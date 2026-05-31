@@ -71,7 +71,9 @@ class GraphBuilder:
         rather than rejecting the whole fragment. A quote that is NOT a
         substring at all (fabricated/paraphrased) is still rejected.
         """
-        frag = self._parse_and_validate(yaml_text, paper)
+        frag = self._parse_and_validate(
+            yaml_text, paper, normalize_ranges=autofix_byte_ranges,
+        )
         if autofix_byte_ranges:
             self._autofix_quote_ranges(frag, raw_text_path=Path(paper["raw_text_path"]))
         self._verify_quotes_against_raw(
@@ -128,7 +130,8 @@ class GraphBuilder:
         resp = await dispatch_agent(agent_type="paper-extractor", prompt=prompt, max_tokens=8192)
         return resp.content
 
-    def _parse_and_validate(self, yaml_text: str, paper: dict) -> KGFragment:
+    def _parse_and_validate(self, yaml_text: str, paper: dict,
+                            normalize_ranges: bool = False) -> KGFragment:
         try:
             data = yaml.safe_load(yaml_text)
         except yaml.YAMLError as e:
@@ -138,6 +141,17 @@ class GraphBuilder:
         # Inject extractor_ts if missing
         for claim in (data.get("nodes", {}).get("claims") or []):
             claim.setdefault("provenance", {}).setdefault("extractor_ts", time.time())
+            # When the caller will recompute byte ranges from the quote text
+            # (ingest_fragment with autofix), an external extractor's reported
+            # quote_byte_range is irrelevant -- normalise any schema-invalid
+            # placeholder (e.g. [0,0] or missing) to a valid [0,1] so model
+            # validation does not reject the fragment before the autofix runs.
+            if normalize_ranges:
+                r = claim.get("quote_byte_range")
+                if (not isinstance(r, list) or len(r) != 2
+                        or not all(isinstance(x, int) and not isinstance(x, bool) for x in r)
+                        or not (0 <= r[0] < r[1])):
+                    claim["quote_byte_range"] = [0, 1]
         return KGFragment.model_validate(data)
 
     def _verify_quotes_against_raw(self, frag: KGFragment, *, raw_text_path: Path) -> None:
