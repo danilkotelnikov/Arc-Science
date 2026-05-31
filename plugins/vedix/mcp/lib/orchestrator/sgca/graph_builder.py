@@ -55,18 +55,49 @@ class GraphBuilder:
     # writes it to the store WITHOUT re-dispatching. This is how a Workflow
     # builds a real grounded KG before the writer is unblocked.
 
-    def ingest_fragment(self, yaml_text: str, paper: dict) -> KGFragment:
+    def ingest_fragment(self, yaml_text: str, paper: dict,
+                        autofix_byte_ranges: bool = True) -> KGFragment:
         """Parse, schema-validate, byte-verify quotes, and persist one
         externally-produced KGFragment. Raises ExtractionFailure /
         ValidationError on any failure (so the caller can substitute the
         paper rather than persist an ungrounded fragment).
+
+        ``autofix_byte_ranges`` (default True for this external-extraction
+        seam): the integrity property SGCA guarantees is "every claim's
+        verbatim_quote is a contiguous substring of the raw text". LLM
+        extractors copy quotes reliably but compute byte offsets
+        unreliably, so when a quote IS present but at a different offset
+        than reported, the range is recomputed from the found position
+        rather than rejecting the whole fragment. A quote that is NOT a
+        substring at all (fabricated/paraphrased) is still rejected.
         """
         frag = self._parse_and_validate(yaml_text, paper)
+        if autofix_byte_ranges:
+            self._autofix_quote_ranges(frag, raw_text_path=Path(paper["raw_text_path"]))
         self._verify_quotes_against_raw(
             frag, raw_text_path=Path(paper["raw_text_path"]),
         )
         self.store.write_paper(frag)
         return frag
+
+    def _autofix_quote_ranges(self, frag: KGFragment, *, raw_text_path: Path) -> None:
+        """Recompute each claim's byte_range from the verbatim_quote's actual
+        position in the raw text. Drops claims whose quote is not found at all
+        (fabricated). Raises only if ALL claims are dropped."""
+        raw = raw_text_path.read_text(encoding="utf-8")
+        kept = []
+        for claim in frag.nodes.claims:
+            idx = raw.find(claim.verbatim_quote)
+            if idx == -1:
+                continue  # fabricated / paraphrased quote -> drop this claim
+            claim.quote_byte_range = [idx, idx + len(claim.verbatim_quote)]
+            kept.append(claim)
+        if not kept:
+            raise ExtractionFailure(
+                "no claim's verbatim_quote is a substring of the raw text "
+                "(all fabricated/paraphrased)"
+            )
+        frag.nodes.claims = kept
 
     async def _extract_with_retries(self, paper: dict) -> None:
         last_err = None
