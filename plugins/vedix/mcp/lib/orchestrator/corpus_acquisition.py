@@ -220,8 +220,9 @@ class CorpusAcquisitionPipeline:
         self.log = log or logging.getLogger(__name__)
 
         # Mark configured sources as tool_discovered so the report says
-        # they were available.
-        for src in ("oa_direct", "crossref_gate"):
+        # they were available. Europe PMC + OA-direct + the Crossref gate
+        # need no key and are always available.
+        for src in ("oa_direct", "crossref_gate", "europepmc"):
             self.source_ledger.mark_tool_discovered(src)
         if self.scihub_mcp_path is not None:
             self.source_ledger.mark_tool_discovered("scihub_mcp")
@@ -298,6 +299,29 @@ class CorpusAcquisitionPipeline:
             self.source_ledger.record_call(
                 "crossref_gate", success=True, records_added=1,
             )
+
+        # Stage 1.5: Europe PMC full text (text-direct). Best channel for
+        # OA biomedical papers -- OpenAlex often exposes only a PMC landing
+        # page, so the PDF cascade below misses them. This yields clean
+        # JATS body text with no PDF round-trip and needs no pacing.
+        epmc_chars = await self._europepmc_fulltext(doi_norm, dest_txt)
+        if epmc_chars >= 1000:
+            self.source_ledger.record_call(
+                "europepmc", success=True, records_added=1,
+            )
+            result.success = True
+            result.source = "europepmc"
+            result.license = "oa (europepmc)"
+            result.text_path = dest_txt
+            result.extracted_chars = epmc_chars
+            self._record_acquisition_artifacts(
+                result=result, year=year, venue=venue, lang=lang,
+            )
+            self._append_manifest(result, out_dir, year=year, venue=venue)
+            return result
+        self.source_ledger.record_call(
+            "europepmc", success=False, http_status=None,
+        )
 
         # Stage 2: OA-direct
         async with httpx.AsyncClient(
@@ -628,6 +652,110 @@ class CorpusAcquisitionPipeline:
         return True
 
     # ------------------------------------------------------------------ #
+    # Europe PMC full-text cascade -- internal (text-direct, OA biomedical)
+    # ------------------------------------------------------------------ #
+
+    async def _europepmc_fulltext(self, doi: str, dest_txt: Path) -> int:
+        """Resolve a DOI to OA full text via Europe PMC, writing plaintext.
+
+        OpenAlex frequently exposes only a PMC *landing page* (no direct
+        ``pdf_url``), so OA-direct misses PubMed Central -- the largest OA
+        biomedical full-text source. Europe PMC serves the JATS XML full
+        text for every OA article it holds. We resolve the DOI to its
+        PMCID, fetch ``/PMC/<pmcid>/fullTextXML``, and flatten the JATS
+        body to plaintext. Returns the character count, or -1 when the
+        article is not OA-available here (the caller then falls through to
+        the PDF channels). No API key, generous rate limits, no pacing.
+        """
+        base = "https://www.ebi.ac.uk/europepmc/webservices/rest"
+        try:
+            async with httpx.AsyncClient(
+                timeout=90, follow_redirects=True,
+                headers={"User-Agent": f"vedix/3.0 (mailto:{self.crossref_email})"},
+            ) as client:
+                r = await client.get(
+                    f"{base}/search",
+                    params={"query": f'DOI:"{doi}"', "format": "json",
+                            "resultType": "lite", "pageSize": 1},
+                )
+                if r.status_code != 200:
+                    return -1
+                results = (r.json().get("resultList", {}) or {}).get("result", [])
+                if not results:
+                    return -1
+                rec = results[0]
+                pmcid = rec.get("pmcid")
+                is_oa = rec.get("isOpenAccess") == "Y" or rec.get("inEPMC") == "Y"
+                if not pmcid or not is_oa:
+                    return -1
+                rx = await client.get(f"{base}/{pmcid}/fullTextXML")
+                if rx.status_code != 200 or len(rx.text) < 500:
+                    return -1
+                text = self._jats_to_text(rx.text)
+                if len(text) < 1000:
+                    return -1
+                dest_txt.write_text(text, encoding="utf-8")
+                return len(text)
+        except Exception as exc:  # noqa: BLE001
+            self.log.debug("europepmc failed for %s: %s", doi, exc)
+            return -1
+
+    @staticmethod
+    def _jats_to_text(xml_text: str) -> str:
+        """Flatten JATS full-text XML to readable plaintext (article title +
+        abstract + body), one paragraph per line. Whitespace inside a
+        paragraph is normalised so a paper-extractor's verbatim quotes stay
+        self-consistent with this stored text. Robust to JATS DOCTYPE +
+        publisher-specific named entities that ElementTree cannot resolve.
+        """
+        import xml.etree.ElementTree as ET
+        # Drop DOCTYPE (internal subset) + namespace decls/prefixes, and
+        # neutralise non-builtin named entities so parsing never aborts.
+        xml_text = re.sub(r"<!DOCTYPE[^>]*?>", "", xml_text, flags=re.S)
+        xml_text = re.sub(r'\sxmlns(:\w+)?="[^"]*"', " ", xml_text)
+        # Strip namespace prefixes from BOTH tags (<mml:math>) and
+        # attributes (xlink:href=) -- otherwise removing the xmlns
+        # declaration leaves an unbound prefix that aborts the parse.
+        xml_text = re.sub(r"(<\/?)[A-Za-z][\w.-]*:", r"\1", xml_text)
+        xml_text = re.sub(r"(\s)[A-Za-z][\w.-]*:([A-Za-z][\w.-]*\s*=)", r"\1\2", xml_text)
+        xml_text = re.sub(
+            r"&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)[\w.-]+;",
+            " ", xml_text,
+        )
+        try:
+            root = ET.fromstring(xml_text)
+        except Exception:  # noqa: BLE001
+            return ""
+        out: list[str] = []
+
+        def _para(el: Any) -> None:
+            t = " ".join("".join(el.itertext()).split())
+            if t:
+                out.append(t)
+
+        at = root.find(".//article-title")
+        if at is not None:
+            _para(at)
+        for ab in root.findall(".//abstract"):
+            for p in ab.iter():
+                if p.tag.split("}")[-1] in ("p", "title"):
+                    _para(p)
+        body = root.find(".//body")
+        if body is not None:
+            def walk(el: Any) -> None:
+                for child in el:
+                    ln = child.tag.split("}")[-1]
+                    if ln in ("p", "title", "label", "caption"):
+                        _para(child)
+                    elif ln in ("sec", "body", "fig", "table-wrap",
+                                "boxed-text", "list", "list-item",
+                                "disp-quote", "supplementary-material"):
+                        walk(child)
+            walk(body)
+        text = "\n\n".join(out)
+        return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    # ------------------------------------------------------------------ #
     # Sci-Hub MCP cascade -- internal
     # ------------------------------------------------------------------ #
 
@@ -885,7 +1013,7 @@ def build_default_pipeline(
             kg_store = None
 
     ledger = SourceLedger(
-        configured=["oa_direct", "annas", "scihub_mcp", "crossref_gate"],
+        configured=["oa_direct", "europepmc", "annas", "scihub_mcp", "crossref_gate"],
     )
     return CorpusAcquisitionPipeline(
         crossref_email=crossref_email,
