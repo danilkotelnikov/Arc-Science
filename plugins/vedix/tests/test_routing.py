@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-ROUTING_DOC = PLUGIN_ROOT / "skills" / "ai-scientist" / "routing-intents.md"
+ROUTING_DOC = PLUGIN_ROOT / "skills" / "vedix" / "routing-intents.md"
 FIXTURES = json.load(open(PLUGIN_ROOT / "tests" / "routing-fixtures.json"))["fixtures"]
 
 

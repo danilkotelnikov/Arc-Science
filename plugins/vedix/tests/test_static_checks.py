@@ -19,6 +19,14 @@ EXPECTED_AGENTS = {
     "slide-presenter",              # Phase E §8.4
 }
 
+# SGCA-class agents use a distinct frontmatter schema (name + description
+# + agent_class + preferred_providers) rather than the classic
+# model/thinking/tools block, so they live on disk but are exempt from the
+# classic-frontmatter parametrized test below.
+SGCA_AGENTS = {
+    "paper-extractor",              # SGCA §3.1 KGFragment extractor
+}
+
 REQUIRED_FRONTMATTER_KEYS = {"name", "description", "model", "thinking", "tools"}
 ALLOWED_MODELS = {"opus", "sonnet", "haiku", "inherit"}
 
@@ -33,8 +41,9 @@ def parse_frontmatter(path: Path) -> dict:
 
 def test_all_expected_agents_exist():
     found = {p.stem for p in AGENTS_DIR.glob("*.md")}
+    allowed = EXPECTED_AGENTS | SGCA_AGENTS
     missing = EXPECTED_AGENTS - found
-    extra = found - EXPECTED_AGENTS
+    extra = found - allowed
     assert not missing, f"missing agent files: {missing}"
     assert not extra, f"unexpected agent files: {extra}"
 

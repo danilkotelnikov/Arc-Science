@@ -133,6 +133,19 @@
                     "em_dash_block_per_1000_words": {"type": "number"}
                   }
                 },
+                "register_discriminator": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {"type": "boolean"},
+                    "mode": {"enum": ["layer_b_only", "hybrid"]},
+                    "classifiers_root": {"type": "string"},
+                    "layer_b_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+                    "fail_action": {"enum": ["warn", "flag", "block"]},
+                    "min_pass_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+                    "max_paragraphs": {"type": "integer", "minimum": 1, "maximum": 5000},
+                    "auto_fetch_missing": {"type": "boolean"}
+                  }
+                },
                 "codex_native_dispatch": {
                   "type": "object",
                   "properties": {

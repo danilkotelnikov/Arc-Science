@@ -113,6 +113,18 @@ Each manuscript sentence carries an entry in `sgca/sentence_ledger.jsonl`:
 
 Any sentence that fails verification triggers a re-write before the manuscript exits its stage gate. The same ledger drives the post-experiment numerical-claim audit (`numerical_audit.json`) and the citation-graph audit (`citation_graph.json`).
 
+## Register quality gate
+
+Three complementary checks confirm the manuscript reads as genuine academic prose, not AI-stylistic or popular-science register:
+
+- **`anti_llm_lint`** — a measured trigger-word blacklist (`delve`, `underscore`, `it is important to note`, paragraph-initial `Furthermore,` …) sourced from post-ChatGPT excess-vocabulary studies. Catches known words.
+- **`linguistic_audit`** — per-locale typographic and terminology rules (guillemets, decimal comma, GOST citations for Russian; Oxford-comma and smart-quote consistency for English; seven locales). Catches script-level slips.
+- **Trained register classifier** — a per-(discipline, language) `xlm-roberta-base` model (the §5.3 Layer B discriminator) that scores each paragraph's probability of being in academic register. Catches the statistical signal no keyword list can express: a paragraph that reads as popular-science ("Scientists have made a major discovery!"), encyclopedic, or conversational gets flagged even when it contains no blacklisted words.
+
+The classifier is wired into the pipeline through [`register_gate.RegisterGate`](plugins/vedix/mcp/lib/orchestrator/register_gate.py), configured under `orchestrator.register_discriminator` in settings. After the manuscript phase it judges every paragraph and writes `register_audit.json` (per-paragraph verdicts + `pass_fraction` + `flagged_paragraphs[]`). The reviewer agent reads it as part of its checklist. The gate degrades gracefully: if no trained model exists for the discipline/language, or torch is absent, every paragraph passes and the audit records `skipped` with a reason — the pipeline never blocks for lack of a model.
+
+Models are loaded lazily (only when a manuscript needs judging) and cached per job. Train your own with `scripts/prepare_corpus.py` → `scripts/scrape_popsci.py` → `scripts/rebuild_splits.py` → `scripts/train_register_classifier.py --auto`, or fetch pre-trained weights with `python -m vedix model fetch`. Trained weights land in `~/.vedix/classifiers/register_<discipline>_<language>/`; `python -m vedix model list` shows what's installed with each model's held-out F1.
+
 ## Corpus acquisition
 
 Full-text acquisition is a first-class pipeline phase. The literature-searcher returns metadata; the orchestrator then runs [`corpus_acquisition.CorpusAcquisitionPipeline`](plugins/vedix/mcp/lib/orchestrator/corpus_acquisition.py) on each merged paper, a three-stage cascade with provenance recording at every step:

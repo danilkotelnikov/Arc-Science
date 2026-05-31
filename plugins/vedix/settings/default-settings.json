@@ -93,6 +93,16 @@
           "em_dash_warn_per_1000_words": 2.0,
           "em_dash_block_per_1000_words": 5.0
         },
+        "register_discriminator": {
+          "enabled": true,
+          "mode": "layer_b_only",
+          "classifiers_root": "~/.vedix/classifiers",
+          "layer_b_threshold": 0.5,
+          "fail_action": "flag",
+          "min_pass_fraction": 0.7,
+          "max_paragraphs": 400,
+          "auto_fetch_missing": false
+        },
         "codex_native_dispatch": {
           "enabled": true,
           "max_threads": 6,
