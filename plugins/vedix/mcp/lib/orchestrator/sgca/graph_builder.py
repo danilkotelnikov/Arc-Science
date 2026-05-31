@@ -48,6 +48,26 @@ class GraphBuilder:
             "failures": [{"paper_id": f.paper_id, "reason": f.reason} for f in failures],
         }
 
+    # ----- workflow-compatible seam ---------------------------------------
+    # graph_builder.run() calls dispatch_agent (host-native only). When the
+    # extraction is performed by a Workflow agent() instead, the caller
+    # already holds the YAML; ingest_fragment validates + byte-verifies +
+    # writes it to the store WITHOUT re-dispatching. This is how a Workflow
+    # builds a real grounded KG before the writer is unblocked.
+
+    def ingest_fragment(self, yaml_text: str, paper: dict) -> KGFragment:
+        """Parse, schema-validate, byte-verify quotes, and persist one
+        externally-produced KGFragment. Raises ExtractionFailure /
+        ValidationError on any failure (so the caller can substitute the
+        paper rather than persist an ungrounded fragment).
+        """
+        frag = self._parse_and_validate(yaml_text, paper)
+        self._verify_quotes_against_raw(
+            frag, raw_text_path=Path(paper["raw_text_path"]),
+        )
+        self.store.write_paper(frag)
+        return frag
+
     async def _extract_with_retries(self, paper: dict) -> None:
         last_err = None
         for attempt in range(self.max_retries + 1):

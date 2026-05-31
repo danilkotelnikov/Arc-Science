@@ -198,6 +198,8 @@ class CorpusAcquisitionPipeline:
         corpus_root: Optional[Path] = None,
         pace_seconds: float = 25.0,
         scihub_mcp_path: Optional[Path] = None,
+        annas_secret_key: Optional[str] = None,
+        annas_base_url: str = "https://annas-archive.org",
         kg_store: Any = None,  # KGStore -- typed loosely so tests can pass None
         provenance_ledger: Any = None,  # ProvenanceLedger
         log: Optional[logging.Logger] = None,
@@ -209,6 +211,10 @@ class CorpusAcquisitionPipeline:
         )
         self.pace_seconds = pace_seconds
         self.scihub_mcp_path = scihub_mcp_path
+        self.annas_secret_key = (annas_secret_key or "").strip() or None
+        self.annas_base_url = (annas_base_url or "https://annas-archive.org").rstrip("/")
+        if not self.annas_base_url.startswith(("http://", "https://")):
+            self.annas_base_url = f"https://{self.annas_base_url}"
         self.kg_store = kg_store
         self.provenance_ledger = provenance_ledger
         self.log = log or logging.getLogger(__name__)
@@ -219,6 +225,8 @@ class CorpusAcquisitionPipeline:
             self.source_ledger.mark_tool_discovered(src)
         if self.scihub_mcp_path is not None:
             self.source_ledger.mark_tool_discovered("scihub_mcp")
+        if self.annas_secret_key is not None:
+            self.source_ledger.mark_tool_discovered("annas")
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -233,10 +241,17 @@ class CorpusAcquisitionPipeline:
         discipline: str,
         venue: Optional[str] = None,
         lang: str = "en",
+        use_annas_fallback: bool = False,
         use_scihub_fallback: bool = False,
         skip_doi_gate: bool = False,
     ) -> AcquisitionResult:
-        """Acquire a single paper through the OA -> Sci-Hub cascade.
+        """Acquire a single paper through the cascade.
+
+        Cascade order (gentle, substituting): DOI gate -> OA-direct ->
+        Anna's Archive (if ``use_annas_fallback`` + secret key) ->
+        Sci-Hub MCP (if ``use_scihub_fallback`` + server path). Each
+        paywall channel is paced by ``pace_seconds`` so mirrors are
+        never hammered.
 
         ``skip_doi_gate=True`` is for test fixtures only; production
         callers should always run the gate.
@@ -304,7 +319,25 @@ class CorpusAcquisitionPipeline:
                     result.bytes_written = dest_pdf.stat().st_size
                     break
 
-        # Stage 3: Sci-Hub MCP (gentle, opt-in)
+        # Stage 3: Anna's Archive (gentle, opt-in) -- paywall channel #1
+        if not result.success and use_annas_fallback and self.annas_secret_key:
+            annas_ok = await self._annas_acquire(doi_norm, dest_pdf)
+            if annas_ok:
+                self.source_ledger.record_call(
+                    "annas", success=True, records_added=1,
+                )
+                result.success = True
+                result.source = "annas"
+                result.license = "annas-mirror"
+                result.pdf_path = dest_pdf
+                result.bytes_written = dest_pdf.stat().st_size
+                await asyncio.sleep(self.pace_seconds)
+            else:
+                self.source_ledger.record_call(
+                    "annas", success=False, http_status=None,
+                )
+
+        # Stage 4: Sci-Hub MCP (gentle, opt-in) -- paywall channel #2
         if not result.success and use_scihub_fallback and self.scihub_mcp_path:
             scihub_ok = await self._scihub_acquire(doi_norm, dest_pdf)
             if scihub_ok:
@@ -380,6 +413,69 @@ class CorpusAcquisitionPipeline:
             "source_ledger": self.source_ledger.report(),
         }
 
+    async def acquire_with_substitution(
+        self,
+        *,
+        candidates: list[dict[str, Any]],
+        target_n: int,
+        discipline: str,
+        lang: str = "en",
+        use_annas_fallback: bool = True,
+        use_scihub_fallback: bool = True,
+    ) -> dict[str, Any]:
+        """Acquire full text for ``target_n`` papers, substituting failures.
+
+        Walk the ranked ``candidates`` pool (best first). For each, run
+        the full cascade (DOI gate -> OA -> Anna's -> Sci-Hub). Keep the
+        ones that yield a verified full-text PDF; when a candidate can't
+        be obtained from ANY channel, skip it and pull the next candidate
+        from the pool instead -- i.e. an unobtainable source is
+        substituted by an obtainable one. Stop once ``target_n`` grounded
+        papers are in hand or the pool is exhausted.
+
+        Returns the obtained set (with on-disk pdf/text paths), the
+        substituted-out set (with failure reasons), and whether the
+        target was met. This is what makes "the writer only sees sources
+        we actually hold the full text for" true.
+        """
+        obtained: list[AcquisitionResult] = []
+        substituted: list[dict[str, Any]] = []
+
+        for c in candidates:
+            if len(obtained) >= target_n:
+                break
+            doi = (c.get("doi") or "").strip()
+            if not doi:
+                substituted.append({"title": c.get("title", ""), "reason": "no_doi"})
+                continue
+            r = await self.acquire_one(
+                doi=doi, title=c.get("title", ""),
+                year=int(c.get("year") or 0),
+                discipline=discipline, lang=lang,
+                venue=c.get("venue") or c.get("source_journal"),
+                use_annas_fallback=use_annas_fallback,
+                use_scihub_fallback=use_scihub_fallback,
+            )
+            if r.success and r.text_path is not None:
+                obtained.append(r)
+            else:
+                substituted.append({
+                    "doi": doi, "title": c.get("title", ""),
+                    "reason": r.failure_reason or "no_fulltext",
+                })
+
+        return {
+            "discipline": discipline,
+            "lang": lang,
+            "target_n": target_n,
+            "obtained_n": len(obtained),
+            "target_met": len(obtained) >= target_n,
+            "pool_size": len(candidates),
+            "obtained": [r.as_dict() for r in obtained],
+            "substituted_out": substituted,
+            "source_ledger": self.source_ledger.report(),
+        }
+
     # ------------------------------------------------------------------ #
     # OA cascade -- internal
     # ------------------------------------------------------------------ #
@@ -427,6 +523,82 @@ class CorpusAcquisitionPipeline:
             _maybe_add(loc, gate_to_legit_hosts=True)
 
         return out
+
+    # ------------------------------------------------------------------ #
+    # Anna's Archive cascade -- internal (scidb -> fast_download -> stream)
+    # ------------------------------------------------------------------ #
+
+    async def _annas_acquire(self, doi: str, dest: Path) -> bool:
+        """Resolve a DOI to a full-text PDF via Anna's Archive, gently.
+
+        Pattern (proven in scripts/scrape_nature.py): hit the canonical
+        ``/scidb/<doi>`` resolver to get the md5, then call
+        ``/dyn/api/fast_download.json?md5=<md5>&key=<secret>`` for a
+        one-shot signed URL, then stream + validate %PDF-. Includes a
+        DOI-in-signed-URL sanity check so a wrong-md5 hit (a known Anna's
+        bug for newly-added papers) is rejected rather than saved.
+        """
+        if not self.annas_secret_key:
+            return False
+        base = self.annas_base_url
+        try:
+            async with httpx.AsyncClient(
+                timeout=120, follow_redirects=True,
+                headers={"User-Agent": USER_AGENT_BROWSER},
+            ) as client:
+                # Step 1: scidb DOI resolver -> md5
+                md5: Optional[str] = None
+                try:
+                    r = await client.get(f"{base}/scidb/{doi}")
+                    if r.status_code == 200:
+                        m = re.search(r'href="/md5/([a-f0-9]{32})"', r.text)
+                        if m:
+                            md5 = m.group(1)
+                except Exception as exc:  # noqa: BLE001
+                    self.log.debug("annas scidb failed for %s: %s", doi, exc)
+                if not md5:
+                    # Fallback: search endpoint with title-free DOI query
+                    try:
+                        r = await client.get(
+                            f"{base}/search",
+                            params={"q": doi, "content": "journal_article", "ext": "pdf"},
+                        )
+                        if r.status_code == 200:
+                            m = re.search(r'href="/md5/([a-f0-9]{32})"', r.text)
+                            if m:
+                                md5 = m.group(1)
+                    except Exception:  # noqa: BLE001
+                        pass
+                if not md5:
+                    return False
+
+                # Step 2: fast_download.json -> signed URL
+                try:
+                    r = await client.get(
+                        f"{base}/dyn/api/fast_download.json",
+                        params={"md5": md5, "key": self.annas_secret_key},
+                    )
+                    if r.status_code != 200:
+                        return False
+                    data = r.json()
+                except Exception as exc:  # noqa: BLE001
+                    self.log.debug("annas fast_download failed: %s", exc)
+                    return False
+                signed = data.get("download_url") if isinstance(data, dict) else None
+                if not signed or not isinstance(signed, str):
+                    return False
+
+                # Step 2.5: DOI-in-URL sanity check (reject wrong-md5 hits)
+                um = re.search(r"/(10\.\d{4,9}/[^/.~]+(?:[.-][^/.~]+)*)\.pdf~", signed)
+                if um and um.group(1).lower() != doi.lower():
+                    self.log.debug("annas doi mismatch: got %s for %s", um.group(1), doi)
+                    return False
+
+                # Step 3: stream + validate
+                return await self._download_pdf(signed, dest, client=client)
+        except Exception as exc:  # noqa: BLE001
+            self.log.debug("annas acquire failed for %s: %s", doi, exc)
+            return False
 
     async def _download_pdf(
         self, url: str, dest: Path, *, client: httpx.AsyncClient,
@@ -672,11 +844,14 @@ def build_default_pipeline(
     *,
     job_id: Optional[str] = None,
     pace_seconds: float = 25.0,
+    enable_annas_fallback: bool = False,
     enable_scihub_fallback: bool = False,
     enable_kg_store: bool = False,
+    corpus_root: Optional[Path] = None,
 ) -> CorpusAcquisitionPipeline:
     """Construct a ready-to-use pipeline from ``OPENALEX_EMAIL`` and
-    ``VEDIX_HOME`` env vars, with optional KG store and Sci-Hub fallback.
+    ``VEDIX_HOME`` env vars, with optional KG store + Anna's + Sci-Hub
+    fallbacks.
 
     The literature-searcher agent and the corpus_lib scripts both call
     this when they don't need fine-grained construction.
@@ -696,6 +871,11 @@ def build_default_pipeline(
         if candidate.exists():
             scihub_path = candidate
 
+    annas_key: Optional[str] = None
+    annas_base = os.environ.get("ANNAS_BASE_URL", "https://annas-archive.org")
+    if enable_annas_fallback:
+        annas_key = os.environ.get("ANNAS_SECRET_KEY", "").strip() or None
+
     kg_store = None
     if enable_kg_store and job_id:
         try:
@@ -705,14 +885,16 @@ def build_default_pipeline(
             kg_store = None
 
     ledger = SourceLedger(
-        configured=["oa_direct", "scihub_mcp", "crossref_gate"],
+        configured=["oa_direct", "annas", "scihub_mcp", "crossref_gate"],
     )
     return CorpusAcquisitionPipeline(
         crossref_email=crossref_email,
         source_ledger=ledger,
-        corpus_root=vedix_home / "corpus",
+        corpus_root=corpus_root or (vedix_home / "corpus"),
         pace_seconds=pace_seconds,
         scihub_mcp_path=scihub_path,
+        annas_secret_key=annas_key,
+        annas_base_url=annas_base,
         kg_store=kg_store,
     )
 
