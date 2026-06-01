@@ -18,9 +18,9 @@ from mcp.lib.orchestrator.source_accounting import SourceLedger
 
 
 def _pipe(**kw) -> CorpusAcquisitionPipeline:
-    led = SourceLedger(["oa_direct", "europepmc", "europepmc_pdf", "unpaywall",
-                        "s2_oa", "core", "preprint", "annas", "scihub_mcp",
-                        "crossref_gate"])
+    led = SourceLedger(["oa_direct", "crossref_fulltext", "europepmc", "europepmc_pdf",
+                        "unpaywall", "s2_oa", "core", "springer", "elsevier", "wiley",
+                        "preprint", "annas", "scihub_mcp", "crossref_gate"])
     return CorpusAcquisitionPipeline(crossref_email="x@example.com",
                                      source_ledger=led, **kw)
 
@@ -153,3 +153,73 @@ def test_preprint_by_title_rejects_mismatch():
                               httpx.MockTransport(handler),
                               "De novo antibody design with diffusion models", 2024)
     assert url is None
+
+
+# --------------------------------------------------------------------------- #
+# Publisher channels -- Crossref TDM links + Elsevier / Wiley / Springer
+# --------------------------------------------------------------------------- #
+
+
+def test_publisher_sources_marked_with_keys():
+    pipe = _pipe(elsevier_api_key="e", wiley_tdm_token="w", springer_api_key="s")
+    rep = pipe.source_ledger.report()["per_source"]
+    for s in ("crossref_fulltext", "elsevier", "wiley", "springer"):
+        assert rep[s]["tool_discovered"] is True
+
+
+def test_publisher_apis_not_discovered_without_keys():
+    rep = _pipe().source_ledger.report()["per_source"]
+    assert rep["elsevier"]["tool_discovered"] is False
+    assert rep["wiley"]["tool_discovered"] is False
+    # Crossref full-text links need no key -- always available.
+    assert rep["crossref_fulltext"]["tool_discovered"] is True
+
+
+def test_crossref_fulltext_urls_prefers_pdf_over_xml():
+    def handler(req):
+        return httpx.Response(200, json={"message": {"link": [
+            {"URL": "https://pub.example/full.xml", "content-type": "application/xml",
+             "intended-application": "text-mining"},
+            {"URL": "https://pub.example/full.pdf", "content-type": "application/pdf",
+             "intended-application": "text-mining"},
+        ]}})
+    urls = _run_with_transport(_pipe(), "_crossref_fulltext_urls",
+                               httpx.MockTransport(handler), "10.1126/science.x")
+    assert urls and urls[0] == "https://pub.example/full.pdf"
+
+
+def test_crossref_fulltext_urls_empty_when_no_links():
+    def handler(req):
+        return httpx.Response(200, json={"message": {}})
+    urls = _run_with_transport(_pipe(), "_crossref_fulltext_urls",
+                               httpx.MockTransport(handler), "10.1/x")
+    assert urls == []
+
+
+def test_elsevier_request_has_auth_header():
+    req = _pipe(elsevier_api_key="KEY")._elsevier_request("10.1016/x")
+    assert req is not None
+    url, hdr = req
+    assert "api.elsevier.com" in url and hdr["X-ELS-APIKey"] == "KEY"
+
+
+def test_wiley_request_has_token_header():
+    req = _pipe(wiley_tdm_token="TOK")._wiley_request("10.1002/x")
+    assert req is not None
+    url, hdr = req
+    assert "api.wiley.com" in url and hdr["Wiley-TDM-Client-Token"] == "TOK"
+
+
+def test_publisher_requests_none_without_keys():
+    pipe = _pipe()
+    assert pipe._elsevier_request("10.1/x") is None
+    assert pipe._wiley_request("10.1/x") is None
+
+
+def test_springer_oa_url_returns_pdf():
+    def handler(req):
+        return httpx.Response(200, json={"records": [
+            {"url": [{"format": "pdf", "value": "https://link.springer.example/x.pdf"}]}]})
+    url = _run_with_transport(_pipe(springer_api_key="k"), "_springer_oa_url",
+                              httpx.MockTransport(handler), "10.1007/x")
+    assert url == "https://link.springer.example/x.pdf"

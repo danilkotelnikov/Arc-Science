@@ -267,6 +267,10 @@ class CorpusAcquisitionPipeline:
         core_api_key: Optional[str] = None,
         unpaywall_email: Optional[str] = None,
         render_pace_seconds: float = 1.5,
+        crossref_plus_token: Optional[str] = None,
+        elsevier_api_key: Optional[str] = None,
+        wiley_tdm_token: Optional[str] = None,
+        springer_api_key: Optional[str] = None,
     ) -> None:
         self.crossref_email = crossref_email
         self.source_ledger = source_ledger
@@ -292,15 +296,28 @@ class CorpusAcquisitionPipeline:
         self.unpaywall_email = (unpaywall_email or crossref_email or "").strip()
         self.render_pace_seconds = render_pace_seconds
         self._render_lock = asyncio.Lock()  # serialise EPMC render PDF fetches
+        # Publisher full-text channels: Crossref TDM links reach every
+        # publisher (Science, Oxford Academic, Springer, Wiley, ACS, IEEE,
+        # ...); the publisher TDM APIs (opt-in via key/token) deliver entitled
+        # full text directly.
+        self.crossref_plus_token = (crossref_plus_token or "").strip() or None
+        self.elsevier_api_key = (elsevier_api_key or "").strip() or None
+        self.wiley_tdm_token = (wiley_tdm_token or "").strip() or None
+        self.springer_api_key = (springer_api_key or "").strip() or None
 
         # Mark configured sources as tool_discovered so the report says
         # they were available. Europe PMC + OA-direct + the OA-discovery
-        # services + the Crossref gate need no key and are always available.
-        for src in ("oa_direct", "crossref_gate", "europepmc", "europepmc_pdf",
-                    "unpaywall", "s2_oa", "preprint"):
+        # services + Crossref (gate and full-text links) need no key and are
+        # always available.
+        for src in ("oa_direct", "crossref_gate", "crossref_fulltext", "europepmc",
+                    "europepmc_pdf", "unpaywall", "s2_oa", "preprint"):
             self.source_ledger.mark_tool_discovered(src)
-        if self.core_api_key is not None:
-            self.source_ledger.mark_tool_discovered("core")
+        for key, src in ((self.core_api_key, "core"),
+                         (self.elsevier_api_key, "elsevier"),
+                         (self.wiley_tdm_token, "wiley"),
+                         (self.springer_api_key, "springer")):
+            if key is not None:
+                self.source_ledger.mark_tool_discovered(src)
         if self.scihub_mcp_path is not None:
             self.source_ledger.mark_tool_discovered("scihub_mcp")
         if self.annas_secret_key is not None:
@@ -420,10 +437,28 @@ class CorpusAcquisitionPipeline:
                     result.pdf_url_used, result.pdf_host = url, host
                     result.license = license_ or ""
                     break
+            # Crossref full-text TDM links -- publisher-agnostic (Science,
+            # Oxford Academic, Springer, Wiley, ACS, IEEE, ...). Several urls
+            # may be listed; the first valid PDF wins.
+            if not result.success:
+                xref_hdr = ({"Crossref-Plus-API-Token": f"Bearer {self.crossref_plus_token}"}
+                            if self.crossref_plus_token else None)
+                hit = False
+                for url in await self._crossref_fulltext_urls(doi_norm, client=client):
+                    if await self._download_pdf(url, dest_pdf, client=client, extra_headers=xref_hdr):
+                        self.source_ledger.record_call("crossref_fulltext", success=True, records_added=1)
+                        result.success, result.source = True, "crossref_fulltext"
+                        result.pdf_url_used, result.license = url, "tdm (crossref)"
+                        hit = True
+                        break
+                if not hit:
+                    self.source_ledger.record_call("crossref_fulltext", success=False, http_status=None)
+            # OA-discovery services -- each returns at most one pdf url.
             discovery = [
                 ("unpaywall", lambda: self._unpaywall_pdf_url(doi_norm, client=client)),
                 ("s2_oa", lambda: self._s2_oa_pdf_url(doi_norm, client=client)),
                 ("core", lambda: self._core_pdf_url(doi_norm, client=client)),
+                ("springer", lambda: self._springer_oa_url(doi_norm, client=client)),
                 ("preprint", lambda: self._preprint_pdf_url_by_title(title, year, client=client)),
             ]
             for srckey, getter in discovery:
@@ -437,6 +472,18 @@ class CorpusAcquisitionPipeline:
                     self.source_ledger.record_call(srckey, success=True, records_added=1)
                     result.success, result.source = True, srckey
                     result.pdf_url_used, result.license = url, f"oa ({srckey})"
+                else:
+                    self.source_ledger.record_call(srckey, success=False, http_status=None)
+            # Publisher TDM APIs (opt-in via key/token) -- entitled full text.
+            for srckey, req in (("elsevier", self._elsevier_request(doi_norm)),
+                                ("wiley", self._wiley_request(doi_norm))):
+                if result.success or req is None:
+                    continue
+                url, hdr = req
+                if await self._download_pdf(url, dest_pdf, client=client, extra_headers=hdr):
+                    self.source_ledger.record_call(srckey, success=True, records_added=1)
+                    result.success, result.source = True, srckey
+                    result.pdf_url_used, result.license = url, f"tdm ({srckey})"
                 else:
                     self.source_ledger.record_call(srckey, success=False, http_status=None)
             if result.success and dest_pdf.exists():
@@ -716,13 +763,19 @@ class CorpusAcquisitionPipeline:
 
     async def _download_pdf(
         self, url: str, dest: Path, *, client: httpx.AsyncClient,
+        extra_headers: Optional[dict[str, str]] = None,
     ) -> bool:
-        """Stream ``url`` to ``dest`` with browser headers; validate magic bytes."""
+        """Stream ``url`` to ``dest`` with browser headers; validate magic bytes.
+        ``extra_headers`` carries publisher TDM auth tokens (Elsevier/Wiley/
+        Crossref-Plus) when a channel needs them."""
         if dest.exists():
             dest.unlink()
+        headers = dict(DEFAULT_BROWSER_HEADERS)
+        if extra_headers:
+            headers.update(extra_headers)
         try:
             async with client.stream(
-                "GET", url, headers=DEFAULT_BROWSER_HEADERS, timeout=120,
+                "GET", url, headers=headers, timeout=120,
             ) as r:
                 r.raise_for_status()
                 with dest.open("wb") as f:
@@ -844,6 +897,80 @@ class CorpusAcquisitionPipeline:
             await asyncio.sleep(self.render_pace_seconds)
             return await self._download_pdf(
                 f"https://europepmc.org/articles/{pmcid}?pdf=render", dest, client=client)
+
+    # ------------------------------------------------------------------ #
+    # Publisher full-text channels -- Crossref TDM links + publisher APIs
+    # ------------------------------------------------------------------ #
+
+    async def _crossref_fulltext_urls(self, doi: str, *,
+                                      client: httpx.AsyncClient) -> list[str]:
+        """Crossref full-text links: the publisher-agnostic route. Crossref's
+        ``message.link[]`` lists the PDF/XML endpoints each publisher exposes
+        for text-mining -- the unified way to reach Science (AAAS), Oxford
+        Academic, Springer, Wiley, ACS, IEEE, etc., not just PMC. A
+        Crossref-Plus token (if configured) grants entitled subscription
+        access; otherwise the open links still resolve."""
+        headers = {}
+        if self.crossref_plus_token:
+            headers["Crossref-Plus-API-Token"] = f"Bearer {self.crossref_plus_token}"
+        try:
+            r = await client.get(f"https://api.crossref.org/works/{doi}",
+                                 params={"mailto": self.crossref_email}, headers=headers)
+            if r.status_code != 200:
+                return []
+            links = (r.json().get("message", {}) or {}).get("link") or []
+        except Exception:  # noqa: BLE001
+            return []
+        pdfs, other = [], []
+        for l in links:
+            if not isinstance(l, dict):
+                continue
+            url = l.get("URL")
+            if not url:
+                continue
+            ct = (l.get("content-type") or "").lower()
+            if ct == "application/pdf" or url.lower().endswith(".pdf"):
+                pdfs.append(url)
+            elif ct in ("unspecified", "application/octet-stream", ""):
+                other.append(url)
+        return pdfs + other
+
+    async def _springer_oa_url(self, doi: str, *,
+                               client: httpx.AsyncClient) -> Optional[str]:
+        """Springer Nature OpenAccess API (needs SPRINGER_API_KEY)."""
+        if not self.springer_api_key:
+            return None
+        try:
+            r = await client.get("https://api.springernature.com/openaccess/json",
+                                 params={"q": f"doi:{doi}", "api_key": self.springer_api_key})
+            if r.status_code != 200:
+                return None
+            for rec in (r.json() or {}).get("records", []) or []:
+                urls = rec.get("url") or []
+                for u in urls:
+                    if isinstance(u, dict) and (u.get("format") == "pdf"
+                            or (u.get("value") or "").lower().endswith(".pdf")):
+                        return u.get("value")
+                if urls and isinstance(urls[0], dict):
+                    return urls[0].get("value")
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+
+    def _elsevier_request(self, doi: str) -> Optional[tuple[str, dict[str, str]]]:
+        """ScienceDirect Article Retrieval API endpoint + TDM auth headers."""
+        if not self.elsevier_api_key:
+            return None
+        return (f"https://api.elsevier.com/content/article/doi/{doi}",
+                {"X-ELS-APIKey": self.elsevier_api_key, "Accept": "application/pdf"})
+
+    def _wiley_request(self, doi: str) -> Optional[tuple[str, dict[str, str]]]:
+        """Wiley Online Library TDM endpoint + client-token header."""
+        if not self.wiley_tdm_token:
+            return None
+        from urllib.parse import quote
+        return (f"https://api.wiley.com/onlinelibrary/tdm/v1/articles/{quote(doi, safe='')}",
+                {"Wiley-TDM-Client-Token": self.wiley_tdm_token})
 
     # ------------------------------------------------------------------ #
     # Europe PMC full-text cascade -- internal (text-direct, OA biomedical)
@@ -1230,10 +1357,11 @@ def build_default_pipeline(
             kg_store = None
 
     ledger = SourceLedger(
-        configured=["oa_direct", "europepmc", "europepmc_pdf", "unpaywall",
-                    "s2_oa", "core", "preprint", "annas", "scihub_mcp",
-                    "crossref_gate"],
+        configured=["oa_direct", "crossref_fulltext", "europepmc", "europepmc_pdf",
+                    "unpaywall", "s2_oa", "core", "springer", "elsevier", "wiley",
+                    "preprint", "annas", "scihub_mcp", "crossref_gate"],
     )
+    _env = lambda k: (os.environ.get(k, "") or "").strip() or None  # noqa: E731
     return CorpusAcquisitionPipeline(
         crossref_email=crossref_email,
         source_ledger=ledger,
@@ -1243,8 +1371,12 @@ def build_default_pipeline(
         annas_secret_key=annas_key,
         annas_base_url=annas_base,
         kg_store=kg_store,
-        core_api_key=os.environ.get("CORE_API_KEY", "").strip() or None,
-        unpaywall_email=os.environ.get("UNPAYWALL_EMAIL", "").strip() or crossref_email,
+        core_api_key=_env("CORE_API_KEY"),
+        unpaywall_email=_env("UNPAYWALL_EMAIL") or crossref_email,
+        crossref_plus_token=_env("CROSSREF_PLUS_TOKEN"),
+        elsevier_api_key=_env("ELSEVIER_API_KEY"),
+        wiley_tdm_token=_env("WILEY_TDM_TOKEN"),
+        springer_api_key=_env("SPRINGER_API_KEY"),
     )
 
 
