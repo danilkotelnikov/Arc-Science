@@ -129,6 +129,65 @@ def _is_legitimate_oa_url(url: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Full-text normalisation + structural gate
+# ---------------------------------------------------------------------------
+
+_LIGATURES = {
+    "ﬁ": "fi", "ﬂ": "fl", "ﬀ": "ff", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "ft", "ﬆ": "st",
+}
+_SECTION_RE = re.compile(
+    r"\b(introduction|materials and methods|methods|results|discussion|"
+    r"conclusions?|references|acknowledge?ments?|experimental|background)\b", re.I,
+)
+_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def normalize_fulltext(text: str) -> str:
+    """Normalise extracted full text so a verbatim quote is a stable
+    substring regardless of source (JATS XML vs PDF text). Fixes ligatures,
+    unifies dashes/quotes, removes soft hyphens, de-hyphenates line-break
+    splits, joins intra-paragraph line breaks, and collapses runs of
+    spaces -- while preserving blank-line paragraph boundaries. This is what
+    lets the SGCA byte-verification match cleanly on PDF-sourced text.
+    """
+    for k, v in _LIGATURES.items():
+        text = text.replace(k, v)
+    text = text.replace("­", "").replace(" ", " ").replace("​", "")
+    text = re.sub(r"[‐-―−]", "-", text)          # dashes -> hyphen
+    text = re.sub(r"[‘’ʼ′]", "'", text)     # single quotes
+    text = re.sub(r"[“”″]", '"', text)           # double quotes
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"(\w)-\n[ \t]*(\w)", r"\1\2", text)           # de-hyphenate
+    text = re.sub(r"\n[ \t]*\n+", " ", text)                # mark paragraph breaks
+    text = re.sub(r"\n+", " ", text)                            # join intra-para lines
+    text = text.replace(" ", "\n\n")                       # restore paragraphs
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()
+
+
+def looks_like_fulltext(text: str, *, min_words: int = 500,
+                        pdf_pages: Optional[int] = None) -> tuple[bool, str]:
+    """Structural full-text gate: reject abstract-only / stub captures.
+
+    Returns ``(ok, reason)``. A genuine article has enough words AND either
+    multiple section headers or a reference list (or is simply long). A PDF
+    of < 2 pages is rejected outright.
+    """
+    if pdf_pages is not None and pdf_pages < 2:
+        return False, f"pdf_pages_{pdf_pages}"
+    words = len(text.split())
+    if words < min_words:
+        return False, f"too_short_{words}w"
+    low = text.lower()
+    n_sections = len(set(m.lower() for m in _SECTION_RE.findall(low)))
+    has_refs = (("references" in low or "bibliography" in low)
+                and (low.count("et al") + len(_YEAR_RE.findall(text)) >= 8))
+    if n_sections >= 2 or has_refs or words >= 1500:
+        return True, f"ok_{words}w_{n_sections}sec"
+    return False, f"no_structure_{words}w_{n_sections}sec"
+
+
+# ---------------------------------------------------------------------------
 # Result dataclass
 # ---------------------------------------------------------------------------
 
@@ -203,6 +262,11 @@ class CorpusAcquisitionPipeline:
         kg_store: Any = None,  # KGStore -- typed loosely so tests can pass None
         provenance_ledger: Any = None,  # ProvenanceLedger
         log: Optional[logging.Logger] = None,
+        store_pdf: bool = True,
+        min_fulltext_words: int = 500,
+        core_api_key: Optional[str] = None,
+        unpaywall_email: Optional[str] = None,
+        render_pace_seconds: float = 1.5,
     ) -> None:
         self.crossref_email = crossref_email
         self.source_ledger = source_ledger
@@ -218,12 +282,25 @@ class CorpusAcquisitionPipeline:
         self.kg_store = kg_store
         self.provenance_ledger = provenance_ledger
         self.log = log or logging.getLogger(__name__)
+        # Store the raw PDF alongside the extracted text; apply a structural
+        # full-text gate; broaden OA discovery (Unpaywall / CORE / S2 /
+        # preprint-by-title) so paywalled DOIs still resolve to a legal full
+        # text; pace the Europe PMC render endpoint to avoid HTTP 429.
+        self.store_pdf = store_pdf
+        self.min_fulltext_words = int(min_fulltext_words)
+        self.core_api_key = (core_api_key or "").strip() or None
+        self.unpaywall_email = (unpaywall_email or crossref_email or "").strip()
+        self.render_pace_seconds = render_pace_seconds
+        self._render_lock = asyncio.Lock()  # serialise EPMC render PDF fetches
 
         # Mark configured sources as tool_discovered so the report says
-        # they were available. Europe PMC + OA-direct + the Crossref gate
-        # need no key and are always available.
-        for src in ("oa_direct", "crossref_gate", "europepmc"):
+        # they were available. Europe PMC + OA-direct + the OA-discovery
+        # services + the Crossref gate need no key and are always available.
+        for src in ("oa_direct", "crossref_gate", "europepmc", "europepmc_pdf",
+                    "unpaywall", "s2_oa", "preprint"):
             self.source_ledger.mark_tool_discovered(src)
+        if self.core_api_key is not None:
+            self.source_ledger.mark_tool_discovered("core")
         if self.scihub_mcp_path is not None:
             self.source_ledger.mark_tool_discovered("scihub_mcp")
         if self.annas_secret_key is not None:
@@ -300,105 +377,118 @@ class CorpusAcquisitionPipeline:
                 "crossref_gate", success=True, records_added=1,
             )
 
-        # Stage 1.5: Europe PMC full text (text-direct). Best channel for
-        # OA biomedical papers -- OpenAlex often exposes only a PMC landing
-        # page, so the PDF cascade below misses them. This yields clean
-        # JATS body text with no PDF round-trip and needs no pacing.
+        # Stage A: Europe PMC JATS full text (text-direct, normalised). Best
+        # channel for OA biomedical papers. The render PDF is stored too so the
+        # corpus keeps the canonical manuscript, not just the XML body.
         epmc_chars = await self._europepmc_fulltext(doi_norm, dest_txt)
         if epmc_chars >= 1000:
-            self.source_ledger.record_call(
-                "europepmc", success=True, records_added=1,
-            )
-            result.success = True
-            result.source = "europepmc"
-            result.license = "oa (europepmc)"
-            result.text_path = dest_txt
-            result.extracted_chars = epmc_chars
-            self._record_acquisition_artifacts(
-                result=result, year=year, venue=venue, lang=lang,
-            )
-            self._append_manifest(result, out_dir, year=year, venue=venue)
-            return result
-        self.source_ledger.record_call(
-            "europepmc", success=False, http_status=None,
-        )
+            ok, _why = looks_like_fulltext(
+                dest_txt.read_text(encoding="utf-8", errors="replace"),
+                min_words=self.min_fulltext_words)
+            if ok:
+                self.source_ledger.record_call("europepmc", success=True, records_added=1)
+                result.success = True
+                result.source = "europepmc"
+                result.license = "oa (europepmc)"
+                result.text_path = dest_txt
+                result.extracted_chars = epmc_chars
+                if self.store_pdf and not (dest_pdf.exists() and dest_pdf.stat().st_size > 1024):
+                    async with httpx.AsyncClient(
+                        timeout=180, follow_redirects=True,
+                        headers={"User-Agent": USER_AGENT_BROWSER},
+                    ) as client:
+                        if await self._epmc_render_pdf(doi_norm, dest_pdf, client=client):
+                            self.source_ledger.record_call("europepmc_pdf", success=True, records_added=1)
+                            result.pdf_path = dest_pdf
+                            result.bytes_written = dest_pdf.stat().st_size
+                self._record_acquisition_artifacts(result=result, year=year, venue=venue, lang=lang)
+                self._append_manifest(result, out_dir, year=year, venue=venue)
+                return result
+        self.source_ledger.record_call("europepmc", success=False, http_status=None)
 
-        # Stage 2: OA-direct
+        # PDF cascade: OA-direct, then the OA-discovery services (legal full
+        # text for paywalled DOIs), then the gentle paywall mirrors. First
+        # channel to yield a valid PDF wins.
         async with httpx.AsyncClient(
-            timeout=120, follow_redirects=True,
+            timeout=180, follow_redirects=True,
             headers={"User-Agent": f"vedix/3.0 (mailto:{self.crossref_email})"},
         ) as client:
-            urls = await self._oa_resolve_pdf_urls(doi_norm, client=client)
-            for url, host, license_ in urls:
+            for url, host, license_ in await self._oa_resolve_pdf_urls(doi_norm, client=client):
                 if await self._download_pdf(url, dest_pdf, client=client):
-                    self.source_ledger.record_call(
-                        "oa_direct", success=True, records_added=1,
-                    )
-                    result.success = True
-                    result.source = "oa_direct"
-                    result.pdf_url_used = url
-                    result.pdf_host = host
+                    self.source_ledger.record_call("oa_direct", success=True, records_added=1)
+                    result.success, result.source = True, "oa_direct"
+                    result.pdf_url_used, result.pdf_host = url, host
                     result.license = license_ or ""
-                    result.pdf_path = dest_pdf
-                    result.bytes_written = dest_pdf.stat().st_size
                     break
+            discovery = [
+                ("unpaywall", lambda: self._unpaywall_pdf_url(doi_norm, client=client)),
+                ("s2_oa", lambda: self._s2_oa_pdf_url(doi_norm, client=client)),
+                ("core", lambda: self._core_pdf_url(doi_norm, client=client)),
+                ("preprint", lambda: self._preprint_pdf_url_by_title(title, year, client=client)),
+            ]
+            for srckey, getter in discovery:
+                if result.success:
+                    break
+                try:
+                    url = await getter()
+                except Exception:  # noqa: BLE001
+                    url = None
+                if url and await self._download_pdf(url, dest_pdf, client=client):
+                    self.source_ledger.record_call(srckey, success=True, records_added=1)
+                    result.success, result.source = True, srckey
+                    result.pdf_url_used, result.license = url, f"oa ({srckey})"
+                else:
+                    self.source_ledger.record_call(srckey, success=False, http_status=None)
+            if result.success and dest_pdf.exists():
+                result.pdf_path = dest_pdf
+                result.bytes_written = dest_pdf.stat().st_size
 
-        # Stage 3: Anna's Archive (gentle, opt-in) -- paywall channel #1
+        # Anna's Archive (gentle, opt-in) -- paywall mirror #1
         if not result.success and use_annas_fallback and self.annas_secret_key:
-            annas_ok = await self._annas_acquire(doi_norm, dest_pdf)
-            if annas_ok:
-                self.source_ledger.record_call(
-                    "annas", success=True, records_added=1,
-                )
-                result.success = True
-                result.source = "annas"
-                result.license = "annas-mirror"
-                result.pdf_path = dest_pdf
-                result.bytes_written = dest_pdf.stat().st_size
+            if await self._annas_acquire(doi_norm, dest_pdf):
+                self.source_ledger.record_call("annas", success=True, records_added=1)
+                result.success, result.source, result.license = True, "annas", "annas-mirror"
+                result.pdf_path, result.bytes_written = dest_pdf, dest_pdf.stat().st_size
                 await asyncio.sleep(self.pace_seconds)
             else:
-                self.source_ledger.record_call(
-                    "annas", success=False, http_status=None,
-                )
+                self.source_ledger.record_call("annas", success=False, http_status=None)
 
-        # Stage 4: Sci-Hub MCP (gentle, opt-in) -- paywall channel #2
+        # Sci-Hub MCP (gentle, opt-in) -- paywall mirror #2
         if not result.success and use_scihub_fallback and self.scihub_mcp_path:
-            scihub_ok = await self._scihub_acquire(doi_norm, dest_pdf)
-            if scihub_ok:
-                self.source_ledger.record_call(
-                    "scihub_mcp", success=True, records_added=1,
-                )
-                result.success = True
-                result.source = "scihub_mcp"
-                result.license = "scihub-mirror"
-                result.pdf_path = dest_pdf
-                result.bytes_written = dest_pdf.stat().st_size
+            if await self._scihub_acquire(doi_norm, dest_pdf):
+                self.source_ledger.record_call("scihub_mcp", success=True, records_added=1)
+                result.success, result.source, result.license = True, "scihub_mcp", "scihub-mirror"
+                result.pdf_path, result.bytes_written = dest_pdf, dest_pdf.stat().st_size
                 await asyncio.sleep(self.pace_seconds)
             else:
-                self.source_ledger.record_call(
-                    "scihub_mcp", success=False, http_status=None,
-                )
+                self.source_ledger.record_call("scihub_mcp", success=False, http_status=None)
 
         if not result.success:
-            self.source_ledger.record_call(
-                "oa_direct", success=False, http_status=None,
-            )
+            self.source_ledger.record_call("oa_direct", success=False, http_status=None)
             result.failure_reason = result.failure_reason or "no_pdf_found"
             return result
 
-        # Post-acquisition: text extraction
+        # Post-acquisition: extract + normalise text from the stored PDF.
         if dest_pdf.exists():
             extracted = self._extract_text(dest_pdf, dest_txt)
             if extracted >= 0:
                 result.text_path = dest_txt
                 result.extracted_chars = extracted
 
-        # Post-acquisition: KG fragment + provenance
-        self._record_acquisition_artifacts(
-            result=result, year=year, venue=venue, lang=lang,
-        )
-        self._append_manifest(result, out_dir, year=year, venue=venue)
+        # Structural full-text gate: reject abstract-only / stub captures so the
+        # caller substitutes a paper it can actually ground on.
+        if result.text_path is not None:
+            ok, why = looks_like_fulltext(
+                dest_txt.read_text(encoding="utf-8", errors="replace"),
+                min_words=self.min_fulltext_words,
+                pdf_pages=self._pdf_page_count(dest_pdf) if dest_pdf.exists() else None)
+            if not ok:
+                result.success = False
+                result.failure_reason = f"not_fulltext_{why}"
+                return result
 
+        self._record_acquisition_artifacts(result=result, year=year, venue=venue, lang=lang)
+        self._append_manifest(result, out_dir, year=year, venue=venue)
         return result
 
     async def acquire_batch(
@@ -652,6 +742,110 @@ class CorpusAcquisitionPipeline:
         return True
 
     # ------------------------------------------------------------------ #
+    # Open-access discovery services -- legal full text for paywalled DOIs
+    # ------------------------------------------------------------------ #
+
+    async def _unpaywall_pdf_url(self, doi: str, *, client: httpx.AsyncClient) -> Optional[str]:
+        """Unpaywall: the canonical index of legal OA copies (incl. green-OA
+        author manuscripts in repositories) for an otherwise-paywalled DOI."""
+        try:
+            r = await client.get(f"https://api.unpaywall.org/v2/{doi}",
+                                  params={"email": self.unpaywall_email})
+            if r.status_code != 200:
+                return None
+            data = r.json()
+        except Exception:  # noqa: BLE001
+            return None
+        locs = []
+        best = data.get("best_oa_location") if isinstance(data, dict) else None
+        if isinstance(best, dict):
+            locs.append(best)
+        locs += [l for l in (data.get("oa_locations") or []) if isinstance(l, dict)]
+        for loc in locs:
+            url = loc.get("url_for_pdf") or (loc.get("url") if (loc.get("url") or "").endswith(".pdf") else None)
+            if url:
+                return url
+        return None
+
+    async def _s2_oa_pdf_url(self, doi: str, *, client: httpx.AsyncClient) -> Optional[str]:
+        """Semantic Scholar openAccessPdf link."""
+        try:
+            r = await client.get(
+                f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}",
+                params={"fields": "openAccessPdf"})
+            if r.status_code != 200:
+                return None
+            oa = (r.json() or {}).get("openAccessPdf")
+            return oa.get("url") if isinstance(oa, dict) else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    async def _core_pdf_url(self, doi: str, *, client: httpx.AsyncClient) -> Optional[str]:
+        """CORE aggregates OA repository copies. Requires CORE_API_KEY."""
+        if not self.core_api_key:
+            return None
+        try:
+            r = await client.post("https://api.core.ac.uk/v3/discover",
+                                  headers={"Authorization": f"Bearer {self.core_api_key}"},
+                                  json={"doi": doi})
+            if r.status_code != 200:
+                return None
+            return (r.json() or {}).get("fullTextLink")
+        except Exception:  # noqa: BLE001
+            return None
+
+    async def _preprint_pdf_url_by_title(self, title: str, year: int, *,
+                                         client: httpx.AsyncClient) -> Optional[str]:
+        """Find a preprint (arXiv) of a paywalled paper by title and return its
+        PDF. Author-accepted preprints are legal green OA of the same work."""
+        if not title or len(title) < 12:
+            return None
+        import difflib
+        try:
+            r = await client.get("http://export.arxiv.org/api/query",
+                                 params={"search_query": f'ti:"{title}"', "max_results": 3})
+            if r.status_code != 200:
+                return None
+            body = r.text
+        except Exception:  # noqa: BLE001
+            return None
+        entries = re.findall(r"<entry>(.*?)</entry>", body, re.S)
+        for e in entries:
+            tm = re.search(r"<title>(.*?)</title>", e, re.S)
+            ct = re.sub(r"\s+", " ", tm.group(1)).strip() if tm else ""
+            if ct and difflib.SequenceMatcher(None, title.lower(), ct.lower()).ratio() >= 0.9:
+                pm = re.search(r'<link[^>]*title="pdf"[^>]*href="([^"]+)"', e)
+                if pm:
+                    return pm.group(1)
+                idm = re.search(r"<id>(http[^<]*arxiv\.org/abs/[^<]+)</id>", e)
+                if idm:
+                    return idm.group(1).replace("/abs/", "/pdf/")
+        return None
+
+    async def _epmc_pmcid(self, doi: str, *, client: httpx.AsyncClient) -> Optional[str]:
+        try:
+            r = await client.get(
+                "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+                params={"query": f'DOI:"{doi}"', "format": "json",
+                        "resultType": "lite", "pageSize": 1})
+            res = (r.json().get("resultList", {}) or {}).get("result", [])
+            return res[0].get("pmcid") if res else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    async def _epmc_render_pdf(self, doi: str, dest: Path, *,
+                               client: httpx.AsyncClient) -> bool:
+        """Store the Europe PMC render PDF for an OA paper. Serialised behind a
+        lock + paced, because the render endpoint 429s under concurrency."""
+        pmcid = await self._epmc_pmcid(doi, client=client)
+        if not pmcid:
+            return False
+        async with self._render_lock:
+            await asyncio.sleep(self.render_pace_seconds)
+            return await self._download_pdf(
+                f"https://europepmc.org/articles/{pmcid}?pdf=render", dest, client=client)
+
+    # ------------------------------------------------------------------ #
     # Europe PMC full-text cascade -- internal (text-direct, OA biomedical)
     # ------------------------------------------------------------------ #
 
@@ -752,8 +946,7 @@ class CorpusAcquisitionPipeline:
                                 "disp-quote", "supplementary-material"):
                         walk(child)
             walk(body)
-        text = "\n\n".join(out)
-        return re.sub(r"\n{3,}", "\n\n", text).strip()
+        return normalize_fulltext("\n\n".join(out))
 
     # ------------------------------------------------------------------ #
     # Sci-Hub MCP cascade -- internal
@@ -834,21 +1027,45 @@ class CorpusAcquisitionPipeline:
     # ------------------------------------------------------------------ #
 
     def _extract_text(self, pdf: Path, txt: Path) -> int:
-        """Extract plaintext via pdfminer. Returns char count, or -1 on failure."""
-        if txt.exists() and txt.stat().st_size > 0:
-            return txt.stat().st_size
+        """Extract + normalise plaintext from a PDF. Prefers PyMuPDF (better
+        layout fidelity), falls back to pdfminer. The text is normalised so a
+        verbatim quote is a stable substring for SGCA byte-verification.
+        Returns char count, or -1 on failure."""
+        raw = self._pdf_to_text(pdf)
+        if raw is None:
+            self.log.debug("no PDF text extractor available / failed for %s", pdf.name)
+            return -1
+        text = normalize_fulltext(raw)
+        txt.write_text(text, encoding="utf-8")
+        return len(text)
+
+    @staticmethod
+    def _pdf_to_text(pdf: Path) -> Optional[str]:
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(str(pdf))
+            text = "\n\n".join(page.get_text("text") for page in doc)
+            doc.close()
+            if text.strip():
+                return text
+        except Exception:  # noqa: BLE001
+            pass
         try:
             from pdfminer.high_level import extract_text as _pdf_extract  # type: ignore[import-untyped]
-        except ImportError:
-            self.log.debug("pdfminer.six not installed; skipping extraction")
-            return -1
+            return _pdf_extract(str(pdf))
+        except Exception:  # noqa: BLE001
+            return None
+
+    @staticmethod
+    def _pdf_page_count(pdf: Path) -> Optional[int]:
         try:
-            text = _pdf_extract(str(pdf))
-        except Exception as exc:  # noqa: BLE001
-            self.log.debug("pdfminer failed for %s: %s", pdf.name, exc)
-            return -1
-        txt.write_text(text or "", encoding="utf-8")
-        return len(text or "")
+            import fitz  # PyMuPDF
+            doc = fitz.open(str(pdf))
+            n = doc.page_count
+            doc.close()
+            return n
+        except Exception:  # noqa: BLE001
+            return None
 
     def _record_acquisition_artifacts(
         self,
@@ -1013,7 +1230,9 @@ def build_default_pipeline(
             kg_store = None
 
     ledger = SourceLedger(
-        configured=["oa_direct", "europepmc", "annas", "scihub_mcp", "crossref_gate"],
+        configured=["oa_direct", "europepmc", "europepmc_pdf", "unpaywall",
+                    "s2_oa", "core", "preprint", "annas", "scihub_mcp",
+                    "crossref_gate"],
     )
     return CorpusAcquisitionPipeline(
         crossref_email=crossref_email,
@@ -1024,6 +1243,8 @@ def build_default_pipeline(
         annas_secret_key=annas_key,
         annas_base_url=annas_base,
         kg_store=kg_store,
+        core_api_key=os.environ.get("CORE_API_KEY", "").strip() or None,
+        unpaywall_email=os.environ.get("UNPAYWALL_EMAIL", "").strip() or crossref_email,
     )
 
 
