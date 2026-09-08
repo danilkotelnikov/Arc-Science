@@ -1,0 +1,219 @@
+"""Operator-only fixed-worker figure renders and portable integrity verification."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import secrets
+import selectors
+import shutil
+import signal
+import subprocess
+import tempfile
+import time
+
+from . import figure_contract as c
+from .vector_assets import verify_asset, _verify_asset_contents
+
+
+def _reservation(fd, job, status, failure=None):
+    value = {'format':'arc-figure-reservation/1','run_id':job['run_id'],
+             'job_sha256':c.digest(c.canonical(job)),'status':status,'failure':failure}
+    if status == 'reserved':
+        c.write_new(fd,'reservation.json',c.canonical(value))
+    else:
+        temporary = '.reservation-' + secrets.token_hex(12)
+        c.write_new(fd,temporary,c.canonical(value))
+        os.replace(temporary,'reservation.json',src_dir_fd=fd,dst_dir_fd=fd)
+        os.fsync(fd)
+
+
+def _append_log(fd, message):
+    # The host owns the opened log descriptor; keep room for the terminal reason.
+    data = ('\n'+message+'\n').encode('utf-8',errors='replace')[-4096:]
+    position = min(os.lseek(fd,0,os.SEEK_END),c.LOG_LIMIT-len(data))
+    os.ftruncate(fd,position)
+    os.lseek(fd,position,os.SEEK_SET)
+    os.write(fd,data)
+    os.fsync(fd)
+
+
+def _execute(argv, run_fd, log_fd, timeout):
+    """Bound both retained bytes and lifetime, including inherited descendant pipes."""
+    with tempfile.TemporaryDirectory(prefix='arc-figure-runtime-') as private:
+        environment = {'PATH':os.defpath,'HOME':private,'TMPDIR':private,
+                       'LANG':'C.UTF-8','LC_ALL':'C.UTF-8','OMP_NUM_THREADS':'4',
+                       'OPENBLAS_NUM_THREADS':'4','MKL_NUM_THREADS':'4',
+                       'BLENDER_USER_CONFIG':private,'BLENDER_USER_SCRIPTS':private,
+                       'BLENDER_USER_DATAFILES':private}
+        process = subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT,env=environment,
+                                   cwd=f'/proc/self/fd/{run_fd}',pass_fds=(run_fd,),
+                                   start_new_session=True)
+        deadline = time.monotonic()+timeout
+        retained = 0
+        selector = selectors.DefaultSelector()
+        try:
+            os.set_blocking(process.stdout.fileno(),False)
+            selector.register(process.stdout,selectors.EVENT_READ)
+            while True:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Render worker timeout')
+                for key,_ in selector.select(min(0.1,max(0,deadline-time.monotonic()))):
+                    data = os.read(key.fileobj.fileno(),64*1024)
+                    if not data:
+                        selector.unregister(key.fileobj)
+                    elif retained < c.LOG_LIMIT-4096:
+                        chunk = data[:c.LOG_LIMIT-4096-retained]
+                        os.write(log_fd,chunk)
+                        retained += len(chunk)
+                status = process.poll()
+                if status is not None:
+                    # Stop descendants even if they still hold stdout open.
+                    try: os.killpg(process.pid,signal.SIGKILL)
+                    except ProcessLookupError: pass
+                    while True:
+                        try: data = os.read(process.stdout.fileno(),64*1024)
+                        except BlockingIOError: break
+                        if not data: break
+                        if retained < c.LOG_LIMIT-4096:
+                            chunk = data[:c.LOG_LIMIT-4096-retained]
+                            os.write(log_fd,chunk); retained += len(chunk)
+                    if status != 0: raise RuntimeError(f'Render worker exited with status {status}')
+                    return
+        finally:
+            try: os.killpg(process.pid,signal.SIGKILL)
+            except ProcessLookupError: pass
+            process.wait()
+            selector.close()
+            process.stdout.close()
+
+
+def _capture(asset_json, manifest, run_fd):
+    source_fd = c.open_directory(asset_json.parent)
+    try:
+        raw = c.read_regular(source_fd,'asset.json',c.JSON_LIMIT)
+        captured,_ = c.validate_asset(source_fd,manifest['asset_id'])
+        if captured != manifest: raise ValueError('Source asset changed during capture')
+        files = {manifest['source']['file']:c.read_regular(source_fd,manifest['source']['file'],c.SOURCE_LIMIT),
+                 'source.png':c.read_regular(source_fd,'source.png',c.SOURCE_LIMIT),'asset.json':raw}
+    finally: os.close(source_fd)
+    inputs = c.child_directory(run_fd,'inputs',create=True)
+    try:
+        destination = c.child_directory(inputs,manifest['asset_id'],create=True)
+        try:
+            for name,data in files.items(): c.write_new(destination,name,data)
+            # Reproduce the captured proof from its captured source, pinned to this fd.
+            if _verify_asset_contents(os.dup(destination),manifest['asset_id']) != manifest:
+                raise ValueError('Captured asset does not reproduce')
+        finally: os.close(destination)
+    finally: os.close(inputs)
+    return c.digest(raw)
+
+
+def _verified_outputs(fd, job):
+    c.validate_job(job,fd)
+    asset_fd = c.asset_directory(fd,job['asset_id'])
+    _verify_asset_contents(asset_fd,job['asset_id'])
+    c.read_regular(fd,'worker.log',c.LOG_LIMIT,empty=True)
+    return c.validate_receipt(c.read_json(fd,'render-receipt.json'),job,fd)
+
+
+def _check_run_path(run_dir, fd):
+    current = c.open_directory(run_dir)
+    try:
+        expected, actual = os.fstat(fd), os.fstat(current)
+        if (expected.st_dev,expected.st_ino) != (actual.st_dev,actual.st_ino):
+            raise ValueError('Run directory changed during operation')
+    finally: os.close(current)
+
+
+def _result(run_dir,job):
+    return {'run_dir':str(run_dir),'image':str(run_dir/'render.png'),
+            'scene':str(run_dir/'scene.blend'),'asset_id':job['asset_id'],'passed':True,
+            'representation':'rasterized_vector_panel','rights_verified':False,
+            'scientific_validity_established':False,'renderer_reexecuted':False,
+            'scope':'Local file integrity; permission is operator-attested. No renderer replay or scientific validation.'}
+
+
+def render_figure(asset_json: Path, project_dir: Path, *, blender: str | None = None,
+                  blender_python: str | None = None, style: str = 'publication',
+                  width: int = 1600, height: int = 1200, samples: int = 64,
+                  seed: int = 23, timeout: int = 180) -> dict:
+    """Create and execute a unique persisted run; raise on failed rendering."""
+    c.require_filesystem()
+    render_settings = c.settings({'style':style,'width':width,'height':height,'samples':samples,
+                                  'seed':seed,'timeout':timeout,'threads':4,'engine':'CYCLES','device':'CPU'})
+    if blender is not None and blender_python is not None:
+        raise ValueError('Choose either --blender or --blender-python')
+    runtime = blender_python if blender_python is not None else blender if blender is not None else 'blender'
+    if not isinstance(runtime,str) or not runtime or '\x00' in runtime:
+        raise ValueError('Invalid runtime executable')
+    # Preserve venv interpreter symlinks: realpath would lose bpy's environment.
+    runtime = os.path.abspath(runtime) if os.sep in runtime else shutil.which(runtime) or runtime
+    asset_json = c.absolute(Path(asset_json))
+    manifest = verify_asset(asset_json)
+    source_fd = c.open_directory(asset_json.parent)
+    try: manifest_digest = c.digest(c.read_regular(source_fd,'asset.json',c.JSON_LIMIT))
+    finally: os.close(source_fd)
+    project_dir = c.absolute(Path(project_dir))
+    project_fd = c.open_directory(project_dir,create=True)
+    try:
+        try: os.mkdir('renders',0o700,dir_fd=project_fd)
+        except FileExistsError: pass
+        renders_fd = c.child_directory(project_fd,'renders')
+    finally: os.close(project_fd)
+    try:
+        run_id = secrets.token_hex(12)
+        run_fd = c.child_directory(renders_fd,run_id,create=True)
+    finally: os.close(renders_fd)
+    run_dir = project_dir/'renders'/run_id
+    job = {'format':'arc-figure-job/1','run_id':run_id,'asset_id':manifest['asset_id'],
+           'asset':'inputs/'+manifest['asset_id']+'/asset.json',
+           'asset_manifest_sha256':manifest_digest,'source_sha256':manifest['source']['sha256'],
+           'proof_sha256':manifest['preview']['sha256'],'representation':'rasterized_vector_panel',
+           'settings':render_settings}
+    log_fd = None
+    reserved = False
+    try:
+        c.write_new(run_fd,'job.json',c.canonical(job))
+        _reservation(run_fd,job,'reserved'); reserved = True
+        log_fd = os.open('worker.log',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=run_fd)
+        if _capture(asset_json,manifest,run_fd) != manifest_digest:
+            raise ValueError('Source manifest changed during capture')
+        worker = Path(__file__).with_name('figure_worker.py').absolute()
+        if blender_python is not None:
+            argv = [runtime,'-I',str(worker),'--',str(run_dir/'job.json'),str(run_dir)]
+        else:
+            argv = [runtime,'--background','--factory-startup','--disable-autoexec',
+                    '--threads','4','--python',str(worker),'--',str(run_dir/'job.json'),str(run_dir)]
+        _execute(argv,run_fd,log_fd,timeout)
+        # Re-read the persisted job and reservation; the child cannot silently alter them.
+        if c.read_json(run_fd,'job.json') != job: raise ValueError('Job changed during rendering')
+        c.validate_reservation(c.read_json(run_fd,'reservation.json'),job,'reserved')
+        _verified_outputs(run_fd,job)
+        _check_run_path(run_dir,run_fd)
+        _reservation(run_fd,job,'completed')
+        return _result(run_dir,job)
+    except BaseException as exc:
+        if reserved:
+            reason = (type(exc).__name__+': '+str(exc)).replace('\x00','')[:2000]
+            _reservation(run_fd,job,'failed',reason)
+            if log_fd is not None: _append_log(log_fd,reason)
+        raise
+    finally:
+        if log_fd is not None: os.close(log_fd)
+        os.close(run_fd)
+
+
+def verify_render(run_dir: Path) -> dict:
+    """Validate the bound source, job and completed outputs without renderer replay."""
+    run_dir = c.absolute(Path(run_dir))
+    fd = c.open_directory(run_dir)
+    try:
+        job = c.read_json(fd,'job.json')
+        c.validate_job(job,fd)
+        c.validate_reservation(c.read_json(fd,'reservation.json'),job,'completed')
+        _verified_outputs(fd,job)
+        _check_run_path(run_dir,fd)
+        return _result(run_dir,job)
+    finally: os.close(fd)

@@ -1,0 +1,14 @@
+# Separate renderer environment: Linux / Python 3.13.14, Blender 5.2.1 LTS.
+# Do not install into the Python 3.12 Arc application environment.
+attrs==26.1.0
+bpy==5.2.1
+cattrs==26.1.0
+certifi==2026.7.22
+charset-normalizer==3.5.1
+cython==3.3.0
+idna==3.19
+numpy==2.5.2
+requests==2.34.2
+typing-extensions==4.16.0
+urllib3==2.7.0
+zstandard==0.25.0

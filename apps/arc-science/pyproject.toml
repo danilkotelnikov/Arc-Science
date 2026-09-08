@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arc-science"
+version = "0.5.0"
+description = "Goal-led exploratory research with bounded reconciliation and reproducible evidence"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.8,<3", "httpx>=0.27,<1", "Pillow>=10,<13", "jsonschema>=4.20,<5", "fastapi>=0.128,<1", "uvicorn>=0.40,<1"]
+
+[project.optional-dependencies]
+structure = ["gemmi>=0.7,<0.8", "numpy>=1.26,<3", "scipy>=1.13,<2", "scikit-image>=0.24,<1", "CairoSVG>=2.8,<3"]
+raster = ["pypdfium2>=4,<6"]
+vector = ["CairoSVG>=2.8,<3", "defusedxml>=0.7,<1", "pypdfium2>=4,<6"]
+test = ["pytest>=8,<10", "gemmi>=0.7,<0.8", "numpy>=1.26,<3", "scipy>=1.13,<2", "scikit-image>=0.24,<1", "CairoSVG>=2.8,<3", "defusedxml>=0.7,<1", "pypdfium2>=4,<6", "reportlab>=4,<5"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[project.scripts]
+arc-science = "arc_science.cli:main"
+
+[tool.setuptools.package-data]
+arc_science = ["static/*", "static/web/*", "static/web/assets/*", "example_assets/1dqj/*"]

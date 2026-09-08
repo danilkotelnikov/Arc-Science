@@ -1,0 +1,16 @@
+.git
+.venv
+__pycache__
+.pytest_cache
+web/node_modules
+web/dist
+.env
+data
+*.token
+evidence
+evidence-v0.2
+dist
+
+evidence-v0.3
+
+.superpowers

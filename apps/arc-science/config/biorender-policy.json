@@ -1,0 +1,12 @@
+{
+  "product": "Arc Science",
+  "endpoint": "https://mcp.services.biorender.com/mcp",
+  "authentication": "separate-user-oauth-consent-required",
+  "schema_policy": "discover-validate-review-pin",
+  "read_tools": ["search-biorender", "search-icons", "search-templates", "custom-figure-get-preview-job"],
+  "approval_required": ["custom-figure-create-session", "custom-figure-get-session"],
+  "denied_tools": ["custom-figure-confirm-preview"],
+  "bulk_asset_export": false,
+  "automatic_generation_retry": false,
+  "rights": "verify individual asset and publication licence before export"
+}

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640">
+<rect width="960" height="640" fill="#f6f8f7"/>
+<rect x="44" y="42" width="8" height="23" rx="4" fill="#18a499"/>
+<g font-family="DejaVu Sans" fill="#18342f">
+<text x="65" y="59" font-size="15" font-weight="bold" letter-spacing="2">ARC SCIENCE</text>
+<text x="44" y="120" font-size="34" font-weight="bold">Evidence, kept in view.</text>
+<text x="46" y="151" font-size="14" fill="#62766f">Original vector artwork for source-to-render qualification</text>
+<rect x="44" y="187" width="489" height="324" rx="15" fill="#ffffff" stroke="#e0e8e4"/>
+<text x="68" y="220" font-size="12" font-weight="bold" letter-spacing="1.5">01 / SYNTHETIC RESPONSE</text>
+<line x1="116" y1="244" x2="116" y2="426" stroke="#8faaa0"/>
+<line x1="116" y1="426" x2="476" y2="426" stroke="#8faaa0"/>
+<line x1="116" y1="317" x2="476" y2="317" stroke="#e6eeea"/>
+<line x1="116" y1="208" x2="476" y2="208" stroke="#ffffff"/>
+<text x="85" y="431" font-size="11" fill="#6b8177">0.0</text>
+<text x="85" y="322" font-size="11" fill="#6b8177">0.5</text>
+<text x="108" y="449" font-size="11" fill="#6b8177">0.0</text>
+<text x="464" y="449" font-size="11" fill="#6b8177">1.0</text>
+<path d="M116.00,399.84 L120.50,399.81 L125.00,399.74 L129.50,399.61 L134.00,399.44 L138.50,399.21 L143.00,398.93 L147.50,398.60 L152.00,398.23 L156.50,397.80 L161.00,397.32 L165.50,396.79 L170.00,396.21 L174.50,395.58 L179.00,394.90 L183.50,394.17 L188.00,393.39 L192.50,392.56 L197.00,391.67 L201.50,390.74 L206.00,389.76 L210.50,388.72 L215.00,387.64 L219.50,386.51 L224.00,385.32 L228.50,384.09 L233.00,382.80 L237.50,381.46 L242.00,380.08 L246.50,378.64 L251.00,377.15 L255.50,375.62 L260.00,374.03 L264.50,372.39 L269.00,370.70 L273.50,368.96 L278.00,367.17 L282.50,365.33 L287.00,363.44 L291.50,361.50 L296.00,359.51 L300.50,357.47 L305.00,355.38 L309.50,353.23 L314.00,351.04 L318.50,348.80 L323.00,346.50 L327.50,344.16 L332.00,341.76 L336.50,339.32 L341.00,336.82 L345.50,334.28 L350.00,331.68 L354.50,329.04 L359.00,326.34 L363.50,323.59 L368.00,320.79 L372.50,317.94 L377.00,315.05 L381.50,312.10 L386.00,309.10 L390.50,306.05 L395.00,302.95 L399.50,299.80 L404.00,296.60 L408.50,293.34 L413.00,290.04 L417.50,286.69 L422.00,283.29 L426.50,279.83 L431.00,276.33 L435.50,272.78 L440.00,269.17 L444.50,265.52 L449.00,261.81 L453.50,258.05 L458.00,254.25 L462.50,250.39 L467.00,246.49 L471.50,242.53 L476.00,238.52" fill="none" stroke="#18342f" stroke-width="3"/>
+<circle cx="116.00" cy="399.84" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="131.65" cy="395.77" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="147.30" cy="402.42" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="162.96" cy="397.02" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="178.61" cy="391.23" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="194.26" cy="396.05" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="209.91" cy="388.72" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="225.57" cy="381.21" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="241.22" cy="384.19" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="256.87" cy="374.92" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="272.52" cy="365.70" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="288.17" cy="366.84" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="303.83" cy="355.63" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="319.48" cy="344.70" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="335.13" cy="344.00" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="350.78" cy="330.86" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="366.43" cy="318.21" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="382.09" cy="315.67" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="397.74" cy="300.60" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="413.39" cy="286.23" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="429.04" cy="281.85" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="444.70" cy="264.84" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="460.35" cy="248.76" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/><circle cx="476.00" cy="242.54" r="4" fill="#18a499" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="76" cy="483" r="4" fill="#18a499"/>
+<text x="88" y="487" font-size="11" fill="#62766f">24 synthetic points</text>
+<line x1="258" y1="483" x2="279" y2="483" stroke="#18342f" stroke-width="3"/>
+<text x="286" y="487" font-size="11" fill="#62766f">Declared generating curve</text>
+<rect x="556" y="187" width="360" height="324" rx="15" fill="#e9f0ec"/>
+<text x="580" y="220" font-size="12" font-weight="bold" letter-spacing="1.5">02 / RETAINED AT EACH STAGE</text>
+<circle cx="594" cy="269" r="12" fill="#18a499"/>
+<text x="590" y="274" font-size="12" fill="#ffffff">1</text>
+<text x="618" y="266" font-size="16" font-weight="bold">Source</text>
+<text x="618" y="287" font-size="12" fill="#62766f">Original vector and provenance</text>
+<line x1="594" y1="284" x2="594" y2="320" stroke="#b8cfc3" stroke-width="2"/>
+<circle cx="594" cy="338" r="12" fill="#18a499"/>
+<text x="590" y="343" font-size="12" fill="#ffffff">2</text>
+<text x="618" y="335" font-size="16" font-weight="bold">Render</text>
+<text x="618" y="356" font-size="12" fill="#62766f">Blender scene, style and settings</text>
+<line x1="594" y1="353" x2="594" y2="389" stroke="#b8cfc3" stroke-width="2"/>
+<circle cx="594" cy="407" r="12" fill="#18a499"/>
+<text x="590" y="412" font-size="12" fill="#ffffff">3</text>
+<text x="618" y="404" font-size="16" font-weight="bold">Verify</text>
+<text x="618" y="425" font-size="12" fill="#62766f">Bound files and output integrity</text>
+<rect x="578" y="458" width="316" height="30" rx="8" fill="#d5e6dc"/>
+<text x="591" y="478" font-size="11" fill="#385e4b">Vector original + separate styled PNG</text>
+<line x1="44" y1="550" x2="916" y2="550" stroke="#d6e1da"/>
+<text x="44" y="578" font-size="11" fill="#6b8177">SYNTHETIC FIXTURE / PIPELINE QUALIFICATION ONLY</text>
+<text x="44" y="600" font-size="11" fill="#6b8177">y = 0.12 + 0.74 x² + 0.02 sin(2.1 i), x = i/23. Curve excludes the oscillating term.</text>
+</g>
+</svg>

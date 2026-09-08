@@ -1,0 +1,107 @@
+{
+  "source_commit": "8a68f2e",
+  "candidate": "03",
+  "originals": [
+    "collage.png",
+    "collage.svg",
+    "overview.png",
+    "interface.png",
+    "rotated.png",
+    "contacts.csv",
+    "source.cif",
+    "scene.json",
+    "molecular_worker.py",
+    "manifest.json",
+    "worker-receipt.json",
+    "checks.json",
+    "caption.md",
+    "run.json"
+  ],
+  "derived_views": {
+    "source_sha256": "71cfeb7a84177e18a6cc00cff54c6449e985dd30718e209136513553562682c6",
+    "viewports": {
+      "overview": "0 48 700 480",
+      "interface": "700 48 700 480",
+      "rotated": "0 528 700 510"
+    }
+  },
+  "excluded": "Editable .blend files and publisher/reference pixels are not in this public package.",
+  "assets": {
+    "collage.png": {
+      "sha256": "7394f162dca9bba20ca985a2cd43473da2c9df7d88be5e39acaec81f30f598d9",
+      "bytes": 342770
+    },
+    "collage.svg": {
+      "sha256": "71cfeb7a84177e18a6cc00cff54c6449e985dd30718e209136513553562682c6",
+      "bytes": 765081
+    },
+    "overview.png": {
+      "sha256": "3f8b4189f1832291b6777cb1ab7966e80f31fd4a4d4bf0228eaac77ac4ceee0d",
+      "bytes": 254389
+    },
+    "interface.png": {
+      "sha256": "56265db75cb990da0d9e15588e428251299bc70275ee55f3bb2c067875509865",
+      "bytes": 180857
+    },
+    "rotated.png": {
+      "sha256": "c2c18d48c9dcd423dec3a804126459aa7a3a12a06e78d8e5330c2b2af761d979",
+      "bytes": 121970
+    },
+    "contacts.csv": {
+      "sha256": "6bb9f918ef668ed60440e4805af52970193fa5024fc5eecd6546be7cd23eef22",
+      "bytes": 2465
+    },
+    "source.cif": {
+      "sha256": "176f9d155fdf18650f8221007511dbde90f0fc19de9462d59515ce590bb30250",
+      "bytes": 647961
+    },
+    "scene.json": {
+      "sha256": "48004cec135b281f61ef32fd811e90d5268f6c2648acc2978104531383fb26d6",
+      "bytes": 1946465
+    },
+    "molecular_worker.py": {
+      "sha256": "06ab40e25b9de824e4d1ed776775c0749a84d1e23c9c59d87e99353548370f33",
+      "bytes": 17767
+    },
+    "manifest.json": {
+      "sha256": "00f12b58bf1c957f37d51234475b2bd8243a62cbb5202a8ab44ab52ccf9c3955",
+      "bytes": 50338
+    },
+    "worker-receipt.json": {
+      "sha256": "2627c791e9da1881aff97bcdd65a4dbcbc1527fc5168ea7f94c9fc2d7c0c6476",
+      "bytes": 45261
+    },
+    "checks.json": {
+      "sha256": "44f158e7fd33806ceb8c02afd141a0e5910feb5771997571de34f99fe7855904",
+      "bytes": 1016
+    },
+    "caption.md": {
+      "sha256": "487617adb85277267c41eeba474bd018949ea05f608f91becbbcdab65e322ee7",
+      "bytes": 2008
+    },
+    "run.json": {
+      "sha256": "09d6bddadfaf1c615609c0303a6c677c2301a449e0ab048feb79c4f5a13bfe1a",
+      "bytes": 76
+    },
+    "overview.svg": {
+      "sha256": "db045d0223d1b493af882aae3f1d61dd3e65e0d9c396c4e1f266d20d782ca7f3",
+      "bytes": 765164
+    },
+    "interface.svg": {
+      "sha256": "7819e361a1da37cf39d73f40a6ce70d27e6da4a1c46ad55993e72a5e910889dd",
+      "bytes": 765166
+    },
+    "rotated.svg": {
+      "sha256": "3dfffdd9c95fb7c43af5a1b4aff04d8e2e8ec939c016dcf16edee330937963d3",
+      "bytes": 765165
+    },
+    "visual-review.md": {
+      "sha256": "7b15aaf106280ea922e68b25adcfa1b634e87815a36aebbc67adc23b062eb6ac",
+      "bytes": 6791
+    },
+    "review-packet-metadata.json": {
+      "sha256": "8b303b4ffd1353b48ab4bf998cbbe22f61083fa9b64e7ee5225cef394b4fd45d",
+      "bytes": 3128
+    }
+  }
+}

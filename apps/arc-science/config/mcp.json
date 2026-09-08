@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "biorender": {
+      "type": "http",
+      "url": "https://mcp.services.biorender.com/mcp",
+      "enabledBy": "ARC_BIORENDER_READS",
+      "credentialFile": "ARC_BIORENDER_TOKEN_FILE",
+      "schemaDigest": "ARC_BIORENDER_SCHEMA_DIGEST",
+      "protocol": "2025-11-25",
+      "supportedExplicitProtocols": ["2025-11-25", "2026-07-28"],
+      "missionScope": "public-templates-only"
+    }
+  }
+}

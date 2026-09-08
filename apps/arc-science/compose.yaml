@@ -1,0 +1,40 @@
+name: arc-science
+services:
+  arc-science:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:${ARC_PORT:-8080}:8080"
+    environment:
+      ARC_DATA_DIR: /data
+      ARC_PROVIDER: ${ARC_PROVIDER:-openai}
+      ARC_MODEL: ${ARC_MODEL:-}
+      ARC_PROVIDER_URL: ${ARC_PROVIDER_URL:-}
+      ARC_MODEL_TOKEN_FILE: /data/planner.token
+      ARC_REVIEWER_PROVIDER: ${ARC_REVIEWER_PROVIDER:-}
+      ARC_REVIEWER_MODEL: ${ARC_REVIEWER_MODEL:-}
+      ARC_REVIEWER_URL: ${ARC_REVIEWER_URL:-}
+      ARC_REVIEWER_TOKEN_FILE: ${ARC_REVIEWER_TOKEN_FILE:-}
+      ARC_VISION_PROVIDER: ${ARC_VISION_PROVIDER:-}
+      ARC_VISION_MODEL: ${ARC_VISION_MODEL:-}
+      ARC_VISION_URL: ${ARC_VISION_URL:-}
+      ARC_VISION_TOKEN_FILE: ${ARC_VISION_TOKEN_FILE:-}
+      ARC_PUBLIC_READS: ${ARC_PUBLIC_READS:-0}
+      ARC_BIORENDER_READS: ${ARC_BIORENDER_READS:-0}
+      ARC_BIORENDER_TOKEN_FILE: ${ARC_BIORENDER_TOKEN_FILE:-/data/biorender.token}
+      ARC_BIORENDER_SCHEMA_DIGEST: ${ARC_BIORENDER_SCHEMA_DIGEST:-}
+      ARC_BIORENDER_PROTOCOL: ${ARC_BIORENDER_PROTOCOL:-2025-11-25}
+    volumes:
+      - arc-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 96
+    mem_limit: 1g
+    cpus: 2
+    restart: unless-stopped
+volumes:
+  arc-data:
