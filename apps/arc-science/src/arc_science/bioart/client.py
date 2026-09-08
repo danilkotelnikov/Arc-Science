@@ -13,6 +13,8 @@ import httpx
 from PIL import Image
 
 from .cache import Cache, digest, encoded
+from .deadline import request_deadline
+from .isolation import request_in_child
 from .models import BioArtLimits, BioArtReceipt, ORIGIN, positive_id
 from .parsing import parse_entry, parse_search
 from ..vector_assets import _read_regular, _validate_svg, _SOURCE_LIMIT, import_vector
@@ -80,13 +82,22 @@ class BioArtClient:
         # Only local code constructs endpoint paths; redirects are never followed.
         if not path.startswith('/') or path.startswith('//') or '\\' in path:
             raise ValueError('Invalid BioArt endpoint')
+        if self.client is None:
+            return request_in_child(path,limit,mimes,self.limits)
+        # Injected transports are trusted test/integration code, not an arbitrary
+        # native-code sandbox. Owned production HTTPX always uses process isolation.
+        with request_deadline(self.limits.timeout_seconds) as remaining:
+            return self._request_bounded(path,limit,mimes,remaining)
+
+    def _request_bounded(self,path,limit,mimes,remaining):
         owned = self.client is None
         client = self.client or httpx.Client(trust_env=False,follow_redirects=False)
         try:
             for attempt in range(self.limits.max_retries+1):
                 try:
-                    with client.stream('GET',ORIGIN+path,timeout=self.limits.timeout_seconds,
+                    with client.stream('GET',ORIGIN+path,timeout=remaining(),
                                        follow_redirects=False,headers={'Accept':', '.join(sorted(mimes)), 'Accept-Encoding':'identity'}) as response:
+                        remaining()
                         status=response.status_code
                         if status in (429,500,502,503,504) and attempt<self.limits.max_retries:
                             delay=0.25*(2**attempt)
@@ -98,6 +109,7 @@ class BioArtClient:
                                     except (ValueError,TypeError,OverflowError): raise ValueError('Invalid Retry-After') from None
                                 if not math.isfinite(delay) or delay>5: raise ValueError('Retry-After exceeds bounded wait; retry explicitly later')
                                 delay=max(0,delay)
+                            if delay>=remaining(): raise ValueError('BioArt request total timeout during retry wait')
                             time.sleep(delay); continue
                         if status!=200: raise ValueError(f'BioArt HTTP {status}; no redirect or access fallback')
                         if response.headers.get('content-encoding','identity').lower()!='identity':
@@ -107,15 +119,18 @@ class BioArtClient:
                         length=response.headers.get('content-length')
                         if length is not None:
                             if not length.isdigit() or int(length)>limit: raise ValueError('BioArt response size exceeds limit')
-                        chunks=[]; size=0; started=time.monotonic()
-                        for chunk in response.iter_bytes(chunk_size=65536):
+                        data=bytearray(); size=0
+                        # Identity encoding plus the default unbuffered iterator: do
+                        # not wait for a 64-KiB accumulation before checking progress.
+                        for chunk in response.iter_bytes():
+                            remaining()
                             size+=len(chunk)
                             if size>limit: raise ValueError('BioArt response size exceeds limit')
-                            if time.monotonic()-started>self.limits.timeout_seconds: raise ValueError('BioArt response total timeout')
-                            chunks.append(chunk)
+                            data.extend(chunk)
                         if not size: raise ValueError('Empty BioArt response')
                         if length is not None and size!=int(length): raise ValueError('BioArt response content length mismatch or truncated body')
-                        return b''.join(chunks)
+                        remaining()
+                        return bytes(data)
                 except httpx.TransportError:
                     if attempt>=self.limits.max_retries: raise ValueError('BioArt transport timeout or connection failure') from None
             raise ValueError('BioArt retry limit exhausted')

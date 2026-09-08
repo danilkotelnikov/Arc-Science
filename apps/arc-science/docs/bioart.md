@@ -25,6 +25,34 @@ Retry-After is honored only within five seconds; a larger or invalid value stops
 and asks for a later explicit attempt. Compressed responses are rejected; requests
 ask for identity encoding so the streaming bound is not bypassed by decompression.
 
+The synchronous network path is a POSIX **main-thread CLI** capability. The default
+owned HTTPX transport runs in a fresh Python subprocess, launched directly without
+a shell. One parent monotonic deadline includes process/interpreter startup, HTTP
+setup, DNS, headers, body, retries and result publication. On expiry or cancellation
+the parent kills and reaps the child before removing its private temporary directory.
+This terminates a child even when native DNS code defers Python signal delivery.
+The scope temporarily maps SIGTERM to cancellation and restores the old handler;
+SIGINT/SIGTERM/alarm delivery is deferred around process-handle acquisition and
+reaping so cancellation cannot orphan a just-launched child.
+
+Results cross this boundary as bounded regular files, read only after child exit;
+there is no potentially blocking pipe receive. Temporary transfer storage is at
+most the configured response limit plus 8 KiB for request/result metadata. Streams
+and result files are checked against their bounds, and stdout/stderr are discarded.
+The cache has its separate configured budget. No transport thread or child remains
+after timeout, Ctrl-C, SIGTERM, malformed output or transfer-limit failure.
+
+Inside the worker, a monotonic deadline and scoped SIGALRM additionally interrupt
+Python socket waits. Retries share the budget, each HTTP request receives its
+remaining timeout, and identity body chunks are checked without 64-KiB buffering.
+Explicitly injected HTTPX clients use this in-process path for trusted testing or
+integration; arbitrary native code inside injected transports is **not** covered
+by the owned-production process-isolation guarantee. Injection requires no active
+real-time alarm and an unblocked SIGALRM. All network paths reject worker-thread
+calls; cache-only operations do not require the signal/deadline scope. No live
+BioArt transfer was used to test these guarantees; native-block and socketpair
+fixtures are entirely local.
+
 The captured initial search HTML is a client-rendered shell, so ordinary search
 may produce a schema-drift error. Inspecting a known entry ID works on the captured
 server HTML. An explicit, offline browser-DOM intake is also available:

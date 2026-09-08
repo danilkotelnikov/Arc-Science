@@ -374,3 +374,130 @@ def test_unsupported_filesystem_capability_fails_explicitly(tmp_path,monkeypatch
     with pytest.raises(ValueError,match='POSIX.*Windows'):
         api().BioArtClient(tmp_path/'cache')
     assert not (tmp_path/'cache').exists()
+
+
+def test_deadline_stops_unbuffered_slow_trickle_near_budget(tmp_path,monkeypatch):
+    import arc_science.bioart.client as provider
+    now=[100.0]; consumed=[]; closed=[]
+    class Trickle(httpx.SyncByteStream):
+        def __iter__(self):
+            for index in range(1000):
+                now[0]+=0.5;consumed.append(index)
+                yield b'x'
+        def close(self):closed.append(True)
+    monkeypatch.setattr(provider.time,'monotonic',lambda:now[0])
+    client=api().BioArtClient(tmp_path/'cache',allow_egress=True,limits=api().BioArtLimits(timeout_seconds=1),
+        client=httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(200,stream=Trickle(),headers={'content-type':'text/html'}))))
+    with pytest.raises(ValueError,match='timeout'):client.inspect(18)
+    assert len(consumed)<=2
+    assert now[0]<=101.0
+    assert closed==[True]
+
+
+def test_deadline_includes_headers_before_consuming_body(tmp_path,monkeypatch):
+    import arc_science.bioart.client as provider
+    now=[100.0];consumed=[]
+    class Body(httpx.SyncByteStream):
+        def __iter__(self):consumed.append(True);yield page().encode()
+    def headers(request):
+        now[0]+=1.1
+        return httpx.Response(200,stream=Body(),headers={'content-type':'text/html'})
+    monkeypatch.setattr(provider.time,'monotonic',lambda:now[0])
+    client=api().BioArtClient(tmp_path/'cache',allow_egress=True,limits=api().BioArtLimits(timeout_seconds=1),client=httpx.Client(transport=httpx.MockTransport(headers)))
+    with pytest.raises(ValueError,match='timeout'):client.inspect(18)
+    assert consumed==[]
+
+
+@pytest.mark.parametrize('phase',['headers','body'])
+def test_deadline_interrupts_blocking_socket_io_without_worker(tmp_path,phase):
+    import signal
+    import socket
+    import time
+    # Local socketpair only: no DNS, listener, live endpoint, or background worker.
+    reader,writer=socket.socketpair();closed=[]
+    class Body(httpx.SyncByteStream):
+        def __iter__(self):reader.recv(1);yield page().encode()
+        def close(self):closed.append(True)
+    def respond(request):
+        if phase=='headers':reader.recv(1)
+        return httpx.Response(200,stream=Body(),headers={'content-type':'text/html'})
+    client=api().BioArtClient(tmp_path/'cache',allow_egress=True,limits=api().BioArtLimits(timeout_seconds=1,max_retries=0),client=httpx.Client(transport=httpx.MockTransport(respond)))
+    # A 2-second socket timeout keeps RED bounded if the application deadline is missing.
+    reader.settimeout(2)
+    handler=signal.getsignal(signal.SIGALRM);start=time.monotonic()
+    try:
+        with pytest.raises(ValueError,match='timeout'):client.inspect(18)
+        assert 0.8<=time.monotonic()-start<1.6
+        assert signal.getsignal(signal.SIGALRM)==handler
+        assert signal.getitimer(signal.ITIMER_REAL)==(0.0,0.0)
+        if phase=='body':assert closed==[True]
+    finally:reader.close();writer.close()
+
+
+def test_network_deadline_rejects_worker_thread_before_transport(tmp_path):
+    import concurrent.futures
+    calls=[]
+    def respond(request):calls.append(request);return httpx.Response(200,text=page(),headers={'content-type':'text/html'})
+    client=api().BioArtClient(tmp_path/'cache',allow_egress=True,client=httpx.Client(transport=httpx.MockTransport(respond)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        with pytest.raises(ValueError,match='main thread'):pool.submit(client.inspect,18).result(timeout=2)
+    assert calls==[]
+
+
+def test_network_deadline_does_not_replace_existing_alarm(tmp_path):
+    import signal
+    calls=[]
+    def respond(request):calls.append(request);return httpx.Response(200,text=page(),headers={'content-type':'text/html'})
+    client=api().BioArtClient(tmp_path/'cache',allow_egress=True,client=httpx.Client(transport=httpx.MockTransport(respond)))
+    signal.setitimer(signal.ITIMER_REAL,30)
+    try:
+        with pytest.raises(ValueError,match='alarm'):client.inspect(18)
+        assert 25<signal.getitimer(signal.ITIMER_REAL)[0]<=30
+    finally:signal.setitimer(signal.ITIMER_REAL,0)
+    assert calls==[]
+
+
+def test_deadline_includes_owned_client_setup_and_reduces_io_budget(tmp_path,monkeypatch):
+    import arc_science.bioart.client as provider
+    now=[100.0];budgets=[]
+    def respond(request):
+        budgets.append(request.extensions['timeout']['read'])
+        now[0]+=0.5
+        return httpx.Response(200,text=page(),headers={'content-type':'text/html'})
+    transport=httpx.Client(transport=httpx.MockTransport(respond))
+    def create(**kwargs):now[0]+=0.6;return transport
+    monkeypatch.setattr(provider.time,'monotonic',lambda:now[0])
+    monkeypatch.setattr(provider.httpx,'Client',create)
+    client=api().BioArtClient(tmp_path/'cache',allow_egress=True,limits=api().BioArtLimits(timeout_seconds=1))
+    # Exercise the owned engine used inside the production worker; the parent
+    # public route now has its separately tested killable process deadline.
+    from arc_science.bioart.deadline import request_deadline
+    with pytest.raises(ValueError,match='timeout'):
+        with request_deadline(1) as remaining:
+            client._request_bounded('/bioart/18',8*1024**2,{'text/html'},remaining)
+    assert len(budgets)==1 and 0<budgets[0]<0.41
+    assert transport.is_closed
+
+
+def test_deadline_is_shared_by_retries_not_reset(tmp_path,monkeypatch):
+    import arc_science.bioart.client as provider
+    now=[100.0];budgets=[]
+    def respond(request):
+        budgets.append(request.extensions['timeout']['read']);now[0]+=0.4
+        return httpx.Response(500,headers={'retry-after':'0'})
+    monkeypatch.setattr(provider.time,'monotonic',lambda:now[0])
+    client=api().BioArtClient(tmp_path/'cache',allow_egress=True,limits=api().BioArtLimits(timeout_seconds=1),client=httpx.Client(transport=httpx.MockTransport(respond)))
+    with pytest.raises(ValueError,match='total timeout'):client.inspect(18)
+    assert budgets==pytest.approx([1.0,0.6,0.2])
+
+
+def test_network_deadline_rejects_blocked_alarm_without_transport(tmp_path):
+    import signal
+    calls=[]
+    def respond(request):calls.append(request);return httpx.Response(200,text=page(),headers={'content-type':'text/html'})
+    client=api().BioArtClient(tmp_path/'cache',allow_egress=True,client=httpx.Client(transport=httpx.MockTransport(respond)))
+    previous=signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGALRM})
+    try:
+        with pytest.raises(ValueError,match='unblocked alarm'):client.inspect(18)
+    finally:signal.pthread_sigmask(signal.SIG_SETMASK,previous)
+    assert calls==[]
