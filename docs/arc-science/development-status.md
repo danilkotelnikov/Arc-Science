@@ -7,7 +7,8 @@ Python before it cleans up its detached renderer. Ordinary cooperative
 cancellation/acquisition/setup tests pass; they do not close this integration gap.
 Native-supervised rendering and merge qualification remain blocked. Configuration,
 offline BioArt, preserved figures and other passing tests retain their narrower
-evidence. [Final verification](verification-2026-09-08.md) records the result.
+evidence. [Current verification](bioart-setup-verification-2026-09-08.md) records
+the result and links the earlier qualification.
 
 | Requirement | Implemented boundary | Qualification still needed |
 | --- | --- | --- |
