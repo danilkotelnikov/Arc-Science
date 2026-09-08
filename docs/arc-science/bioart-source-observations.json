@@ -1,0 +1,57 @@
+{
+  "schema": "arc-bioart-research-observations/1",
+  "observed_on": "2026-09-08",
+  "origin": "https://bioart.niaid.nih.gov",
+  "interface_status": "observed_public_website_not_documented_stable_api",
+  "observed_site_version": "e98381ff594ab55e664bf75fce0254bc2f34ad3b",
+  "metadata_snapshots": [
+    {
+      "url": "https://bioart.niaid.nih.gov/bioart/18",
+      "capture_name": "bioart-18.html",
+      "bytes": 218986,
+      "sha256": "a6141f2dfb47e482e7e4086e2747ed07c74d1358f5935585f7a8ba73b93a1649",
+      "title": "Antibody",
+      "creator": "Ryan Kissinger",
+      "collection": "NIAID Visual & Medical Arts",
+      "credit": "Courtesy of NIAID",
+      "license": "Public Domain",
+      "representations_observed": 11,
+      "neutral_representation": {
+        "group_id": 64,
+        "caption": "Antibody - Grey",
+        "files": {"AI": 626856, "EPS": 626857, "PNG": 626859, "SVG": 626860}
+      }
+    },
+    {
+      "url": "https://bioart.niaid.nih.gov/bioart/505",
+      "capture_name": "bioart-505.html",
+      "bytes": 207556,
+      "sha256": "9ada002de935d324f67e02bbf77aa5f5b9daa37eaf96d9f622a19edc2a66ac82",
+      "title": "Syringe",
+      "creator": "Ryan Kissinger",
+      "collection": "NIAID Visual & Medical Arts",
+      "credit": "Courtesy of NIAID",
+      "license": "Public Domain",
+      "representation": {
+        "group_id": 1943,
+        "files": {"AI": 636180, "EPS": 636181, "PNG": 636183, "SVG": 636184}
+      }
+    },
+    {
+      "url": "https://bioart.niaid.nih.gov/discover?q=antibody&sort=relevance",
+      "capture_name": "bioart-antibody-search.html",
+      "bytes": 195744,
+      "sha256": "27e40c999e2b282b34f1eaef4888c41070171d9c21c7c816d82f56243e791f50",
+      "entry_count_observed": 7
+    }
+  ],
+  "asset_transfer": {
+    "attempted_url": "https://bioart.niaid.nih.gov/api/bioarts/505/files/636184",
+    "status": "network_approval_cancelled_before_decision",
+    "successful_file_bytes": false,
+    "live_fetch_verified": false,
+    "alternate_route_attempted": false,
+    "further_attempts_in_this_session_authorized": false
+  },
+  "distribution_note": "Raw website captures remain research intermediates. Reduced source-derived parser fixtures must identify their derivation. This record is not a successful asset-fetch receipt or a rights attestation."
+}

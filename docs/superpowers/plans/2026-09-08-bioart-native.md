@@ -50,7 +50,7 @@ assert next(r for r in entry.representations if r.group_id == 64).files["SVG"] =
 
 ### Task 2: Implement and measure the native Rust configuration/launch application
 
-**Files:** Create `native/arc-science/Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, focused `src/{main,lib,config,process}.rs`, CLI integration tests, native README, and `.github/workflows/arc-native.yml`. Update root README with verified native setup commands. Never edit the Vedix plugin or existing scientific calculations.
+**Files:** Create `native/arc-science/Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, focused `src/{main,lib,config,process}.rs`, CLI integration tests, native README, and `.github/workflows/arc-native.yml`. Add the missing `apps/arc-science/src/arc_science/__main__.py` module entry point delegating to the existing CLI, with a subprocess help test; the existing package only supports `-m arc_science.cli`. Update root README with verified native setup commands. Never edit the Vedix plugin or existing scientific calculations.
 
 **Interfaces:** Executable `arc-science-native`; commands `init`, `config`, `doctor`, `serve`, `worker`; global `--project <directory>`. Config file `arc-science.toml`, schema version 1. Python worker invocation is `<python> -m arc_science <args...>`. Config contains `[worker] python/data/host/port` and `[bioart] cache_dir/max_metadata_bytes/max_file_bytes/max_cache_bytes/metadata_ttl_seconds/timeout_seconds/max_retries` matching Task1 defaults. No secret fields.
 
