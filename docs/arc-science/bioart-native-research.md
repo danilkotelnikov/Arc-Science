@@ -71,6 +71,8 @@ Cancellation covers the worker's process group/job as well as the immediate Pyth
 
 Linux build, test, binary-size and command-resource measurements belong in the verification record. Windows and macOS CI configuration is not evidence that those platforms have run successfully. A small supervisor is also not a low-memory replacement for Blender or the scientific worker.
 
+Final integration review retained an Important limitation: repeated native cancellation can force-kill Python before it cleans up a detached renderer. The cooperative cancellation fixes and passing lifecycle tests do not close that force path. Native-supervised rendering and merge qualification remain blocked; see the [final verification record](verification-2026-09-08.md). Configuration and BioArt have their own narrower executed checks.
+
 ## HoH and scientific evaluation
 
 The HoH paper distinguishes evolving project artifacts from the fixed model, base harness, role definitions and runtime policy within a run. Its planner, developer and independent QA roles motivate a single-writer implementation path and evaluation of frozen candidates. Arc's interpretation is bounded candidate development with preserved evidence and permission stops, not unrestricted self-modification until a model declares success. [HoH paper, inspected PDF pages 1–5](https://arxiv.org/abs/2609.01481).

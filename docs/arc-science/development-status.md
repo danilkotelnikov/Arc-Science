@@ -2,6 +2,13 @@
 
 This is a development application, not a certified scientific platform or a completed Rust rewrite. The verification record and retained reviews identify the exact tested revision.
 
+**Open Important finding I1:** native's repeated-cancellation force path can kill
+Python before it cleans up its detached renderer. Ordinary cooperative
+cancellation/acquisition/setup tests pass; they do not close this integration gap.
+Native-supervised rendering and merge qualification remain blocked. Configuration,
+offline BioArt, preserved figures and other passing tests retain their narrower
+evidence. [Final verification](verification-2026-09-08.md) records the result.
+
 | Requirement | Implemented boundary | Qualification still needed |
 | --- | --- | --- |
 | Arc Science in the Vedix repository | App under `apps/arc-science`, Arc Science root README, original Vedix plugins and history preserved | GitHub write access and repository-slug rename |
@@ -10,7 +17,7 @@ This is a development application, not a certified scientific platform or a comp
 | NIH BioArt intake | CLI metadata inspection, entry-bound file selection, bounded consent-gated transfer, cache, receipts and checked import | Live vector retrieval, real NIH SVG compatibility and an integrated asset-browser UI |
 | BioArt rights | Entry-specific credit retained; automation currently limited to exact Public Domain entries | Other license policies require review; no whole-catalog reuse assumption |
 | Reliable network behavior | Owned transport in a deadline-bound process; no redirects or permission bypass; offline fault tests | Service availability and future website-schema compatibility |
-| Native Rust application | Strict TOML configuration, init/config/doctor/serve/worker commands, direct argument launch, process-tree cancellation and measured Linux release | Windows/macOS execution and signed desktop installers; scientific calculations still run in Python |
+| Native Rust application | Strict TOML configuration, init/config/doctor/serve/worker commands, direct argument launch, tested cooperative cancellation and measured Linux release | Open I1 force-cancelled renderer containment; Windows/macOS execution and signed desktop installers; calculations still run in Python |
 | HoH foundation | Bounded candidate work, fixed roles, single writer, independent QA and evidence preservation | Broader harness evolution and scientific-validity evaluation |
 | Scientific image review | Exact candidate bytes/hashes and separate reference roles supported by provider protocol | Live provider-based comparison in this environment |
 | Programming/ML diagrams | React Flow with ELK researched as a later editor | Shared graph model, editor and controlled SVG export not shipped |

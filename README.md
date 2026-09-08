@@ -2,6 +2,12 @@
 
 Arc Science is an evidence-bound research workbench under development in the existing Vedix repository. It combines a molecular figure workspace with bounded research missions: competing hypotheses, permitted computations, independent role reviews and reproducible evidence.
 
+This checkpoint is **not merge-ready**. One Important final-review finding remains:
+repeated native cancellation can abandon a detached renderer. Native-supervised
+rendering is not qualified; configuration and BioArt have separate tested scopes.
+The inherited root suite also has 24 documented failures. See the
+[verification record](docs/arc-science/verification-2026-09-08.md).
+
 The application is in [apps/arc-science](apps/arc-science). Vedix's plugin code, identifiers, installers and history are preserved; use the [original Vedix installation guide](docs/legacy/VEDIX_README.md) for those plugins. The repository slug has not been renamed.
 
 ## Run locally

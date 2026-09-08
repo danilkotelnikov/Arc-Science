@@ -1,5 +1,13 @@
 # Arc Science native supervisor
 
+**Development blocker I1:** this is not a qualified renderer supervisor.
+Repeated cancellation signals trigger native's immediate force-kill path;
+Python may exit before cleaning up its detached renderer, leaving that renderer
+running. Cooperative cancellation tests pass, but do not establish containment
+on this supported force path. This remains an open Important final-review finding,
+not merely a hypothetical hostile child escape. Do not rely on this build for
+native-supervised rendering until that boundary is fixed and tested.
+
 A small Rust CLI for configuring and supervising the existing Python scientific
 worker. Commands: `init`, `config`, `doctor`, `serve`, `worker`; global
 `--project <existing-directory>`. No GUI, browser engine, scientific rewrite,
@@ -124,6 +132,10 @@ handlers are restored; BioArt alarm/deadline state is unchanged. The application
 lifetime tests exercise real native → Python → this executor with a stdlib renderer,
 positive FIFO readiness, bounded EOF and direct-renderer `ECHILD` evidence, including
 SIGTERM injected at acquisition/setup boundaries. This is not Blender qualification.
+
+The supported repeated-cancellation path is an exception to that cooperative
+cleanup: native can force-kill Python before its handler runs, and its process
+group does not include the detached renderer. See open finding I1 above.
 
 A child that deliberately escapes its owner's process group is outside this
 trusted-worker contract. SIGKILL/crash
