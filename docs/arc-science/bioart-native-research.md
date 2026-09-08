@@ -52,6 +52,8 @@ Use atomic writes and content-addressed objects. A cache hit should make zero HT
 
 The first implementation deliberately automates fetch/import only for an exact `Public Domain` entry license. Other licenses are inspectable but blocked pending a separately reviewed policy; this is narrower than the full NIH catalog. Its hardened cache also requires POSIX no-follow/descriptor primitives and fails explicitly where those are unavailable. Windows asset intake is therefore not established by the native launcher's portability. Browser-assisted search uses an explicit local rendered-HTML snapshot, labelled with its operator-supplied origin, query and hash; it does not claim to authenticate the page or run Playwright automatically.
 
+An independent review reproduced a timeout defect: buffered incoming chunks delayed a one-second check until 500 simulated seconds. The amended owned transport runs in a killable subprocess, with a parent deadline covering setup, native DNS, headers, body and retries; cancellation reaps the child before removing temporary results. Focused tests cover slow trickles and native blocking without making a live NIH request. Injected custom transports remain a separately documented trusted integration boundary. This is an engineering test result, not a claim about NIH availability.
+
 ## Rust: a narrow, measurable boundary
 
 | Approach | Benefit | Cost or limitation | Decision |
@@ -64,6 +66,8 @@ The first implementation deliberately automates fetch/import only for an exact `
 Tauri's official architecture supports web frontends with Rust application logic and uses the operating system's webview. That supports the proposed integration, but framework example sizes do not measure Arc Science. The recommendation is an engineering inference, not a performance result. [Tauri 2 introduction](https://v2.tauri.app/start/).
 
 The native executable should initialize a strict project-local TOML file, inspect configuration, report local dependencies and launch `python -m arc_science` through an argument vector. It must not concatenate shell text, install dependencies at startup, store credentials in TOML or silently open a public network listener. BioArt configuration must reach the actual Python provider; decorative settings are not an implementation.
+
+Cancellation must cover the worker's descendants as well as the immediate Python process. The maintained `process-wrap` crate exposes standard-process wrappers for Unix process groups and Windows job objects. It is a candidate abstraction for this boundary; the pinned version and tested behavior must be recorded by the implementation, not inferred from documentation alone. [process-wrap API](https://docs.rs/process-wrap).
 
 Linux build, test, binary-size and command-resource measurements belong in the verification record. Windows and macOS CI configuration is not evidence that those platforms have run successfully. A small supervisor is also not a low-memory replacement for Blender or the scientific worker.
 
