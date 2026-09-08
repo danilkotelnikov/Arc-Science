@@ -280,7 +280,7 @@ def validate_asset(fd, asset_id):
     if not isinstance(provenance, dict) or set(provenance) - {'origin','title','permission_note','external_rendering_authorized','source_url','template_id'}:
         raise ValueError('Invalid provenance')
     for key,maximum in [('title',500),('permission_note',4000)]: text(provenance.get(key), maximum)
-    if provenance.get('origin') not in ('biorender','user','synthetic_fixture') or provenance.get('external_rendering_authorized') is not True:
+    if provenance.get('origin') not in ('biorender','nih_bioart','user','synthetic_fixture') or provenance.get('external_rendering_authorized') is not True:
         raise ValueError('External rendering authorization is required')
     if 'source_url' in provenance:
         url = text(provenance['source_url'],2000)
@@ -300,6 +300,8 @@ def validate_asset(fd, asset_id):
             raise ValueError('Invalid public BioRender template URL')
     elif 'template_id' in provenance:
         raise ValueError('Unexpected template ID')
+    if provenance['origin'] == 'nih_bioart' and not re.fullmatch(r'https://bioart\.niaid\.nih\.gov/bioart/[1-9][0-9]*', provenance.get('source_url', '')):
+        raise ValueError('NIH BioArt provenance requires a canonical entry URL')
     source = exact(manifest['source'], 'file sha256 size media_type content_kind', 'source')
     preview = exact(manifest['preview'], 'file sha256 pixel_sha256 width height', 'proof')
     converter = exact(manifest['converter'], 'engine engine_version pillow_version', 'converter')

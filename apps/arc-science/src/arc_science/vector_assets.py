@@ -211,7 +211,7 @@ def _validate_provenance(value: object) -> dict:
     if set(value) - allowed or not required <= set(value):
         raise ValueError("Invalid provenance fields")
     origin = value.get("origin")
-    if not isinstance(origin, str) or origin not in {"biorender", "user", "synthetic_fixture"}:
+    if not isinstance(origin, str) or origin not in {"biorender", "nih_bioart", "user", "synthetic_fixture"}:
         raise ValueError("Invalid provenance origin")
     _plain_text(value.get("title"), "title", 500)
     _plain_text(value.get("permission_note"), "permission_note", 4000)
@@ -231,6 +231,8 @@ def _validate_provenance(value: object) -> dict:
             raise ValueError("BioRender provenance is not a matching public-template detail URL")
     elif "template_id" in value:
         raise ValueError("template_id is reserved for BioRender provenance")
+    if origin == "nih_bioart" and not re.fullmatch(r'https://bioart\.niaid\.nih\.gov/bioart/[1-9][0-9]*', value.get('source_url', '')):
+        raise ValueError("NIH BioArt provenance requires a canonical entry URL")
     try:
         encoded = canonical(value)
     except (TypeError, ValueError):
@@ -436,12 +438,14 @@ def _regular_artifact(directory_fd: int, basename: str, limit: int) -> bytes:
     return _read_regular_at(directory_fd, basename, limit, "Asset artifact")
 
 
-def import_vector(source: Path, project_dir: Path, provenance: dict) -> Path:
+def import_vector(source: Path, project_dir: Path, provenance: dict, *, expected_sha256: str | None = None) -> Path:
     """Return immutable assets/<asset-id>/asset.json after source/proof validation."""
     source = Path(source)
     project_dir = _absolute_path(Path(project_dir))
     provenance = _validate_provenance(provenance)
     data = _read_regular(source, _SOURCE_LIMIT)
+    if expected_sha256 is not None and (not _valid_hash(expected_sha256) or _sha256(data) != expected_sha256):
+        raise ValueError("Source hash does not match verified import receipt")
     extension = source.suffix.lower()
     content_kind, preview, pixel_digest, width, height = _convert(extension, data)
     source_name = "source" + extension

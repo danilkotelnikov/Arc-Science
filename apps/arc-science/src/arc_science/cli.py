@@ -81,6 +81,8 @@ def main(argv=None):
     val=commands.add_parser('validate');val.add_argument('--output',type=Path,default=Path('./reproducibility.json'))
     commands.add_parser('doctor')
     commands.add_parser('biorender-discover',help='Inspect the validated BioRender tool schemas and digest')
+    from .bioart.cli import register as register_bioart
+    register_bioart(commands)
     figure_import=commands.add_parser('figure-import',help='Import an authorized local SVG or PDF')
     figure_import.add_argument('source',type=Path)
     figure_import.add_argument('--project',type=Path,required=True)
@@ -139,6 +141,9 @@ def main(argv=None):
         elif args.command=='verify':result=verify_capsule(args.capsule.read_bytes())
         elif args.command=='validate':result=validate(args.output)
         elif args.command=='biorender-discover':result=asyncio.run(discover_biorender())
+        elif args.command=='bioart':
+            from .bioart.cli import run as run_bioart
+            result=run_bioart(args)
         elif args.command=='molecule-render':
             from .molecular import prepare_complex
             from .molecular_figure import render_complex

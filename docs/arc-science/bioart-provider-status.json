@@ -1,0 +1,16 @@
+{
+  "schema": "arc-bioart-provider-status/1",
+  "observed_on": "2026-09-08",
+  "metadata_inputs": "Existing read-only public HTML captures for entries 18/505 and initial search shell; separate reduced browser-rendered search observation",
+  "entry_18_grey_svg": {"entry_id":18,"representation_id":64,"file_id":626860},
+  "search_initial_html": "Shell-only; parser returns explicit schema drift, not empty success",
+  "search_browser_dom": "Seven observed hits, supported by labeled reduced fixture; optional explicit offline snapshot intake",
+  "live_vector_fetch_verified": false,
+  "asset_transfer_status": "Prior network approval cancelled before decision; no further live file transfer attempted",
+  "alternate_host_or_browser_download_attempted": false,
+  "file_test_bytes": "Synthetic offline fault-injection fixtures only",
+  "ui_and_service": "Deferred; complete provider CLI is the supported surface",
+  "python_filesystem_portability": "Existing POSIX no-follow vector import primitives; Windows execution not certified",
+  "rights_verified": false,
+  "scientific_validity_established": false
+}

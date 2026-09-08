@@ -1,0 +1,14 @@
+{
+  "derivation": "Reduced data from public bioart-18.html captured 2026-09-08; source SHA256 a6141f2dfb47e482e7e4086e2747ed07c74d1358f5935585f7a8ba73b93a1649. React presentation properties omitted; no asset bytes captured.",
+  "records": [
+    {"children": "BIOART-000018"},
+    {"variant": "h4", "children": "Antibody"},
+    {"carouselItems": [{"fileId":626859,"fileFormat":"PNG","bioartFileGroupId":64,"caption":"Antibody - Grey","srcImg":"/api/bioarts/18/files/626859"}]},
+    {"filemapping":{"64":{"AI":626856,"EPS":626857,"PNG":626859,"SVG":626860}}},
+    {"children":["Licensing: ",["$","$Ld",null,{"href":"/faqs#usage-restrictions-bioart","children":"Public Domain"}]]},
+    {"children":[["$","$L10",null,{"children":"Collection"}],["$","$L10",null,{"children":"NIAID Visual & Medical Arts"}]]},
+    {"children":[["$","$L10",null,{"children":"Creator"}],["$","$L10",null,{"children":"Ryan Kissinger"}]]},
+    {"children":[["$","$L10",null,{"children":"Credit"}],["$","$L10",null,{"children":"Courtesy of NIAID"}]]},
+    {"children":[["$","$L10",null,{"children":" Cite This Entry"}],["$","$L10",null,{"children":["NIAID Visual & Medical Arts",". (","10/7/2024","). ","Antibody",". NIAID NIH BIOART Source. bioart.niaid.nih.gov/bioart/",18]}]]}
+  ]
+}
