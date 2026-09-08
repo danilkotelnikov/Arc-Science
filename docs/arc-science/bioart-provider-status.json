@@ -10,7 +10,9 @@
   "alternate_host_or_browser_download_attempted": false,
   "file_test_bytes": "Synthetic offline fault-injection fixtures only",
   "ui_and_service": "Deferred; complete provider CLI is the supported surface",
-  "python_filesystem_portability": "Existing POSIX no-follow vector import primitives; Windows execution not certified",
+  "python_filesystem_portability": "Requires POSIX no-follow and dir_fd primitives; Windows provider explicitly unsupported before cache creation",
+  "owned_transport_deadline": "Spawned Python transport with parent monotonic deadline, bounded regular-file transfer, termination and reaping",
+  "injected_transport_boundary": "Trusted in-process integration/test clients use the unbuffered POSIX alarm path; arbitrary native injected code is outside the owned-transport guarantee",
   "rights_verified": false,
   "scientific_validity_established": false
 }
