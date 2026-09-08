@@ -367,3 +367,10 @@ def test_malicious_duplicate_flight_mapping_json_rejected():
     flight='11:{"filemapping":{"64":{"SVG":1,"SVG":2}}}\n'
     html='<script>self.__next_f.push('+json.dumps([1,flight])+')</script>'
     with pytest.raises(ValueError,match='schema'):api().parse_entry(html,18)
+
+
+def test_unsupported_filesystem_capability_fails_explicitly(tmp_path,monkeypatch):
+    monkeypatch.setattr(os,'O_NOFOLLOW',0)
+    with pytest.raises(ValueError,match='POSIX.*Windows'):
+        api().BioArtClient(tmp_path/'cache')
+    assert not (tmp_path/'cache').exists()

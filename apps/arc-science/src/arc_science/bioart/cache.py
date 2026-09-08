@@ -19,6 +19,10 @@ def encoded(value):
 
 class Cache:
     def __init__(self, root: Path, budget: int):
+        if (os.name != 'posix' or not getattr(os,'O_NOFOLLOW',0) or
+                not getattr(os,'O_NONBLOCK',0) or not getattr(os,'O_DIRECTORY',0) or
+                not {os.open,os.stat,os.mkdir,os.unlink,os.link} <= os.supports_dir_fd):
+            raise ValueError('BioArt cache/import requires POSIX no-follow directory/file primitives; Windows Python provider support is unavailable')
         if '..' in Path(root).parts: raise ValueError('Unsafe cache path')
         self.root = Path(os.path.abspath(root)); self.budget = budget
 
