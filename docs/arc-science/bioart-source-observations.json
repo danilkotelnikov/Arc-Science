@@ -42,9 +42,17 @@
       "capture_name": "bioart-antibody-search.html",
       "bytes": 195744,
       "sha256": "27e40c999e2b282b34f1eaef4888c41070171d9c21c7c816d82f56243e791f50",
-      "entry_count_observed": 7
+      "capture_scope": "initial_html_shell_without_search_hit_records"
     }
   ],
+  "browser_search_observation": {
+    "url": "https://bioart.niaid.nih.gov/discover?q=antibody&sort=relevance",
+    "entry_count_observed": 7,
+    "scope": "browser_rendered_DOM_not_the_initial_HTML_snapshot",
+    "entry_ids_in_display_order": [18, 17, 250, 249, 248, 85, 575],
+    "titles_in_display_order": ["Antibody", "Antibody", "IgG", "IGE", "IgA", "Complement C1 Complex", "White Pulp"],
+    "reduced_observation_file": "bioart-antibody-browser-observation.html"
+  },
   "asset_transfer": {
     "attempted_url": "https://bioart.niaid.nih.gov/api/bioarts/505/files/636184",
     "status": "network_approval_cancelled_before_decision",

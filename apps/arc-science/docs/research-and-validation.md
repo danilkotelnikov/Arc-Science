@@ -6,6 +6,8 @@ release: 0.3.0
 
 # Arc Science research architecture and qualification
 
+Historical report: the `evidence-v0.3/` paths below are retained in the rendering companion checkpoint, not this lean source import. See [historical evidence locations](../../../docs/arc-science/historical-evidence.md). These results do not describe a fresh run of the current development branch.
+
 Arc Science develops a scientific exploration loop around immutable inputs, competing hypotheses, bounded tools and recorded evidence. The 0.3 development scope strengthens evidence verification, connects rendered numerical figures to a visual critic, and adds an explicitly configured BioRender search path. Comparative scientific performance remains unmeasured.
 
 ## Investigation of the supplied package

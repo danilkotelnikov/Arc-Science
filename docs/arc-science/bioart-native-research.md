@@ -23,7 +23,7 @@ Public-page inspection found these routes and data on the research date:
 | Syringe entry | `/bioart/505` | Representation-to-format file mapping |
 | File reference | `/api/bioarts/18/files/626859` | PNG reference in the antibody entry; not a successful file transfer |
 
-The server-rendered HTML carries JSON-encoded Next flight records containing `carouselItems` and `filemapping`. These can be JSON-decoded without evaluating JavaScript. An opaque download server-action identifier also appeared in the public script; it is unsuitable as a durable integration contract. A detail page initially displayed no downloadable files until a representation was selected, even though its metadata already contained the file mapping. [Antibody entry](https://bioart.niaid.nih.gov/bioart/18), [Syringe entry](https://bioart.niaid.nih.gov/bioart/505).
+The detail-page server-rendered HTML carries JSON-encoded Next flight records containing `carouselItems` and `filemapping`. These can be JSON-decoded without evaluating JavaScript. In contrast, the captured initial search HTML is a shell: the seven hits were observed only in the browser-rendered DOM. An opaque download server-action identifier also appeared in the public script; it is unsuitable as a durable integration contract. A detail page initially displayed no downloadable files until a representation was selected, even though its metadata already contained the file mapping. [Antibody entry](https://bioart.niaid.nih.gov/bioart/18), [Syringe entry](https://bioart.niaid.nih.gov/bioart/505).
 
 The antibody entry identified Ryan Kissinger, NIAID Visual & Medical Arts, Courtesy of NIAID, and Public Domain. Its explicitly grey representation is group 64, with AI `626856`, EPS `626857`, PNG `626859` and SVG `626860`. The syringe's group 1943 maps AI `636180`, EPS `636181`, PNG `636183` and SVG `636184`. These are source-derived parser fixtures, not a promise that these IDs or the site's serialization will remain unchanged.
 
@@ -49,6 +49,8 @@ The following are Arc engineering decisions, not NIH service guarantees:
 Search, inspect and fetch are separate operations. Fetch only a format/file ID present in the selected entry's own representation map. Prefer an explicitly grey or black-and-white representation when available; never recolor an original silently. Store citation, collection, creator, credit, license, page hash, retrieval time, representation and byte hash in a receipt alongside the immutable original.
 
 Use atomic writes and content-addressed objects. A cache hit should make zero HTTP requests. A missing or stale item without network consent should produce a useful error. Size, MIME, decoding, redirect, timeout, malformed metadata and symlink cases need offline fault-injection tests. A successful fetch and an eligible preview/import are different states: AI/EPS remain archive-only, and SVG/PNG must pass the existing safety checks. Unsupported Illustrator SVG features are an import limitation, not a reason to loosen the validator.
+
+The first implementation deliberately automates fetch/import only for an exact `Public Domain` entry license. Other licenses are inspectable but blocked pending a separately reviewed policy; this is narrower than the full NIH catalog. Its hardened cache also requires POSIX no-follow/descriptor primitives and fails explicitly where those are unavailable. Windows asset intake is therefore not established by the native launcher's portability. Browser-assisted search uses an explicit local rendered-HTML snapshot, labelled with its operator-supplied origin, query and hash; it does not claim to authenticate the page or run Playwright automatically.
 
 ## Rust: a narrow, measurable boundary
 
@@ -81,6 +83,14 @@ A recent rendering-consensus study reports an instructive failure: a broken back
 - Keep collage backgrounds exactly white, with restrained blue/grey molecular defaults. NIH schematics must not masquerade as molecular geometry.
 - Treat theorem-prover success as a separate qualification. No Lean-backed proof execution is established by this increment; prose confidence and passing ordinary tests cannot substitute for it.
 - Stop on exhausted budgets, missing evidence or access restrictions. “Try multiple ways” means permitted, meaningfully different approaches, not bypasses or infinite retries.
+
+## Related composition and proof requirements
+
+For the requested programming/ML block diagrams, the recommended later editor is React Flow with ELK for nested graphs and edge routing; Dagre is a simpler option for small directed trees. React Flow does not supply its own automatic layout engine. Arc should export from a shared node/edge model into a controlled SVG compositor, so graph editing and publication layout do not depend on screenshotting a live DOM. This is a framework recommendation, not a shipped diagram editor. [React Flow layout comparison](https://reactflow.dev/learn/layouting/layouting).
+
+For mathematical claims, a successful Lean build is not the whole trust boundary. Lean's current manual distinguishes statement meaning from proof validity, recommends axiom inspection and fresh kernel rechecking, and describes sandboxed comparator/external-checker validation for adversarially supplied proofs. Unreviewed generated proof code must not execute in the main scientific service. Arc's future gate should bind a trusted theorem statement, pinned toolchain/dependencies, isolated build, permitted-axiom policy, proof-checker output and exact hashes; missing verification must remain unqualified. A text scan for `sorry` alone cannot establish this. No such gate was executed or shipped in this increment. [Lean: validating a proof](https://lean-lang.org/doc/reference/latest/ValidatingProofs/).
+
+MD figure composition likewise needs an actual trajectory/analysis result, units and sampling/uncertainty information. The supplied 1DQJ contact matrix is static structural analysis, not an MD result. Photoshop-like layer editing and BioArt schematics cannot supply absent measurements.
 
 ## Selected tools: actual contribution
 

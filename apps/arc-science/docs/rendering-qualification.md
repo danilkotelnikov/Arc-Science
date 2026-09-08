@@ -1,5 +1,7 @@
 # Arc Science 0.4.0 rendering qualification
 
+Historical report: the `evidence-v0.4/` paths below are retained in the rendering companion checkpoint, not this lean source import. See [historical evidence locations](../../../docs/arc-science/historical-evidence.md). These results do not describe a fresh run of the current development branch.
+
 Status: release qualification passed and final review is clean after one consolidated fix wave. The authoritative executed record is `evidence-v0.4/verification.json`.
 
 Version 0.4.0 extends the research harness with operator-controlled vector intake and retained Blender render runs. It preserves a source illustration, records authorization assertions, regenerates a flat proof and binds rendered outputs to the input and job settings. The renderer presents the proof as an intact panel; it does not infer biological structures or invent coordinates from an illustration.
