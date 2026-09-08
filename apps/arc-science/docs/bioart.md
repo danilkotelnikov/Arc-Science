@@ -8,10 +8,27 @@ HTML and file routes, **not a documented stable public API**.
 ```sh
 arc-science bioart search antibody --project ./project --allow-egress
 arc-science bioart inspect 18 --project ./project --allow-egress
+arc-science bioart fetch 18 --project ./project --allow-egress
 arc-science bioart fetch 18 --representation 64 --format svg --project ./project --allow-egress
 arc-science bioart verify /absolute/project/.arc-science/bioart/DIGEST.receipt.json
 arc-science bioart import /absolute/project/.arc-science/bioart/DIGEST.receipt.json --project ./project
 ```
+
+`fetch` defaults to SVG. Without `--representation`, it first discards groups
+that do not contain the requested format, then chooses the first compatible group
+whose caption explicitly contains a neutral label: `grey`, `gray`, `greyscale`,
+`grayscale`, `black-and-white`, `black and white`, or `blackwhite`. Labels are
+matched case-insensitively as words; stable ties retain website source order. If
+no compatible neutral caption exists, the first compatible group in source order
+is used. If no group contains the requested format, the command stops rather than
+substituting PNG or another format.
+
+Use `--representation` to select a group explicitly and `--format` to request
+SVG, PNG, AI, or EPS manually. An explicit group remains authoritative: if it does
+not contain that format, fetch stops and does not switch groups. The verified
+receipt reports the actual selected group ID, file ID, caption, format, and source
+hash. A neutral caption is retained provider metadata, not pixel analysis, an
+image-quality judgment, or evidence of scientific validity.
 
 The examples describe the interface; no live file transfer was verified in this
 development session. Network approval for the prior vector transfer was cancelled,

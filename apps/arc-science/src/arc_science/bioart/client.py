@@ -15,7 +15,7 @@ from PIL import Image
 from .cache import Cache, digest, encoded
 from .deadline import request_deadline
 from .isolation import request_in_child
-from .models import BioArtLimits, BioArtReceipt, ORIGIN, positive_id
+from .models import BioArtLimits, BioArtReceipt, ORIGIN, _is_neutral_caption, positive_id
 from .parsing import parse_entry, parse_search
 from ..vector_assets import _read_regular, _validate_svg, _SOURCE_LIMIT, import_vector
 
@@ -179,14 +179,22 @@ class BioArtClient:
         self.cache.write({sha+'.html':data,name:raw})
         return {**value,'snapshot_record':str(self.cache.root/name)}
 
-    def fetch(self,entry_id,representation_id,format):
-        positive_id(entry_id); positive_id(representation_id)
+    def fetch(self,entry_id,representation_id=None,format='SVG'):
+        positive_id(entry_id)
+        if representation_id is not None: positive_id(representation_id)
         if not isinstance(format,str) or format.upper() not in _MIME: raise ValueError('Unsupported BioArt format')
         format=format.upper()
         entry,_,page_hash=self._metadata(f'/bioart/{entry_id}',lambda html:parse_entry(html,entry_id))
-        representation=next((r for r in entry.representations if r.group_id==representation_id),None)
-        if representation is None: raise ValueError('Unknown entry representation')
-        if format not in representation.files: raise ValueError('Format absent from representation')
+        if representation_id is None:
+            compatible=tuple(r for r in entry.representations if format in r.files)
+            if not compatible:
+                raise ValueError(f'No BioArt representation contains requested format {format}')
+            representation=next((r for r in compatible if _is_neutral_caption(r.caption)),compatible[0])
+            representation_id=representation.group_id
+        else:
+            representation=next((r for r in entry.representations if r.group_id==representation_id),None)
+            if representation is None: raise ValueError('Unknown entry representation')
+            if format not in representation.files: raise ValueError('Format absent from representation')
         if entry.license!='Public Domain': raise ValueError('Unknown or restricted license requires operator review; fetch/import blocked')
         index='fetch-'+digest(encoded([entry_id,representation_id,format,page_hash]))+'.json'
         existing=self.cache.read(index,4096)

@@ -5,6 +5,14 @@ from pathlib import Path
 import re
 
 ORIGIN = 'https://bioart.niaid.nih.gov'
+_NEUTRAL_CAPTION = re.compile(
+    r'(?<!\w)(?:gr(?:e|a)y(?:scale)?|black(?:-|\s+)and(?:-|\s+)white|blackwhite)(?!\w)',
+    re.IGNORECASE,
+)
+
+
+def _is_neutral_caption(caption):
+    return isinstance(caption, str) and _NEUTRAL_CAPTION.search(caption) is not None
 
 
 def positive_id(value):
@@ -33,10 +41,9 @@ class BioArtEntry:
 
     @property
     def preferred_representation_id(self):
-        for term in ('grey', 'gray', 'blackwhite', 'black-and-white'):
-            for representation in self.representations:
-                if term in representation.caption.lower():
-                    return representation.group_id
+        for representation in self.representations:
+            if _is_neutral_caption(representation.caption):
+                return representation.group_id
         return self.representations[0].group_id
 
 

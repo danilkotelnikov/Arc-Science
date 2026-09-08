@@ -18,8 +18,8 @@ def register(commands):
         command.add_argument('--project',type=Path,default=Path('.'))
         if name in ('search','inspect','fetch'): command.add_argument('--allow-egress',action='store_true')
         if name=='fetch':
-            command.add_argument('--representation',type=int,required=True)
-            command.add_argument('--format',choices=['svg','png','ai','eps','SVG','PNG','AI','EPS'],required=True)
+            command.add_argument('--representation',type=int)
+            command.add_argument('--format',choices=['svg','png','ai','eps','SVG','PNG','AI','EPS'],default='SVG')
 
 
 def run(args):
