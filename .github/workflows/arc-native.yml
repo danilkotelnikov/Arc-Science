@@ -1,0 +1,43 @@
+name: Arc Science native supervisor
+on:
+  push:
+    paths: ['native/arc-science/**', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/tests/test_module_entrypoint.py', '.github/workflows/arc-native.yml']
+  pull_request:
+    paths: ['native/arc-science/**', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/tests/test_module_entrypoint.py', '.github/workflows/arc-native.yml']
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: native/arc-science
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+      - run: cargo fmt --check
+      - run: cargo test --locked
+      - run: cargo clippy --locked -- -D warnings
+      - run: cargo build --release --locked
+      # This matrix qualifies only the native supervisor/stdlib test fixture.
+      # Windows BioArt is unsupported; Linux process-tree tests use /proc.
+      # No scientific-worker, live-network, Blender, or GUI qualification here.
+  module-entrypoint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/arc-science
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install . pytest
+      - run: python -m pytest tests/test_module_entrypoint.py -q

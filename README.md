@@ -18,6 +18,31 @@ arc-science serve --data ./data
 
 Open [the local workbench](http://127.0.0.1:8080/). In another activated terminal, run `arc-science token --data ./data` and enter that operator token in Research. It stays in page memory. Use a fresh data directory for 0.5.0; historical capsules need their matching verifier. [Migration notes](apps/arc-science/docs/migration-0.5.md) describe compatibility and provenance.
 
+## Native configuration and launch
+
+The optional Rust CLI configures and supervises the existing Python worker; it is
+not a GUI or scientific rewrite. With Rust 1.90.0 installed, from the repository root:
+
+```bash
+cargo +1.90.0 build --release --locked --manifest-path native/arc-science/Cargo.toml
+mkdir arc-project
+native/arc-science/target/release/arc-science-native --project arc-project init
+```
+
+Set `worker.python` in `arc-project/arc-science.toml` to your installed Arc Science
+environment's absolute Python path, then run:
+
+```bash
+native/arc-science/target/release/arc-science-native --project arc-project doctor
+native/arc-science/target/release/arc-science-native --project arc-project worker -- --help
+native/arc-science/target/release/arc-science-native --project arc-project serve
+```
+
+Linux native tests/build and module help are checked; this does not qualify the
+scientific worker. Windows/macOS CI is configured but not run here, and Windows
+BioArt is unsupported. The supervisor is noninteractive (stdin EOF), with no
+shell, PTY, or automatic install. See [native setup and lifecycle limits](native/arc-science/README.md).
+
 ## Molecular workspace
 
 ![1DQJ antibody–antigen illustrative collage](apps/arc-science/src/arc_science/example_assets/1dqj/collage.png)
