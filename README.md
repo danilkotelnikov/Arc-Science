@@ -32,11 +32,13 @@ not a GUI or scientific rewrite. With Rust 1.90.0 installed, from the repository
 ```bash
 cargo +1.90.0 build --release --locked --manifest-path native/arc-science/Cargo.toml
 mkdir arc-project
-native/arc-science/target/release/arc-science-native --project arc-project init
+native/arc-science/target/release/arc-science-native --project arc-project \
+  init --python "$PWD/apps/arc-science/.venv/bin/python"
 ```
 
-Set `worker.python` in `arc-project/arc-science.toml` to your installed Arc Science
-environment's absolute Python path, then run:
+The selected interpreter must already contain Arc Science. Initialization writes
+the path without executing it or installing dependencies, and never overwrites an
+existing configuration. Then run:
 
 ```bash
 native/arc-science/target/release/arc-science-native --project arc-project doctor
@@ -48,6 +50,36 @@ Linux native tests/build and module help are checked; this does not qualify the
 scientific worker. Windows/macOS CI is configured but not run here, and Windows
 BioArt is unsupported. The supervisor is noninteractive (stdin EOF), with no
 shell, PTY, or automatic install. See [native setup and lifecycle limits](native/arc-science/README.md).
+
+## NIH BioArt assets
+
+Use an existing project directory and install the application's `vector` extra in
+your selected Python environment for SVG validation/import. Fetch defaults to SVG
+and prefers an explicitly neutral-labelled representation that provides that
+format. An explicit `--representation` remains authoritative; original bytes are
+never recolored. From the installed application's environment:
+
+```bash
+arc-science bioart inspect 18 --project ./arc-project --allow-egress
+arc-science bioart fetch 18 --project ./arc-project --allow-egress
+```
+
+After native initialization, the equivalent first-class command uses the selected
+project and its configured interpreter/cache:
+
+```bash
+native/arc-science/target/release/arc-science-native --project arc-project \
+  bioart fetch 18 --allow-egress
+```
+
+The result includes the selected file/group IDs, source and receipt paths, credit,
+license and byte hash. Use `bioart verify RECEIPT` before `bioart import RECEIPT
+--project ./arc-project` to import an eligible SVG. Omit `--allow-egress` for
+verified fresh-cache access only. AI/EPS are archive-only, and PNG is preview-only.
+Automation currently accepts exact Public Domain entries, not every license in
+the collection. Live NIH vector transfer and Windows BioArt are not qualified.
+See [provider behavior](apps/arc-science/docs/bioart.md) and the separate
+[access/setup research](docs/arc-science/bioart-setup-research-2026-09-08.md).
 
 ## Molecular workspace
 
@@ -83,7 +115,7 @@ The actual React/HeroUI 3 UI is built and tested through DOM interactions and se
 
 ```bash
 cd apps/arc-science
-python -m pip install '.[test]'
+python -m pip install '.[test,vector]'
 cd web
 npm ci
 npm test
