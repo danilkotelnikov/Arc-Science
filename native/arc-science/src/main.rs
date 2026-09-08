@@ -25,7 +25,7 @@ struct Cli {
 enum Action {
     /// Create a default arc-science.toml; refuses to overwrite.
     Init {
-        /// Python executable or venv path to persist; it is not run during init.
+        /// Python executable or venv interpreter path; it is not run during init.
         #[arg(long)]
         python: Option<String>,
     },

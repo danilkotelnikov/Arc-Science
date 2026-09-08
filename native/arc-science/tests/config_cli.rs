@@ -65,6 +65,37 @@ fn init_rejects_invalid_python_before_creating_config() {
 }
 
 #[test]
+fn init_rejects_lexical_directory_python_without_consuming_config() {
+    #[cfg(windows)]
+    let invalid = ["venv/", "venv/.", "venv\\", "venv\\."];
+    #[cfg(not(windows))]
+    let invalid = ["venv/", "venv/."];
+
+    for selected in invalid {
+        let temp = tempfile::tempdir().unwrap();
+        let output = run(temp.path(), &["init", "--python", selected]);
+        assert!(!output.status.success(), "accepted {selected:?}");
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .contains("executable"),
+            "missing actionable error for {selected:?}"
+        );
+        assert!(!temp.path().join("arc-science.toml").exists());
+    }
+}
+
+#[test]
+fn init_help_names_a_venv_interpreter_path() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = run(temp.path(), &["init", "--help"]);
+    assert!(output.status.success(), "{output:?}");
+    let help = String::from_utf8(output.stdout).unwrap();
+    assert!(help.contains("Python executable or venv interpreter path"));
+    assert!(!help.contains("Python executable or venv path"));
+}
+
+#[test]
 fn init_uses_platform_python_default() {
     let temp = init();
     let config: toml::Value =

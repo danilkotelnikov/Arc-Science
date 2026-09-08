@@ -185,7 +185,10 @@ fn validate_python(value: &str) -> Result<()> {
         return Err("worker.python must name one executable, not a command line".into());
     }
     let path = Path::new(value);
-    if path.file_name().is_none() {
+    if value.chars().last().is_some_and(std::path::is_separator)
+        || value.rsplit(std::path::is_separator).next() == Some(".")
+        || path.file_name().is_none()
+    {
         return Err("worker.python must name one executable, not a directory".into());
     }
     if !path.is_absolute() && path.components().count() > 1 {
