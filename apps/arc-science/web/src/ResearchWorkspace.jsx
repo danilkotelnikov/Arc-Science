@@ -2,17 +2,18 @@ import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {Button} from '@heroui/react/button';
 import {checkedFetch, downloadResponse} from './http';
 
-function Artifact({missionId,artifact,request,onError}) {
+function Artifact({missionId,artifact,request}) {
   const [url,setUrl]=useState('');
+  const [error,setError]=useState(''),[attempt,setAttempt]=useState(0);
   useEffect(()=>{
     const controller=new AbortController();let ownedUrl;
-    setUrl('');
+    setUrl('');setError('');
     request(`/missions/${missionId}/artifacts/${artifact.digest}`,'GET',undefined,controller.signal)
       .then(r=>r.blob()).then(blob=>{if(!controller.signal.aborted){ownedUrl=URL.createObjectURL(blob);setUrl(ownedUrl);}})
-      .catch(e=>{if(e.name!=='AbortError')onError(e.message);});
+      .catch(e=>{if(!controller.signal.aborted&&e.name!=='AbortError')setError(e.message);});
     return ()=>{controller.abort();if(ownedUrl)URL.revokeObjectURL(ownedUrl);};
-  },[missionId,artifact.digest,request,onError]);
-  return <figure className="artifact">{url?<><img src={url} alt={'Artifact from '+artifact.source_observation_id}/><a href={url} download={artifact.digest+'.png'}>Download authenticated PNG</a></>:<p>Loading authenticated artifact…</p>}<figcaption>{artifact.source_observation_id} · {artifact.digest.slice(0,12)}…</figcaption></figure>;
+  },[missionId,artifact.digest,request,attempt]);
+  return <figure className="artifact">{url?<><img src={url} alt={'Artifact from '+artifact.source_observation_id}/><a href={url} download={artifact.digest+'.png'}>Download authenticated PNG</a></>:error?<><p role="alert">Artifact unavailable: {error}</p><Button variant="secondary" onPress={()=>setAttempt(n=>n+1)}>Retry artifact</Button><p>Check your token, then retry or select the mission again.</p></>:<p>Loading authenticated artifact…</p>}<figcaption>{artifact.source_observation_id} · {artifact.digest.slice(0,12)}…</figcaption></figure>;
 }
 
 export default function ResearchWorkspace() {
@@ -62,7 +63,7 @@ export default function ResearchWorkspace() {
         <div className="actions"><Button isDisabled={busy} onPress={()=>task(async()=>setVerification(await(await request('/missions/'+mission.id+'/verify')).json()))}>Verify and recompute</Button><Button variant="secondary" isDisabled={busy} onPress={()=>task(async()=>downloadResponse(await request('/missions/'+mission.id+'/capsule'),'arc-'+mission.id+'.zip'))}>Export replay capsule</Button><Button variant="ghost" isDisabled={busy||!['ready','paused'].includes(state.status)} onPress={()=>task(async()=>{await request('/missions/'+mission.id+'/start','POST');await refresh(mission.id);})}>Resume</Button><Button variant="danger" isDisabled={busy||state.status==='cancelled'} onPress={()=>task(async()=>{await request('/missions/'+mission.id+'/cancel','POST');await refresh(mission.id);})}>Cancel</Button></div>
         <p role="status">{state.stop_reason}</p>{verification&&<pre>{JSON.stringify(verification,null,2)}</pre>}
         <div className="branches">{state.branches.map(branch=><article key={branch.id} className={'branch'+(state.focus===branch.id?' focus':'')}><h3>{branch.title}</h3><p>{branch.hypothesis}</p><p>Falsifier: {branch.falsifier}</p><p className="muted">Opened round {branch.created_round} · parents: {branch.parents.join(', ')||'root'}</p></article>)}</div>
-        <h2>Visual artifacts</h2><div className="artifacts">{state.artifacts.length?state.artifacts.map(artifact=><Artifact key={mission.id+artifact.digest} missionId={mission.id} artifact={artifact} request={request} onError={setError}/>):<p className="muted">No visual artifacts in this mission.</p>}</div>
+        <h2>Visual artifacts</h2><div className="artifacts">{state.artifacts.length?state.artifacts.map(artifact=><Artifact key={mission.id+artifact.digest} missionId={mission.id} artifact={artifact} request={request}/>):<p className="muted">No visual artifacts in this mission.</p>}</div>
         <h2>Visual review</h2>{state.visual_reports.length?state.visual_reports.map((report,i)=><div className="record" key={i}><h3>{report.model} · round {report.round} · {report.verdict}</h3>{report.findings.map((finding,j)=><p key={j}>{finding.category}: {finding.detail}</p>)}</div>):<p className="muted">No visual review report. No passing qualification is implied.</p>}
         <h2>Reconciliation</h2>{state.assessments.slice(-12).map((assessment,i)=><div className="record" key={i}><h3>{assessment.role} · {assessment.branch_id} · {assessment.position}</h3><p>{assessment.finding}</p><p className="muted">Evidence: {assessment.evidence_ids.join(', ')} · Model: {assessment.model}</p></div>)}
         <h2>Execution evidence</h2>{state.observations.map(observation=><details className="record" key={observation.id}><summary>{observation.id} · {observation.tool} · {observation.status}</summary><pre>{JSON.stringify(observation.data,null,2)}</pre></details>)}

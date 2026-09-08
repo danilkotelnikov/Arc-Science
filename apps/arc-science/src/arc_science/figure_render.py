@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from pathlib import Path
 import secrets
 import selectors
@@ -9,6 +10,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 
 from . import figure_contract as c
@@ -37,25 +39,56 @@ def _append_log(fd, message):
     os.fsync(fd)
 
 
+@contextmanager
+def _render_cancellation():
+    """Defer SIGINT/TERM until the renderer is owned; restore caller policy.
+
+    Signal callbacks must not raise inside Popen's OS-child acquisition, nor
+    interrupt kill/wait cleanup. This synchronous executor requires the main
+    thread; it does not install process-wide handlers from background threads.
+    BioArt's alarm/deadline state is deliberately untouched.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        raise ValueError('Render cancellation requires the POSIX main thread; use the CLI')
+    pending = None
+    previous = {}
+    def cancel(signum, _frame):
+        nonlocal pending
+        if pending is None: pending = signum
+    def check():
+        if pending is not None: raise SystemExit(128 + pending)
+    try:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            previous[signum] = signal.signal(signum, cancel)
+        yield check
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
 def _execute(argv, run_fd, log_fd, timeout):
     """Bound both retained bytes and lifetime, including inherited descendant pipes."""
-    with tempfile.TemporaryDirectory(prefix='arc-figure-runtime-') as private:
+    with _render_cancellation() as check_cancelled, tempfile.TemporaryDirectory(prefix='arc-figure-runtime-') as private:
         environment = {'PATH':os.defpath,'HOME':private,'TMPDIR':private,
                        'LANG':'C.UTF-8','LC_ALL':'C.UTF-8','OMP_NUM_THREADS':'4',
                        'OPENBLAS_NUM_THREADS':'4','MKL_NUM_THREADS':'4',
                        'BLENDER_USER_CONFIG':private,'BLENDER_USER_SCRIPTS':private,
                        'BLENDER_USER_DATAFILES':private}
-        process = subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT,env=environment,
-                                   cwd=f'/proc/self/fd/{run_fd}',pass_fds=(run_fd,),
-                                   start_new_session=True)
         deadline = time.monotonic()+timeout
         retained = 0
-        selector = selectors.DefaultSelector()
+        process = selector = None
         try:
+            check_cancelled()
+            process = subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT,env=environment,
+                                       cwd=f'/proc/self/fd/{run_fd}',pass_fds=(run_fd,),
+                                       start_new_session=True)
+            check_cancelled()
+            selector = selectors.DefaultSelector()
             os.set_blocking(process.stdout.fileno(),False)
             selector.register(process.stdout,selectors.EVENT_READ)
             while True:
+                check_cancelled()
                 if time.monotonic() >= deadline:
                     raise RuntimeError('Render worker timeout')
                 for key,_ in selector.select(min(0.1,max(0,deadline-time.monotonic()))):
@@ -78,14 +111,16 @@ def _execute(argv, run_fd, log_fd, timeout):
                         if retained < c.LOG_LIMIT-4096:
                             chunk = data[:c.LOG_LIMIT-4096-retained]
                             os.write(log_fd,chunk); retained += len(chunk)
+                    check_cancelled()
                     if status != 0: raise RuntimeError(f'Render worker exited with status {status}')
                     return
         finally:
-            try: os.killpg(process.pid,signal.SIGKILL)
-            except ProcessLookupError: pass
-            process.wait()
-            selector.close()
-            process.stdout.close()
+            if process is not None:
+                try: os.killpg(process.pid,signal.SIGKILL)
+                except ProcessLookupError: pass
+                process.wait()
+                process.stdout.close()
+            if selector is not None: selector.close()
 
 
 def _capture(asset_json, manifest, run_fd):

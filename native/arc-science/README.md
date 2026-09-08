@@ -109,11 +109,24 @@ Object without Unix signal grace. Cancellation exits 130; normal child exit code
 are propagated, and Unix signal exits use `128 + signal`. Configuration/launch
 errors exit 1; argument errors exit 2.
 
-The Linux fixture proves graceful Python-child reaping, forced termination of an
-unresponsive descendant, and cleanup after leader exit. Forced orphaned Unix
-grandchildren are reaped by the OS's adopter, not by this non-subreaper supervisor;
-tests distinguish a non-running zombie from a live orphan. A child that deliberately
-escapes its process group is outside this trusted-worker contract. SIGKILL/crash
+Linux stdlib fixtures establish a positive live descendant handshake, then require
+bounded EOF on a FIFO whose only writer belongs to that descendant, for forced
+termination and cleanup after leader exit. The graceful fixture additionally waits
+its own child before publishing a reaped marker. These tests do not infer death
+from inaccessible `/proc` data. Native reaps its direct Python child; orphaned Unix
+grandchildren are reaped by the OS's adopter, not this non-subreaper supervisor.
+
+The shipped figure/molecule executor owns a separate renderer session for standalone
+timeouts and log isolation. Its scoped main-thread SIGINT/SIGTERM handling defers
+cancellation across OS-child acquisition, then kills the renderer group and waits
+its direct child before exit. Setup failures also enter that cleanup. Caller signal
+handlers are restored; BioArt alarm/deadline state is unchanged. The application
+lifetime tests exercise real native → Python → this executor with a stdlib renderer,
+positive FIFO readiness, bounded EOF and direct-renderer `ECHILD` evidence, including
+SIGTERM injected at acquisition/setup boundaries. This is not Blender qualification.
+
+A child that deliberately escapes its owner's process group is outside this
+trusted-worker contract. SIGKILL/crash
 of the supervisor and OS-uninterruptible process states cannot promise graceful
 cleanup or a fixed reap deadline. Windows/macOS execution remains pending.
 
@@ -145,7 +158,16 @@ cargo build --release --locked
 Tests run a deterministic local Python-stdlib module fixture, not mocked spawning.
 Python 3 must be on PATH (`python3` on Unix, `python` on Windows), or set
 `ARC_NATIVE_TEST_PYTHON` to an explicit executable. Linux process-tree tests use
-`/proc` and `kill`; they do not make network requests or run scientific work.
+local FIFOs and signals; they do not make network requests or run scientific work.
+The stdin test keeps the supervisor's pipe writer open until bounded worker exit,
+so inheriting input cannot accidentally pass. Acquisition tests cover setup-error
+live-child/reaping checks and a successful child that exits before the post-spawn hook.
+For renderer integration, build the debug native binary first, then run
+`PYTHONPATH=src python -m pytest tests/test_render_lifetime.py -q` from
+`apps/arc-science` using the application Python environment. Without that binary,
+the three native integration cases explicitly skip; standalone cases still run.
+The Linux module-entrypoint CI job builds and checks that binary before running
+both test files, so a clean checkout does not silently skip native integration.
 The Python module-entrypoint test separately runs the real worker's `--help`.
 
 Release settings use LTO, one codegen unit, and stripping. Measurements and exact

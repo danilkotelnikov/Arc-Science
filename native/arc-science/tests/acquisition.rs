@@ -125,7 +125,8 @@ impl CommandWrapper for SuccessfulWrapper {
         child: &mut Child,
         _: &CommandWrap,
     ) -> io::Result<()> {
-        assert!(child.try_wait()?.is_none());
+        // Deterministically model a child that exits before post_spawn runs.
+        assert_eq!(child.wait()?.code(), Some(23));
         self.0.lock().unwrap().push("post");
         Ok(())
     }
@@ -145,7 +146,10 @@ fn successful_acquisition_delegates_hooks_and_preserves_child_execution() {
     let mut command = command();
     // Replace the sleeper argv, preserving the configured Python executable.
     command = Command::new(command.get_program());
-    command.args(["-c", "import os,time; time.sleep(0.1); raise SystemExit(int(os.environ['ACQUISITION_TEST_CODE']))"]);
+    command.args([
+        "-c",
+        "import os; raise SystemExit(int(os.environ['ACQUISITION_TEST_CODE']))",
+    ]);
     let mut child = acquire::spawn(command, SuccessfulWrapper(Arc::clone(&stages))).unwrap();
     assert_eq!(*stages.lock().unwrap(), ["pre", "post", "wrap"]);
     assert_eq!(child.wait().unwrap().code(), Some(23));

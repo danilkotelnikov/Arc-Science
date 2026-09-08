@@ -113,6 +113,34 @@ test('empty saved missions and public example failures have actionable states',a
   expect(await screen.findByText('No saved missions. Create a mission to begin.')).toBeInTheDocument();
 });
 
+test('failed authenticated artifact stops loading and retries without losing Research state',async()=>{
+  selectedRow.state.artifacts=[{digest:'d'.repeat(64),source_observation_id:'obs-1',media_type:'image/png'}];
+  const normalFetch=fetch.getMockImplementation();let unavailable=true;
+  fetch.mockImplementation(async(path,options)=>{
+    if(path.includes('/artifacts/')&&unavailable){requests.push({path,options});return new Response('unavailable',{status:503});}
+    return normalFetch(path,options);
+  });
+  const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
+  await user.type(screen.getByLabelText('Local operator token'),'private');
+  await user.click(screen.getByRole('button',{name:'Load missions'}));
+  await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
+  expect(await screen.findByText(/Artifact unavailable:/)).toHaveTextContent('503');
+  expect(screen.queryByText('Loading authenticated artifact…')).not.toBeInTheDocument();
+  expect(screen.queryByRole('img',{name:'Artifact from obs-1'})).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button',{name:'Molecules'}));await user.click(screen.getByRole('button',{name:'Research'}));
+  expect(screen.getByLabelText('Local operator token')).toHaveValue('private');
+  expect(screen.getByText('Selected mission: mission-1')).toBeVisible();
+  unavailable=false;
+  await user.click(screen.getByRole('button',{name:'Retry artifact'}));
+  expect(await screen.findByRole('img',{name:'Artifact from obs-1'})).toHaveAttribute('src','blob:artifact');
+  expect(screen.queryByText(/Artifact unavailable:/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  const calls=requests.filter(r=>r.path?.includes('/artifacts/'));
+  expect(calls).toHaveLength(2);
+  expect(calls.every(r=>r.options.headers.Authorization==='Bearer private')).toBe(true);
+  expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
+});
+
 test('view selection and export work from the keyboard',async()=>{
   const user=userEvent.setup();render(<App/>);
   const tab=await screen.findByRole('tab',{name:'Collage'});

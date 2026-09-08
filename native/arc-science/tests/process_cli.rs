@@ -75,6 +75,11 @@ fn help_needs_no_project_or_python() {
 
 #[test]
 fn worker_preserves_arguments_environment_cwd_and_noninteractive_streams() {
+    use std::{
+        process::Stdio,
+        thread,
+        time::{Duration, Instant},
+    };
     let temp = fixture();
     let args = [
         "echo",
@@ -84,13 +89,32 @@ fn worker_preserves_arguments_environment_cwd_and_noninteractive_streams() {
         "literal project",
         "--help",
     ];
-    let output = success(
-        worker(&temp)
-            .args(["worker", "--"])
-            .args(args)
-            .env("ARC_BIOART_TIMEOUT_SECONDS", "99")
-            .output()
-            .unwrap(),
+    let mut child = worker(&temp)
+        .args(["worker", "--"])
+        .args(args)
+        .env("ARC_BIOART_TIMEOUT_SECONDS", "99")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Keep the supervisor's input OPEN: inheriting it would block Python's read.
+    let input = child.stdin.take().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let completed = loop {
+        if child.try_wait().unwrap().is_some() {
+            break true;
+        }
+        if Instant::now() >= deadline {
+            break false;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    drop(input); // Also release the fixture on a failing inherited-input mutation.
+    let output = success(child.wait_with_output().unwrap());
+    assert!(
+        completed,
+        "worker inherited supervisor stdin instead of receiving EOF"
     );
     let value = record(&temp);
     assert_eq!(value["args"], serde_json::json!(args));
@@ -273,38 +297,64 @@ fn signal_exit_is_reported_as_128_plus_signal() {
 mod cancellation {
     use super::*;
     use std::{
+        io::{self, Read},
+        os::unix::fs::OpenOptionsExt,
         process::{Child, Stdio},
         thread,
         time::{Duration, Instant},
     };
 
-    fn running(pid: u32) -> bool {
-        fs::read_to_string(format!("/proc/{pid}/stat"))
-            .ok()
-            .is_some_and(|s| {
-                s.rsplit_once(") ")
-                    .is_some_and(|(_, tail)| !tail.starts_with('Z'))
-            })
-    }
     struct Cleanup {
         child: Child,
         descendants: Vec<u32>,
+        spawned: std::path::PathBuf,
     }
     impl Drop for Cleanup {
         fn drop(&mut self) {
+            // Give the real supervisor its normal group-cleanup path even if
+            // setup/readiness failed before the test learned the worker PIDs.
+            if self.child.try_wait().ok().flatten().is_none() {
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(self.child.id() as i32),
+                    nix::sys::signal::Signal::SIGTERM,
+                );
+                let deadline = Instant::now() + Duration::from_secs(3);
+                while self.child.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
             let _ = self.child.kill();
             let _ = self.child.wait();
+            if let Ok(bytes) = fs::read(&self.spawned)
+                && let Ok(pids) = serde_json::from_slice::<Vec<u32>>(&bytes)
+            {
+                self.descendants.extend(pids);
+            }
             for pid in &self.descendants {
-                if running(*pid) {
-                    let _ = Command::new("kill")
-                        .args(["-KILL", &pid.to_string()])
-                        .status();
-                }
+                // Failure cleanup never interprets inaccessible /proc as death.
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(*pid as i32),
+                    nix::sys::signal::Signal::SIGKILL,
+                );
             }
         }
     }
     fn exercise(mode: &str, signal: Option<&str>) {
         let temp = fixture();
+        let endpoint = temp.path().join("lifetime.fifo");
+        assert!(
+            Command::new(python())
+                .args(["-c", "import os,sys; os.mkfifo(sys.argv[1])"])
+                .arg(&endpoint)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let mut lifetime = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_NONBLOCK)
+            .open(&endpoint)
+            .unwrap();
         let child = worker(&temp)
             .args(["worker", "--", mode])
             .stdout(Stdio::null())
@@ -314,6 +364,7 @@ mod cancellation {
         let mut guard = Cleanup {
             child,
             descendants: Vec::new(),
+            spawned: temp.path().join("record.spawned"),
         };
         let start = Instant::now();
         while !temp.path().join("record.json").exists() {
@@ -336,6 +387,38 @@ mod cancellation {
             value["pid"].as_u64().unwrap() as u32,
             value["child"].as_u64().unwrap() as u32,
         ];
+        // The grandchild opens its own writer after exec; no other process has
+        // a copy. Its PID message proves the observer saw a live writer first.
+        let mut ready = Vec::new();
+        loop {
+            let mut byte = [0];
+            match lifetime.read(&mut byte) {
+                Ok(1) => {
+                    ready.push(byte[0]);
+                    if byte[0] == b'\n' {
+                        break;
+                    }
+                }
+                Ok(_) => panic!("descendant never supplied a live handshake"),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Err(error) => panic!("lifetime read failed: {error}"),
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "no live handshake"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            String::from_utf8(ready)
+                .unwrap()
+                .trim()
+                .parse::<u32>()
+                .unwrap(),
+            guard.descendants[1]
+        );
+        // Leader exit is gated until the live observer has received readiness.
+        fs::write(temp.path().join("release"), "ready observed").unwrap();
         if let Some(signal) = signal {
             assert!(
                 Command::new("kill")
@@ -356,11 +439,19 @@ mod cancellation {
             thread::sleep(Duration::from_millis(10));
         };
         assert_eq!(status.code(), Some(if signal.is_some() { 130 } else { 7 }));
-        for pid in &guard.descendants {
-            while running(*pid) && start.elapsed() < Duration::from_secs(6) {
-                thread::sleep(Duration::from_millis(10));
+        let eof_deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            match lifetime.read(&mut [0]) {
+                Ok(0) => break,
+                Ok(_) => panic!("unexpected data after live handshake"),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Err(error) => panic!("lifetime read failed: {error}"),
             }
-            assert!(!running(*pid), "orphan process {pid}");
+            assert!(
+                Instant::now() < eof_deadline,
+                "live descendant retained its writer"
+            );
+            thread::sleep(Duration::from_millis(10));
         }
         if mode == "tree" {
             assert_eq!(

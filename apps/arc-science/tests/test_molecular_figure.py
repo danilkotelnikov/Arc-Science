@@ -202,6 +202,32 @@ def test_no_contact_caption_truthfully_scopes_full_complex_fallback(tmp_path):
     assert 'No contacts at the selected cutoff' in caption
     assert 'full selected complex' in caption
     assert 'three closest geometric residue pairs from b' not in caption
+    assert 'locator encloses' not in caption
+    assert 'No locator is shown' in caption
+
+
+@pytest.mark.parametrize('count,description', [(1, '1 closest geometric residue pair'), (2, '2 closest geometric residue pairs')])
+@pytest.mark.parametrize('locator', [False, True])
+def test_caption_uses_actual_selection_pair_count_and_locator(tmp_path, count, description, locator):
+    from arc_science.molecular import prepare_complex
+    figure = module('molecular_figure')
+    scene = prepare_complex(structure(tmp_path), antibody_chains=('L','H'), antigen_chains=('A',), assembly='asymmetric_unit')
+    scene['contacts'] = [dict(antibody_residue=f'H:{n}', antigen_residue='A:7',
+        antibody_atom=f'H:{n}:CA', antigen_atom='A:7:CA', distance=2+n/10, atom_pair_count=1)
+        for n in range(1, count+1)]
+    scene['residues'] = [dict(id=f'H:{n}') for n in range(1, count+1)] + [dict(id='A:7')]
+    images(tmp_path)
+    if locator:
+        (tmp_path/'worker-receipt.json').write_text(json.dumps({'views': {'overview': {
+            'annotations': {'interface_bounds': [80,60,120,100]}}}}))
+    figure.compose_complex(scene, tmp_path, width=640)
+    caption = (tmp_path/'caption.md').read_text()
+    assert 'asymmetric unit' in caption
+    assert 'biological assembly' not in caption
+    assert description in caption
+    assert 'three closest' not in caption
+    assert ('locator encloses' in caption) == locator
+    assert ('No locator is shown' in caption) != locator
 
 
 def test_camera_basis_is_finite_for_coincident_partner_centroids():

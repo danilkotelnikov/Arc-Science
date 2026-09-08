@@ -1,9 +1,9 @@
 name: Arc Science native supervisor
 on:
   push:
-    paths: ['native/arc-science/**', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/tests/test_module_entrypoint.py', '.github/workflows/arc-native.yml']
+    paths: ['native/arc-science/**', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/src/arc_science/figure_render.py', 'apps/arc-science/tests/test_module_entrypoint.py', 'apps/arc-science/tests/test_render_lifetime.py', 'apps/arc-science/tests/fixtures/render_lifetime.py', '.github/workflows/arc-native.yml']
   pull_request:
-    paths: ['native/arc-science/**', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/tests/test_module_entrypoint.py', '.github/workflows/arc-native.yml']
+    paths: ['native/arc-science/**', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/src/arc_science/figure_render.py', 'apps/arc-science/tests/test_module_entrypoint.py', 'apps/arc-science/tests/test_render_lifetime.py', 'apps/arc-science/tests/fixtures/render_lifetime.py', '.github/workflows/arc-native.yml']
 permissions:
   contents: read
 jobs:
@@ -27,7 +27,11 @@ jobs:
       - run: cargo clippy --locked -- -D warnings
       - run: cargo build --release --locked
       # This matrix qualifies only the native supervisor/stdlib test fixture.
-      # Windows BioArt is unsupported; Linux process-tree tests use /proc.
+      # Windows BioArt is unsupported; Linux process-tree tests use sole-writer
+      # FIFO readiness/EOF, not /proc absence. Native reaps its direct child;
+      # orphan grandchildren are reaped by their OS adopter. Matrix configuration
+      # is not evidence of successful Windows/macOS execution. Real renderer-
+      # executor lifecycle integration lives in the application pytest suite.
       # No scientific-worker, live-network, Blender, or GUI qualification here.
   module-entrypoint:
     runs-on: ubuntu-latest
@@ -40,4 +44,9 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install . pytest
-      - run: python -m pytest tests/test_module_entrypoint.py -q
+      # Linux-only native → real executor coverage uses the application's
+      # existing dependencies, but its renderer is strictly a stdlib fixture.
+      - run: rustup toolchain install 1.90.0 --profile minimal
+      - run: cargo +1.90.0 build --locked --manifest-path ../../native/arc-science/Cargo.toml
+      - run: test -x ../../native/arc-science/target/debug/arc-science-native
+      - run: python -m pytest tests/test_module_entrypoint.py tests/test_render_lifetime.py -q -rs

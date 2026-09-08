@@ -13,8 +13,17 @@ child = None
 if mode in ('tree', 'stubborn-tree', 'exit-tree'):
     child = subprocess.Popen([
         sys.executable, '-c',
-        'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)',
-    ])
+        '''import os,signal,sys,time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+lifetime = os.open(sys.argv[1], os.O_WRONLY)
+os.write(lifetime, (str(os.getpid()) + '\\n').encode())
+print('live', flush=True)
+time.sleep(60)
+''', str(record.parent / 'lifetime.fifo'),
+    ], stdout=subprocess.PIPE)
+    record.with_suffix('.spawned').write_text(json.dumps([os.getpid(), child.pid]))
+    assert child.stdout.readline() == b'live\n'
+    child.stdout.close()
     if mode == 'tree':
         def cancel(signum, frame):
             child.kill()
@@ -37,6 +46,11 @@ if mode == 'exit':
 if mode == 'signal':
     os.kill(os.getpid(), signal.SIGTERM)
 if mode == 'exit-tree':
+    deadline = time.monotonic() + 5
+    while not (record.parent / 'release').exists():
+        if time.monotonic() >= deadline:
+            raise RuntimeError('Observer never acknowledged live descendant')
+        time.sleep(.01)
     raise SystemExit(7)
 if child:
     while True:

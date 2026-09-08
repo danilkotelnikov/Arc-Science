@@ -125,11 +125,16 @@ def compose_complex(scene: dict, output: Path, *, width: int = 1400) -> dict:
     cairosvg.svg2png(bytestring='\n'.join(svg).encode(),write_to=str(output/'collage.png'))
     from .molecular_worker import select_detail_contacts
     detail_pairs=select_detail_contacts(scene)
+    pair_description=f'{len(detail_pairs)} closest geometric residue pair'+('' if len(detail_pairs)==1 else 's')
+    assembly_description=(selection['assembly_application'] if selection['assembly']=='asymmetric_unit'
+                          else f'biological assembly {selection["assembly"]} ({selection["assembly_application"]})')
+    locator=('The thin locator encloses the projected atoms of contacting residues shown in b.'
+             if annotation_records['overview'].get('interface_bounds') else 'No locator is shown in a.')
     caption=[f'# {Path(scene["source"]["name"]).stem}: antibody–antigen interface',
-        '',f'Author chains {", ".join(selection["antibody_chains"])} form one antibody partner; antigen chains: {", ".join(selection["antigen_chains"])}. Model {selection["model_number"]}, biological assembly {selection["assembly"]} ({selection["assembly_application"]}).',
-        '', '**a.** Full selected complex as coordinate-derived illustrative atomic envelopes. The thin locator encloses the projected atoms of contacting residues shown in b. These Gaussian density surfaces are approximate, not solvent-excluded surfaces.',
-        '', '**b.** All residues participating in geometric inter-partner contacts. Individual residue covalent sticks retain deposited positions. Labels identify residues in the three closest geometric pairs, using author chain, residue number and insertion code.',
-        '', '**c.** The three closest geometric residue pairs from b, shown in a rotated local view. All other residues are omitted. Labels and dashed distance segments are projections of deposited atom coordinates. Dashed segments denote geometric separation, not hydrogen bonds. Numbers are distances between the closest heavy atoms of each residue pair.',
+        '',f'Author chains {", ".join(selection["antibody_chains"])} form one antibody partner; antigen chains: {", ".join(selection["antigen_chains"])}. Model {selection["model_number"]}, {assembly_description}.',
+        '', f'**a.** Full selected complex as coordinate-derived illustrative atomic envelopes. {locator} These Gaussian density surfaces are approximate, not solvent-excluded surfaces.',
+        '', f'**b.** All residues participating in geometric inter-partner contacts. Individual residue covalent sticks retain deposited positions. Labels identify residues in the {pair_description}, using author chain, residue number and insertion code.',
+        '', f'**c.** The {pair_description} from b, shown in a rotated local view. All other residues are omitted. Labels and dashed distance segments are projections of deposited atom coordinates. Dashed segments denote geometric separation, not hydrogen bonds. Numbers are distances between the closest heavy atoms of each residue pair.',
         '',f'**d.** Complete binary residue contact matrix: {len(contacts)} pairs. A uniform dot marks a minimum heavy-atom separation ≤ {cutoff:g} Å; absent dots mean no contact at that cutoff. Every contact is retained in contacts.csv.',
         '', '| Antibody atom | Antigen atom | Distance (Å) |', '|---|---|---:|']
     caption.extend(f'| {c["antibody_atom"]} | {c["antigen_atom"]} | {c["distance"]:.4f} |' for c in detail_pairs)

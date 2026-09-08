@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "vite build && node scripts/package-ui.mjs",
+    "build": "node scripts/package-ui.mjs --clean-dist && vite build && node scripts/package-ui.mjs",
     "test": "vitest run"
   },
   "dependencies": {
