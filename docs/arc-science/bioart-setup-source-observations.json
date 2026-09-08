@@ -1,0 +1,81 @@
+{
+  "schema": "arc-bioart-setup-observations/1",
+  "observed_at": "2026-09-08",
+  "source_branch": "arc-science-bioart-setup",
+  "baseline_commit": "660ef2b7bae6325caae6e1417331ab6a3c278957",
+  "nih": {
+    "origin": "https://bioart.niaid.nih.gov",
+    "primary_sources": [
+      "https://www.niaid.nih.gov/research/nih-bioart-source",
+      "https://bioart.niaid.nih.gov/faqs",
+      "https://bioart.niaid.nih.gov/terms"
+    ],
+    "formats": [
+      "SVG",
+      "AI",
+      "EPS",
+      "PNG"
+    ],
+    "license_policy": "Entry-specific; Arc automatically fetches/imports exact Public Domain only.",
+    "stable_public_api_found": false,
+    "live_vector_transfer_verified": false
+  },
+  "github": {
+    "repository": "danilkotelnikov/vedix",
+    "read_metadata_succeeded": true,
+    "read_known_base_succeeded": true,
+    "attempted_development_branch": "arc-science-bioart-setup",
+    "branch_write_succeeded": false,
+    "status": 403,
+    "error": "Resource not accessible by integration",
+    "further_sync_attempts": false
+  },
+  "plugins": {
+    "superdesign": "Existing direction preserved; no new authentication attempt after earlier login timeout.",
+    "jinko": "Router only; no QSP task applies.",
+    "superpowers": "TDD, single-writer implementation and independent review.",
+    "supericons": "Recommendations rejected after semantic review; no new icons adopted.",
+    "parallel_search": "NIH primary guidance.",
+    "undermind": "Paper abstracts and bibliographic identifiers.",
+    "alphaxiv": "Discovery and raw selected paper pages."
+  },
+  "research": [
+    {
+      "url": "https://arxiv.org/abs/2609.01481",
+      "title": "Harness-of-Harness: Multi-Day Autonomous Software Development with Continual Improvement",
+      "evidence": "Selected raw pages 1, 2, 4, 5",
+      "status": "preprint",
+      "application": "Fixed role/runtime policy; bounded versioned software increments; independent QA."
+    },
+    {
+      "url": "https://arxiv.org/abs/2608.13331",
+      "title": "Training AI Scientists to Replicate Research",
+      "evidence": "Selected raw pages 1–5",
+      "status": "preprint",
+      "application": "Distinguish visual similarity from actual experiments, claim support and integrity."
+    },
+    {
+      "url": "https://arxiv.org/abs/2608.14869",
+      "title": "RaivenTracks: Branching Provenance for Conversational Visualization Workflows",
+      "evidence": "Abstract and bibliographic metadata only",
+      "status": "preprint",
+      "application": "Research lead, not a shipped Arc subsystem."
+    },
+    {
+      "url": "https://arxiv.org/abs/2607.27556",
+      "title": "Evaluating Agentic Bioinformatics through Function, Evidence, and Validation",
+      "evidence": "Abstract and bibliographic metadata only",
+      "status": "preprint",
+      "application": "Research lead; workflow operations, evidence and validation are separate."
+    }
+  ],
+  "limitations": [
+    "I1 renderer force cancellation remains open.",
+    "Windows/macOS runtime and installers unqualified.",
+    "Windows Python BioArt provider unsupported.",
+    "No new UI or live visual-model comparison in this increment.",
+    "No live NIH vector transfer or automatic browser fallback.",
+    "No Lean gate execution or full Rust scientific rewrite."
+  ]
+}
+
