@@ -40,6 +40,22 @@ def test_owned_deadline_returns_bounded_file_result_after_child_exit(tmp_path):
     assert_reaped_and_cleaned(tmp_path)
 
 
+def test_owned_transfer_accepts_symlink_ancestor_in_system_tmpdir(tmp_path,monkeypatch):
+    import tempfile
+    actual=tmp_path/'actual';(actual/'nested').mkdir(parents=True)
+    alias=tmp_path/'temporary-alias';alias.symlink_to(actual,target_is_directory=True)
+    monkeypatch.setattr(tempfile,'tempdir',str(alias/'nested'))
+    result=supervisor()(command(tmp_path),{'path':'/success','limit':1024},timeout=2,limit=1024)
+    assert result==b'synthetic child bytes'
+    child=json.loads((tmp_path/'child.json').read_text())
+    assert Path(child['directory']).parent==actual/'nested'
+    assert child['directory_mode']==0o700
+    assert child['directory_owner']==os.geteuid()
+    assert_reaped_and_cleaned(tmp_path)
+    assert alias.is_symlink()
+    assert list((actual/'nested').iterdir())==[]
+
+
 def test_owned_deadline_oversize_transfer_is_terminated_and_reaped(tmp_path):
     with pytest.raises(ValueError,match='size|limit'):
         supervisor()(command(tmp_path),{'path':'/oversize','limit':1024},timeout=2,limit=1024)

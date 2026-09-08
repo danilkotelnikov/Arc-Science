@@ -4,11 +4,14 @@ import json
 import os
 from pathlib import Path
 import signal
+import stat
 import sys
 
 report=Path(sys.argv[1]);root=Path(sys.argv[2])
 request=json.loads((root/'request.json').read_text())
-report.write_text(json.dumps({'pid':os.getpid(),'directory':str(root)}))
+info=root.stat()
+report.write_text(json.dumps({'pid':os.getpid(),'directory':str(root),
+    'directory_mode':stat.S_IMODE(info.st_mode),'directory_owner':info.st_uid}))
 if request['path']=='/success':
     (root/'response.bin').write_bytes(b'synthetic child bytes')
     (root/'result.json').write_text('{"ok":true}')

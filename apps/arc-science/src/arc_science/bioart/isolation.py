@@ -51,7 +51,12 @@ def _run_worker(command,request,*,timeout,limit):
     end=time.monotonic()+timeout
     data=encoded(request)
     if len(data)>4096:raise ValueError('BioArt worker request exceeds limit')
-    with tempfile.TemporaryDirectory(prefix='arc-bioart-http-') as directory:
+    # System TMPDIR may legitimately use a symlink alias (for example /var on
+    # macOS). Resolve that parent before creating our private mode-0700 directory,
+    # so both no-follow operations and TemporaryDirectory cleanup use its real path.
+    # User cache/source paths retain their separate strict no-symlink policy.
+    temporary_parent=Path(tempfile.gettempdir()).resolve(strict=True)
+    with tempfile.TemporaryDirectory(prefix='arc-bioart-http-',dir=temporary_parent) as directory:
         root=Path(directory)
         fd=_open_directory(root)
         try:_write_regular_at(fd,'request.json',data)
