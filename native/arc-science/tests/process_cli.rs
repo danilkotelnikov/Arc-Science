@@ -324,10 +324,10 @@ mod cancellation {
             thread::sleep(Duration::from_millis(10));
         }
         let value = loop {
-            if let Ok(bytes) = fs::read(temp.path().join("record.json")) {
-                if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
-                    break value;
-                }
+            if let Ok(bytes) = fs::read(temp.path().join("record.json"))
+                && let Ok(value) = serde_json::from_slice::<Value>(&bytes)
+            {
+                break value;
             }
             assert!(start.elapsed() < Duration::from_secs(5));
             thread::sleep(Duration::from_millis(10));

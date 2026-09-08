@@ -95,7 +95,13 @@ existing Python CLI directly for those flows.
 
 The pinned [process-wrap 9.0.0 std API](https://docs.rs/process-wrap/9.0.0/process_wrap/std/index.html)
 provides Unix ProcessGroup and Windows JobObject containment. Signal handlers are
-installed before spawn. On Unix, Ctrl-C/SIGTERM/SIGHUP request group SIGTERM and
+installed before spawn. A native single-wrapper acquisition guard owns the raw
+child immediately after OS creation and before fallible post-spawn/JobObject
+setup; setup failure kills and waits that child before returning an error. The
+guard disarms only after wrapper acquisition succeeds, handing lifecycle ownership
+to the supervisor. This closes an unguarded setup-error path in the pinned
+dependency; Windows execution still requires its own qualification.
+On Unix, Ctrl-C/SIGTERM/SIGHUP request group SIGTERM and
 allow at most two seconds for Python cleanup; another signal skips the grace.
 Then the group is force-killed and the direct child reaped. Descendants are also
 terminated if the leader exits first. Windows cancellation terminates the Job

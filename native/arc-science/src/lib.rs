@@ -1,3 +1,4 @@
+pub mod acquire;
 pub mod config;
 pub mod process;
 

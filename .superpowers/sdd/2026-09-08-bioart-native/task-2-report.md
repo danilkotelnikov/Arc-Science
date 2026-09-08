@@ -316,3 +316,124 @@ were added to the application. No push.
 
 Commit: task implementation/report committed together; see the commit containing
 this report (hash also returned in the handoff). No unrelated controller files included.
+
+## Fix round 1 — own the child across fallible containment setup
+
+Starting HEAD `177921c` (controller documentation); original native implementation
+`c87b1788cf9a66b65e62c4f2d135499f98501b92`. Read the full saved
+`task-2-review.md`. Its Important finding is verified against pinned source:
+`CommandWrap::spawn` creates a raw child before `post_spawn`/`wrap_child`; Windows
+JobObject sets CREATE_SUSPENDED, then fallible job assignment/resumption may fail
+while no native ChildGuard exists. Dropping raw Child does not kill or wait it.
+
+Normal `/root/.cargo/bin/cargo info process-wrap@9.1.0` downloaded compatible
+9.1.0 (MSRV1.87) for inspection only. Its pipeline and JobObject have the same
+gap; production remains pinned9.0.0. No registry/cache modification, vendoring,
+raw Windows handle duplication, new privilege, external sync, or subagent.
+
+### Changes
+
+- Added small `native/arc-science/src/acquire.rs`, exported by `src/lib.rs` and
+  called by `src/process.rs` instead of the dependency's generic spawn pipeline.
+  It drives the actual single ProcessGroup OR JobObject public hooks in order:
+  pre_spawn, OS spawn, post_spawn, wrap_child. Actual wrappers do not require
+  sibling-wrapper state; the empty context is deliberate, not a replacement
+  general multi-wrapper framework.
+- A raw Child is captured in an infallible RAII struct immediately after OS spawn,
+  before any post_spawn or wrap_child setup. The guarded ChildWrapper is consumed
+  by JobObject; an error during setup/resumption drops it, invoking raw kill and
+  wait before error return. No unsafe filesystem/Windows workaround was added.
+- Guard arming state is allocated before spawning. It disarms only after wrapping
+  succeeds and the returned child passes to the existing supervisor guard. This
+  also avoids a raw-PID kill on later drop after ProcessGroup has already reaped
+  the child through waitpid. Existing graceful/forced group lifecycle is unchanged.
+- Added `tests/acquisition.rs`: both failing-hook paths around a real Python
+  sleeper, plus success hook-order/environment/exit delegation. Unix tests assert
+  Child::try_wait is None inside the hook (real created/live child), and same-parent
+  waitpid(WNOHANG) returns ECHILD after failure, proving prior reap rather than
+  just termination/zombie state. Test-only RED cleanup kills AND waits a survivor.
+- Added exact Unix dev dependency nix0.30.1 with process/signal features; it was
+  already transitively locked. Cargo.lock gains only the root dependency edge.
+- Native README describes acquisition ownership and unchanged Windows limits.
+- All-target Clippy exposed an existing nested-if lint in tests/process_cli.rs;
+  converted that one nested file-read/JSON parse into an equivalent let-chain.
+  No EOF/lifecycle assertion semantics changed in this fix round.
+
+### TDD and exact output
+
+Cwd for all commands:
+`/workspace/scratch/0894be2b5454/vedix-arc-science/native/arc-science`.
+
+The first regression attempt used immediate /proc/PID absence as its assertion
+and unexpectedly produced2passes against the still-unfixed dependency path
+(`cargo test --locked --test acquisition`,0.00s). This was rejected as a false
+GREEN before adding a fix. A temporary forwarding acquisition function still
+called the original CommandWrap::spawn, ensuring the improved tests exercised
+the leak. Its harmless unused-mut warning was removed. Tests were strengthened
+to a live Child::try_wait at the hook plus same-parent waitpid/ECHILD afterward.
+
+RED command (offline only because adding an already-cached direct dev dependency
+updates the lock's root edge):
+
+```bash
+ARC_NATIVE_TEST_PYTHON=/workspace/scratch/0894be2b5454/arc-science/arc-science/.venv/bin/python /root/.cargo/bin/cargo test --offline --test acquisition
+```
+
+Exit101; `0 passed; 2 failed; ... finished in 0.00s`. Both exact failures:
+`created child must be killed AND reaped before error return`, actual
+`Ok(StillAlive)`, expected `Err(ECHILD)`. Both real survivors killed/waited by
+test-only cleanup; no leaked fixture left by the corrected RED tests.
+
+After implementing acquisition ownership, GREEN command:
+
+```bash
+/root/.cargo/bin/cargo fmt && ARC_NATIVE_TEST_PYTHON=/workspace/scratch/0894be2b5454/arc-science/arc-science/.venv/bin/python /root/.cargo/bin/cargo test --locked --test acquisition
+```
+
+Exit0; `3 passed; 0 failed; ... finished in 0.12s`. Success case verifies hooks
+pre/post/wrap, propagated environment and real child exit23, not just mock calls.
+
+First covering command used fmt check, the3native integration suites,
+`cargo clippy --locked --all-targets -- -D warnings`, then release build.
+Tests passed3+5+12; Clippy stopped before build for new guard collapsible_if.
+Changed the guard to an early return. The next all-target Clippy exposed the
+pre-existing nested-if test lint; applied the behavior-preserving let-chain above.
+
+Final covering command:
+
+```bash
+/root/.cargo/bin/cargo fmt && /root/.cargo/bin/cargo fmt --check && ARC_NATIVE_TEST_PYTHON=/workspace/scratch/0894be2b5454/arc-science/arc-science/.venv/bin/python /root/.cargo/bin/cargo test --locked --test acquisition --test process_cli --test config_cli && /root/.cargo/bin/cargo clippy --locked --all-targets -- -D warnings && /root/.cargo/bin/cargo build --release --locked
+```
+
+Combined exit0: acquisition3passed in0.12s; config5passed in0.06s;
+process12passed in2.09s; all-target Clippy clean in0.16s; release build clean
+in9.93s. `git diff --check` clean. No broad application, scientific, frontend,
+legacy, network, or cross-platform suite run. Previous timing/RSS samples and
+binary hash earlier in this report describe the original c87b178 build only;
+timing/RSS were not rerun for this acquisition fix.
+
+Affected release size check (`stat -c '%s bytes'` and `sha256sum` on
+`native/arc-science/target/release/arc-science-native`, repository-root cwd):
+**1163080 bytes**; SHA256
+`66ad72ca36695d22ff83d7ae80530a3ba8b55e3987f51f7ec9c2a62579c0a8c2`.
+
+### Remaining review concerns and self-review
+
+Windows JobObject setup/resumption branch remains source-reviewed, not executed.
+The injected actual failure paths execute on Linux; the Unix ECHILD tests are
+configured for macOS too but not run there. Kill/wait follows OS process semantics,
+not a new guarantee about uninterruptible waits or arbitrary external permissions.
+
+Observed /proc false-absence is important evidence against overclaiming the
+earlier forced-descendant/leader-exit tests: a child reported absent from the
+process directory was demonstrably StillAlive to its actual parent. Controller
+was notified and will carry stronger descendant-lifetime assertions to whole-branch
+review. Those existing tests were not semantically expanded in this bounded fix.
+The review's separate Minor EOF-test weakness also remains deferred: output()
+supplies EOF itself, although production correctly uses Stdio::null. Do not
+interpret covering-suite success as independently resolving either deferred issue.
+
+Self-review verified immediate ownership, hook order against pinned public APIs,
+guard survival through consuming wrap_child errors, disarm after success,
+normal wrapper delegation, and untouched config/science/Vedix code. No raw child
+handle escapes this acquisition path. Independent re-review belongs to controller.

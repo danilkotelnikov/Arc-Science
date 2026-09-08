@@ -1,5 +1,5 @@
-use crate::{Result, config::Config};
-use process_wrap::std::{ChildWrapper, CommandWrap};
+use crate::{Result, acquire, config::Config};
+use process_wrap::std::ChildWrapper;
 use std::{
     env,
     ffi::OsString,
@@ -215,14 +215,12 @@ pub fn run(config: &Config, project: &Path, args: &[OsString]) -> Result<i32> {
     ]) {
         command.env(key, value.to_string());
     }
-    let mut wrapped = CommandWrap::from(command);
     #[cfg(unix)]
-    wrapped.wrap(process_wrap::std::ProcessGroup::leader());
+    let wrapper = process_wrap::std::ProcessGroup::leader();
     #[cfg(windows)]
-    wrapped.wrap(process_wrap::std::JobObject);
+    let wrapper = process_wrap::std::JobObject;
     let mut guard = ChildGuard(Some(
-        wrapped
-            .spawn()
+        acquire::spawn(command, wrapper)
             .map_err(|e| format!("Cannot launch Python executable: {e}"))?,
     ));
     let child = guard.0.as_mut().expect("newly spawned child");
