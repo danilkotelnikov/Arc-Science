@@ -9,28 +9,40 @@ not merely a hypothetical hostile child escape. Do not rely on this build for
 native-supervised rendering until that boundary is fixed and tested.
 
 A small Rust CLI for configuring and supervising the existing Python scientific
-worker. Commands: `init`, `config`, `doctor`, `serve`, `worker`; global
+worker. Commands: `init`, `config`, `doctor`, `serve`, `worker`, and
+`bioart`; global
 `--project <existing-directory>`. No GUI, browser engine, scientific rewrite,
 installer, automatic download, or startup network call is included. Tauri is a
 possible later desktop-window integration, not a shipped feature.
 
 ## Build and use
 
-Rust 1.90.0 with rustfmt/clippy is pinned in `rust-toolchain.toml`. Install the
-toolchain using your normal Rust setup if needed. From the repository root:
+Rust 1.90.0 with rustfmt/clippy is pinned in `rust-toolchain.toml`. The examples
+assume Rust and an operator-provisioned virtual environment that already contains
+Arc Science; they do not use global Python/system installs or download packages.
+From the repository root on Linux/macOS:
 
 ```bash
 cargo +1.90.0 build --release --locked --manifest-path native/arc-science/Cargo.toml
-python3.12 -m venv apps/arc-science/.venv
-apps/arc-science/.venv/bin/python -m pip install ./apps/arc-science
-mkdir arc-project
-native/arc-science/target/release/arc-science-native --project arc-project init
+mkdir -p arc-project
+native/arc-science/target/release/arc-science-native --project arc-project \
+  init --python "$PWD/apps/arc-science/.venv/bin/python"
 ```
 
-Edit `arc-project/arc-science.toml`: set `worker.python` to the **absolute path**
-of `apps/arc-science/.venv/bin/python` (one executable, not a shell command).
-The default is `python3` from PATH; an activated environment is another option.
-Then, from the same repository root:
+On Windows PowerShell, the portable config/doctor/generic-worker path is:
+
+```powershell
+cargo +1.90.0 build --release --locked --manifest-path native/arc-science/Cargo.toml
+New-Item -ItemType Directory -Force arc-project | Out-Null
+& native/arc-science/target/release/arc-science-native.exe --project arc-project `
+  init --python (Resolve-Path apps/arc-science/.venv/Scripts/python.exe).Path
+```
+
+`init --python` persists one executable name or path without running, installing,
+or canonicalizing it. Spaces and Unicode are supported; shell text is never
+evaluated. Invalid blank, NUL, or parent-traversing relative paths are rejected
+before the exclusive config file is created. With no option the default is
+`python3` on Unix and `python` on Windows. Then, from the same repository root:
 
 ```bash
 native/arc-science/target/release/arc-science-native --project arc-project config
@@ -46,6 +58,34 @@ fixture. Put **all worker arguments after `--`**, including the worker's own
 `--project` option. Arguments are passed separately; metacharacters are data, not
 shell syntax. Your invoking shell still requires its normal quoting.
 
+First-class BioArt commands delegate to the existing Python interface and provider;
+the native layer does not duplicate transport, metadata, cache, or import logic:
+
+```bash
+# Explicit offline operator-supplied rendered DOM; never launches a browser.
+native/arc-science/target/release/arc-science-native --project arc-project \
+  bioart search antibody --search-html saved-search.html
+# Cache-only unless the operator adds --allow-egress.
+native/arc-science/target/release/arc-science-native --project arc-project bioart inspect 18
+# Defaults to SVG and the provider-selected neutral representation.
+native/arc-science/target/release/arc-science-native --project arc-project bioart fetch 18
+native/arc-science/target/release/arc-science-native --project arc-project \
+  bioart fetch 18 --representation 64 --format SVG --allow-egress
+native/arc-science/target/release/arc-science-native --project arc-project \
+  bioart verify /path/to/cache/receipt.json
+native/arc-science/target/release/arc-science-native --project arc-project \
+  bioart import /path/to/cache/receipt.json
+```
+
+`search`, `inspect`, and `fetch` alone accept `--allow-egress`; it is opt-in.
+`verify` and `import` cannot accept it. `--search-html` conflicts with egress.
+Formats preserve the Python CLI's exact accepted spellings: `svg/png/ai/eps` and
+`SVG/PNG/AI/EPS`. Entry and representation IDs must be positive. Python receives
+the resolved native project once, so its project and the configured cache cannot
+silently diverge. Fetch/import remain limited to exact source-derived
+`Public Domain` metadata, entry-bound file IDs, immutable bytes, hashes, receipts,
+configured limits, and explicit egress.
+
 The native build/config/doctor/module-help path was executed on Linux with Rust
 1.90.0 and Python 3.12.13. The existing scientific dependencies were already
 installed; this is not a fresh-machine install qualification. Windows/macOS CI is
@@ -55,7 +95,11 @@ above, use `target\release\arc-science-native.exe`, and configure the venv's
 Only `.exe`/`.com` executable files are launched there, not batch/shell scripts.
 The native supervisor is intended to be portable; **Windows BioArt is currently
 unsupported**, because the Python cache requires POSIX no-follow filesystem APIs.
+Direct native `bioart` operations fail before Python launch on Windows; native
+`init`, `config`, `doctor`, and generic `worker` support remain available.
 No Windows importer or scientific-worker qualification is implied by a build.
+Only Linux native-to-application BioArt execution is qualified here; macOS remains
+source/stdlib-matrix coverage, not an execution claim.
 
 ## Configuration contract
 
@@ -149,6 +193,11 @@ transport before cleanup. Trusted injected HTTPX clients instead use an availabl
 unblocked POSIX alarm and do not offer the arbitrary-native-code guarantee. These
 provider distinctions are preserved; native launch does not authorize egress.
 See [BioArt provider details](../../apps/arc-science/docs/bioart.md).
+SVG safety/import eligibility requires the application's `vector` optional
+dependency set, including `defusedxml`. A base-only environment preserves an
+otherwise valid SVG original but reports it as download-only; actual SVG import is
+not qualified without that explicitly provisioned dependency set. AI/EPS stay
+download-only and PNG stays preview-only.
 
 `doctor` checks configured/local executable availability without running the
 executables, importing packages, making network requests, or installing anything.
@@ -162,9 +211,9 @@ is inferred.
 ```bash
 cd native/arc-science
 cargo fmt --check
-cargo test --locked
-cargo clippy --locked -- -D warnings
-cargo build --release --locked
+cargo test --locked --offline
+cargo clippy --locked --offline -- -D warnings
+cargo build --release --locked --offline
 ```
 
 Tests run a deterministic local Python-stdlib module fixture, not mocked spawning.
@@ -174,12 +223,14 @@ local FIFOs and signals; they do not make network requests or run scientific wor
 The stdin test keeps the supervisor's pipe writer open until bounded worker exit,
 so inheriting input cannot accidentally pass. Acquisition tests cover setup-error
 live-child/reaping checks and a successful child that exits before the post-spawn hook.
-For renderer integration, build the debug native binary first, then run
-`PYTHONPATH=src python -m pytest tests/test_render_lifetime.py -q` from
+For application integration, build the debug native binary first, then run
+`PYTHONPATH=src python -m pytest tests/test_render_lifetime.py tests/test_native_bioart.py -q` from
 `apps/arc-science` using the application Python environment. Without that binary,
-the three native integration cases explicitly skip; standalone cases still run.
+the native integration cases explicitly skip; standalone cases still run.
 The Linux module-entrypoint CI job builds and checks that binary before running
-both test files, so a clean checkout does not silently skip native integration.
+all three test files, so a clean checkout does not silently skip native integration.
+Its application environment explicitly includes the `vector` extra because the
+offline synthetic SVG test verifies SVG eligibility as well as receipt/hash binding.
 The Python module-entrypoint test separately runs the real worker's `--help`.
 
 Release settings use LTO, one codegen unit, and stripping. Measurements and exact

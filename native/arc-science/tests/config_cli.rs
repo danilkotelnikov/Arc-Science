@@ -1,3 +1,4 @@
+use arc_science_native::config;
 use std::{
     fs,
     process::{Command, Output},
@@ -20,6 +21,58 @@ fn init() -> TempDir {
     let output = run(temp.path(), &["init"]);
     assert!(output.status.success(), "{:?}", output);
     temp
+}
+
+#[test]
+fn init_persists_one_explicit_unicode_executable_without_running_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let selected = "venv space 日本/py$(touch NEVER_EXECUTED); &";
+    let output = run(temp.path(), &["init", "--python", selected]);
+    assert!(output.status.success(), "{output:?}");
+    assert!(!temp.path().join("NEVER_EXECUTED").exists());
+    let config: toml::Value =
+        toml::from_str(&fs::read_to_string(temp.path().join("arc-science.toml")).unwrap()).unwrap();
+    assert_eq!(config["worker"]["python"].as_str(), Some(selected));
+
+    let original = fs::read(temp.path().join("arc-science.toml")).unwrap();
+    assert!(
+        !run(temp.path(), &["init", "--python", "another/python"])
+            .status
+            .success()
+    );
+    assert_eq!(
+        original,
+        fs::read(temp.path().join("arc-science.toml")).unwrap()
+    );
+}
+
+#[test]
+fn init_rejects_invalid_python_before_creating_config() {
+    for selected in ["", "   ", "../venv/bin/python"] {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(
+            !run(temp.path(), &["init", "--python", selected])
+                .status
+                .success(),
+            "accepted {selected:?}"
+        );
+        assert!(!temp.path().join("arc-science.toml").exists());
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    assert!(config::initialize(temp.path(), Some("bin\0python")).is_err());
+    assert!(!temp.path().join("arc-science.toml").exists());
+}
+
+#[test]
+fn init_uses_platform_python_default() {
+    let temp = init();
+    let config: toml::Value =
+        toml::from_str(&fs::read_to_string(temp.path().join("arc-science.toml")).unwrap()).unwrap();
+    assert_eq!(
+        config["worker"]["python"].as_str(),
+        Some(if cfg!(windows) { "python" } else { "python3" })
+    );
 }
 fn mutate(temp: &TempDir, from: &str, to: &str) {
     let path = temp.path().join("arc-science.toml");

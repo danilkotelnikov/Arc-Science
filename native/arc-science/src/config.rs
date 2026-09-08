@@ -43,7 +43,7 @@ impl Default for Config {
         Self {
             schema_version: 1,
             worker: Worker {
-                python: "python3".into(),
+                python: if cfg!(windows) { "python" } else { "python3" }.into(),
                 data: "data".into(),
                 host: "127.0.0.1".into(),
                 port: 8080,
@@ -71,9 +71,14 @@ pub fn project_root(project: &Path) -> Result<PathBuf> {
     Ok(root)
 }
 
-pub fn initialize(project: &Path) -> Result<()> {
+pub fn initialize(project: &Path, python: Option<&str>) -> Result<()> {
     let path = project.join(CONFIG_FILE);
-    let content = toml::to_string_pretty(&Config::default())?;
+    let mut config = Config::default();
+    if let Some(python) = python {
+        config.worker.python = python.into();
+    }
+    config.validate()?;
+    let content = toml::to_string_pretty(&config)?;
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -138,9 +143,7 @@ impl Config {
         if !ip.is_loopback() {
             return Err("worker.host must be loopback".into());
         }
-        if self.worker.python.trim().is_empty() || self.worker.python.contains('\0') {
-            return Err("worker.python must name one executable, not a command line".into());
-        }
+        validate_python(&self.worker.python)?;
         for (name, value, minimum, maximum) in [
             (
                 "max_metadata_bytes",
@@ -175,6 +178,20 @@ impl Config {
         }
         Ok(())
     }
+}
+
+fn validate_python(value: &str) -> Result<()> {
+    if value.trim().is_empty() || value.contains('\0') {
+        return Err("worker.python must name one executable, not a command line".into());
+    }
+    let path = Path::new(value);
+    if path.file_name().is_none() {
+        return Err("worker.python must name one executable, not a directory".into());
+    }
+    if !path.is_absolute() && path.components().count() > 1 {
+        project_path(Path::new("."), path)?;
+    }
+    Ok(())
 }
 
 fn project_path(project: &Path, path: &Path) -> Result<PathBuf> {

@@ -1,4 +1,5 @@
 pub mod acquire;
+pub mod bioart;
 pub mod config;
 pub mod process;
 

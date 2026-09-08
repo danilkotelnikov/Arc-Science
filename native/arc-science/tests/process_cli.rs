@@ -22,7 +22,7 @@ fn fixture() -> TempDir {
         .unwrap();
     assert!(
         native(temp.path())
-            .arg("init")
+            .args(["init", "--python", &python()])
             .output()
             .unwrap()
             .status
@@ -37,7 +37,6 @@ fn fixture() -> TempDir {
     .unwrap();
     let path = temp.path().join("arc-science.toml");
     let mut config: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    config["worker"]["python"] = python().into();
     config["worker"]["data"] = "data space 日本".into();
     config["bioart"]["timeout_seconds"] = 11.into();
     config["bioart"]["max_retries"] = 0.into();
@@ -68,9 +67,284 @@ fn help_needs_no_project_or_python() {
             .unwrap(),
     );
     let help = String::from_utf8(output.stdout).unwrap();
-    for command in ["init", "config", "doctor", "serve", "worker"] {
+    for command in ["init", "config", "doctor", "serve", "worker", "bioart"] {
         assert!(help.contains(command));
     }
+}
+
+#[test]
+fn bioart_help_needs_no_project_or_python() {
+    let missing = tempfile::tempdir().unwrap().path().join("missing");
+    for args in [
+        vec!["bioart", "--help"],
+        vec!["bioart", "search", "--help"],
+        vec!["bioart", "inspect", "--help"],
+        vec!["bioart", "fetch", "--help"],
+        vec!["bioart", "verify", "--help"],
+        vec!["bioart", "import", "--help"],
+    ] {
+        success(native(&missing).args(args).output().unwrap());
+    }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn bioart_search_preserves_offline_snapshot_and_egress_is_opt_in() {
+    let temp = fixture();
+    let snapshot = "snap shots 日本/$(touch NEVER).html";
+    success(
+        worker(&temp)
+            .args([
+                "bioart",
+                "search",
+                "antibody $(touch SHELL_MARKER); & 日本",
+                "--search-html",
+                snapshot,
+            ])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        record(&temp)["args"],
+        serde_json::json!([
+            "bioart",
+            "search",
+            "--project",
+            temp.path().canonicalize().unwrap(),
+            "--search-html=snap shots 日本/$(touch NEVER).html",
+            "--",
+            "antibody $(touch SHELL_MARKER); & 日本"
+        ])
+    );
+    assert!(!temp.path().join("SHELL_MARKER").exists());
+
+    success(
+        worker(&temp)
+            .args(["bioart", "search", "antibody", "--allow-egress"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        record(&temp)["args"],
+        serde_json::json!([
+            "bioart",
+            "search",
+            "--project",
+            temp.path().canonicalize().unwrap(),
+            "--allow-egress",
+            "--",
+            "antibody"
+        ])
+    );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn bioart_inspect_and_fetch_forward_typed_ids_and_exact_format_spelling() {
+    let temp = fixture();
+    success(
+        worker(&temp)
+            .args(["bioart", "inspect", "18", "--allow-egress"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        record(&temp)["args"],
+        serde_json::json!([
+            "bioart",
+            "inspect",
+            "--project",
+            temp.path().canonicalize().unwrap(),
+            "--allow-egress",
+            "--",
+            "18"
+        ])
+    );
+
+    success(
+        worker(&temp)
+            .args(["bioart", "fetch", "18"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        record(&temp)["args"],
+        serde_json::json!([
+            "bioart",
+            "fetch",
+            "--project",
+            temp.path().canonicalize().unwrap(),
+            "--format",
+            "SVG",
+            "--",
+            "18"
+        ])
+    );
+
+    for format in ["svg", "png", "ai", "eps", "SVG", "PNG", "AI", "EPS"] {
+        success(
+            worker(&temp)
+                .args([
+                    "bioart",
+                    "fetch",
+                    "18",
+                    "--representation",
+                    "626859",
+                    "--format",
+                    format,
+                    "--allow-egress",
+                ])
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(
+            record(&temp)["args"],
+            serde_json::json!([
+                "bioart",
+                "fetch",
+                "--project",
+                temp.path().canonicalize().unwrap(),
+                "--allow-egress",
+                "--representation",
+                "626859",
+                "--format",
+                format,
+                "--",
+                "18"
+            ])
+        );
+    }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn bioart_verify_and_import_never_accept_egress_and_forward_project_once() {
+    let temp = fixture();
+    let receipt = "receipt space 日本/$(touch NEVER).json";
+    for command in ["verify", "import"] {
+        success(
+            worker(&temp)
+                .args(["bioart", command, receipt])
+                .output()
+                .unwrap(),
+        );
+        let value = record(&temp);
+        assert_eq!(
+            value["args"],
+            serde_json::json!([
+                "bioart",
+                command,
+                "--project",
+                temp.path().canonicalize().unwrap(),
+                "--",
+                receipt
+            ])
+        );
+        let args = value["args"].as_array().unwrap();
+        assert_eq!(args.iter().filter(|value| *value == "--project").count(), 1);
+        assert!(!args.iter().any(|value| value == "--allow-egress"));
+        let rejected = worker(&temp)
+            .args(["bioart", command, receipt, "--allow-egress"])
+            .output()
+            .unwrap();
+        assert!(!rejected.status.success());
+    }
+}
+
+#[test]
+fn bioart_rejects_malformed_values_before_worker_launch() {
+    let temp = fixture();
+    for args in [
+        vec!["bioart", "inspect", "0"],
+        vec!["bioart", "inspect", "-1"],
+        vec!["bioart", "inspect", "9007199254740992"],
+        vec!["bioart", "fetch", "18", "--representation", "0"],
+        vec!["bioart", "fetch", "18", "--format", "JPG"],
+        vec![
+            "bioart",
+            "search",
+            "antibody",
+            "--search-html",
+            "snapshot.html",
+            "--allow-egress",
+        ],
+    ] {
+        let _ = fs::remove_file(temp.path().join("record.json"));
+        let output = worker(&temp).args(&args).output().unwrap();
+        assert!(!output.status.success(), "accepted {args:?}");
+        assert!(!temp.path().join("record.json").exists());
+    }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn bioart_preserves_leading_hyphen_positionals_and_option_paths_as_data() {
+    let temp = fixture();
+    success(
+        worker(&temp)
+            .args([
+                "bioart",
+                "search",
+                "--search-html=-snapshot 日本.html",
+                "--",
+                "-query $(touch NEVER)",
+            ])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        record(&temp)["args"],
+        serde_json::json!([
+            "bioart",
+            "search",
+            "--project",
+            temp.path().canonicalize().unwrap(),
+            "--search-html=-snapshot 日本.html",
+            "--",
+            "-query $(touch NEVER)"
+        ])
+    );
+
+    success(
+        worker(&temp)
+            .args(["bioart", "verify", "--", "-receipt 日本.json"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        record(&temp)["args"],
+        serde_json::json!([
+            "bioart",
+            "verify",
+            "--project",
+            temp.path().canonicalize().unwrap(),
+            "--",
+            "-receipt 日本.json"
+        ])
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn direct_bioart_is_rejected_before_worker_launch_on_windows() {
+    let temp = fixture();
+    let output = worker(&temp)
+        .args([
+            "bioart",
+            "search",
+            "antibody",
+            "--search-html",
+            "snapshot.html",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("POSIX cache/import")
+    );
+    assert!(!temp.path().join("record.json").exists());
 }
 
 #[test]

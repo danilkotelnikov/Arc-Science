@@ -1,5 +1,8 @@
+#[cfg(not(windows))]
+use arc_science_native::bioart;
 use arc_science_native::{
     Result,
+    bioart::BioArtCommand,
     config::{self, Config},
     process,
 };
@@ -21,7 +24,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Action {
     /// Create a default arc-science.toml; refuses to overwrite.
-    Init,
+    Init {
+        /// Python executable or venv path to persist; it is not run during init.
+        #[arg(long)]
+        python: Option<String>,
+    },
     /// Validate and print configuration with resolved project paths.
     Config,
     /// Report local executable availability, not scientific qualification; no network.
@@ -33,14 +40,19 @@ enum Action {
         #[arg(last = true, required = true)]
         args: Vec<OsString>,
     },
+    /// Use the existing Python BioArt provider through typed native commands.
+    Bioart {
+        #[command(subcommand)]
+        command: BioArtCommand,
+    },
 }
 
 fn run() -> Result<i32> {
     let cli = Cli::parse();
     let project = config::project_root(&cli.project)?;
     match cli.command {
-        Action::Init => {
-            config::initialize(&project)?;
+        Action::Init { python } => {
+            config::initialize(&project, python.as_deref())?;
             println!("Created {}", project.join(config::CONFIG_FILE).display());
         }
         Action::Config => println!("{}", toml::to_string_pretty(&Config::load(&project)?)?),
@@ -62,6 +74,18 @@ fn run() -> Result<i32> {
             );
         }
         Action::Worker { args } => return process::run(&Config::load(&project)?, &project, &args),
+        Action::Bioart { command } => {
+            #[cfg(windows)]
+            let _ = command;
+            #[cfg(windows)]
+            return Err("Native BioArt operations require the POSIX cache/import implementation and are unsupported on Windows".into());
+            #[cfg(not(windows))]
+            return process::run(
+                &Config::load(&project)?,
+                &project,
+                &bioart::arguments(command, &project),
+            );
+        }
     }
     Ok(0)
 }

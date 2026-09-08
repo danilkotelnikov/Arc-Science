@@ -1,9 +1,9 @@
 name: Arc Science native supervisor
 on:
   push:
-    paths: ['native/arc-science/**', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/src/arc_science/figure_render.py', 'apps/arc-science/tests/test_module_entrypoint.py', 'apps/arc-science/tests/test_render_lifetime.py', 'apps/arc-science/tests/fixtures/render_lifetime.py', '.github/workflows/arc-native.yml']
+    paths: ['native/arc-science/**', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/src/arc_science/bioart/**', 'apps/arc-science/src/arc_science/figure_render.py', 'apps/arc-science/src/arc_science/vector_assets.py', 'apps/arc-science/tests/test_module_entrypoint.py', 'apps/arc-science/tests/test_native_bioart.py', 'apps/arc-science/tests/test_render_lifetime.py', 'apps/arc-science/tests/fixtures/bioart/entry-18-reduced.json', 'apps/arc-science/tests/fixtures/render_lifetime.py', '.github/workflows/arc-native.yml']
   pull_request:
-    paths: ['native/arc-science/**', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/src/arc_science/figure_render.py', 'apps/arc-science/tests/test_module_entrypoint.py', 'apps/arc-science/tests/test_render_lifetime.py', 'apps/arc-science/tests/fixtures/render_lifetime.py', '.github/workflows/arc-native.yml']
+    paths: ['native/arc-science/**', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/src/arc_science/bioart/**', 'apps/arc-science/src/arc_science/figure_render.py', 'apps/arc-science/src/arc_science/vector_assets.py', 'apps/arc-science/tests/test_module_entrypoint.py', 'apps/arc-science/tests/test_native_bioart.py', 'apps/arc-science/tests/test_render_lifetime.py', 'apps/arc-science/tests/fixtures/bioart/entry-18-reduced.json', 'apps/arc-science/tests/fixtures/render_lifetime.py', '.github/workflows/arc-native.yml']
 permissions:
   contents: read
 jobs:
@@ -43,10 +43,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install . pytest
+      - run: python -m pip install '.[vector]' pytest
       # Linux-only native → real executor coverage uses the application's
       # existing dependencies, but its renderer is strictly a stdlib fixture.
       - run: rustup toolchain install 1.90.0 --profile minimal
       - run: cargo +1.90.0 build --locked --manifest-path ../../native/arc-science/Cargo.toml
       - run: test -x ../../native/arc-science/target/debug/arc-science-native
-      - run: python -m pytest tests/test_module_entrypoint.py tests/test_render_lifetime.py -q -rs
+      - run: python -m pytest tests/test_module_entrypoint.py tests/test_render_lifetime.py tests/test_native_bioart.py -q -rs
