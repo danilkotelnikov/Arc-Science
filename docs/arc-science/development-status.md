@@ -2,13 +2,15 @@
 
 This is a development application, not a certified scientific platform or a completed Rust rewrite. The verification record and retained reviews identify the exact tested revision.
 
-**Open Important finding I1:** native's repeated-cancellation force path can kill
-Python before it cleans up its detached renderer. Ordinary cooperative
-cancellation/acquisition/setup tests pass; they do not close this integration gap.
-Native-supervised rendering and merge qualification remain blocked. Configuration,
-offline BioArt, preserved figures and other passing tests retain their narrower
-evidence. [Current verification](bioart-setup-verification-2026-09-08.md) records
-the result and links the earlier qualification.
+**Important finding I1 has an unqualified source fix:** native now advertises its
+process container, and Python shares that container only after checking the marker
+and actual process-group topology. A deterministic double-signal test first
+reproduced the leaked live renderer and passes with the new contract. The current
+environment cannot rebuild Rust, and GitHub ref creation is still forbidden, so
+the uninjected native-to-renderer test has not run against the updated binary.
+Native-supervised rendering and merge qualification remain blocked pending that
+execution. [Current verification](renderer-containment-verification-2026-09-09.md)
+records the exact evidence and limitations.
 
 | Requirement | Implemented boundary | Qualification still needed |
 | --- | --- | --- |
@@ -18,7 +20,7 @@ the result and links the earlier qualification.
 | NIH BioArt intake | CLI metadata inspection, SVG/default neutral selection with explicit override, entry-bound files, bounded consent-gated transfer, cache, receipts and checked import | Live vector retrieval, real NIH SVG compatibility and an integrated asset-browser UI |
 | BioArt rights | Entry-specific credit retained; automation currently limited to exact Public Domain entries | Other license policies require review; no whole-catalog reuse assumption |
 | Reliable network behavior | Owned transport in a deadline-bound process; no redirects or permission bypass; offline fault tests | Service availability and future website-schema compatibility |
-| Native Rust application | Strict TOML configuration, exclusive `init --python`, config/doctor/serve/worker and typed BioArt commands, direct argument launch, tested cooperative cancellation and measured Linux release | Open I1 force-cancelled renderer containment; Windows/macOS execution and signed desktop installers; calculations still run in Python |
+| Native Rust application | Strict TOML configuration, exclusive `init --python`, config/doctor/serve/worker and typed BioArt commands, direct argument launch, tested cooperative cancellation, source-level outer renderer containment and measured earlier Linux release | Rebuild and uninjected execution of the I1 regression; Windows/macOS execution and signed desktop installers; calculations still run in Python |
 | HoH foundation | Bounded candidate work, fixed roles, single writer, independent QA and evidence preservation | Broader harness evolution and scientific-validity evaluation |
 | Scientific image review | Exact candidate bytes/hashes and separate reference roles supported by provider protocol | Live provider-based comparison in this environment |
 | Programming/ML diagrams | React Flow with ELK researched as a later editor | Shared graph model, editor and controlled SVG export not shipped |

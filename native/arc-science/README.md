@@ -1,12 +1,12 @@
 # Arc Science native supervisor
 
-**Development blocker I1:** this is not a qualified renderer supervisor.
-Repeated cancellation signals trigger native's immediate force-kill path;
-Python may exit before cleaning up its detached renderer, leaving that renderer
-running. Cooperative cancellation tests pass, but do not establish containment
-on this supported force path. This remains an open Important final-review finding,
-not merely a hypothetical hostile child escape. Do not rely on this build for
-native-supervised rendering until that boundary is fixed and tested.
+**Qualification gate I1:** the source now gives supervised renderers the native
+process group/job as their outer containment boundary. A deterministic regression
+blocks Python after renderer acquisition, sends two native termination signals and
+requires FIFO EOF from the renderer. The Python/process-graph path passes, but this
+environment could not rebuild the changed Rust source. Do not rely on the retained
+older binary for native-supervised rendering until clean CI passes the uninjected
+test. See the [current verification](../../docs/arc-science/renderer-containment-verification-2026-09-09.md).
 
 A small Rust CLI for configuring and supervising the existing Python scientific
 worker. Commands: `init`, `config`, `doctor`, `serve`, `worker`, and
@@ -172,14 +172,20 @@ The shipped figure/molecule executor owns a separate renderer session for standa
 timeouts and log isolation. Its scoped main-thread SIGINT/SIGTERM handling defers
 cancellation across OS-child acquisition, then kills the renderer group and waits
 its direct child before exit. Setup failures also enter that cleanup. Caller signal
-handlers are restored; BioArt alarm/deadline state is unchanged. The application
-lifetime tests exercise real native → Python → this executor with a stdlib renderer,
-positive FIFO readiness, bounded EOF and direct-renderer `ECHILD` evidence, including
-SIGTERM injected at acquisition/setup boundaries. This is not Blender qualification.
+handlers are restored; BioArt alarm/deadline state is unchanged.
 
-The supported repeated-cancellation path is an exception to that cooperative
-cleanup: native can force-kill Python before its handler runs, and its process
-group does not include the detached renderer. See open finding I1 above.
+For a native launch, the supervisor overrides `ARC_NATIVE_CONTAINMENT` with a
+versioned process-group/job marker. On POSIX, Python accepts that marker only when
+its PID is also its process-group ID. It then keeps the renderer in the outer
+container and kills the direct renderer during cooperative cleanup; native kills
+any remaining group/job descendants when Python exits or the grace period is
+forced. Standalone or mismatched-marker execution retains the isolated renderer
+session. The application lifetime tests use a real native → Python → executor chain,
+positive FIFO readiness, bounded EOF and direct-renderer `ECHILD` evidence. The new
+force test holds Python before its cleanup and sends two signals, so only native
+containment can close the renderer's sole-writer FIFO. This is process-lifecycle
+evidence, not Blender or scientific qualification; clean updated-binary execution
+is still required as described in I1 above.
 
 A child that deliberately escapes its owner's process group is outside this
 trusted-worker contract. SIGKILL/crash
