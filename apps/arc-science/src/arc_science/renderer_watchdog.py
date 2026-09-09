@@ -58,31 +58,36 @@ def main() -> int:
     if _cancelled(control_fd, 0):
         return 125
 
-    argv = sys.argv[5:]
     try:
-        renderer = subprocess.Popen(
-            argv, stdin=subprocess.DEVNULL, stderr=subprocess.STDOUT,
-            cwd=f'/proc/self/fd/{run_fd}', pass_fds=(run_fd,))
-    except OSError as exc:
-        number = exc.errno if isinstance(exc.errno, int) and exc.errno > 0 else errno.EIO
-        print(f'{type(exc).__name__}: {exc}', file=sys.stderr, flush=True)
-        _publish(status_fd, f'spawn {number}')
-        return 0
-    except BaseException as exc:
-        print(f'{type(exc).__name__}: {exc}', file=sys.stderr, flush=True)
-        _publish(status_fd, 'watchdog error')
-        return 0
+        argv = sys.argv[5:]
+        try:
+            renderer = subprocess.Popen(
+                argv, stdin=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+                cwd=f'/proc/self/fd/{run_fd}', pass_fds=(run_fd,))
+        except OSError as exc:
+            number = exc.errno if isinstance(exc.errno, int) and exc.errno > 0 else errno.EIO
+            print(f'{type(exc).__name__}: {exc}', file=sys.stderr, flush=True)
+            _publish(status_fd, f'spawn {number}')
+            return 0
+        except BaseException as exc:
+            print(f'{type(exc).__name__}: {exc}', file=sys.stderr, flush=True)
+            _publish(status_fd, 'watchdog error')
+            return 0
 
-    while True:
-        status = renderer.poll()
-        if status is not None:
-            _publish(status_fd, f'status {status}')
-            _kill_owned_group()
-        if _cancelled(control_fd, 0.05):
-            _kill_owned_group()
-        # Keep the poll cadence bounded without relying on signal delivery to
-        # interrupt a long sleep on platforms with restarted system calls.
-        time.sleep(0)
+        while True:
+            status = renderer.poll()
+            if status is not None:
+                _publish(status_fd, f'status {status}')
+                return 0
+            if _cancelled(control_fd, 0.05):
+                return 125
+            # Keep the poll cadence bounded without relying on signal delivery
+            # to interrupt a long sleep on platforms with restarted syscalls.
+            time.sleep(0)
+    finally:
+        # This includes EPIPE while publishing status, malformed invocation
+        # after ownership, control-pipe errors, and ordinary renderer exit.
+        _kill_owned_group()
 
 
 if __name__ == '__main__':

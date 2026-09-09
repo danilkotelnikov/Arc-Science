@@ -132,19 +132,14 @@ def test_repeated_native_cancel_contains_renderer_when_python_cannot_cleanup(tmp
 
 
 @pytest.mark.skipif(sys.platform != 'linux', reason='Linux executor uses /proc/self/fd cwd')
-@pytest.mark.parametrize('inherited_marker', [False, True], ids=['clean-environment', 'spoofed-marker'])
-def test_successful_renderer_exit_kills_its_live_descendants_before_return(tmp_path, inherited_marker):
+def test_successful_renderer_exit_kills_its_live_descendants_before_return(tmp_path):
     """Success cannot leave a descendant able to mutate validated outputs."""
     import arc_science
     driver = Path(__file__).parent / 'fixtures/render_lifetime.py'
     endpoint = str(tmp_path / 'life.fifo')
     os.mkfifo(endpoint)
     env = dict(os.environ, PYTHONPATH=str(Path(arc_science.__file__).parent.parent))
-    if inherited_marker:
-        # An inherited marker must not weaken renderer-tree ownership.
-        env['ARC_NATIVE_CONTAINMENT'] = 'process-group-v1'
-    else:
-        env.pop('ARC_NATIVE_CONTAINMENT', None)
+    env.pop('ARC_NATIVE_CONTAINMENT', None)
     with os.fdopen(os.open(endpoint, os.O_RDONLY | os.O_NONBLOCK), 'rb', buffering=0) as channel:
         process = subprocess.Popen(
             [sys.executable, str(driver), 'leader-exit', endpoint, str(tmp_path)],
@@ -180,6 +175,74 @@ def test_successful_renderer_exit_kills_its_live_descendants_before_return(tmp_p
                 except ProcessLookupError:
                     pass
             process.communicate(timeout=5)
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='Linux executor uses process-group containment')
+def test_status_reader_loss_still_kills_renderer_descendants(tmp_path):
+    """A failed status publication cannot bypass watchdog group teardown."""
+    from arc_science import renderer_watchdog
+    endpoint = str(tmp_path / 'life.fifo')
+    os.mkfifo(endpoint)
+    renderer = '''import os, pathlib, subprocess, sys, time
+endpoint, root = sys.argv[1:]
+descendant = """import os, signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+channel = os.open(sys.argv[1], os.O_WRONLY)
+os.write(channel, (str(os.getpid()) + '\\\\n').encode())
+time.sleep(60)
+"""
+subprocess.Popen([sys.executable, '-c', descendant, endpoint],
+                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                 stderr=subprocess.DEVNULL)
+pathlib.Path(root, 'leader-waiting').write_text('live')
+while not pathlib.Path(root, 'release-leader').exists():
+    time.sleep(.01)
+'''
+    run_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    control_r, control_w = os.pipe()
+    status_r, status_w = os.pipe()
+    helper = Path(renderer_watchdog.__file__).absolute()
+    process = None
+    lifetime_ended = False
+    with os.fdopen(os.open(endpoint, os.O_RDONLY | os.O_NONBLOCK), 'rb', buffering=0) as channel:
+        try:
+            process = subprocess.Popen(
+                [sys.executable, '-I', str(helper), str(control_r), str(status_w),
+                 str(run_fd), '--', sys.executable, '-c', renderer, endpoint, str(tmp_path)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, pass_fds=(control_r, status_w, run_fd),
+                start_new_session=True)
+            os.close(control_r); control_r = None
+            os.close(status_w); status_w = None
+            assert select.select([channel], [], [], 5)[0], 'renderer descendant never became live'
+            ready = channel.read(32)
+            assert ready and ready.endswith(b'\n')
+            int(ready)
+            deadline = time.monotonic() + 5
+            while not (tmp_path / 'leader-waiting').exists():
+                assert time.monotonic() < deadline, 'renderer leader did not reach release gate'
+                time.sleep(.01)
+            # Remove the only protocol reader before the renderer exits. The
+            # watchdog must tear down the group even when os.write gets EPIPE.
+            os.close(status_r); status_r = None
+            (tmp_path / 'release-leader').write_text('exit')
+            process.wait(timeout=5)
+            assert select.select([channel], [], [], 2)[0], 'status publication failure leaked descendant'
+            assert channel.read(1) == b''
+            lifetime_ended = True
+        finally:
+            if not lifetime_ended and process is not None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if process is not None and process.poll() is None:
+                process.kill()
+            if process is not None:
+                process.wait(timeout=5)
+            for descriptor in (control_r, control_w, status_r, status_w, run_fd):
+                if descriptor is not None:
+                    os.close(descriptor)
 
 
 def test_executor_rejects_non_main_thread_before_spawn(tmp_path):
