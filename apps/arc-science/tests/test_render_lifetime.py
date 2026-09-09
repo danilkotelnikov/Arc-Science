@@ -39,37 +39,29 @@ def test_cancel_owns_renderer_from_acquisition_through_setup(tmp_path, mode, nat
             env['PYTHONPATH'] = str(Path(arc_science.__file__).parent.parent)
             argv = [sys.executable, str(driver), mode, endpoint, str(tmp_path)]
         process = subprocess.Popen(argv, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        pid = owner_pid = None
+        lifetime_ended = False
         try:
             assert select.select([channel], [], [], 5)[0], 'renderer never became live'
             ready = channel.read(32)
             assert ready and ready.endswith(b'\n'), 'renderer exited without a live handshake'
-            pid = int(ready)
+            int(ready)
             if mode == 'poll':
                 process.send_signal(signal.SIGTERM)
             # Only the renderer owns this writer: parent, worker and native
             # never inherit it. A timeout cannot be mistaken for death.
             assert select.select([channel], [], [], 5)[0], 'renderer lifetime did not end'
             assert channel.read(1) == b''
+            lifetime_ended = True
             _, stderr = process.communicate(timeout=5)
             assert process.returncode == (130 if native and mode == 'poll' else 143), stderr.decode()
             assert (tmp_path / 'reaped').read_text() == 'ECHILD'
         finally:
-            if (tmp_path / 'spawned').exists():
+            if not lifetime_ended and (tmp_path / 'spawned').exists():
                 owner_pid = int((tmp_path / 'spawned').read_text())
-            if owner_pid is not None:
                 try:
                     os.killpg(owner_pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-            if pid is not None:
-                try:
-                    os.killpg(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    try:
-                        os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
             if process.poll() is None:
                 process.kill()
             process.communicate(timeout=5)
@@ -98,12 +90,12 @@ def test_repeated_native_cancel_contains_renderer_when_python_cannot_cleanup(tmp
         process = subprocess.Popen(
             [str(binary), '--project', str(tmp_path), 'worker', '--', 'blocked', endpoint, str(tmp_path)],
             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        pid = worker_pid = owner_pid = None
+        lifetime_ended = False
         try:
             assert select.select([channel], [], [], 5)[0], 'renderer never became live'
             ready = channel.read(32)
             assert ready and ready.endswith(b'\n'), 'renderer exited without a live handshake'
-            pid = int(ready)
+            int(ready)
             deadline = time.monotonic() + 5
             while not (tmp_path / 'setup-blocked').exists():
                 assert time.monotonic() < deadline, 'Python never entered the blocked setup window'
@@ -118,31 +110,22 @@ def test_repeated_native_cancel_contains_renderer_when_python_cannot_cleanup(tmp
             # a process lookup could confuse inaccessible /proc with death.
             assert select.select([channel], [], [], 3)[0], 'renderer survived repeated native cancellation'
             assert channel.read(1) == b''
+            lifetime_ended = True
             _, tail = process.communicate(timeout=5)
             assert process.returncode == 130, (first_stderr + tail).decode()
         finally:
-            if (tmp_path / 'spawned').exists():
-                owner_pid = int((tmp_path / 'spawned').read_text())
-            if worker_pid is None and (tmp_path / 'setup-blocked').exists():
+            if not lifetime_ended and (tmp_path / 'setup-blocked').exists():
                 worker_pid = int((tmp_path / 'setup-blocked').read_text())
-            if worker_pid is not None:
                 try:
                     os.killpg(worker_pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-            if owner_pid is not None:
+            if not lifetime_ended and (tmp_path / 'spawned').exists():
+                owner_pid = int((tmp_path / 'spawned').read_text())
                 try:
                     os.killpg(owner_pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-            if pid is not None:
-                try:
-                    os.killpg(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    try:
-                        os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
             if process.poll() is None:
                 process.kill()
             process.communicate(timeout=5)
@@ -167,12 +150,12 @@ def test_successful_renderer_exit_kills_its_live_descendants_before_return(tmp_p
             [sys.executable, str(driver), 'leader-exit', endpoint, str(tmp_path)],
             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
             start_new_session=True)
-        descendant_pid = owner_pid = None
+        lifetime_ended = False
         try:
             assert select.select([channel], [], [], 5)[0], 'renderer descendant never became live'
             ready = channel.read(32)
             assert ready and ready.endswith(b'\n'), 'descendant exited without a live handshake'
-            descendant_pid = int(ready)
+            int(ready)
             deadline = time.monotonic() + 5
             while not (tmp_path / 'execute-returned').exists():
                 assert process.poll() is None, process.stderr.read().decode()
@@ -182,22 +165,18 @@ def test_successful_renderer_exit_kills_its_live_descendants_before_return(tmp_p
             # still-live executor parent returning control to output validation.
             assert select.select([channel], [], [], 2)[0], 'renderer descendant survived _execute success'
             assert channel.read(1) == b''
+            lifetime_ended = True
             assert process.poll() is None
         finally:
-            if (tmp_path / 'spawned').exists():
+            if not lifetime_ended and (tmp_path / 'spawned').exists():
                 owner_pid = int((tmp_path / 'spawned').read_text())
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            if owner_pid is not None:
                 try:
                     os.killpg(owner_pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-            if descendant_pid is not None:
+            if process.poll() is None:
                 try:
-                    os.kill(descendant_pid, signal.SIGKILL)
+                    os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
             process.communicate(timeout=5)

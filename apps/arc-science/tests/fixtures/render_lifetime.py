@@ -16,10 +16,16 @@ real_spawn = subprocess.Popen
 real_blocking = os.set_blocking
 
 
+def publish(name, value):
+    temporary = root / (name + '.tmp')
+    temporary.write_text(str(value))
+    os.replace(temporary, root / name)
+
+
 def spawn(*args, **kwargs):
     child = real_spawn(*args, **kwargs)
     created.append(child)
-    (root / 'spawned').write_text(str(child.pid))
+    publish('spawned', child.pid)
     if mode == 'acquire':
         # Cancellation occurs after real OS creation but before assignment of
         # Popen's result in _execute. Wait for positive renderer readiness first.
@@ -48,7 +54,7 @@ def setup(fd, blocking):
             if time.monotonic() > deadline:
                 raise RuntimeError('Renderer did not become ready')
             time.sleep(.01)
-        (root / 'setup-blocked').write_text(str(os.getpid()))
+        publish('setup-blocked', os.getpid())
         time.sleep(60)
     return real_blocking(fd, blocking)
 
