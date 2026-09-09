@@ -6,9 +6,12 @@ import {App} from './main.jsx';
 
 const assets = Object.fromEntries(['collage.png','collage.svg','overview.svg','interface.svg','rotated.svg','overview.png','interface.png','rotated.png','contacts.csv','source.cif','scene.json','molecular_worker.py','integrity.json','caption.md','visual-review.md'].map(name=>[name,{url:'/api/examples/1dqj/assets/'+name,sha256:'a'.repeat(64),bytes:12,media_type:name.endsWith('.svg')?'image/svg+xml':'image/png'}]));
 const example = {id:'1dqj',title:'HyHEL-63 Fab · Lysozyme',source:{id:'1DQJ',model:1,assembly:'1',url:'https://www.rcsb.org/structure/1DQJ'},partners:{antibody:['A','B'],antigen:['C']},contact_pairs:49,cutoff_angstrom:4,review:{status:'Accepted illustrative figure, candidate 03',scope:'Historical direct image review',live_provider_qualified:false,browser_layout_verified:false},limitations:['Gaussian atomic envelope, not a solvent-excluded surface.'],assets};
+const bioartEntry = {entry_id:18,title:'Antibody',license:'Public Domain',credit:'Courtesy of NIAID',creator:'Ryan Kissinger',collection:'NIAID Visual & Medical Arts',citation:'NIAID BioArt, BIOART-000018',source_url:'https://bioart.niaid.nih.gov/bioart/18',preferred_representation_id:64,representations:[{group_id:63,caption:'Antibody - Colored',files:{PNG:626857,SVG:626858}},{group_id:64,caption:'Antibody - Grey',files:{PNG:626859,SVG:626860,AI:626861,EPS:626862}}]};
+const bioartReceipt = {receipt_id:'b'.repeat(64),entry_id:18,title:'Antibody',license:'Public Domain',credit:'Courtesy of NIAID',creator:'Ryan Kissinger',collection:'NIAID Visual & Medical Arts',citation:'NIAID BioArt, BIOART-000018',representation_id:64,caption:'Antibody - Grey',format:'SVG',file_id:626860,source_page_sha256:'c'.repeat(64),sha256:'d'.repeat(64),size:120,preview_eligible:true,import_eligible:true,limitation:null,rights_verified:false,scientific_validity_established:false,preview_url:'/api/bioart/receipts/'+'b'.repeat(64)+'/preview',download_url:'/api/bioart/receipts/'+'b'.repeat(64)+'/source'};
+const bioartDownloadReceipt = {...bioartReceipt,receipt_id:'e'.repeat(64),format:'EPS',file_id:626862,preview_eligible:false,import_eligible:false,limitation:'AI/EPS originals are download-only; never executed',preview_url:'/api/bioart/receipts/'+'e'.repeat(64)+'/preview',download_url:'/api/bioart/receipts/'+'e'.repeat(64)+'/source'};
 const row = {id:'mission-1',state:{status:'paused',round:1,actions_used:3,model_calls_used:2,data_origin:'fixture',branches:[],assessments:[],observations:[],events:[],visual_reports:[],artifacts:[],stop_reason:'Review needed'}};
 let requests, downloadClick, selectedRow;
-const json = data => new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json'}});
+const json = (data,init={}) => new Response(JSON.stringify(data),{...init,headers:{'Content-Type':'application/json',...(init.headers||{})}});
 
 beforeEach(()=>{
   requests=[]; selectedRow=structuredClone(row);
@@ -16,6 +19,13 @@ beforeEach(()=>{
     requests.push({path,options});
     if(path==='/api/examples/1dqj')return json(example);
     if(path.startsWith('/api/examples/1dqj/assets/'))return new Response('real selected artifact');
+    if(path==='/api/bioart/search')return json({hits:[{entry_id:18,title:'Antibody'}]});
+    if(path==='/api/bioart/inspect')return json(bioartEntry);
+    if(path==='/api/bioart/fetch')return json(JSON.parse(options.body).format==='EPS'?bioartDownloadReceipt:bioartReceipt);
+    if(path===bioartReceipt.preview_url)return new Response('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"></svg>',{headers:{'Content-Type':'image/svg+xml'}});
+    if(path===bioartReceipt.download_url)return new Response('verified source',{headers:{'Content-Type':'image/svg+xml'}});
+    if(path===bioartDownloadReceipt.download_url)return new Response('verified source',{headers:{'Content-Type':'application/postscript'}});
+    if(path==='/api/bioart/import')return json({asset_id:'nih-bioart-antibody',asset_manifest:'assets/nih-bioart-antibody/asset.json'});
     if(path==='/api/missions')return json(options.method==='POST'?selectedRow:[{id:'mission-1',status:'paused',goal:'Saved experiment'}]);
     if(path.endsWith('/verify'))return json({reproduction_passed:true});
     if(path.endsWith('/capsule'))return new Response('capsule');
@@ -148,4 +158,83 @@ test('view selection and export work from the keyboard',async()=>{
   expect(await screen.findByRole('img',{name:'Annotated overview'})).toHaveAttribute('src',assets['overview.svg'].url);
   screen.getByRole('button',{name:'Export SVG'}).focus();await user.keyboard('{Enter}');
   await waitFor(()=>expect(requests.some(r=>r.download==='1dqj-overview.svg')).toBe(true));
+});
+
+test('BioArt search is authenticated, cache-first, and shares the in-memory operator token',async()=>{
+  const user=userEvent.setup();render(<App/>);
+  await user.click(screen.getByRole('button',{name:'Research'}));
+  await user.type(screen.getByLabelText('Local operator token'),'shared-operator');
+  await user.click(screen.getByRole('button',{name:'BioArt'}));
+  expect(screen.getByLabelText('Operator token for BioArt')).toHaveValue('shared-operator');
+  await user.clear(screen.getByLabelText('BioArt search query'));
+  await user.type(screen.getByLabelText('BioArt search query'),'antibody');
+  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
+  expect(await screen.findByRole('button',{name:'Antibody · BIOART-000018'})).toBeInTheDocument();
+  const sent=requests.find(r=>r.path==='/api/bioart/search');
+  expect(sent.options.headers.Authorization).toBe('Bearer shared-operator');
+  expect(JSON.parse(sent.options.body)).toEqual({query:'antibody',allow_egress:false});
+  expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
+});
+
+test('BioArt inspects, fetches the automatic neutral SVG, verifies a protected preview, and imports it',async()=>{
+  const user=userEvent.setup();render(<App/>);
+  await user.click(screen.getByRole('button',{name:'BioArt'}));
+  await user.type(screen.getByLabelText('Operator token for BioArt'),'bioart-operator');
+  await user.click(screen.getByLabelText('Permit NIH network access for this request'));
+  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
+  await user.click(await screen.findByRole('button',{name:'Antibody · BIOART-000018'}));
+  expect(await screen.findByText('Courtesy of NIAID')).toBeInTheDocument();
+  expect(screen.getByText('NIH metadata: Public Domain')).toBeInTheDocument();
+  expect(screen.getByLabelText('Representation')).toHaveValue('auto');
+  await user.click(screen.getByRole('button',{name:'Fetch verified SVG'}));
+  expect(await screen.findByRole('img',{name:'Verified BioArt preview: Antibody'})).toHaveAttribute('src','blob:artifact');
+  const fetchRequest=requests.find(r=>r.path==='/api/bioart/fetch');
+  expect(JSON.parse(fetchRequest.options.body)).toEqual({entry_id:18,format:'SVG',allow_egress:true});
+  const previewRequest=requests.find(r=>r.path===bioartReceipt.preview_url);
+  expect(previewRequest.options.headers.Authorization).toBe('Bearer bioart-operator');
+  expect(screen.getByText('Receipt verified')).toBeInTheDocument();
+  expect(screen.getByText('Verified SVG · group 64')).toBeInTheDocument();
+  expect(screen.getByText(/Rights metadata has not been independently verified/)).toBeInTheDocument();
+  expect(screen.getByText(/Scientific validity is not established/)).toBeInTheDocument();
+  await user.click(screen.getByRole('button',{name:'Download verified source'}));
+  await waitFor(()=>expect(requests).toContainEqual(expect.objectContaining({download:'bioart-18.svg',href:'blob:artifact'})));
+  await user.click(screen.getByRole('button',{name:'Import verified SVG'}));
+  expect(await screen.findByText('Imported asset nih-bioart-antibody')).toBeInTheDocument();
+  expect(screen.getByText('assets/nih-bioart-antibody/asset.json')).toBeInTheDocument();
+});
+
+test('BioArt manual representation override is explicit and fetch errors preserve the inspected entry',async()=>{
+  const user=userEvent.setup();render(<App/>);
+  await user.click(screen.getByRole('button',{name:'BioArt'}));
+  await user.type(screen.getByLabelText('Operator token for BioArt'),'operator');
+  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
+  await user.click(await screen.findByRole('button',{name:'Antibody · BIOART-000018'}));
+  await user.selectOptions(screen.getByLabelText('Representation'),'63');
+  await user.click(screen.getByRole('button',{name:'Fetch verified SVG'}));
+  await screen.findByRole('img',{name:'Verified BioArt preview: Antibody'});
+  const sent=requests.findLast(r=>r.path==='/api/bioart/fetch');
+  expect(JSON.parse(sent.options.body)).toEqual({entry_id:18,representation_id:63,format:'SVG',allow_egress:false});
+
+  fetch.mockImplementationOnce(async()=>json({detail:'Unknown or restricted license requires operator review; fetch/import blocked'},{status:409}));
+  await user.click(screen.getByRole('button',{name:'Fetch verified SVG'}));
+  expect(await screen.findByRole('alert')).toHaveTextContent('restricted license');
+  expect(screen.getByText('Courtesy of NIAID')).toBeInTheDocument();
+});
+
+test('BioArt exposes original vector formats without previewing or importing download-only EPS',async()=>{
+  const user=userEvent.setup();render(<App/>);
+  await user.click(screen.getByRole('button',{name:'BioArt'}));
+  await user.type(screen.getByLabelText('Operator token for BioArt'),'operator');
+  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
+  await user.click(await screen.findByRole('button',{name:'Antibody · BIOART-000018'}));
+  expect(screen.getAllByRole('option').map(option=>option.value)).toEqual(expect.arrayContaining(['SVG','PNG','AI','EPS']));
+  await user.selectOptions(screen.getByLabelText('Format'),'EPS');
+  await user.click(screen.getByRole('button',{name:'Fetch verified EPS'}));
+  expect(await screen.findByText(/download-only; no browser preview/)).toBeInTheDocument();
+  expect(screen.getByRole('button',{name:'EPS import unavailable'})).toBeDisabled();
+  const sent=requests.findLast(request=>request.path==='/api/bioart/fetch');
+  expect(JSON.parse(sent.options.body)).toEqual({entry_id:18,format:'EPS',allow_egress:false});
+  expect(requests.some(request=>request.path===bioartDownloadReceipt.preview_url)).toBe(false);
+  await user.click(screen.getByRole('button',{name:'Download verified source'}));
+  await waitFor(()=>expect(requests).toContainEqual(expect.objectContaining({download:'bioart-18.eps',href:'blob:artifact'})));
 });

@@ -25,6 +25,10 @@ _MIME = {'SVG':{'image/svg+xml'}, 'PNG':{'image/png'},
          'EPS':{'application/postscript','application/eps','application/octet-stream'}}
 
 
+class BioArtCacheMiss(ValueError):
+    """Fresh verified metadata or source bytes are absent with egress disabled."""
+
+
 def _load(raw):
     try:
         def pairs(items):
@@ -78,7 +82,7 @@ class BioArtClient:
         self.cache=Cache(cache_dir,self.limits.max_cache_bytes); self.client=client
 
     def _request(self,path,limit,mimes):
-        if not self.allow_egress: raise ValueError('Missing or stale cache; explicit --allow-egress required')
+        if not self.allow_egress: raise BioArtCacheMiss('Missing or stale cache; explicit --allow-egress required')
         # Only local code constructs endpoint paths; redirects are never followed.
         if not path.startswith('/') or path.startswith('//') or '\\' in path:
             raise ValueError('Invalid BioArt endpoint')

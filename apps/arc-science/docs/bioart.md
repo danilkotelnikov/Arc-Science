@@ -148,8 +148,39 @@ validators recognize that origin. Existing BioRender validation is unchanged.
 
 PNG must decode successfully within 2048×2048 pixels and is preview-eligible only;
 the current vector importer accepts SVG/PDF, so PNG import is explicitly unavailable.
-AI/EPS originals are download-only and never executed. Neither a new authenticated
-web service route nor a HeroUI workspace is included in this increment.
+AI/EPS originals are download-only and never executed.
+
+## HeroUI workspace and authenticated routes
+
+The BioArt workspace uses the local operator token and keeps it in page memory,
+shared with Research. Search, inspection, fetch, preview, original download, and
+SVG import routes all require that token. The browser never receives a cache path.
+It receives a receipt digest, authenticated preview/download URLs, source and
+source-page hashes, selected entry/group/file IDs, eligibility fields, and the
+retained provenance text.
+
+Search, inspection, and fetch first call the provider with egress disabled. A
+fresh cache hit returns without starting another process. On the specific
+missing-or-stale-cache error, a checked network box permits the service to run the
+same BioArt CLI through a new POSIX process group. The child uses the qualified
+main-thread transport boundary. Cancellation or the web helper's total deadline
+terminates the group and waits for it before the request ends. The service then
+reopens the cache with egress disabled and re-verifies the result; CLI stdout and
+absolute source paths are never forwarded to the browser.
+
+The helper deadline is twice the configured per-request BioArt timeout plus five
+seconds because a fetch may need one metadata request and one file request. The
+provider's tighter byte, retry, and per-request limits still apply. This web path
+is POSIX-only, like the cache/import primitives. Live NIH service behavior and
+actual NIH vector compatibility remain unqualified until a consented live test is
+recorded.
+
+SVG and PNG previews are served only after receipt and source-byte verification,
+with same-origin authentication and a restrictive content-security policy.
+SVG, PNG, AI, and EPS originals can be downloaded after the same check. Only an
+eligible SVG can enter the immutable vector importer. The UI keeps the NIH source
+link, credit, license label, hashes, and the explicit rights/scientific-validity
+limits next to the selected asset.
 
 Fixtures are deliberately labeled: entry 18 is reduced source-derived Flight data;
 the seven-result search fixture is a separate reduced browser DOM observation.

@@ -26,7 +26,7 @@ python -m pip install .
 arc-science serve --data ./data
 ```
 
-Open [the local workbench](http://127.0.0.1:8080/). In another activated terminal, run `arc-science token --data ./data` and enter that operator token in Research. It stays in page memory. Use a fresh data directory for 0.5.0; historical capsules need their matching verifier. [Migration notes](apps/arc-science/docs/migration-0.5.md) describe compatibility and provenance.
+Open [the local workbench](http://127.0.0.1:8080/). In another activated terminal, run `arc-science token --data ./data` and enter that operator token in BioArt or Research. Both workspaces share it in page memory; it is not written to browser storage. Use a fresh data directory for 0.6.0. Historical capsules need their matching verifier. [Migration notes](apps/arc-science/docs/migration-0.6.md) describe this increment and its limits.
 
 ## Native configuration and launch
 
@@ -76,6 +76,13 @@ native/arc-science/target/release/arc-science-native --project arc-project \
   bioart fetch 18 --allow-egress
 ```
 
+The HeroUI workbench now exposes the same evidence-bound path. Open BioArt, enter
+the local operator token, search the fresh cache, and inspect an entry before
+fetching it. Each live search, inspection, or file request requires the visible
+NIH network checkbox. Cache hits do not start a network process. A cache miss with
+consent runs the existing BioArt CLI in a supervised process group, then reopens
+and verifies the resulting cache entry before returning it to the browser.
+
 The result includes the selected file/group IDs, source and receipt paths, credit,
 license and byte hash. Use `bioart verify RECEIPT` before `bioart import RECEIPT
 --project ./arc-project` to import an eligible SVG. Omit `--allow-egress` for
@@ -109,11 +116,11 @@ Defaults are a 1400 px white collage, 96 samples and seed 23. The output directo
 
 Research preserves goal, execution mode, round limit, explicit egress and visual-review consent, saved missions, start/cancel/resume, numerical verification and replay-capsule export. Artifact inspection/download remains authenticated. Switching workspaces retains the current goal, token and mission.
 
-Offline mode uses a scripted planner and real numerical analysis; it is not live-model or biological evidence. Live mode requires configured server-side providers, exact model IDs and credentials. Visual review also requires a configured vision provider; missing or failed qualification is not a passing badge. [Provider configuration](apps/arc-science/docs/source-readme-0.4.md#direct-model-and-vision-configuration) documents the retained environment settings; substitute a fresh 0.5 data directory.
+Offline mode uses a scripted planner and real numerical analysis; it is not live-model or biological evidence. Live mode requires configured server-side providers, exact model IDs and credentials. Visual review also requires a configured vision provider; missing or failed qualification is not a passing badge. [Provider configuration](apps/arc-science/docs/source-readme-0.4.md#direct-model-and-vision-configuration) documents the retained environment settings; substitute a fresh 0.6 data directory.
 
 HoH's fixed roles, single writer, frozen candidates and independent QA are the foundation. Self-evolving harness proposals, broader scientific composition and Lean proof obligations remain separate development requirements. Reproducibility, model agreement and attractive figures do not establish scientific validity or publication authorization.
 
-The actual React/HeroUI 3 UI is built and tested through DOM interactions and served artifact bytes. Browser pixel layout remains unverified because local HTTP and shared-file HTML previews were rejected by policy; no alternate browser/hosting workaround was used. Historical candidate image acceptance is scoped to illustration clarity, not the running page.
+The React/HeroUI 3 UI is built and tested through DOM interactions and served artifact bytes. Browser pixel layout remains unverified: on 9 September 2026 the managed browser rejected the running loopback page with `ERR_BLOCKED_BY_CLIENT`. No alternate browser or hosting path was used. Historical candidate image acceptance is scoped to illustration clarity, not the running page.
 
 ## Develop and test
 
@@ -131,4 +138,4 @@ python -m pip wheel --no-deps . --wheel-dir dist
 
 `npm run build` copies compiled files into the Python package. Path-scoped CI runs the app tests, real frontend DOM tests and production build. Native Blender integration tests skip unless an explicit runtime is supplied; ordinary CI does not call live models or paid services.
 
-[Application migration and public inclusion policy](apps/arc-science/docs/migration-0.5.md) · [Legacy Vedix guide](docs/legacy/VEDIX_README.md)
+[Application migration and public inclusion policy](apps/arc-science/docs/migration-0.6.md) · [Legacy Vedix guide](docs/legacy/VEDIX_README.md)

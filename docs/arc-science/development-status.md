@@ -14,9 +14,9 @@ records the exact evidence and limitations.
 | Requirement | Implemented boundary | Qualification still needed |
 | --- | --- | --- |
 | Arc Science in the Vedix repository | App under `apps/arc-science`, Arc Science root README, original Vedix plugins and history preserved | GitHub write access and repository-slug rename |
-| HeroUI workbench | Actual HeroUI components, molecular views, zoom, export, authenticated Research workspace | Browser pixel review; current evidence is DOM interaction, build and served bytes |
+| HeroUI workbench | Actual HeroUI components, molecular views, zoom, export, authenticated BioArt and Research workspaces | Browser pixel review; current evidence is DOM interaction, build and served bytes |
 | White molecular collages | Frozen 1DQJ candidate03, three transparent Blender views, annotated SVG views, coordinate-derived contact CSV and matrix | New structures, official Blender requalification, and publication-specific review |
-| NIH BioArt intake | CLI metadata inspection, SVG/default neutral selection with explicit override, entry-bound files, bounded consent-gated transfer, cache, receipts and checked import | Live vector retrieval, real NIH SVG compatibility and an integrated asset-browser UI |
+| NIH BioArt intake | CLI and HeroUI search/inspection, format-aware neutral selection with explicit override, entry-bound files, consent-gated transfer, verified previews/downloads, cache receipts and checked SVG import | Live vector retrieval and real NIH file compatibility |
 | BioArt rights | Entry-specific credit retained; automation currently limited to exact Public Domain entries | Other license policies require review; no whole-catalog reuse assumption |
 | Reliable network behavior | Owned transport in a deadline-bound process; no redirects or permission bypass; offline fault tests | Service availability and future website-schema compatibility |
 | Native Rust application | Strict TOML configuration, exclusive `init --python`, config/doctor/serve/worker and typed BioArt commands, direct argument launch, tested cooperative and repeated cancellation, Python-owned renderer watchdog, and measured earlier Linux release | Windows/macOS execution and signed desktop installers; calculations still run in Python |

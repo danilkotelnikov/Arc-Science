@@ -129,6 +129,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if not authorization or not secrets.compare_digest(authorization,expected):
             raise HTTPException(401,'Authentication required',headers={'WWW-Authenticate':'Bearer'})
 
+    from .bioart.web import create_router as create_bioart_router
+    app.include_router(create_bioart_router(root,authorized))
+
     @app.middleware('http')
     async def security_headers(request,call_next):
         if request.headers.get('content-length','0').isdigit() and int(request.headers.get('content-length','0'))>1024*1024:

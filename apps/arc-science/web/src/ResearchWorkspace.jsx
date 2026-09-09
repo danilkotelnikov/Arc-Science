@@ -16,8 +16,8 @@ function Artifact({missionId,artifact,request}) {
   return <figure className="artifact">{url?<><img src={url} alt={'Artifact from '+artifact.source_observation_id}/><a href={url} download={artifact.digest+'.png'}>Download authenticated PNG</a></>:error?<><p role="alert">Artifact unavailable: {error}</p><Button variant="secondary" onPress={()=>setAttempt(n=>n+1)}>Retry artifact</Button><p>Check your token, then retry or select the mission again.</p></>:<p>Loading authenticated artifact…</p>}<figcaption>{artifact.source_observation_id} · {artifact.digest.slice(0,12)}…</figcaption></figure>;
 }
 
-export default function ResearchWorkspace() {
-  const [token,setToken]=useState(''),[goal,setGoal]=useState('Compare competing explanations of the nonlinear response and challenge the preferred fit.');
+export default function ResearchWorkspace({token,setToken}) {
+  const [goal,setGoal]=useState('Compare competing explanations of the nonlinear response and challenge the preferred fit.');
   const [mode,setMode]=useState('demo'),[egress,setEgress]=useState(false),[vision,setVision]=useState(false),[rounds,setRounds]=useState(5),[points,setPoints]=useState('');
   const [mission,setMission]=useState(null),[missions,setMissions]=useState(null),[verification,setVerification]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const selected=useRef(null),generation=useRef(0);

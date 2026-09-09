@@ -1,6 +1,7 @@
 import React, {useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Button} from '@heroui/react/button';
+import BioArtWorkspace from './BioArtWorkspace';
 import MolecularWorkspace from './MolecularWorkspace';
 import ResearchWorkspace from './ResearchWorkspace';
 import {Icon} from './icons';
@@ -8,13 +9,15 @@ import './styles.css';
 
 export function App() {
   const [workspace,setWorkspace]=useState('molecules');
+  const [token,setToken]=useState('');
   return <div className="app-shell">
-    <header className="app-header"><div className="brand">Arc Science<span className="development">0.5.0 · Development</span></div><span className="header-note">Evidence-bound research workbench</span><a href="/diagnostics">Diagnostics ↗</a></header>
-    <div className="app-body"><nav className="workspace-nav" aria-label="Workspaces"><p className="eyebrow">WORKSPACE</p><Button variant="ghost" aria-pressed={workspace==='molecules'} onPress={()=>setWorkspace('molecules')}><Icon name="atom"/>Molecules</Button><Button variant="ghost" aria-pressed={workspace==='research'} onPress={()=>setWorkspace('research')}><Icon name="search"/>Research</Button><p className="nav-footnote">Explore.<br/>Inspect.<br/>Reproduce.</p></nav>
+    <header className="app-header"><div className="brand">Arc Science<span className="development">0.6.0 · Development</span></div><span className="header-note">Evidence-bound research workbench</span><a href="/diagnostics">Diagnostics ↗</a></header>
+    <div className="app-body"><nav className="workspace-nav" aria-label="Workspaces"><p className="eyebrow">WORKSPACE</p><Button variant="ghost" aria-pressed={workspace==='molecules'} onPress={()=>setWorkspace('molecules')}><Icon name="atom"/>Molecules</Button><Button variant="ghost" aria-pressed={workspace==='bioart'} onPress={()=>setWorkspace('bioart')}><Icon name="scan-search"/>BioArt</Button><Button variant="ghost" aria-pressed={workspace==='research'} onPress={()=>setWorkspace('research')}><Icon name="search"/>Research</Button><p className="nav-footnote">Explore.<br/>Inspect.<br/>Reproduce.</p></nav>
       <main className="workspace-content">
         {/* Keep both workspaces mounted: credentials, goal and selection stay in memory. */}
         <div hidden={workspace!=='molecules'}><MolecularWorkspace/></div>
-        <div hidden={workspace!=='research'}><ResearchWorkspace/></div>
+        <div hidden={workspace!=='bioart'}><BioArtWorkspace token={token} setToken={setToken}/></div>
+        <div hidden={workspace!=='research'}><ResearchWorkspace token={token} setToken={setToken}/></div>
       </main>
     </div>
   </div>;
