@@ -367,6 +367,7 @@ fn worker_preserves_arguments_environment_cwd_and_noninteractive_streams() {
         .args(["worker", "--"])
         .args(args)
         .env("ARC_BIOART_TIMEOUT_SECONDS", "99")
+        .env("ARC_NATIVE_CONTAINMENT", "untrusted-parent-value")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -406,6 +407,10 @@ fn worker_preserves_arguments_environment_cwd_and_noninteractive_streams() {
     assert_eq!(value["env"]["ARC_BIOART_MAX_FILE_BYTES"], "33554432");
     assert_eq!(value["env"]["ARC_BIOART_MAX_CACHE_BYTES"], "268435456");
     assert_eq!(value["env"]["ARC_BIOART_METADATA_TTL_SECONDS"], "86400");
+    #[cfg(unix)]
+    assert_eq!(value["env"]["ARC_NATIVE_CONTAINMENT"], "process-group-v1");
+    #[cfg(windows)]
+    assert_eq!(value["env"]["ARC_NATIVE_CONTAINMENT"], "job-object-v1");
     assert_eq!(
         Path::new(value["env"]["ARC_BIOART_CACHE_DIR"].as_str().unwrap()),
         temp.path()

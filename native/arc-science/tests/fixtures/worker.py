@@ -36,7 +36,8 @@ time.sleep(60)
 
 record.write_text(json.dumps({
     'args': sys.argv[1:], 'module': sys.argv[0], 'cwd': os.getcwd(),
-    'env': {k: v for k, v in os.environ.items() if k.startswith('ARC_BIOART_') or k == 'ARC_DATA_DIR'},
+    'env': {k: v for k, v in os.environ.items()
+            if k.startswith('ARC_BIOART_') or k in ('ARC_DATA_DIR', 'ARC_NATIVE_CONTAINMENT')},
     'stdin': sys.stdin.read(), 'pid': os.getpid(), 'child': child.pid if child else None,
 }), encoding='utf-8')
 print('fixture stdout', flush=True)

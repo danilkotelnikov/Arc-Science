@@ -17,6 +17,30 @@ from . import figure_contract as c
 from .vector_assets import verify_asset, _verify_asset_contents
 
 
+def _native_owns_descendants():
+    """Return whether the native parent established the advertised container."""
+    marker = os.environ.get('ARC_NATIVE_CONTAINMENT')
+    if os.name == 'posix':
+        # A ProcessGroup::leader child must be the leader of its own group.
+        # Requiring both facts prevents an inherited marker from changing the
+        # normal standalone cleanup policy.
+        return marker == 'process-group-v1' and os.getpgrp() == os.getpid()
+    if os.name == 'nt':
+        return marker == 'job-object-v1'
+    return False
+
+
+def _kill_renderer(process, native_containment):
+    """Kill the isolated renderer group or its child inside outer containment."""
+    try:
+        if os.name == 'posix' and not native_containment:
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except ProcessLookupError:
+        pass
+
+
 def _reservation(fd, job, status, failure=None):
     value = {'format':'arc-figure-reservation/1','run_id':job['run_id'],
              'job_sha256':c.digest(c.canonical(job)),'status':status,'failure':failure}
@@ -77,12 +101,13 @@ def _execute(argv, run_fd, log_fd, timeout):
         deadline = time.monotonic()+timeout
         retained = 0
         process = selector = None
+        native_containment = _native_owns_descendants()
         try:
             check_cancelled()
             process = subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT,env=environment,
                                        cwd=f'/proc/self/fd/{run_fd}',pass_fds=(run_fd,),
-                                       start_new_session=True)
+                                       start_new_session=not native_containment)
             check_cancelled()
             selector = selectors.DefaultSelector()
             os.set_blocking(process.stdout.fileno(),False)
@@ -102,8 +127,7 @@ def _execute(argv, run_fd, log_fd, timeout):
                 status = process.poll()
                 if status is not None:
                     # Stop descendants even if they still hold stdout open.
-                    try: os.killpg(process.pid,signal.SIGKILL)
-                    except ProcessLookupError: pass
+                    _kill_renderer(process,native_containment)
                     while True:
                         try: data = os.read(process.stdout.fileno(),64*1024)
                         except BlockingIOError: break
@@ -116,8 +140,7 @@ def _execute(argv, run_fd, log_fd, timeout):
                     return
         finally:
             if process is not None:
-                try: os.killpg(process.pid,signal.SIGKILL)
-                except ProcessLookupError: pass
+                _kill_renderer(process,native_containment)
                 process.wait()
                 process.stdout.close()
             if selector is not None: selector.close()

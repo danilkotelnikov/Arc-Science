@@ -40,6 +40,16 @@ def setup(fd, blocking):
                 raise RuntimeError('Renderer did not become ready')
             time.sleep(.01)
         os.kill(os.getpid(), signal.SIGTERM)
+    elif mode == 'blocked':
+        # Hold Python after Popen ownership but before its cancellation check.
+        # A repeated native interrupt must still contain the live renderer.
+        deadline = time.monotonic() + 5
+        while not (root / 'ready').exists():
+            if time.monotonic() > deadline:
+                raise RuntimeError('Renderer did not become ready')
+            time.sleep(.01)
+        (root / 'setup-blocked').write_text('blocked')
+        time.sleep(60)
     return real_blocking(fd, blocking)
 
 
