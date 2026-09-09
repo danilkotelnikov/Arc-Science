@@ -1,12 +1,13 @@
 # Arc Science native supervisor
 
-**Qualification gate I1:** the source now gives supervised renderers the native
-process group/job as their outer containment boundary. A deterministic regression
-blocks Python after renderer acquisition, sends two native termination signals and
-requires FIFO EOF from the renderer. The Python/process-graph path passes, but this
-environment could not rebuild the changed Rust source. Do not rely on the retained
-older binary for native-supervised rendering until clean CI passes the uninjected
-test. See the [current verification](../../docs/arc-science/renderer-containment-verification-2026-09-09.md).
+**Qualification gate I1:** the Linux figure executor now gives each renderer an
+isolated watchdog process group and non-inherited parent-liveness pipe. Deterministic
+regressions cover both repeated native termination while Python cannot clean up and a
+successful renderer leader that leaves a live descendant. The final design has no
+native marker or Rust source dependency and passes through the retained native binary.
+Independent code review approved the lifecycle boundary with no remaining findings.
+Official Blender and Windows/macOS rendering remain separate gates. See the [current
+verification](../../docs/arc-science/renderer-containment-verification-2026-09-09.md).
 
 A small Rust CLI for configuring and supervising the existing Python scientific
 worker. Commands: `init`, `config`, `doctor`, `serve`, `worker`, and
@@ -168,24 +169,22 @@ its own child before publishing a reaped marker. These tests do not infer death
 from inaccessible `/proc` data. Native reaps its direct Python child; orphaned Unix
 grandchildren are reaped by the OS's adopter, not this non-subreaper supervisor.
 
-The shipped figure/molecule executor owns a separate renderer session for standalone
-timeouts and log isolation. Its scoped main-thread SIGINT/SIGTERM handling defers
-cancellation across OS-child acquisition, then kills the renderer group and waits
-its direct child before exit. Setup failures also enter that cleanup. Caller signal
-handlers are restored; BioArt alarm/deadline state is unchanged.
+The shipped Linux figure/molecule executor starts an isolated watchdog as renderer
+process-group leader. The executor retains the only writer of a private control pipe;
+abrupt Python death therefore becomes EOF in the watchdog. The renderer cannot
+inherit that pipe or the bounded status pipe. On normal renderer exit, the watchdog
+reaps the leader, publishes its actual status, then kills its group before Python can
+validate outputs. Timeout, cancellation and invalid protocol also kill the group and
+reap Python's direct watchdog child. Caller signal handlers are restored; BioArt
+alarm/deadline state is unchanged.
 
-For a native launch, the supervisor overrides `ARC_NATIVE_CONTAINMENT` with a
-versioned process-group/job marker. On POSIX, Python accepts that marker only when
-its PID is also its process-group ID. It then keeps the renderer in the outer
-container and kills the direct renderer during cooperative cleanup; native kills
-any remaining group/job descendants when Python exits or the grace period is
-forced. Standalone or mismatched-marker execution retains the isolated renderer
-session. The application lifetime tests use a real native → Python → executor chain,
-positive FIFO readiness, bounded EOF and direct-renderer `ECHILD` evidence. The new
-force test holds Python before its cleanup and sends two signals, so only native
-containment can close the renderer's sole-writer FIFO. This is process-lifecycle
-evidence, not Blender or scientific qualification; clean updated-binary execution
-is still required as described in I1 above.
+The application lifetime tests use a real native → Python → watchdog → renderer
+chain, positive FIFO readiness, bounded EOF, and direct-watchdog `ECHILD` evidence.
+The force test holds Python before cleanup and sends two signals; kernel EOF on the
+non-inherited control pipe lets the watchdog contain the renderer after Python is
+force-killed. A second regression has a successful renderer leader leave a live,
+FIFO-owning descendant and proves that the descendant dies before `_execute` returns.
+This is Linux process-lifecycle evidence, not Blender or scientific qualification.
 
 A child that deliberately escapes its owner's process group is outside this
 trusted-worker contract. SIGKILL/crash

@@ -2,25 +2,24 @@
 
 This is a development application, not a certified scientific platform or a completed Rust rewrite. The verification record and retained reviews identify the exact tested revision.
 
-**Important finding I1 has an unqualified source fix:** native now advertises its
-process container, and Python shares that container only after checking the marker
-and actual process-group topology. A deterministic double-signal test first
-reproduced the leaked live renderer and passes with the new contract. The current
-environment cannot rebuild Rust, and GitHub ref creation is still forbidden, so
-the uninjected native-to-renderer test has not run against the updated binary.
-Native-supervised rendering and merge qualification remain blocked pending that
-execution. [Current verification](renderer-containment-verification-2026-09-09.md)
+**Important finding I1 is independently approved and locally resolved for the Linux
+executor:** a private watchdog owns the renderer group and observes
+Python through a non-inherited liveness pipe. Deterministic regressions prove cleanup
+on both repeated native cancellation and a successful renderer-leader exit with a
+live descendant. The rejected environment-marker design and its Rust changes were
+removed; the final native integration runs with the retained binary and no injected
+marker. [Current verification](renderer-containment-verification-2026-09-09.md)
 records the exact evidence and limitations.
 
 | Requirement | Implemented boundary | Qualification still needed |
 | --- | --- | --- |
 | Arc Science in the Vedix repository | App under `apps/arc-science`, Arc Science root README, original Vedix plugins and history preserved | GitHub write access and repository-slug rename |
 | HeroUI workbench | Actual HeroUI components, molecular views, zoom, export, authenticated Research workspace | Browser pixel review; current evidence is DOM interaction, build and served bytes |
-| White molecular collages | Frozen 1DQJ candidate03, three transparent Blender views, annotated SVG views, coordinate-derived contact CSV and matrix | New structures, native renderer requalification and publication-specific review |
+| White molecular collages | Frozen 1DQJ candidate03, three transparent Blender views, annotated SVG views, coordinate-derived contact CSV and matrix | New structures, official Blender requalification, and publication-specific review |
 | NIH BioArt intake | CLI metadata inspection, SVG/default neutral selection with explicit override, entry-bound files, bounded consent-gated transfer, cache, receipts and checked import | Live vector retrieval, real NIH SVG compatibility and an integrated asset-browser UI |
 | BioArt rights | Entry-specific credit retained; automation currently limited to exact Public Domain entries | Other license policies require review; no whole-catalog reuse assumption |
 | Reliable network behavior | Owned transport in a deadline-bound process; no redirects or permission bypass; offline fault tests | Service availability and future website-schema compatibility |
-| Native Rust application | Strict TOML configuration, exclusive `init --python`, config/doctor/serve/worker and typed BioArt commands, direct argument launch, tested cooperative cancellation, source-level outer renderer containment and measured earlier Linux release | Rebuild and uninjected execution of the I1 regression; Windows/macOS execution and signed desktop installers; calculations still run in Python |
+| Native Rust application | Strict TOML configuration, exclusive `init --python`, config/doctor/serve/worker and typed BioArt commands, direct argument launch, tested cooperative and repeated cancellation, Python-owned renderer watchdog, and measured earlier Linux release | Windows/macOS execution and signed desktop installers; calculations still run in Python |
 | HoH foundation | Bounded candidate work, fixed roles, single writer, independent QA and evidence preservation | Broader harness evolution and scientific-validity evaluation |
 | Scientific image review | Exact candidate bytes/hashes and separate reference roles supported by provider protocol | Live provider-based comparison in this environment |
 | Programming/ML diagrams | React Flow with ELK researched as a later editor | Shared graph model, editor and controlled SVG export not shipped |

@@ -1,82 +1,108 @@
 # Renderer containment continuation — 9 September 2026
 
-**Disposition: implemented source candidate; native qualification still blocked.**
-This continuation addresses inherited Important finding I1 without changing the
-scientific example, renderer styling, BioArt policy or user interface. Production
-source commits are `7e257fbedc2097f48739c1de6a7226e84ab854b1` and
-`e88269340e29279e43378dc85cae44ad0955d06c`, based on the reviewed BioArt setup
+**Disposition: independently approved and locally qualified for the Linux
+executor.** This continuation addresses inherited Important finding I1 without
+changing the scientific example, renderer styling, BioArt policy, or user interface.
+The final implementation is in commits
+`a885dc109bdcd03b336136a1d7a8745783c9f43e`,
+`609283540c4e0bf703b576b0a02d757d2da4e6b9`, and
+`bb63e45088cf998370b888e887f3d7f04f0dfba7`, based on the reviewed BioArt setup
 checkpoint `cda462854ec1c857c174070dc3e98dee8556a767`.
 
-## Root cause and contract
+## Review-driven root cause
 
-Native owns Python through a Unix process group or Windows Job Object. The Python
-executor previously launched the renderer with `start_new_session=True`, so the
-renderer escaped the Unix group. A first native signal asked Python to clean up;
-a second signal immediately killed the Python group. If Python was still between
-renderer acquisition and its next cancellation check, no remaining owner could
-reach the detached renderer.
+Native owns Python through a Unix process group or Windows Job Object. The original
+Python executor created a separate renderer session. A second native cancellation
+could therefore kill Python before Python killed that detached renderer.
 
-The source fix makes the boundary explicit:
+An intermediate fix made Python share the outer group when native set an
+`ARC_NATIVE_CONTAINMENT` marker. A first independent review rejected that design for
+two concrete reasons:
 
-1. Native overrides `ARC_NATIVE_CONTAINMENT` with `process-group-v1` on Unix or
-   `job-object-v1` on Windows.
-2. POSIX Python requires both the exact marker and `getpgrp() == getpid()` before
-   trusting outer containment. Missing, wrong or topology-inconsistent markers
-   retain standalone isolation.
-3. A supervised renderer stays in the native container. Python kills its direct
-   child for cooperative cleanup; native kills remaining descendants when Python
-   exits or force cancellation occurs.
-4. Standalone POSIX execution continues to create and kill a private renderer
-   session, preserving the existing timeout/descendant behavior.
+1. after the renderer leader exited successfully, Python could no longer kill its
+   still-live descendants before validating outputs; and
+2. a process-group leader could spoof the environment marker without proving that an
+   outer supervisor actually owned its descendants.
 
-This matches the pinned wrapper contract: `ProcessGroup::leader()` establishes a
-group and wrapped kill targets the process group. The application does not treat
-that mechanism as cgroup-style containment of a child that deliberately creates a
-new session.
+That marker contract and its Rust changes were removed. The final branch has no net
+Rust source change from the reviewed base for this finding.
+
+## Final containment contract
+
+The Linux executor now starts an isolated Python watchdog as the leader of a private
+renderer process group. Two anonymous pipes make its ownership explicit:
+
+1. The executor retains the only control-pipe writer. The watchdog checks the read
+   end before spawning and throughout execution. Abrupt executor death closes the
+   writer in the kernel, and EOF makes the watchdog kill its complete process group.
+2. The watchdog retains the only status-pipe writer. It launches the renderer in its
+   own group without passing either protocol descriptor to the renderer.
+3. When the renderer leader exits, the watchdog reaps it, atomically publishes its
+   actual signed exit status, then kills its own group. The executor waits for the
+   watchdog to exit and accepts only the bounded status protocol before returning.
+4. On timeout, cooperative cancellation, invalid protocol, or watchdog failure, the
+   executor independently kills the watchdog group and reaps its direct child.
+5. Inherited `ARC_NATIVE_CONTAINMENT` values have no effect. Native and standalone
+   launches use the same inner ownership mechanism.
+
+This closes the post-render mutation window for trusted renderer descendants that
+remain in the owned group. A child that deliberately calls `setsid` or otherwise
+escapes that process group is outside this process-group boundary; this is not
+cgroup/container isolation.
 
 ## Test-first evidence
 
-The regression uses real processes, not a mocked launcher. A stdlib renderer opens
-a FIFO as its sole writer. The fixture blocks Python after `Popen` ownership but
-before cancellation cleanup; the test observes a positive live PID handshake,
-sends SIGTERM twice to native, then requires bounded FIFO EOF and native exit 130.
+The process-lifetime regressions use real processes and FIFO sole-writer witnesses,
+not mocked death or `/proc` absence.
+
+- Force cancellation: a renderer writes its PID to a FIFO and keeps the only writer
+  open while Python is deliberately blocked after OS acquisition. The test sends
+  SIGTERM twice through the retained native binary and requires FIFO EOF and native
+  exit 130.
+- Successful leader exit: a renderer spawns a descendant that ignores SIGTERM,
+  redirects stdout/stderr away from the parent, owns the FIFO writer, then the leader
+  exits 0. The executor parent stays alive for 60 seconds after `_execute` returns.
+  EOF must occur before that return marker, proving cleanup precedes output
+  validation.
+- Status-reader loss: the test closes the only status-pipe reader, releases a
+  successful renderer leader, and requires watchdog exit plus descendant FIFO EOF.
+  This proves an `EPIPE` cannot bypass group teardown.
 
 | Check | Result | Interpretation |
-|---|---|---|
-| New double-signal test against retained native binary, no marker | **Failed as expected:** `renderer survived repeated native cancellation` | Reproduced I1 before enabling the new contract |
-| Same real process graph with `ARC_NATIVE_CONTAINMENT=process-group-v1` | 1 passed in 0.45 s | Exercises the changed Python policy with the older native binary supplying the future marker externally |
-| Complete renderer-lifetime file with marker | 11 passed in 3.51 s | Cooperative acquisition/setup, handler restoration, marker/topology rejection and force containment |
-| Complete Arc application suite with marker | 559 passed, 6 skipped in 45.66 s | All available application tests; six existing explicit Blender-runtime skips |
-| Python bytecode compilation and `git diff --check` | Passed | Syntax/whitespace checks only |
+|---|---:|---|
+| Double-signal test before any fix | **Failed as expected:** `renderer survived repeated native cancellation` | Reproduced the inherited I1 leak |
+| Leader-exit test against the rejected marker design | **1 passed, 1 failed as expected** in 3.52 s; contained-parent failed | Proved the independent review finding before redesign |
+| Status-reader-loss test before the final teardown fix | **Failed as expected:** `status publication failure leaked descendant` | Reproduced the second-review EPIPE path |
+| Final renderer-lifetime file | **12 passed** in 5.29 s | Covers acquisition, setup, timeout/poll cancellation, repeated native cancellation, normal descendant cleanup, status-protocol loss, handler restoration, and direct-child reaping |
+| Figure-render suite | **87 passed, 4 skipped** in 7.58 s | Includes bounded logs, timeouts, inherited stdout, checkpoints, and artifact verification; skips require an explicitly configured official Blender Python runtime |
+| Complete Arc application suite | **560 passed, 6 skipped** in 47.97 s | All available application tests with `PYTHONPATH=src`; six existing explicit Blender-runtime skips |
+| Lifecycle stress loop | **20/20 invocations; 60/60 cases passed** | Repeated double-signal, leader-exit, and status-reader-loss cases |
+| Python bytecode compilation and `git diff --check` | Passed | Syntax and whitespace checks |
 
-The full application run used Python 3.12.14 in a project-local environment. Its
-dependencies were reconstructed from retained packages plus the current runtime.
-It made no live NIH, BioRender, model-provider or Blender request. The environment
-marker was injected because the retained native executable predates this source
-change; that run is not evidence that the Rust half compiled or emitted it.
+Two read-only review rounds rejected the intermediate designs before the final
+approval. The final reviewer reported no Critical, Important, or Minor code findings
+and independently ran the combined lifecycle/figure-render set: **99 passed, 4
+explicit Blender-runtime skips**.
 
-## Remaining gate
+The tests used Python 3.12.14 in the project-local environment. The retained native
+binary predates the rejected marker change, which is appropriate because the final
+design requires no native marker or Rust modification. The native regression is a
+real native → Python → watchdog → renderer execution and ran without injecting a
+containment marker.
 
-No `cargo`, `rustc` or `rustup` executable is available in this runtime. The
-authenticated GitHub connector can read `danilkotelnikov/vedix`, but creating the
-`Arc-Science` development ref returned HTTP 403 (`Resource not accessible by
-integration`), so its configured Rust 1.90 Linux/Windows/macOS workflow could not
-be triggered. Network approval for installing another local dependency source was
-also unavailable; no permission bypass was attempted.
+No live NIH, BioRender, model-provider, or Blender request ran in this continuation.
+The skipped Blender tests therefore remain an explicit rendering-quality gate rather
+than an inferred pass.
 
-Before I1 can be closed, a clean checkout must run:
+## Remaining qualification boundary
 
-```bash
-cargo +1.90.0 fmt --check --manifest-path native/arc-science/Cargo.toml
-cargo +1.90.0 test --locked --manifest-path native/arc-science/Cargo.toml
-cargo +1.90.0 clippy --locked --manifest-path native/arc-science/Cargo.toml -- -D warnings
-cargo +1.90.0 build --locked --manifest-path native/arc-science/Cargo.toml
-cd apps/arc-science
-python -m pip install '.[test]'
-python -m pytest tests/test_render_lifetime.py -q -rs
-```
+The current result is Linux process-lifecycle evidence. The artifact executor already
+requires Linux no-follow and descriptor-relative filesystem primitives. It does not
+qualify Windows/macOS rendering, an official Blender build, scientific correctness,
+or visual publication quality. The inherited root-suite 24-failure maintenance item
+is unchanged and separately documented.
 
-The final test must run without externally injecting `ARC_NATIVE_CONTAINMENT`, so
-the rebuilt native executable itself proves both contract halves. Until then this
-remains an unmerged development checkpoint. The inherited root-suite 24-failure
-maintenance item is unchanged and separately documented.
+The authenticated GitHub connector could read `danilkotelnikov/vedix`, but creating
+the `Arc-Science` development ref returned HTTP 403 (`Resource not accessible by
+integration`). No remote branch or pull request was created; this remains a local,
+unmerged development checkpoint as the user authorized.

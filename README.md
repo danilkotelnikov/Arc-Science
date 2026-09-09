@@ -2,12 +2,13 @@
 
 Arc Science is an evidence-bound research workbench under development in the existing Vedix repository. It combines a molecular figure workspace with bounded research missions: competing hypotheses, permitted computations, independent role reviews and reproducible evidence.
 
-This checkpoint is **not merge-ready**. A source fix and deterministic regression
-now address the Important repeated-cancellation renderer finding, but the updated
-Rust supervisor has not been rebuilt in this environment. Native-supervised
-rendering therefore remains unqualified until clean CI executes the uninjected
-native-to-renderer path. Configuration and BioArt retain separate tested scopes,
-and the inherited root suite has 24 documented failures. See the current
+This checkpoint is **not merge-ready**. The Linux renderer executor now uses a
+private process-group watchdog and kernel parent-liveness pipe; deterministic tests
+cover repeated native cancellation and cleanup after a successful renderer leader
+exit. Independent code review approved this boundary with no remaining findings.
+The complete application suite passes locally, while official Blender,
+Windows/macOS rendering, live BioArt, and the inherited root suite remain separate
+qualification gates. See the current
 [containment verification](docs/arc-science/renderer-containment-verification-2026-09-09.md)
 and the retained [earlier record](docs/arc-science/bioart-setup-verification-2026-09-08.md).
 
