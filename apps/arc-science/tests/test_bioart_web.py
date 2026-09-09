@@ -245,6 +245,23 @@ def test_owned_cli_finalizes_its_group_after_success(tmp_path, monkeypatch):
     assert len(finalized) == 1
 
 
+def test_owned_cli_finalizes_its_group_after_failure(tmp_path, monkeypatch):
+    import arc_science.bioart.web as web
+
+    original = web._stop_cli_uninterruptibly
+    finalized = []
+
+    async def record(process):
+        finalized.append(process.pid)
+        await original(process)
+
+    monkeypatch.setattr(web, '_stop_cli_uninterruptibly', record)
+    with pytest.raises(ValueError, match='Invalid BioArt identity'):
+        asyncio.run(web._run_bioart_cli(
+            tmp_path.absolute(), ('inspect', '--allow-egress', '0'), 5))
+    assert len(finalized) == 1
+
+
 def test_concurrent_cache_misses_share_one_cli_population(tmp_path, monkeypatch):
     import arc_science.bioart.web as web
 
