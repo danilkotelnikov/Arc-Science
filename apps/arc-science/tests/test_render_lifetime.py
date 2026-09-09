@@ -138,8 +138,13 @@ def test_executor_rejects_non_main_thread_before_spawn(tmp_path):
 @pytest.mark.skipif(os.name != 'posix', reason='POSIX process-group topology check')
 def test_native_containment_requires_marker_and_actual_group_leadership(monkeypatch):
     from arc_science.figure_render import _native_owns_descendants
-    monkeypatch.setenv('ARC_NATIVE_CONTAINMENT', 'process-group-v1')
     monkeypatch.setattr(os, 'getpid', lambda: 41)
+    monkeypatch.setattr(os, 'getpgrp', lambda: 41)
+    monkeypatch.delenv('ARC_NATIVE_CONTAINMENT', raising=False)
+    assert _native_owns_descendants() is False
+    monkeypatch.setenv('ARC_NATIVE_CONTAINMENT', 'wrong-version')
+    assert _native_owns_descendants() is False
+    monkeypatch.setenv('ARC_NATIVE_CONTAINMENT', 'process-group-v1')
     monkeypatch.setattr(os, 'getpgrp', lambda: 42)
     assert _native_owns_descendants() is False
     monkeypatch.setattr(os, 'getpgrp', lambda: 41)
