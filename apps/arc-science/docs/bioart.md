@@ -122,13 +122,14 @@ receipt remains verifiable against its original page. Hashes provide integrity,
 not remote authenticity or a cryptographic NIH signature.
 
 The flat cache uses no-follow directory/file descriptors, exclusive temporary
-files, a single-writer lock, atomic promotion, and immutable source/receipt writes.
-The budget includes temporary write bytes. It refuses growth beyond budget instead
-of silently evicting provenance. A process killed during a write may leave a
-`.writer-lock` or orphaned artifact; the next write fails explicitly. An operator
-must confirm no writer is active before recovering a stale lock. No recovery or
-deletion occurs automatically. These filesystem primitives follow the existing
-POSIX vector importer; Windows Python file/import support is not certified here.
+files, a process-owned advisory writer lock, atomic promotion, and immutable
+source/receipt writes. The lock inode may persist, but the kernel releases its
+ownership when a writer exits. After acquiring that lock, a later writer removes
+only Arc-private interrupted-write files matching `.write-` plus 32 hexadecimal
+characters. It never removes a promoted source or receipt. The budget includes
+temporary write bytes and refuses growth beyond budget instead of silently
+evicting provenance. These filesystem primitives follow the existing POSIX vector
+importer; Windows Python file/import support is not certified here.
 
 Only the exact entry license `Public Domain` permits fetch/import. Missing license
 is schema drift; unknown/restricted text is retained by inspect and requires
@@ -161,19 +162,23 @@ retained provenance text.
 
 Search, inspection, and fetch first call the provider with egress disabled. A
 fresh cache hit returns without starting another process. On the specific
-missing-or-stale-cache error, a checked network box permits the service to run the
-same BioArt CLI through a new POSIX process group. The child uses the qualified
-main-thread transport boundary. Cancellation or the web helper's total deadline
-terminates the group and waits for it before the request ends. The service then
-reopens the cache with egress disabled and re-verifies the result; CLI stdout and
-absolute source paths are never forwarded to the browser.
+missing-or-stale-cache error, a checked network box permits one action and is reset
+before that action begins. The service starts the same BioArt CLI through a new
+POSIX process group from the trusted installed package, in a sanitized environment
+that contains only locale and `ARC_BIOART_*` settings. It does not import from or
+run with the writable project as its working directory. Cancellation, normal
+completion, helper failure, or the total deadline finalizes the whole process
+group and waits for it before the request ends. Concurrent cache misses serialize,
+recheck the cache, and share one population. The service then reopens the cache
+with egress disabled and re-verifies the result; CLI stdout and absolute source
+paths are never forwarded to the browser.
 
-The helper deadline is twice the configured per-request BioArt timeout plus five
-seconds because a fetch may need one metadata request and one file request. The
-provider's tighter byte, retry, and per-request limits still apply. This web path
-is POSIX-only, like the cache/import primitives. Live NIH service behavior and
-actual NIH vector compatibility remain unqualified until a consented live test is
-recorded.
+Search and inspection receive the configured per-request timeout plus five
+seconds. Fetch receives twice that timeout plus five seconds because it may need
+one metadata request and one file request. The provider's tighter byte, retry, and
+per-request limits still apply. This web path is POSIX-only, like the cache/import
+primitives. Live NIH service behavior and actual NIH vector compatibility remain
+unqualified until a consented live test is recorded.
 
 SVG and PNG previews are served only after receipt and source-byte verification,
 with same-origin authentication and a restrictive content-security policy.

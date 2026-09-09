@@ -27,11 +27,13 @@ downloads.
 
 Every operation starts with egress disabled. A fresh cache result never starts a
 network process. When the provider reports a missing or stale cache entry, the
-visible NIH network checkbox permits the service to populate the cache through
-the existing BioArt CLI. The CLI runs in a separate POSIX process group so timeout
-or cancellation can terminate its owned network worker. The service then opens
-the cache without egress and verifies the returned metadata, receipt, and source
-bytes before responding to the browser.
+visible NIH network checkbox permits exactly one action and resets immediately.
+The service populates the cache through the existing BioArt CLI, launched from the
+trusted installed package with a sanitized environment and a separate POSIX
+process group. Timeout, cancellation, failure, and normal completion all finalize
+that owned group. Concurrent misses serialize and recheck the cache so they share
+one population. The service then opens the cache without egress and verifies the
+returned metadata, receipt, and source bytes before responding to the browser.
 
 The web API does not expose absolute cache paths. Receipt and file endpoints bind
 64-character receipt digests to project-local files, recheck source size and

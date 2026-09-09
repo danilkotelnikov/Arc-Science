@@ -4,6 +4,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+import stat
 
 import httpx
 import pytest
@@ -256,7 +257,9 @@ def test_timeout_is_bounded_and_cache_budget_refuses_write(tmp_path):
     assert len(attempts)==3
     client,_=transport_client(tmp_path,limits=api().BioArtLimits(max_cache_bytes=50))
     with pytest.raises(ValueError,match='budget'):client.inspect(18)
-    assert list((tmp_path/'cache').iterdir())==[]
+    entries=list((tmp_path/'cache').iterdir())
+    assert [entry.name for entry in entries]==['.writer-lock']
+    assert stat.S_IMODE(entries[0].stat().st_mode)==0o600
 
 
 def test_stream_limit_without_content_length(tmp_path):

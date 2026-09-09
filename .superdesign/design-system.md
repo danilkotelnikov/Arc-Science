@@ -27,7 +27,8 @@ Arc Science is an evidence-bound scientific workbench. The primary surfaces are 
 - Empty: explain the source and that live access requires explicit consent.
 - Search: show the query, result identity, and source link; do not fabricate thumbnails.
 - Inspect: show entry ID, title, creator, collection, license, credit, citation, and all representations with available formats.
-- Fetch: require a visible `Permit NIH network access for this request` control. Default to compatible neutral-labelled SVG selection, but retain a representation override.
+- Search/inspect: a visible permission covers only the next action and resets before the request begins.
+- Fetch: require an adjacent `Permit NIH network access for this fetch` control. Consume and reset it for that request. Default to compatible neutral-labelled SVG selection, but retain a representation override.
 - Verified: show the exact receipt digest, source file hash, format, file ID, source-page hash, preview/import eligibility, and limitations.
 - Imported: show the immutable Arc asset ID and manifest path. State that rights metadata and file validation do not establish scientific correctness.
 - Errors: keep the previous valid selection and render a specific, actionable message. Unsupported metadata schema, restricted license, unsafe SVG, missing cache, timeout, and authentication failures must remain distinct.
@@ -41,7 +42,7 @@ Arc Science is an evidence-bound scientific workbench. The primary surfaces are 
 
 ## Motion and accessibility
 
-- No ambient animation. Loading state may use text and disabled controls.
+- No ambient animation. Loading state uses status text, `aria-busy`, and disabled controls.
 - Maintain semantic landmarks, native labels, `role="alert"` for failures, and `role="status"` for progress.
 - Every action must be keyboard operable. Visible focus uses a 2 px `#315d7c` outline.
 - Do not rely on color alone for license, verification, or eligibility state.

@@ -154,7 +154,7 @@ def test_explicit_egress_populates_through_the_owned_cli_boundary(tmp_path, monk
     assert response.status_code == 200, response.text
     assert response.json() == {'hits': [{'entry_id': 18, 'title': 'Antibody'}]}
     assert calls == [(tmp_path.absolute(),
-                      ('search', '--allow-egress', '--', 'antibody'), 65)]
+                      ('search', '--allow-egress', '--', 'antibody'), 35)]
 
 
 def test_untyped_provider_error_never_triggers_the_network_helper(tmp_path, monkeypatch):
@@ -195,6 +195,82 @@ def test_owned_cli_bridge_accepts_all_live_commands_and_literal_query(tmp_path, 
             await _run_bioart_cli(tmp_path.absolute(), command, 5)
 
     asyncio.run(run())
+
+
+def test_owned_cli_ignores_project_module_shadowing(tmp_path, monkeypatch):
+    from arc_science.bioart.web import _run_bioart_cli
+
+    _seed(tmp_path, monkeypatch)
+    marker = tmp_path / 'project-code-executed'
+    (tmp_path / 'arc_science.py').write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('unsafe')\n")
+
+    asyncio.run(_run_bioart_cli(
+        tmp_path.absolute(), ('search', '--allow-egress', '--', 'antibody'), 5))
+    assert not marker.exists()
+
+
+def test_owned_cli_environment_excludes_unrelated_secrets(monkeypatch):
+    from arc_science.bioart.web import _cli_environment
+
+    monkeypatch.setenv('ARC_BIOART_TIMEOUT_SECONDS', '17')
+    monkeypatch.setenv('LANG', 'C.UTF-8')
+    monkeypatch.setenv('PYTHONPATH', '/unsafe/import/path')
+    monkeypatch.setenv('ARC_MODEL_TOKEN_FILE', '/secret/model-token')
+    monkeypatch.setenv('TOP_SECRET', 'do-not-forward')
+
+    environment = _cli_environment()
+
+    assert environment['ARC_BIOART_TIMEOUT_SECONDS'] == '17'
+    assert environment['LANG'] == 'C.UTF-8'
+    assert 'PYTHONPATH' not in environment
+    assert 'ARC_MODEL_TOKEN_FILE' not in environment
+    assert 'TOP_SECRET' not in environment
+
+
+def test_owned_cli_finalizes_its_group_after_success(tmp_path, monkeypatch):
+    import arc_science.bioart.web as web
+
+    _seed(tmp_path, monkeypatch)
+    original = web._stop_cli_uninterruptibly
+    finalized = []
+
+    async def record(process):
+        finalized.append(process.pid)
+        await original(process)
+
+    monkeypatch.setattr(web, '_stop_cli_uninterruptibly', record)
+    asyncio.run(web._run_bioart_cli(
+        tmp_path.absolute(), ('search', '--allow-egress', '--', 'antibody'), 5))
+    assert len(finalized) == 1
+
+
+def test_concurrent_cache_misses_share_one_cli_population(tmp_path, monkeypatch):
+    import arc_science.bioart.web as web
+
+    seed_root = tmp_path / 'seed'
+    _seed(seed_root, monkeypatch)
+    monkeypatch.setenv('ARC_BIOART_CACHE_DIR', 'bioart-cache')
+    calls = []
+
+    async def populate(*_):
+        calls.append('population')
+        await asyncio.sleep(.05)
+        shutil.copytree(seed_root / 'bioart-cache', tmp_path / 'bioart-cache',
+                        dirs_exist_ok=True)
+
+    monkeypatch.setattr(web, '_run_bioart_cli', populate)
+
+    async def run():
+        transport = httpx.ASGITransport(app=_app(tmp_path))
+        async with httpx.AsyncClient(transport=transport, base_url='http://arc.test') as client:
+            request = lambda: client.post('/api/bioart/search', headers=_auth(),
+                json={'query': 'antibody', 'allow_egress': True})
+            return await asyncio.gather(request(), request())
+
+    responses = asyncio.run(run())
+    assert [response.status_code for response in responses] == [200, 200]
+    assert calls == ['population']
 
 
 @pytest.mark.skipif(os.name != 'posix' or not hasattr(os, 'mkfifo'),
@@ -252,3 +328,12 @@ def test_preview_reverifies_bytes_and_rejects_tampering(tmp_path, monkeypatch):
         response = client.get(f'/api/bioart/receipts/{receipt_id}/preview', headers=_auth())
     assert response.status_code == 409
     assert 'mismatch' in response.json()['detail'].lower()
+
+
+def test_import_maps_invalid_provider_configuration_without_server_error(tmp_path, monkeypatch):
+    monkeypatch.setenv('ARC_BIOART_CACHE_DIR', '../outside')
+    with TestClient(_app(tmp_path), raise_server_exceptions=False) as client:
+        response = client.post('/api/bioart/import', headers=_auth(),
+                               json={'receipt_id': 'a' * 64})
+    assert response.status_code == 409
+    assert 'cache path' in response.json()['detail'].lower()

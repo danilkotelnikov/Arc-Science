@@ -18,22 +18,22 @@ button svg { flex-shrink: 0; }
 .app-header { min-height: 58px; padding: 0 24px; border-bottom: 1px solid #e4e7e9; display: flex; gap: 24px; align-items: center; }
 .brand { font-size: 18px; font-weight: 650; letter-spacing: -.5px; display: flex; gap: 18px; align-items: center; }
 .development { color: #68727a; border-left: 1px solid #dce0e3; padding-left: 18px; font-size: 11px; font-weight: 400; letter-spacing: 0; }
-.header-note { color: #798188; margin-left: auto; font-size: 11px; }
+.header-note { color: #4d5962; margin-left: auto; font-size: 11px; }
 .app-header>a { font-size: 11px; color: #68727a; }
 .app-body { display: grid; grid-template-columns: 150px minmax(0,1fr); min-height: calc(100vh - 58px); }
 .workspace-nav { background: #f8f9fa; border-right: 1px solid #e4e7e9; padding: 25px 12px; display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
-.eyebrow { font-size: 10px; letter-spacing: 1.1px; color: #838a90; font-weight: 600; }
+.eyebrow { font-size: 10px; letter-spacing: 1.1px; color: #4d5962; font-weight: 600; }
 .workspace-nav .eyebrow { padding: 0 10px 10px; }
 .workspace-nav .button { justify-content: flex-start; gap: 10px; border-radius: 5px; font-size: 12px; }
 .workspace-nav .button[aria-pressed="true"] { color: #315d7c; background: #eaf0f4; }
-.nav-footnote { margin-top: auto; padding: 40px 10px 0; color: #92989d; font-size: 11px; line-height: 1.9; }
+.nav-footnote { margin-top: auto; padding: 40px 10px 0; color: #4d5962; font-size: 11px; line-height: 1.9; }
 .workspace-content { min-width: 0; }
 .molecular-workspace { display: grid; grid-template-columns: 228px minmax(0,1fr); min-height: calc(100vh - 58px); }
 .inspector { padding: 28px 20px; border-right: 1px solid #e9ebed; }
 .inspector h1 { margin: 10px 0 14px; }
 .inspector>a { font-size: 11px; }
 dl { margin: 28px 0 20px; }
-dt { color: #7e878e; font-size: 10px; margin: 17px 0 4px; }
+dt { color: #4d5962; font-size: 10px; margin: 17px 0 4px; }
 dd { margin: 0; font-size: 12px; }
 .partner { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; }
 .antibody { background: #91aec5; }.antigen { background: #c4c9cc; }
@@ -42,14 +42,14 @@ dd { margin: 0; font-size: 12px; }
 .inspector-section h2 { font-size: 11px; }
 summary { cursor: pointer; font-weight: 500; }
 .inspector-section .button { display: flex; justify-content: flex-start; white-space: normal; height: auto; min-height: 30px; text-align: left; font-size: 11px; padding: 5px 0; }
-.muted,.field-note { color: #78828a; font-size: 11px; }
+.muted,.field-note { color: #4d5962; font-size: 11px; }
 .figure-workspace { min-width: 0; display: flex; flex-direction: column; background: #fff; }
 .figure-toolbar { min-height: 64px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; border-bottom: 1px solid #edf0f2; padding: 12px 22px; }
 .figure-toolbar .tabs__tab { font-size: 11px; }
 .figure-toolbar>.button { border-radius: 5px; gap: 7px; }
 .figure-stage { background: #fff; overflow: auto; flex: 1; height: calc(100vh - 172px); min-height: 380px; padding: 20px; }
 .figure-stage img { display: block; height: auto; background: #fff; margin: 0 auto; }
-.stage-footer { min-height: 48px; border-top: 1px solid #edf0f2; padding: 8px 20px; display: flex; justify-content: space-between; gap: 12px; align-items: center; color: #7b858d; font-size: 10px; }
+.stage-footer { min-height: 48px; border-top: 1px solid #edf0f2; padding: 8px 20px; display: flex; justify-content: space-between; gap: 12px; align-items: center; color: #4d5962; font-size: 10px; }
 .zoom-controls { display: flex; gap: 3px; align-items: center; flex-shrink: 0; }
 .zoom-controls .button { min-width: 28px; font-size: 11px; }
 .error-line,[role="alert"] { color: #a23d3d; padding: 12px 0; }
@@ -75,7 +75,7 @@ input[type="checkbox"] { margin-top: 3px; accent-color: #315d7c; }
 .results-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .results-heading h2 { font-size: 20px; margin: 8px 0; }
 .status-label { padding: 4px 8px; border: 1px solid #dce1e5; border-radius: 4px; color: #61717c; font-size: 11px; }
-.empty-state { padding: 70px 0; max-width: 380px; color: #78828a; }
+.empty-state { padding: 70px 0; max-width: 380px; color: #4d5962; }
 .empty-state h2 { color: #3d4b55; font-weight: 500; }
 .record,.branch { padding: 14px 0; border-bottom: 1px solid #edf0f2; }
 .record p,.branch p { margin-top: 6px; }
@@ -104,16 +104,17 @@ input[type="checkbox"] { margin-top: 3px; accent-color: #315d7c; }
 .bioart-metadata { margin: 0; }
 .bioart-metadata dt { margin-top: 12px; }
 .bioart-control-row { display: grid; grid-template-columns: 100px minmax(180px,1fr); gap: 10px; margin-bottom: 12px; }
-.bioart-control-row label { display: block; font-size: 10px; margin-bottom: 5px; color: #7e878e; }
+.bioart-control-row label { display: block; font-size: 10px; margin-bottom: 5px; color: #4d5962; }
+.bioart-fetch-consent { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0; font-size: 11px; line-height: 1.6; }
 .bioart-control-row+.button,.bioart-entry-grid section>.button { border-radius: 5px; gap: 8px; }
 .bioart-representations { border-top: 1px solid #edf0f2; padding-top: 22px; }
 .representation-list { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 1px 24px; }
 .representation-list>div { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #edf0f2; font-size: 11px; }
-.representation-list span { color: #78828a; text-align: right; }
+.representation-list span { color: #4d5962; text-align: right; }
 .bioart-receipt { margin-top: 28px; padding-top: 24px; border-top: 1px solid #dce1e5; }
 .receipt-heading { display: flex; gap: 10px; align-items: flex-start; color: #315d7c; }
 .receipt-heading h2 { margin: 0 0 4px; color: #28323b; }
-.receipt-heading p { color: #78828a; font-size: 11px; }
+.receipt-heading p { color: #4d5962; font-size: 11px; }
 .receipt-grid { display: grid; grid-template-columns: minmax(240px,.85fr) minmax(280px,1.15fr); gap: 28px; margin-top: 18px; }
 .bioart-preview-stage { min-height: 220px; border: 1px solid #e9ebed; background: #fff; display: grid; place-items: center; padding: 24px; }
 .bioart-preview-stage img { display: block; max-width: 100%; max-height: 360px; }
@@ -126,6 +127,6 @@ input[type="checkbox"] { margin-top: 3px; accent-color: #315d7c; }
 .import-record { display: flex; flex-direction: column; gap: 4px; border-left: 2px solid #91aec5; padding: 10px 12px; font-size: 11px; }
 .import-record code { overflow-wrap: anywhere; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 10px; padding: 12px 0; }
-footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e9ebed; font-size: 10px; color: #7b858d; line-height: 1.7; }
+footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e9ebed; font-size: 10px; color: #4d5962; line-height: 1.7; }
 @media(max-width:1100px) { .app-body { grid-template-columns: 122px minmax(0,1fr); }.molecular-workspace { grid-template-columns: 200px minmax(0,1fr); }.inspector { padding: 24px 15px; }.header-note { display: none; }.app-header>a { margin-left: auto; }.research-workspace { grid-template-columns: 300px minmax(0,1fr); }.research-results { padding: 24px 20px; }.bioart-workspace { grid-template-columns: 270px minmax(0,1fr); }.bioart-main { padding: 24px 20px; }.bioart-entry-grid,.receipt-grid { gap: 22px; } }
 @media(max-width:760px) { .app-header { padding: 12px 16px; }.brand { gap: 10px; font-size: 16px; }.development { padding-left: 10px; font-size: 9px; }.app-header>a { display: none; }.app-body { display: block; }.workspace-nav { flex-direction: row; padding: 8px 12px; border-bottom: 1px solid #e4e7e9; }.workspace-nav .eyebrow,.nav-footnote { display: none; }.molecular-workspace,.research-workspace,.bioart-workspace { display: flex; flex-direction: column; }.inspector { order: 2; border-top: 1px solid #e9ebed; border-right: 0; }.figure-stage { height: auto; min-height: 300px; padding: 8px; }.figure-toolbar { padding: 10px; }.stage-footer { padding: 8px 10px; }.research-form,.bioart-search { border-right: 0; border-bottom: 1px solid #e9ebed; }.research-results,.bioart-main { padding: 24px; }.bioart-entry-grid,.receipt-grid { grid-template-columns: 1fr; }.bioart-heading { flex-direction: column; }.status-stack { align-items: flex-start; }.bioart-control-row { grid-template-columns: 1fr; } }

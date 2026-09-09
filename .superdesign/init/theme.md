@@ -3,7 +3,7 @@
 ## Tokens and rules
 
 - Canvas: pure white `#fff`; navigation surface `#f8f9fa`.
-- Text: `#28323b`; muted text ranges from `#78828a` to `#92989d`.
+- Text: `#28323b`; small muted text is `#4d5962` on white (7.19:1 contrast).
 - Accent: restrained scientific blue `#315d7c`; selected surface `#eaf0f4`.
 - Molecular roles: antibody `#91aec5`; antigen `#c4c9cc`.
 - Rules: `#dce0e3`, `#e4e7e9`, `#e9ebed`, and `#edf0f2`.

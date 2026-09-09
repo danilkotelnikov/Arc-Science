@@ -3,10 +3,19 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import stat
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - rejected explicitly by Cache on Windows
+    fcntl = None
+
 from ..vector_assets import _open_directory, _read_regular_at, _write_regular_at
+
+
+_PRIVATE_TEMPORARY = re.compile(r'\.write-[0-9a-f]{32}')
 
 
 def digest(data):
@@ -19,7 +28,7 @@ def encoded(value):
 
 class Cache:
     def __init__(self, root: Path, budget: int):
-        if (os.name != 'posix' or not getattr(os,'O_NOFOLLOW',0) or
+        if (os.name != 'posix' or fcntl is None or not getattr(os,'O_NOFOLLOW',0) or
                 not getattr(os,'O_NONBLOCK',0) or not getattr(os,'O_DIRECTORY',0) or
                 not {os.open,os.stat,os.mkdir,os.unlink,os.link} <= os.supports_dir_fd):
             raise ValueError('BioArt cache/import requires POSIX no-follow directory/file primitives; Windows Python provider support is unavailable')
@@ -35,19 +44,30 @@ class Cache:
         finally: os.close(fd)
 
     def write(self, entries, *, replace=()):
-        fd = _open_directory(self.root,create=True); locked = False; temporary = []
+        fd = _open_directory(self.root,create=True); lock_fd = None; temporary = []
         try:
             try:
-                _write_regular_at(fd,'.writer-lock',b'BioArt write in progress')
-                locked = True
-            except FileExistsError:
-                raise ValueError('BioArt cache busy; review stale writer lock after an interrupted process') from None
+                lock_fd = os.open('.writer-lock', os.O_RDWR | os.O_CREAT |
+                    os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0), 0o600, dir_fd=fd)
+                info = os.fstat(lock_fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or
+                        info.st_uid != os.geteuid()):
+                    raise ValueError('BioArt cache lock is not a private regular file')
+                os.fchmod(lock_fd, 0o600)
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise ValueError('BioArt cache busy; another writer is active') from None
+            except OSError:
+                raise ValueError('BioArt cache lock is unavailable or unsafe') from None
             total = 0
             sizes = {}
             for name in os.listdir(fd):
                 info = os.stat(name,dir_fd=fd,follow_symlinks=False)
                 if not stat.S_ISREG(info.st_mode): raise ValueError('BioArt cache contains non-regular or symlink entry')
-                if name != '.writer-lock': total += info.st_size; sizes[name] = info.st_size
+                if _PRIVATE_TEMPORARY.fullmatch(name):
+                    os.unlink(name,dir_fd=fd)
+                elif name != '.writer-lock':
+                    total += info.st_size; sizes[name] = info.st_size
             pending = {}
             for name, data in entries.items():
                 if Path(name).name != name or name.startswith('.'): raise ValueError('Unsafe cache filename')
@@ -71,5 +91,5 @@ class Cache:
         finally:
             for temp in temporary:
                 os.unlink(temp,dir_fd=fd)
-            if locked: os.unlink('.writer-lock',dir_fd=fd)
+            if lock_fd is not None: os.close(lock_fd)
             os.close(fd)

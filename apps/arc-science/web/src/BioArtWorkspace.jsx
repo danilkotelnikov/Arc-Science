@@ -21,22 +21,25 @@ function ProtectedPreview({receipt,request}) {
 }
 
 export default function BioArtWorkspace({token,setToken}) {
-  const [query,setQuery]=useState('antibody'),[allowEgress,setAllowEgress]=useState(false);
+  const [query,setQuery]=useState('antibody'),[metadataEgress,setMetadataEgress]=useState(false),[fetchEgress,setFetchEgress]=useState(false);
   const [hits,setHits]=useState(null),[entry,setEntry]=useState(null),[receipt,setReceipt]=useState(null),[imported,setImported]=useState(null);
   const [format,setFormat]=useState('SVG'),[representation,setRepresentation]=useState('auto');
   const [error,setError]=useState(''),[busy,setBusy]=useState(false);
   const request=useCallback((path,method='POST',body,signal)=>checkedFetch(path.startsWith('/api/')?path:'/api/bioart'+path,{method,signal,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined}),[token]);
-  async function task(action){setBusy(true);setError('');try{await action();}catch(reason){setError(reason.message);}finally{setBusy(false);}}
-  async function search(){
-    const data=await(await request('/search','POST',{query,allow_egress:allowEgress})).json();
-    setHits(data.hits);setEntry(null);setReceipt(null);setImported(null);
+  async function task(action,{consent=false,clearConsent}={}){
+    if(clearConsent)clearConsent(false);
+    setBusy(true);setError('');try{await action(consent);}catch(reason){setError(reason.message);}finally{setBusy(false);}
   }
-  async function inspect(entryId){
-    const data=await(await request('/inspect','POST',{entry_id:entryId,allow_egress:allowEgress})).json();
-    setEntry(data);setFormat('SVG');setRepresentation('auto');setReceipt(null);setImported(null);
+  async function search(consent){
+    const data=await(await request('/search','POST',{query,allow_egress:consent})).json();
+    setHits(data.hits);setEntry(null);setReceipt(null);setImported(null);setFetchEgress(false);
   }
-  async function fetchSource(){
-    const body={entry_id:entry.entry_id,format,allow_egress:allowEgress};
+  async function inspect(entryId,consent){
+    const data=await(await request('/inspect','POST',{entry_id:entryId,allow_egress:consent})).json();
+    setEntry(data);setFormat('SVG');setRepresentation('auto');setReceipt(null);setImported(null);setFetchEgress(false);
+  }
+  async function fetchSource(consent){
+    const body={entry_id:entry.entry_id,format,allow_egress:consent};
     if(representation!=='auto')body.representation_id=Number(representation);
     setReceipt(await(await request('/fetch','POST',body)).json());setImported(null);
   }
@@ -48,18 +51,19 @@ export default function BioArtWorkspace({token,setToken}) {
     await downloadResponse(response,`bioart-${receipt.entry_id}.${receipt.format.toLowerCase()}`);
   }
   const formats=useMemo(()=>entry?formatOrder.filter(candidate=>entry.representations.some(item=>candidate in item.files)):[],[entry]);
-  return <div className="bioart-workspace">
+  return <div className="bioart-workspace" aria-busy={busy}>
     <aside className="bioart-search" aria-label="BioArt search">
       <p className="eyebrow">BIOART / NIH</p><h1>Source vectors.</h1>
       <p className="muted">Search recorded metadata first. Permit a live NIH request only when the project cache is missing or stale.</p>
       <label htmlFor="bioart-token">Operator token for BioArt</label><input id="bioart-token" type="password" value={token} onChange={event=>setToken(event.target.value)} autoComplete="off"/>
       <p className="field-note">Shared with Research in memory only.</p>
       <label htmlFor="bioart-query">BioArt search query</label><input id="bioart-query" value={query} onChange={event=>setQuery(event.target.value)}/>
-      <label className="check"><input type="checkbox" checked={allowEgress} onChange={event=>setAllowEgress(event.target.checked)}/>Permit NIH network access for this request</label>
-      <Button isDisabled={busy||!token||!query.trim()} onPress={()=>task(search)}><Icon name="search"/>Search NIH BioArt</Button>
-      <p className="field-note">Consent is passed with each search, inspection, and fetch. It is never inferred from an earlier mission.</p>
+      <label className="check"><input type="checkbox" checked={metadataEgress} onChange={event=>setMetadataEgress(event.target.checked)}/>Permit NIH network access for the next search or inspection</label>
+      <Button isDisabled={busy||!token||!query.trim()} onPress={()=>task(search,{consent:metadataEgress,clearConsent:setMetadataEgress})}><Icon name="search"/>Search NIH BioArt</Button>
+      <p className="field-note">Consent is consumed by one action and then cleared. Cache hits remain offline.</p>
+      {busy&&<p role="status" className="operation-status">BioArt request in progress…</p>}
       <h2>Results</h2>
-      {hits===null?<p className="muted">No search run in this session.</p>:hits.length?<div className="bioart-results-list">{hits.map(hit=><Button className="bioart-result" variant="ghost" key={hit.entry_id} isDisabled={busy} onPress={()=>task(()=>inspect(hit.entry_id))}>{hit.title} · BIOART-{String(hit.entry_id).padStart(6,'0')}</Button>)}</div>:<p>No matching entries in the returned metadata.</p>}
+      {hits===null?<p className="muted">No search run in this session.</p>:hits.length?<div className="bioart-results-list">{hits.map(hit=><Button className="bioart-result" variant="ghost" key={hit.entry_id} isDisabled={busy} onPress={()=>task(consent=>inspect(hit.entry_id,consent),{consent:metadataEgress,clearConsent:setMetadataEgress})}>{hit.title} · BIOART-{String(hit.entry_id).padStart(6,'0')}</Button>)}</div>:<p>No matching entries in the returned metadata.</p>}
     </aside>
     <section className="bioart-main" aria-label="BioArt evidence workspace">
       {error&&<p role="alert" className="bioart-error">{error}</p>}
@@ -68,9 +72,10 @@ export default function BioArtWorkspace({token,setToken}) {
         <div className="bioart-entry-grid">
           <section aria-labelledby="bioart-source-heading"><h2 id="bioart-source-heading">Source record</h2><dl className="bioart-metadata"><dt>Creator</dt><dd>{entry.creator}</dd><dt>Credit</dt><dd>{entry.credit}</dd><dt>Collection</dt><dd>{entry.collection}</dd><dt>Citation</dt><dd>{entry.citation}</dd></dl></section>
           <section aria-labelledby="bioart-fetch-heading"><h2 id="bioart-fetch-heading">Select source file</h2>
-            <div className="bioart-control-row"><div><label htmlFor="bioart-format">Format</label><select id="bioart-format" value={format} onChange={event=>{setFormat(event.target.value);setRepresentation('auto');setReceipt(null);setImported(null);}}>{formats.map(item=><option key={item} value={item}>{item}</option>)}</select></div>
-              <div><label htmlFor="bioart-representation">Representation</label><select id="bioart-representation" value={representation} onChange={event=>{setRepresentation(event.target.value);setReceipt(null);setImported(null);}}><option value="auto">Automatic · neutral compatible {format}</option>{entry.representations.map(item=><option key={item.group_id} value={String(item.group_id)} disabled={!(format in item.files)}>{item.caption}{format in item.files?'':' · format unavailable'}</option>)}</select></div></div>
-            <Button isDisabled={busy||!formats.includes(format)} onPress={()=>task(fetchSource)}><Icon name="cloud-download"/>Fetch verified {format}</Button>
+            <div className="bioart-control-row"><div><label htmlFor="bioart-format">Format</label><select id="bioart-format" value={format} onChange={event=>{setFormat(event.target.value);setRepresentation('auto');setReceipt(null);setImported(null);setFetchEgress(false);}}>{formats.map(item=><option key={item} value={item}>{item}</option>)}</select></div>
+              <div><label htmlFor="bioart-representation">Representation</label><select id="bioart-representation" value={representation} onChange={event=>{setRepresentation(event.target.value);setReceipt(null);setImported(null);setFetchEgress(false);}}><option value="auto">Automatic · neutral compatible {format}</option>{entry.representations.map(item=><option key={item.group_id} value={String(item.group_id)} disabled={!(format in item.files)}>{item.caption}{format in item.files?'':' · format unavailable'}</option>)}</select></div></div>
+            <label className="check bioart-fetch-consent"><input type="checkbox" checked={fetchEgress} onChange={event=>setFetchEgress(event.target.checked)}/>Permit NIH network access for this fetch</label>
+            <Button isDisabled={busy||!formats.includes(format)} onPress={()=>task(fetchSource,{consent:fetchEgress,clearConsent:setFetchEgress})}><Icon name="cloud-download"/>Fetch verified {format}</Button>
             <p className="field-note">Automatic selection prefers an explicitly grey, grayscale, or black-and-white representation that contains the requested format.</p>
           </section>
         </div>

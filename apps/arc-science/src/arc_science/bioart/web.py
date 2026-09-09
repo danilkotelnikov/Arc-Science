@@ -67,6 +67,13 @@ def _receipt_path(client: BioArtClient, receipt_id: str):
     return client.cache.root / f'{receipt_id}.receipt.json'
 
 
+def _cli_environment():
+    """Pass only locale and BioArt-specific configuration to the helper."""
+    permitted = {'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'}
+    return {key: value for key, value in os.environ.items()
+            if key in permitted or key.startswith('ARC_BIOART_')}
+
+
 async def _stop_cli(process):
     if process.returncode is None:
         try:
@@ -109,38 +116,45 @@ async def _run_bioart_cli(project: Path, arguments: tuple[str, ...], timeout: in
         raise ValueError('BioArt web egress requires the qualified POSIX CLI provider')
     if not arguments:
         raise ValueError('Invalid BioArt CLI request')
-    command = (sys.executable, '-m', 'arc_science', 'bioart', arguments[0],
-               '--project', str(project), *arguments[1:])
-    environment = os.environ.copy()
-    # Run the same package tree as the service even when a developer starts it
-    # from a source checkout and the project directory is elsewhere.
-    environment['PYTHONPATH'] = str(Path(__file__).resolve().parents[2])
-    with tempfile.TemporaryFile(mode='w+b') as errors:
-        process = await asyncio.create_subprocess_exec(
-            *command, cwd=project, env=environment, stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=errors, close_fds=True,
-            start_new_session=True)
-        try:
-            await asyncio.wait_for(process.wait(), timeout)
-        except asyncio.TimeoutError:
+    package_root = Path(__file__).resolve().parents[2]
+    bootstrap = ('import sys; root=sys.argv.pop(1); sys.path.insert(0,root); '
+                 'from arc_science.cli import main; raise SystemExit(main())')
+    command = (sys.executable, '-I', '-c', bootstrap, str(package_root), 'bioart',
+               arguments[0], '--project', str(project), *arguments[1:])
+    try:
+        with tempfile.TemporaryFile(mode='w+b') as errors:
+            process = await asyncio.create_subprocess_exec(
+                *command, cwd=package_root, env=_cli_environment(),
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors,
+                close_fds=True, start_new_session=True)
+            try:
+                await asyncio.wait_for(process.wait(), timeout)
+            except asyncio.TimeoutError:
+                await _stop_cli_uninterruptibly(process)
+                raise ValueError('BioArt web helper total timeout') from None
+            except asyncio.CancelledError as cancellation:
+                await _stop_cli_uninterruptibly(process)
+                raise cancellation
+            status = process.returncode
             await _stop_cli_uninterruptibly(process)
-            raise ValueError('BioArt web helper total timeout') from None
-        except asyncio.CancelledError as cancellation:
-            await _stop_cli_uninterruptibly(process)
-            raise cancellation
-        if process.returncode:
-            errors.seek(0, os.SEEK_END)
-            size = errors.tell()
-            errors.seek(max(0, size - 4096))
-            detail = errors.read(4096).decode('utf-8', errors='replace').strip()
-            if size > 4096:
-                detail = '[truncated] ' + detail
-            raise ValueError('BioArt CLI failed' + (': ' + detail if detail else ''))
+            if status:
+                errors.seek(0, os.SEEK_END)
+                size = errors.tell()
+                errors.seek(max(0, size - 4096))
+                lines = errors.read(4096).decode('utf-8', errors='replace').splitlines()
+                last = lines[-1].strip() if lines else ''
+                if (last.startswith('ValueError: ') and len(last) <= 2000 and
+                        str(project) not in last):
+                    raise ValueError('BioArt CLI failed: ' + last.removeprefix('ValueError: '))
+                raise ValueError('BioArt CLI failed without a safe provider error')
+    except OSError:
+        raise ValueError('BioArt CLI could not start or complete') from None
 
 
 def create_router(project: Path, authorized):
     root = Path(project).absolute()
     router = APIRouter(prefix='/api/bioart', dependencies=[Depends(authorized)])
+    population_lock = asyncio.Lock()
 
     def client(allow_egress=False):
         settings = BioArtSettings.from_environment(root)
@@ -161,12 +175,22 @@ def create_router(project: Path, authorized):
                 raise _problem(error) from None
         except ValueError as error:
             raise _problem(error) from None
-        try:
-            timeout = BioArtSettings.from_environment(root).limits.timeout_seconds * 2 + 5
-            await _run_bioart_cli(root, arguments, timeout)
-            return await asyncio.to_thread(lambda: operation(client(False)))
-        except ValueError as error:
-            raise _problem(error) from None
+        async with population_lock:
+            # Another request may have populated this cache while we waited.
+            try:
+                return await asyncio.to_thread(lambda: operation(client(False)))
+            except BioArtCacheMiss:
+                pass
+            except ValueError as error:
+                raise _problem(error) from None
+            try:
+                settings = BioArtSettings.from_environment(root)
+                multiplier = 2 if arguments[0] == 'fetch' else 1
+                timeout = settings.limits.timeout_seconds * multiplier + 5
+                await _run_bioart_cli(root, arguments, timeout)
+                return await asyncio.to_thread(lambda: operation(client(False)))
+            except ValueError as error:
+                raise _problem(error) from None
 
     @router.post('/search')
     async def search(request: SearchRequest):
@@ -248,9 +272,8 @@ def create_router(project: Path, authorized):
 
     @router.post('/import')
     async def import_asset(request: ImportRequest):
-        provider = client(False)
-
         def operation():
+            provider = client(False)
             manifest = provider.import_asset(_receipt_path(provider, request.receipt_id), root)
             try:
                 relative = manifest.absolute().relative_to(root)

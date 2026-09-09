@@ -79,9 +79,11 @@ native/arc-science/target/release/arc-science-native --project arc-project \
 The HeroUI workbench now exposes the same evidence-bound path. Open BioArt, enter
 the local operator token, search the fresh cache, and inspect an entry before
 fetching it. Each live search, inspection, or file request requires the visible
-NIH network checkbox. Cache hits do not start a network process. A cache miss with
-consent runs the existing BioArt CLI in a supervised process group, then reopens
-and verifies the resulting cache entry before returning it to the browser.
+NIH network checkbox. The permission is consumed by that one action and reset.
+Cache hits do not start a network process. A cache miss with consent runs the
+existing BioArt CLI from its trusted installed package in a sanitized environment
+and supervised process group, then reopens and verifies the resulting cache entry
+before returning it to the browser. Concurrent misses share one cache population.
 
 The result includes the selected file/group IDs, source and receipt paths, credit,
 license and byte hash. Use `bioart verify RECEIPT` before `bioart import RECEIPT
