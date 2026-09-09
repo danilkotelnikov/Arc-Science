@@ -62,8 +62,10 @@ not mocked death or `/proc` absence.
 - Successful leader exit: a renderer spawns a descendant that ignores SIGTERM,
   redirects stdout/stderr away from the parent, owns the FIFO writer, then the leader
   exits 0. The executor parent stays alive for 60 seconds after `_execute` returns.
-  EOF must occur before that return marker, proving cleanup precedes output
-  validation.
+  The test observes the return marker and then requires bounded FIFO EOF while that
+  parent is still alive, distinguishing watchdog cleanup from eventual parent-exit
+  cleanup. The implementation's status-before-return ordering is separately visible
+  in the reviewed control path.
 - Status-reader loss: the test closes the only status-pipe reader, releases a
   successful renderer leader, and requires watchdog exit plus descendant FIFO EOF.
   This proves an `EPIPE` cannot bypass group teardown.
@@ -73,7 +75,7 @@ not mocked death or `/proc` absence.
 | Double-signal test before any fix | **Failed as expected:** `renderer survived repeated native cancellation` | Reproduced the inherited I1 leak |
 | Leader-exit test against the rejected marker design | **1 passed, 1 failed as expected** in 3.52 s; contained-parent failed | Proved the independent review finding before redesign |
 | Status-reader-loss test before the final teardown fix | **Failed as expected:** `status publication failure leaked descendant` | Reproduced the second-review EPIPE path |
-| Final renderer-lifetime file | **12 passed** in 5.29 s | Covers acquisition, setup, timeout/poll cancellation, repeated native cancellation, normal descendant cleanup, status-protocol loss, handler restoration, and direct-child reaping |
+| Final renderer-lifetime file | **12 passed** in 5.29 s | Covers poll/acquisition/setup cancellation, repeated native cancellation, normal descendant cleanup, status-protocol loss, handler restoration, and direct-child reaping |
 | Figure-render suite | **87 passed, 4 skipped** in 7.58 s | Includes bounded logs, timeouts, inherited stdout, checkpoints, and artifact verification; skips require an explicitly configured official Blender Python runtime |
 | Complete Arc application suite | **560 passed, 6 skipped** in 47.97 s | All available application tests with `PYTHONPATH=src`; six existing explicit Blender-runtime skips |
 | Lifecycle stress loop | **20/20 invocations; 60/60 cases passed** | Repeated double-signal, leader-exit, and status-reader-loss cases |

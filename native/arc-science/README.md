@@ -183,8 +183,10 @@ chain, positive FIFO readiness, bounded EOF, and direct-watchdog `ECHILD` eviden
 The force test holds Python before cleanup and sends two signals; kernel EOF on the
 non-inherited control pipe lets the watchdog contain the renderer after Python is
 force-killed. A second regression has a successful renderer leader leave a live,
-FIFO-owning descendant and proves that the descendant dies before `_execute` returns.
-This is Linux process-lifecycle evidence, not Blender or scientific qualification.
+FIFO-owning descendant and proves that the watchdog cleans it up while the executor
+parent remains alive. The reviewed status protocol establishes teardown before
+Python accepts completion. This is Linux process-lifecycle evidence, not Blender or
+scientific qualification.
 
 A child that deliberately escapes its owner's process group is outside this
 trusted-worker contract. SIGKILL/crash
