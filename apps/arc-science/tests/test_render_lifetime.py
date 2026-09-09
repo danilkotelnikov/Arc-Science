@@ -39,7 +39,7 @@ def test_cancel_owns_renderer_from_acquisition_through_setup(tmp_path, mode, nat
             env['PYTHONPATH'] = str(Path(arc_science.__file__).parent.parent)
             argv = [sys.executable, str(driver), mode, endpoint, str(tmp_path)]
         process = subprocess.Popen(argv, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        pid = None
+        pid = owner_pid = None
         try:
             assert select.select([channel], [], [], 5)[0], 'renderer never became live'
             ready = channel.read(32)
@@ -55,13 +55,21 @@ def test_cancel_owns_renderer_from_acquisition_through_setup(tmp_path, mode, nat
             assert process.returncode == (130 if native and mode == 'poll' else 143), stderr.decode()
             assert (tmp_path / 'reaped').read_text() == 'ECHILD'
         finally:
-            if pid is None and (tmp_path / 'spawned').exists():
-                pid = int((tmp_path / 'spawned').read_text())
+            if (tmp_path / 'spawned').exists():
+                owner_pid = int((tmp_path / 'spawned').read_text())
+            if owner_pid is not None:
+                try:
+                    os.killpg(owner_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             if pid is not None:
                 try:
                     os.killpg(pid, signal.SIGKILL)
                 except ProcessLookupError:
-                    pass
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
             if process.poll() is None:
                 process.kill()
             process.communicate(timeout=5)
@@ -90,7 +98,7 @@ def test_repeated_native_cancel_contains_renderer_when_python_cannot_cleanup(tmp
         process = subprocess.Popen(
             [str(binary), '--project', str(tmp_path), 'worker', '--', 'blocked', endpoint, str(tmp_path)],
             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        pid = worker_pid = None
+        pid = worker_pid = owner_pid = None
         try:
             assert select.select([channel], [], [], 5)[0], 'renderer never became live'
             ready = channel.read(32)
@@ -113,13 +121,18 @@ def test_repeated_native_cancel_contains_renderer_when_python_cannot_cleanup(tmp
             _, tail = process.communicate(timeout=5)
             assert process.returncode == 130, (first_stderr + tail).decode()
         finally:
-            if pid is None and (tmp_path / 'spawned').exists():
-                pid = int((tmp_path / 'spawned').read_text())
+            if (tmp_path / 'spawned').exists():
+                owner_pid = int((tmp_path / 'spawned').read_text())
             if worker_pid is None and (tmp_path / 'setup-blocked').exists():
                 worker_pid = int((tmp_path / 'setup-blocked').read_text())
             if worker_pid is not None:
                 try:
                     os.killpg(worker_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if owner_pid is not None:
+                try:
+                    os.killpg(owner_pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
             if pid is not None:
@@ -135,28 +148,67 @@ def test_repeated_native_cancel_contains_renderer_when_python_cannot_cleanup(tmp
             process.communicate(timeout=5)
 
 
+@pytest.mark.skipif(sys.platform != 'linux', reason='Linux executor uses /proc/self/fd cwd')
+@pytest.mark.parametrize('inherited_marker', [False, True], ids=['clean-environment', 'spoofed-marker'])
+def test_successful_renderer_exit_kills_its_live_descendants_before_return(tmp_path, inherited_marker):
+    """Success cannot leave a descendant able to mutate validated outputs."""
+    import arc_science
+    driver = Path(__file__).parent / 'fixtures/render_lifetime.py'
+    endpoint = str(tmp_path / 'life.fifo')
+    os.mkfifo(endpoint)
+    env = dict(os.environ, PYTHONPATH=str(Path(arc_science.__file__).parent.parent))
+    if inherited_marker:
+        # An inherited marker must not weaken renderer-tree ownership.
+        env['ARC_NATIVE_CONTAINMENT'] = 'process-group-v1'
+    else:
+        env.pop('ARC_NATIVE_CONTAINMENT', None)
+    with os.fdopen(os.open(endpoint, os.O_RDONLY | os.O_NONBLOCK), 'rb', buffering=0) as channel:
+        process = subprocess.Popen(
+            [sys.executable, str(driver), 'leader-exit', endpoint, str(tmp_path)],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            start_new_session=True)
+        descendant_pid = owner_pid = None
+        try:
+            assert select.select([channel], [], [], 5)[0], 'renderer descendant never became live'
+            ready = channel.read(32)
+            assert ready and ready.endswith(b'\n'), 'descendant exited without a live handshake'
+            descendant_pid = int(ready)
+            deadline = time.monotonic() + 5
+            while not (tmp_path / 'execute-returned').exists():
+                assert process.poll() is None, process.stderr.read().decode()
+                assert time.monotonic() < deadline, '_execute did not return after renderer success'
+                time.sleep(.01)
+            # The descendant is the FIFO's sole writer. EOF must precede the
+            # still-live executor parent returning control to output validation.
+            assert select.select([channel], [], [], 2)[0], 'renderer descendant survived _execute success'
+            assert channel.read(1) == b''
+            assert process.poll() is None
+        finally:
+            if (tmp_path / 'spawned').exists():
+                owner_pid = int((tmp_path / 'spawned').read_text())
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            if owner_pid is not None:
+                try:
+                    os.killpg(owner_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if descendant_pid is not None:
+                try:
+                    os.kill(descendant_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            process.communicate(timeout=5)
+
+
 def test_executor_rejects_non_main_thread_before_spawn(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     from arc_science.figure_render import _execute
     with ThreadPoolExecutor(max_workers=1) as pool:
         with pytest.raises(ValueError, match='main thread'):
             pool.submit(_execute, ['/missing/renderer'], -1, -1, 1).result()
-
-
-@pytest.mark.skipif(os.name != 'posix', reason='POSIX process-group topology check')
-def test_native_containment_requires_marker_and_actual_group_leadership(monkeypatch):
-    from arc_science.figure_render import _native_owns_descendants
-    monkeypatch.setattr(os, 'getpid', lambda: 41)
-    monkeypatch.setattr(os, 'getpgrp', lambda: 41)
-    monkeypatch.delenv('ARC_NATIVE_CONTAINMENT', raising=False)
-    assert _native_owns_descendants() is False
-    monkeypatch.setenv('ARC_NATIVE_CONTAINMENT', 'wrong-version')
-    assert _native_owns_descendants() is False
-    monkeypatch.setenv('ARC_NATIVE_CONTAINMENT', 'process-group-v1')
-    monkeypatch.setattr(os, 'getpgrp', lambda: 42)
-    assert _native_owns_descendants() is False
-    monkeypatch.setattr(os, 'getpgrp', lambda: 41)
-    assert _native_owns_descendants() is True
 
 
 @pytest.mark.parametrize('failure', [False, True])

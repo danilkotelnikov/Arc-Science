@@ -25,10 +25,6 @@ const BRIDGE_KEYS: [&str; 7] = [
 ];
 const POLL: Duration = Duration::from_millis(20);
 const CANCEL_GRACE: Duration = Duration::from_secs(2);
-#[cfg(unix)]
-const NATIVE_CONTAINMENT: &str = "process-group-v1";
-#[cfg(windows)]
-const NATIVE_CONTAINMENT: &str = "job-object-v1";
 
 fn validate_environment() -> Result<()> {
     for (key, _) in env::vars_os() {
@@ -208,9 +204,6 @@ pub fn run(config: &Config, project: &Path, args: &[OsString]) -> Result<i32> {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .env("ARC_DATA_DIR", &config.worker.data)
-        // Override any inherited value: only this supervisor establishes the
-        // process group/job that permits a worker to share outer containment.
-        .env("ARC_NATIVE_CONTAINMENT", NATIVE_CONTAINMENT)
         .env(BRIDGE_KEYS[0], &config.bioart.cache_dir);
     for (key, value) in BRIDGE_KEYS[1..].iter().zip([
         config.bioart.max_metadata_bytes,

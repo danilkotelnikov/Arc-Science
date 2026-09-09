@@ -9,6 +9,7 @@ import selectors
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -17,28 +18,45 @@ from . import figure_contract as c
 from .vector_assets import verify_asset, _verify_asset_contents
 
 
-def _native_owns_descendants():
-    """Return whether the native parent established the advertised container."""
-    marker = os.environ.get('ARC_NATIVE_CONTAINMENT')
-    if os.name == 'posix':
-        # A ProcessGroup::leader child must be the leader of its own group.
-        # Requiring both facts prevents an inherited marker from changing the
-        # normal standalone cleanup policy.
-        return marker == 'process-group-v1' and os.getpgrp() == os.getpid()
-    if os.name == 'nt':
-        return marker == 'job-object-v1'
-    return False
-
-
-def _kill_renderer(process, native_containment):
-    """Kill the isolated renderer group or its child inside outer containment."""
+def _kill_renderer(process):
+    """Kill the renderer watchdog's isolated process group."""
     try:
-        if os.name == 'posix' and not native_containment:
-            os.killpg(process.pid, signal.SIGKILL)
-        else:
-            process.kill()
+        os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+
+
+def _watchdog_result(status_fd, executable):
+    """Read the closed, non-inherited status pipe and preserve spawn errors."""
+    message = bytearray()
+    while True:
+        chunk = os.read(status_fd, 129 - len(message))
+        if not chunk:
+            break
+        message.extend(chunk)
+        if len(message) > 128:
+            raise RuntimeError('Renderer watchdog returned an oversized status')
+    try:
+        kind, value = bytes(message).decode('ascii').strip().split(' ', 1)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise RuntimeError('Renderer watchdog exited without a valid status') from exc
+    if kind == 'spawn':
+        try:
+            number = int(value)
+        except ValueError as exc:
+            raise RuntimeError('Renderer watchdog returned an invalid spawn error') from exc
+        if number <= 0 or str(number) != value:
+            raise RuntimeError('Renderer watchdog returned an invalid spawn error')
+        raise OSError(number, os.strerror(number), os.fspath(executable))
+    if kind != 'status':
+        raise RuntimeError('Renderer watchdog failed before renderer completion')
+    try:
+        status = int(value)
+    except ValueError as exc:
+        raise RuntimeError('Renderer watchdog returned an invalid renderer status') from exc
+    if str(status) != value or not -255 <= status <= 255:
+        raise RuntimeError('Renderer watchdog returned an invalid renderer status')
+    return status
 
 
 def _reservation(fd, job, status, failure=None):
@@ -101,13 +119,20 @@ def _execute(argv, run_fd, log_fd, timeout):
         deadline = time.monotonic()+timeout
         retained = 0
         process = selector = None
-        native_containment = _native_owns_descendants()
+        control_r = control_w = status_r = status_w = None
         try:
             check_cancelled()
-            process = subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
+            control_r, control_w = os.pipe()
+            status_r, status_w = os.pipe()
+            watchdog = Path(__file__).with_name('renderer_watchdog.py').absolute()
+            command = [sys.executable, '-I', str(watchdog), str(control_r), str(status_w),
+                       str(run_fd), '--', *argv]
+            process = subprocess.Popen(command,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT,env=environment,
-                                       cwd=f'/proc/self/fd/{run_fd}',pass_fds=(run_fd,),
-                                       start_new_session=not native_containment)
+                                       cwd=f'/proc/self/fd/{run_fd}',
+                                       pass_fds=(run_fd,control_r,status_w),start_new_session=True)
+            os.close(control_r); control_r = None
+            os.close(status_w); status_w = None
             check_cancelled()
             selector = selectors.DefaultSelector()
             os.set_blocking(process.stdout.fileno(),False)
@@ -126,8 +151,9 @@ def _execute(argv, run_fd, log_fd, timeout):
                         retained += len(chunk)
                 status = process.poll()
                 if status is not None:
-                    # Stop descendants even if they still hold stdout open.
-                    _kill_renderer(process,native_containment)
+                    # Stop any group member left by a failed watchdog before
+                    # accepting its non-inherited renderer status.
+                    _kill_renderer(process)
                     while True:
                         try: data = os.read(process.stdout.fileno(),64*1024)
                         except BlockingIOError: break
@@ -135,15 +161,19 @@ def _execute(argv, run_fd, log_fd, timeout):
                         if retained < c.LOG_LIMIT-4096:
                             chunk = data[:c.LOG_LIMIT-4096-retained]
                             os.write(log_fd,chunk); retained += len(chunk)
+                    status = _watchdog_result(status_r, argv[0])
                     check_cancelled()
                     if status != 0: raise RuntimeError(f'Render worker exited with status {status}')
                     return
         finally:
             if process is not None:
-                _kill_renderer(process,native_containment)
+                _kill_renderer(process)
                 process.wait()
                 process.stdout.close()
             if selector is not None: selector.close()
+            for descriptor in (control_r, control_w, status_r, status_w):
+                if descriptor is not None:
+                    os.close(descriptor)
 
 
 def _capture(asset_json, manifest, run_fd):

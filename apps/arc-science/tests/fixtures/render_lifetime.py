@@ -55,18 +55,41 @@ def setup(fd, blocking):
 
 subprocess.Popen = spawn
 os.set_blocking = setup
-renderer = '''import os, pathlib, signal, sys, time
+renderer = '''import os, pathlib, signal, subprocess, sys, time
+endpoint, root, mode = sys.argv[1:]
+if mode == 'leader-exit':
+    descendant = """import os, pathlib, signal, sys, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 channel = os.open(sys.argv[1], os.O_WRONLY)
-os.write(channel, (str(os.getpid()) + '\\n').encode())
+os.write(channel, (str(os.getpid()) + '\\\\n').encode())
 pathlib.Path(sys.argv[2], 'ready').write_text('live')
+time.sleep(60)
+"""
+    subprocess.Popen([sys.executable, '-c', descendant, endpoint, root],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 5
+    while not pathlib.Path(root, 'ready').exists():
+        if time.monotonic() > deadline:
+            raise RuntimeError('Descendant did not become ready')
+        time.sleep(.01)
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+channel = os.open(endpoint, os.O_WRONLY)
+os.write(channel, (str(os.getpid()) + '\\n').encode())
+pathlib.Path(root, 'ready').write_text('live')
 time.sleep(60)
 '''
 directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
 log = os.open(root / 'worker.log', os.O_WRONLY | os.O_CREAT, 0o600)
 handlers = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM, signal.SIGALRM)}
 try:
-    figure_render._execute([sys.executable, '-c', renderer, endpoint, str(root)], directory, log, 30)
+    figure_render._execute([sys.executable, '-c', renderer, endpoint, str(root), mode], directory, log, 30)
+    if mode == 'leader-exit':
+        # Keep the executor parent alive so the test can distinguish renderer
+        # tree cleanup from eventual cleanup when this process exits.
+        (root / 'execute-returned').write_text('live')
+        time.sleep(60)
 finally:
     assert {s: signal.getsignal(s) for s in handlers} == handlers
     os.close(log)
