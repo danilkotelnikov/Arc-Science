@@ -154,8 +154,7 @@ async def _run_bioart_cli(project: Path, arguments: tuple[str, ...], timeout: in
 def create_router(project: Path, authorized):
     root = Path(project).absolute()
     router = APIRouter(prefix='/api/bioart', dependencies=[Depends(authorized)])
-    population_key = None
-    population_result = None
+    population = None
 
     def client(allow_egress=False):
         settings = BioArtSettings.from_environment(root)
@@ -183,28 +182,53 @@ def create_router(project: Path, authorized):
 
     async def populate_once(arguments, operation):
         """Join an identical live request; reject unrelated work without queuing."""
-        nonlocal population_key, population_result
-        future = population_result
-        owner = future is None
-        if owner:
-            future = asyncio.get_running_loop().create_future()
-            population_key, population_result = arguments, future
-        elif population_key != arguments:
+        nonlocal population
+        record = population
+        if record is not None and record['task'].done():
+            record = None
+        if record is None:
+            task = asyncio.create_task(populate(arguments, operation))
+            record = {'key': arguments, 'task': task, 'waiters': 0}
+            population = record
+
+            def finished(done):
+                nonlocal population
+                if population is record:
+                    population = None
+                try:
+                    done.exception()
+                except asyncio.CancelledError:
+                    pass
+
+            task.add_done_callback(finished)
+        elif record['task'].cancelling():
+            raise ValueError('BioArt live cache population is stopping; retry')
+        elif record['key'] != arguments:
             raise ValueError(
                 'BioArt live cache population is active for another request; retry')
 
-        if owner:
-            try:
-                future.set_result(await populate(arguments, operation))
-            except asyncio.CancelledError:
-                future.cancel()
-                raise
-            except Exception as error:
-                future.set_exception(error)
-            finally:
-                if population_result is future:
-                    population_key = population_result = None
-        return await asyncio.shield(future)
+        task = record['task']
+        record['waiters'] += 1
+        try:
+            return await asyncio.shield(task)
+        finally:
+            record['waiters'] -= 1
+            if record['waiters'] == 0 and not task.done():
+                task.cancel()
+                cancellation = None
+                while not task.done():
+                    try:
+                        await asyncio.shield(task)
+                    except asyncio.CancelledError as error:
+                        cancellation = error
+                    except Exception:
+                        break
+                try:
+                    task.result()
+                except (asyncio.CancelledError, Exception):
+                    pass
+                if cancellation is not None:
+                    raise cancellation
 
     async def cache_first(allow_egress, arguments, operation):
         try:

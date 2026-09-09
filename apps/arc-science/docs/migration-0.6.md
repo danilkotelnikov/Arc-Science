@@ -33,9 +33,10 @@ trusted installed package with a sanitized environment and a separate POSIX
 process group. Timeout, cancellation, failure, and normal completion all finalize
 that owned group. Identical concurrent misses share one in-flight population;
 unrelated live misses are rejected rather than queued. Each new population
-rechecks the cache before egress. The service then opens the cache without egress
-and verifies the returned metadata, receipt, and source bytes before responding to
-the browser.
+rechecks the cache before egress. Canceling one joined request preserves other
+identical waiters; canceling the last waiter stops and awaits the population. The
+service then opens the cache without egress and verifies the returned metadata,
+receipt, and source bytes before responding to the browser.
 
 The web API does not expose absolute cache paths. Receipt and file endpoints bind
 64-character receipt digests to project-local files, recheck source size and

@@ -335,6 +335,76 @@ def test_unrelated_cache_miss_does_not_queue_behind_active_population(tmp_path, 
     assert calls == [('search', '--allow-egress', '--', 'antibody')]
 
 
+def test_cancelling_first_request_does_not_cancel_identical_waiter(tmp_path, monkeypatch):
+    import arc_science.bioart.web as web
+
+    seed_root = tmp_path / 'seed'
+    _seed(seed_root, monkeypatch)
+    monkeypatch.setenv('ARC_BIOART_CACHE_DIR', 'bioart-cache')
+
+    async def run():
+        started = asyncio.Event()
+        release = asyncio.Event()
+        calls = []
+
+        async def populate(*_):
+            calls.append('population')
+            started.set()
+            await release.wait()
+            shutil.copytree(seed_root / 'bioart-cache', tmp_path / 'bioart-cache',
+                            dirs_exist_ok=True)
+
+        monkeypatch.setattr(web, '_run_bioart_cli', populate)
+        transport = httpx.ASGITransport(app=_app(tmp_path))
+        async with httpx.AsyncClient(transport=transport, base_url='http://arc.test') as client:
+            request = lambda: client.post('/api/bioart/search', headers=_auth(),
+                json={'query': 'antibody', 'allow_egress': True})
+            first = asyncio.create_task(request())
+            await asyncio.wait_for(started.wait(), .5)
+            second = asyncio.create_task(request())
+            await asyncio.sleep(.05)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            release.set()
+            response = await asyncio.wait_for(second, 1)
+        return response, calls
+
+    response, calls = asyncio.run(run())
+    assert response.status_code == 200
+    assert calls == ['population']
+
+
+def test_cancelling_last_request_stops_shared_population(tmp_path, monkeypatch):
+    import arc_science.bioart.web as web
+
+    monkeypatch.setenv('ARC_BIOART_CACHE_DIR', 'bioart-cache')
+
+    async def run():
+        started = asyncio.Event()
+        stopped = asyncio.Event()
+
+        async def populate(*_):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
+        monkeypatch.setattr(web, '_run_bioart_cli', populate)
+        transport = httpx.ASGITransport(app=_app(tmp_path))
+        async with httpx.AsyncClient(transport=transport, base_url='http://arc.test') as client:
+            request = asyncio.create_task(client.post('/api/bioart/search', headers=_auth(),
+                json={'query': 'antibody', 'allow_egress': True}))
+            await asyncio.wait_for(started.wait(), .5)
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+            await asyncio.wait_for(stopped.wait(), .5)
+
+    asyncio.run(run())
+
+
 @pytest.mark.skipif(os.name != 'posix' or not hasattr(os, 'mkfifo'),
                     reason='BioArt web egress is a POSIX-only boundary')
 def test_web_cli_cleanup_closes_a_descendant_owned_fifo(tmp_path):

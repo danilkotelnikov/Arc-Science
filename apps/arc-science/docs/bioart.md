@@ -171,8 +171,10 @@ completion, helper failure, or the total deadline finalizes the whole process
 group and waits for it before the request ends. Identical concurrent cache misses
 join one in-flight result. An unrelated live miss receives a conflict response
 instead of waiting in a queue, and every new population rechecks the cache before
-egress. The service then reopens the cache with egress disabled and re-verifies the
-result; CLI stdout and absolute source paths are never forwarded to the browser.
+egress. Each request is a counted waiter: canceling one does not cancel another
+identical request, while canceling the final waiter stops and awaits the population.
+The service then reopens the cache with egress disabled and re-verifies the result;
+CLI stdout and absolute source paths are never forwarded to the browser.
 
 Search and inspection receive the configured per-request timeout plus five
 seconds. Fetch receives twice that timeout plus five seconds because it may need
