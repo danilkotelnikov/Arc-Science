@@ -290,6 +290,51 @@ def test_concurrent_cache_misses_share_one_cli_population(tmp_path, monkeypatch)
     assert calls == ['population']
 
 
+def test_unrelated_cache_miss_does_not_queue_behind_active_population(tmp_path, monkeypatch):
+    import arc_science.bioart.web as web
+
+    seed_root = tmp_path / 'seed'
+    _seed(seed_root, monkeypatch)
+    monkeypatch.setenv('ARC_BIOART_CACHE_DIR', 'bioart-cache')
+
+    async def run():
+        started = asyncio.Event()
+        release = asyncio.Event()
+        calls = []
+
+        async def populate(_project, arguments, _timeout):
+            calls.append(arguments)
+            started.set()
+            await release.wait()
+            shutil.copytree(seed_root / 'bioart-cache', tmp_path / 'bioart-cache',
+                            dirs_exist_ok=True)
+
+        monkeypatch.setattr(web, '_run_bioart_cli', populate)
+        transport = httpx.ASGITransport(app=_app(tmp_path))
+        async with httpx.AsyncClient(transport=transport, base_url='http://arc.test') as client:
+            first = asyncio.create_task(client.post('/api/bioart/search', headers=_auth(),
+                json={'query': 'antibody', 'allow_egress': True}))
+            await asyncio.wait_for(started.wait(), .5)
+            second = None
+            try:
+                second = await asyncio.wait_for(client.post(
+                    '/api/bioart/search', headers=_auth(),
+                    json={'query': 'syringe', 'allow_egress': True}), .25)
+            except asyncio.TimeoutError:
+                pass
+            finally:
+                release.set()
+            first_response = await first
+        return first_response, second, calls
+
+    first, second, calls = asyncio.run(run())
+    assert first.status_code == 200
+    assert second is not None, 'unrelated live population waited instead of failing closed'
+    assert second.status_code == 409
+    assert 'active' in second.json()['detail'].lower()
+    assert calls == [('search', '--allow-egress', '--', 'antibody')]
+
+
 @pytest.mark.skipif(os.name != 'posix' or not hasattr(os, 'mkfifo'),
                     reason='BioArt web egress is a POSIX-only boundary')
 def test_web_cli_cleanup_closes_a_descendant_owned_fifo(tmp_path):
@@ -330,6 +375,54 @@ while True:time.sleep(1)
         finally:
             if process.returncode is None:
                 await _stop_cli_uninterruptibly(process)
+
+    try:
+        asyncio.run(run())
+    finally:
+        os.close(reader)
+
+
+@pytest.mark.skipif(os.name != 'posix' or not hasattr(os, 'mkfifo'),
+                    reason='BioArt web egress is a POSIX-only boundary')
+def test_web_cli_cleanup_closes_descendant_after_nonzero_leader_exit(tmp_path):
+    from arc_science.bioart.web import _stop_cli_uninterruptibly
+
+    endpoint = tmp_path / 'failed-lifetime.fifo'
+    record = tmp_path / 'failed-descendant-live'
+    os.mkfifo(endpoint)
+    reader = os.open(endpoint, os.O_RDONLY | os.O_NONBLOCK)
+    descendant = """import os,signal,sys,time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+writer=os.open(sys.argv[1],os.O_WRONLY)
+open(sys.argv[2],'x').write(str(os.getpid()))
+os.write(writer,b'live\\n')
+while True:time.sleep(1)
+"""
+    leader = """import subprocess,sys
+subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2],sys.argv[3]],close_fds=True)
+raise SystemExit(7)
+"""
+
+    async def run():
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, '-c', leader, descendant, str(endpoint), str(record),
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True)
+        try:
+            await asyncio.wait_for(process.wait(), 2)
+            assert process.returncode == 7
+            for _ in range(200):
+                if record.exists():
+                    break
+                await asyncio.sleep(.01)
+            assert record.exists(), 'failed leader descendant never opened its witness'
+            assert select.select([reader], [], [], 2)[0]
+            assert os.read(reader, 16) == b'live\n'
+            await _stop_cli_uninterruptibly(process)
+            assert select.select([reader], [], [], 2)[0]
+            assert os.read(reader, 1) == b'', 'failed helper descendant survived finalization'
+        finally:
+            await _stop_cli_uninterruptibly(process)
 
     try:
         asyncio.run(run())

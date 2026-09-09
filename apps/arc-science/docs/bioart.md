@@ -168,10 +168,11 @@ POSIX process group from the trusted installed package, in a sanitized environme
 that contains only locale and `ARC_BIOART_*` settings. It does not import from or
 run with the writable project as its working directory. Cancellation, normal
 completion, helper failure, or the total deadline finalizes the whole process
-group and waits for it before the request ends. Concurrent cache misses serialize,
-recheck the cache, and share one population. The service then reopens the cache
-with egress disabled and re-verifies the result; CLI stdout and absolute source
-paths are never forwarded to the browser.
+group and waits for it before the request ends. Identical concurrent cache misses
+join one in-flight result. An unrelated live miss receives a conflict response
+instead of waiting in a queue, and every new population rechecks the cache before
+egress. The service then reopens the cache with egress disabled and re-verifies the
+result; CLI stdout and absolute source paths are never forwarded to the browser.
 
 Search and inspection receive the configured per-request timeout plus five
 seconds. Fetch receives twice that timeout plus five seconds because it may need

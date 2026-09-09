@@ -176,6 +176,25 @@ test('BioArt search is authenticated, cache-first, and shares the in-memory oper
   expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
 });
 
+test('BioArt freezes request controls while their submitted state is in flight',async()=>{
+  const normalFetch=fetch.getMockImplementation();let finish;
+  fetch.mockImplementation((path,options)=>{
+    if(path==='/api/bioart/search')return new Promise(resolve=>{finish=()=>resolve(json({hits:[]}));});
+    return normalFetch(path,options);
+  });
+  const user=userEvent.setup();render(<App/>);
+  await user.click(screen.getByRole('button',{name:'BioArt'}));
+  const token=screen.getByLabelText('Operator token for BioArt');
+  const query=screen.getByLabelText('BioArt search query');
+  const consent=screen.getByLabelText('Permit NIH network access for the next search or inspection');
+  await user.type(token,'operator');await user.click(consent);
+  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
+  expect(await screen.findByRole('status')).toHaveTextContent('request in progress');
+  expect(token).toBeDisabled();expect(query).toBeDisabled();expect(consent).toBeDisabled();
+  finish();
+  await waitFor(()=>expect(screen.queryByRole('status')).not.toBeInTheDocument());
+});
+
 test('BioArt inspects, fetches the automatic neutral SVG, verifies a protected preview, and imports it',async()=>{
   const user=userEvent.setup();render(<App/>);
   await user.click(screen.getByRole('button',{name:'BioArt'}));

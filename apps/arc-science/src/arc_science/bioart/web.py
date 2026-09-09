@@ -154,7 +154,8 @@ async def _run_bioart_cli(project: Path, arguments: tuple[str, ...], timeout: in
 def create_router(project: Path, authorized):
     root = Path(project).absolute()
     router = APIRouter(prefix='/api/bioart', dependencies=[Depends(authorized)])
-    population_lock = asyncio.Lock()
+    population_key = None
+    population_result = None
 
     def client(allow_egress=False):
         settings = BioArtSettings.from_environment(root)
@@ -167,6 +168,44 @@ def create_router(project: Path, authorized):
         except ValueError as error:
             raise _problem(error) from None
 
+    async def populate(arguments, operation):
+        # The cache may have changed after the request's first read. Recheck in
+        # the shared operation before starting any network process.
+        try:
+            return await asyncio.to_thread(lambda: operation(client(False)))
+        except BioArtCacheMiss:
+            pass
+        settings = BioArtSettings.from_environment(root)
+        multiplier = 2 if arguments[0] == 'fetch' else 1
+        timeout = settings.limits.timeout_seconds * multiplier + 5
+        await _run_bioart_cli(root, arguments, timeout)
+        return await asyncio.to_thread(lambda: operation(client(False)))
+
+    async def populate_once(arguments, operation):
+        """Join an identical live request; reject unrelated work without queuing."""
+        nonlocal population_key, population_result
+        future = population_result
+        owner = future is None
+        if owner:
+            future = asyncio.get_running_loop().create_future()
+            population_key, population_result = arguments, future
+        elif population_key != arguments:
+            raise ValueError(
+                'BioArt live cache population is active for another request; retry')
+
+        if owner:
+            try:
+                future.set_result(await populate(arguments, operation))
+            except asyncio.CancelledError:
+                future.cancel()
+                raise
+            except Exception as error:
+                future.set_exception(error)
+            finally:
+                if population_result is future:
+                    population_key = population_result = None
+        return await asyncio.shield(future)
+
     async def cache_first(allow_egress, arguments, operation):
         try:
             return await asyncio.to_thread(lambda: operation(client(False)))
@@ -175,22 +214,10 @@ def create_router(project: Path, authorized):
                 raise _problem(error) from None
         except ValueError as error:
             raise _problem(error) from None
-        async with population_lock:
-            # Another request may have populated this cache while we waited.
-            try:
-                return await asyncio.to_thread(lambda: operation(client(False)))
-            except BioArtCacheMiss:
-                pass
-            except ValueError as error:
-                raise _problem(error) from None
-            try:
-                settings = BioArtSettings.from_environment(root)
-                multiplier = 2 if arguments[0] == 'fetch' else 1
-                timeout = settings.limits.timeout_seconds * multiplier + 5
-                await _run_bioart_cli(root, arguments, timeout)
-                return await asyncio.to_thread(lambda: operation(client(False)))
-            except ValueError as error:
-                raise _problem(error) from None
+        try:
+            return await populate_once(arguments, operation)
+        except ValueError as error:
+            raise _problem(error) from None
 
     @router.post('/search')
     async def search(request: SearchRequest):

@@ -1,8 +1,9 @@
 """Crash-released ownership and recovery for the private BioArt cache."""
-import fcntl
 import os
 
 import pytest
+
+fcntl = pytest.importorskip('fcntl')
 
 from arc_science.bioart.cache import Cache
 
