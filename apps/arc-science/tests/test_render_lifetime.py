@@ -90,7 +90,7 @@ def test_repeated_native_cancel_contains_renderer_when_python_cannot_cleanup(tmp
         process = subprocess.Popen(
             [str(binary), '--project', str(tmp_path), 'worker', '--', 'blocked', endpoint, str(tmp_path)],
             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        pid = None
+        pid = worker_pid = None
         try:
             assert select.select([channel], [], [], 5)[0], 'renderer never became live'
             ready = channel.read(32)
@@ -100,6 +100,7 @@ def test_repeated_native_cancel_contains_renderer_when_python_cannot_cleanup(tmp
             while not (tmp_path / 'setup-blocked').exists():
                 assert time.monotonic() < deadline, 'Python never entered the blocked setup window'
                 time.sleep(.01)
+            worker_pid = int((tmp_path / 'setup-blocked').read_text())
             process.send_signal(signal.SIGTERM)
             assert select.select([process.stderr], [], [], 5)[0], 'native cancellation was not observed'
             first_stderr = process.stderr.readline()
@@ -114,6 +115,13 @@ def test_repeated_native_cancel_contains_renderer_when_python_cannot_cleanup(tmp
         finally:
             if pid is None and (tmp_path / 'spawned').exists():
                 pid = int((tmp_path / 'spawned').read_text())
+            if worker_pid is None and (tmp_path / 'setup-blocked').exists():
+                worker_pid = int((tmp_path / 'setup-blocked').read_text())
+            if worker_pid is not None:
+                try:
+                    os.killpg(worker_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             if pid is not None:
                 try:
                     os.killpg(pid, signal.SIGKILL)

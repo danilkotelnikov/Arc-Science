@@ -48,7 +48,7 @@ def setup(fd, blocking):
             if time.monotonic() > deadline:
                 raise RuntimeError('Renderer did not become ready')
             time.sleep(.01)
-        (root / 'setup-blocked').write_text('blocked')
+        (root / 'setup-blocked').write_text(str(os.getpid()))
         time.sleep(60)
     return real_blocking(fd, blocking)
 
