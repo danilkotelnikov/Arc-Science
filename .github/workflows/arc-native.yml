@@ -1,9 +1,9 @@
 name: Arc Science native supervisor
 on:
   push:
-    paths: ['native/arc-science/**', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/src/arc_science/bioart/**', 'apps/arc-science/src/arc_science/figure_render.py', 'apps/arc-science/src/arc_science/vector_assets.py', 'apps/arc-science/tests/test_module_entrypoint.py', 'apps/arc-science/tests/test_native_bioart.py', 'apps/arc-science/tests/test_render_lifetime.py', 'apps/arc-science/tests/fixtures/bioart/entry-18-reduced.json', 'apps/arc-science/tests/fixtures/render_lifetime.py', '.github/workflows/arc-native.yml']
+    paths: ['native/arc-science/**', 'apps/arc-science/scripts/check-native-installed.py', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/src/arc_science/bioart/**', 'apps/arc-science/src/arc_science/figure_render.py', 'apps/arc-science/src/arc_science/vector_assets.py', 'apps/arc-science/tests/test_module_entrypoint.py', 'apps/arc-science/tests/test_native_bioart.py', 'apps/arc-science/tests/test_render_lifetime.py', 'apps/arc-science/tests/fixtures/bioart/entry-18-reduced.json', 'apps/arc-science/tests/fixtures/render_lifetime.py', '.github/workflows/arc-native.yml']
   pull_request:
-    paths: ['native/arc-science/**', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/src/arc_science/bioart/**', 'apps/arc-science/src/arc_science/figure_render.py', 'apps/arc-science/src/arc_science/vector_assets.py', 'apps/arc-science/tests/test_module_entrypoint.py', 'apps/arc-science/tests/test_native_bioart.py', 'apps/arc-science/tests/test_render_lifetime.py', 'apps/arc-science/tests/fixtures/bioart/entry-18-reduced.json', 'apps/arc-science/tests/fixtures/render_lifetime.py', '.github/workflows/arc-native.yml']
+    paths: ['native/arc-science/**', 'apps/arc-science/scripts/check-native-installed.py', 'apps/arc-science/src/arc_science/__main__.py', 'apps/arc-science/src/arc_science/bioart/**', 'apps/arc-science/src/arc_science/figure_render.py', 'apps/arc-science/src/arc_science/vector_assets.py', 'apps/arc-science/tests/test_module_entrypoint.py', 'apps/arc-science/tests/test_native_bioart.py', 'apps/arc-science/tests/test_render_lifetime.py', 'apps/arc-science/tests/fixtures/bioart/entry-18-reduced.json', 'apps/arc-science/tests/fixtures/render_lifetime.py', '.github/workflows/arc-native.yml']
 permissions:
   contents: read
 jobs:

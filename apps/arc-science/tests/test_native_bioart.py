@@ -157,3 +157,22 @@ def test_native_init_and_default_svg_fetch_use_configured_offline_cache(tmp_path
     assert verification["format"] == "SVG"
     assert verification["sha256"] == source_sha
     assert digest((cache / receipt_name).read_bytes()) == receipt_name[:64]
+
+
+@pytest.mark.parametrize("flag,setting", [("-O", None), ("-OO", None), (None, "1")])
+def test_installed_package_check_refuses_disabled_assertions(flag, setting):
+    """Removing the optimization refusal must turn rejection into false success."""
+    if not NATIVE.is_file():
+        pytest.skip("native debug binary is not built")
+    environment = dict(os.environ)
+    environment.pop("PYTHONOPTIMIZE", None)
+    if setting is not None:
+        environment["PYTHONOPTIMIZE"] = setting
+    script = Path(__file__).parents[1] / "scripts/check-native-installed.py"
+    command = [sys.executable, *([flag] if flag else []), str(script),
+               "--binary", str(NATIVE), "--python", sys.executable]
+    result = subprocess.run(command, env=environment, text=True, capture_output=True,
+                            check=False, timeout=20)
+    assert result.returncode == 2, (result.returncode, result.stdout, result.stderr)
+    assert "optimization disables qualification checks" in result.stderr
+    assert '"result": "passed"' not in result.stdout

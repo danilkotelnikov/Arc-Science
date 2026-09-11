@@ -20,6 +20,8 @@ def main():
     parser.add_argument("--binary", required=True, type=Path)
     parser.add_argument("--python", required=True, type=Path)
     args = parser.parse_args()
+    if sys.flags.optimize:
+        parser.error("Python optimization disables qualification checks; omit -O/-OO and unset PYTHONOPTIMIZE")
     if sys.platform != "linux":
         parser.error("This check qualifies Linux execution only")
     binary = args.binary.resolve(strict=True)

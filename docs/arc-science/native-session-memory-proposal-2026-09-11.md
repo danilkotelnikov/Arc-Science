@@ -133,6 +133,14 @@ safe. Disable and delete/export controls must cover source text, vectors, FTS,
 generation files and caches. Tombstoning hides data immediately; physical erasure
 and already-exported backups need explicit, accurately described policy.
 
+Use two clearly named operations: **remove from future retrieval** leaves already
+frozen mission evidence intact; **erase stored content** requires an enumerated,
+approved purge across memory, retained invocation passages and locally managed
+capsules/exports. Purging evidence invalidates affected replay/certification and
+must record that loss rather than silently keep a passing receipt. Copies outside
+Arc's control cannot be promised erased. The UI and API must state this boundary
+before either operation; the word "forget" alone is too ambiguous.
+
 ## Acceptance before enabling by default
 
 - Crash/restart and interrupted-ingestion tests; idempotent append; no event loss

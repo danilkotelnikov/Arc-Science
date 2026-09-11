@@ -39,12 +39,20 @@ and in-process HTTP tests are not browser-pixel evidence.
 | Fresh release launcher to separate non-editable installed wheel | Offline init → fetch → verify → SVG import passed |
 
 The installed-wheel check is reproducible with
-`apps/arc-science/scripts/check-native-installed.py --binary ABSOLUTE_BINARY --python VENV_INTERPRETER`.
+`SOURCE_TEST_PYTHON apps/arc-science/scripts/check-native-installed.py --binary ABSOLUTE_BINARY --python VENV_INTERPRETER`.
 Run that script with the source test environment, and install the wheel with its
 `vector` extra in the separate target interpreter. It refuses an editable/source
 package probe. Its cached SVG is explicitly synthetic, SHA-256
 `bc12cb08e1bdd4a377996e3ff1ef2f7064562b6cb4caa10065b5ae714c512e4f`.
 It is integration evidence, not compatibility evidence for a downloaded NIH SVG.
+
+Independent review found that optimized host Python could disable the check's
+assertions. A pre-fix run reproduced a false pass with a source-installed worker;
+that deliberately invalid result is retained only as a failure reproducer, not
+qualification evidence. The corrected check must reject `-O`, `-OO` and
+`PYTHONOPTIMIZE` before running any probe. Use an unoptimized source-test
+interpreter; the initial and subsequent positive qualification runs are
+unoptimized. The source-install negative control checks the normal mode as well.
 
 Runtime: Linux x86-64, glibc 2.39, Python 3.12.14, SQLite 3.53.1,
 Rust/Cargo 1.90.0. Python dependencies were freshly resolved within the current
