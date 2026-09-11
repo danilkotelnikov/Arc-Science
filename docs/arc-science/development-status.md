@@ -7,9 +7,10 @@ executor:** a private watchdog owns the renderer group and observes
 Python through a non-inherited liveness pipe. Deterministic regressions prove cleanup
 on both repeated native cancellation and a successful renderer-leader exit with a
 live descendant. The rejected environment-marker design and its Rust changes were
-removed; the final native integration runs with the retained binary and no injected
-marker. [Current verification](renderer-containment-verification-2026-09-09.md)
-records the exact evidence and limitations.
+removed. The original review used the retained binary without an injected marker.
+On 2026-09-11 the same product source passed integration with a freshly rebuilt
+Rust executable. [Renderer review](renderer-containment-verification-2026-09-09.md)
+and [fresh qualification](qualification-2026-09-11.md) distinguish those runs.
 
 | Requirement | Implemented boundary | Qualification still needed |
 | --- | --- | --- |
@@ -19,7 +20,8 @@ records the exact evidence and limitations.
 | NIH BioArt intake | CLI and HeroUI search/inspection, format-aware neutral selection with explicit override, entry-bound files, consent-gated transfer, verified previews/downloads, cache receipts and checked SVG import | Live vector retrieval and real NIH file compatibility |
 | BioArt rights | Entry-specific credit retained; automation currently limited to exact Public Domain entries | Other license policies require review; no whole-catalog reuse assumption |
 | Reliable network behavior | Owned transport in a deadline-bound process; no redirects or permission bypass; offline fault tests | Service availability and future website-schema compatibility |
-| Native Rust application | Strict TOML configuration, exclusive `init --python`, config/doctor/serve/worker and typed BioArt commands, direct argument launch, tested cooperative and repeated cancellation, Python-owned renderer watchdog, and measured earlier Linux release | Windows/macOS execution and signed desktop installers; calculations still run in Python |
+| Native Rust application | Strict TOML configuration, exclusive `init --python`, config/doctor/serve/worker and typed BioArt commands, direct argument launch, tested cooperative and repeated cancellation, Python-owned renderer watchdog; fresh Linux build and installed-wheel bridge qualified on 2026-09-11 | Windows/macOS execution and signed desktop installers; Windows cross-target check is not runtime qualification; calculations still run in Python |
+| Native agent/session memory | [Researched proposal](native-session-memory-proposal-2026-09-11.md): project-scoped verbatim storage, hybrid retrieval, warm Rust service and optional MemPalace import | Design approval, implementation, real embedding/recall/latency tests and context-evidence integration |
 | HoH foundation | Bounded candidate work, fixed roles, single writer, independent QA and evidence preservation | Broader harness evolution and scientific-validity evaluation |
 | Scientific image review | Exact candidate bytes/hashes and separate reference roles supported by provider protocol | Live provider-based comparison in this environment |
 | Programming/ML diagrams | React Flow with ELK researched as a later editor | Shared graph model, editor and controlled SVG export not shipped |

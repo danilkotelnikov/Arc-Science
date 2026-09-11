@@ -9,6 +9,11 @@ Independent code review approved the lifecycle boundary with no remaining findin
 Official Blender and Windows/macOS rendering remain separate gates. See the [current
 verification](../../docs/arc-science/renderer-containment-verification-2026-09-09.md).
 
+Fresh qualification on 2026-09-11 rebuilt this source with Rust 1.90.0 on Linux:
+31 native tests, strict lint, and the installed-wheel BioArt bridge passed.
+Windows MSVC-target `cargo check --all-targets` passed, but Windows execution and
+BioArt intake remain unqualified. See the [new qualification record](../../docs/arc-science/qualification-2026-09-11.md).
+
 A small Rust CLI for configuring and supervising the existing Python scientific
 worker. Commands: `init`, `config`, `doctor`, `serve`, `worker`, and
 `bioart`; global

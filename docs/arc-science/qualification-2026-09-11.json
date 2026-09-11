@@ -1,0 +1,48 @@
+{
+  "schema": "arc-qualification/1",
+  "observed_on": "2026-09-11",
+  "product_source_commit": "847781fbb4f767cee659e2e4ca8ae9db7d920c79",
+  "runtime": {"os": "Linux", "architecture": "x86_64", "rust": "1.90.0", "python": "3.12.14", "sqlite": "3.53.1"},
+  "gates": {
+    "fresh_rust_rebuild": {
+      "status": "qualified_linux_supervisor",
+      "native_tests_passed": 31,
+      "format_and_clippy_passed": true,
+      "installed_wheel_offline_bioart_passed": true,
+      "source_install_negative_control_passed": true,
+      "binary_bytes": 1241608,
+      "binary_sha256": "243c477e787621c4faa70723fc4d7c127dae5845653971f0f5b0cd7ed7e5ba64"
+    },
+    "live_nih_vector_transfer": {
+      "status": "unqualified",
+      "attempted_entry_id": 18,
+      "failed_phase": "metadata_before_file_transfer",
+      "direct_transport_diagnostic": "ConnectError: [Errno -3] Temporary failure in name resolution",
+      "nih_file_or_receipt_created": false,
+      "alternate_transport_attempted": false
+    },
+    "windows_bioart_intake": {
+      "status": "unsupported",
+      "native_cross_target_check": "passed_x86_64-pc-windows-msvc_all-targets",
+      "windows_executable_linked": false,
+      "windows_runtime_executed": false,
+      "posix_provider_guard_removed": false
+    },
+    "browser_pixels": {
+      "status": "unqualified",
+      "navigation_error": "net::ERR_BLOCKED_BY_CLIENT",
+      "application_screenshot_captured": false
+    }
+  },
+  "regression": {
+    "python_passed": 580,
+    "python_skipped": 6,
+    "skip_scope": "explicit_official_blender_runtime",
+    "ui_tests_passed": 15,
+    "packaged_public_assets_passed": 20,
+    "wheel_sha256": "4218c2ec642467b9a9d3926dc40e795b64828a4b9a4e2c1073ea7421e69ab495",
+    "legacy_root_suite_rerun": false
+  },
+  "native_session_memory": "researched_proposal_not_implemented_pending_design_approval",
+  "github_sync_attempted_this_turn": false
+}
