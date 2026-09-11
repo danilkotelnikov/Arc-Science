@@ -28,7 +28,8 @@ and in-process HTTP tests are not browser-pixel evidence.
 | Check | Result |
 | --- | --- |
 | Initial Python baseline, before building native | 575 passed, 11 skipped |
-| Full application suite with fresh native debug executable | 580 passed, 6 explicit official-Blender-runtime skips |
+| Full application suite with fresh native debug executable, before tooling correction | 580 passed, 6 explicit official-Blender-runtime skips |
+| Final suite after optimized-mode regression fix, check code `ce248cb` | 583 passed, same 6 explicit official-Blender-runtime skips |
 | Rust tests on Linux | 31 passed (3 acquisition, 10 config, 18 process) |
 | Rust formatting and strict Clippy | Passed |
 | Linux release build | Passed, `--locked --offline` after dependency acquisition |
@@ -49,13 +50,21 @@ It is integration evidence, not compatibility evidence for a downloaded NIH SVG.
 Independent review found that optimized host Python could disable the check's
 assertions. A pre-fix run reproduced a false pass with a source-installed worker;
 that deliberately invalid result is retained only as a failure reproducer, not
-qualification evidence. The corrected check must reject `-O`, `-OO` and
+qualification evidence. The corrected check rejects `-O`, `-OO` and
 `PYTHONOPTIMIZE` before running any probe. Use an unoptimized source-test
 interpreter; the initial and subsequent positive qualification runs are
-unoptimized. The source-install negative control checks the normal mode as well.
+unoptimized. All three new regressions failed with false-success exit code 0
+before the fix and passed afterward; the normal installed-wheel path passed
+again after the correction. The source-install negative control checks the normal
+mode as well. The native CI path filter now includes this check script.
+
+Independent re-review cleared the check-code gate at `ce248cb` with no remaining
+Critical or Important findings. The reviewer independently reran the four native
+BioArt cases and installed-wheel smoke, and matched the artifact hashes and
+final suite evidence. [Review record](qualification-review-2026-09-11.md).
 
 Runtime: Linux x86-64, glibc 2.39, Python 3.12.14, SQLite 3.53.1,
-Rust/Cargo 1.90.0. Python dependencies were freshly resolved within the current
+Rust/Cargo 1.90.0, Node 24.19.0, npm 11.9.0. Python dependencies were freshly resolved within the current
 project constraints; the evidence package contains that environment's freeze.
 The six remaining skips require an explicitly configured official Blender/bpy
 runtime. Starlette/httpx and NumPy/scikit-image deprecations, plus three HeroUI
