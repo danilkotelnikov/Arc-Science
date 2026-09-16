@@ -31,6 +31,10 @@ beforeEach(()=>{
     if(path.endsWith('/capsule'))return new Response('capsule');
     if(path.includes('/artifacts/'))return new Response('authenticated image',{headers:{'Content-Type':'image/png'}});
     if(path.endsWith('/cancel'))selectedRow.state.status='cancelled';
+    if(path==='/api/memory/health')return json({protocol:'arc-memory/1',sqlite:'3.53.2'});
+    if(path.startsWith('/api/memory/sessions/'))return json([{record_id:'r2',project_id:'arc-science',session_id:'mission-1',agent_id:'analyst',seq:2,role:'analyst',text:'{"assessments":[{"position":"challenge"}]}',content_digest:'f'.repeat(64),source_uri:'mission://mission-1/round/0/analyst/1',trust:'model_output',visibility:'visible',retention:'active',compaction_epoch:0,wall_time_ms:1}]);
+    if(path.startsWith('/api/memory/sessions'))return json([{session_id:'mission-1',record_count:18,first_seq:1,last_seq:18,min_epoch:0,max_epoch:2}]);
+    if(path==='/api/memory/search')return json([{record:{record_id:'r9',role:'planner',text:'quadratic term hypothesis',session_id:'mission-1',compaction_epoch:1,content_digest:'a'.repeat(64),trust:'model_output'},score:1.2,reason:'hybrid'}]);
     return json(selectedRow);
   }));
   URL.createObjectURL=vi.fn(()=> 'blob:artifact'); URL.revokeObjectURL=vi.fn();
@@ -264,4 +268,17 @@ test('BioArt exposes original vector formats without previewing or importing dow
   expect(requests.some(request=>request.path===bioartDownloadReceipt.preview_url)).toBe(false);
   await user.click(screen.getByRole('button',{name:'Download verified source'}));
   await waitFor(()=>expect(requests).toContainEqual(expect.objectContaining({download:'bioart-18.eps',href:'blob:artifact'})));
+});
+
+test('memory workspace loads a captured session and searches its reasoning',async()=>{
+  const user=userEvent.setup();render(<App/>);
+  await user.click(screen.getByRole('button',{name:'Memory'}));
+  await user.type(screen.getByLabelText('Operator token for Memory'),'tok');
+  await user.click(screen.getByRole('button',{name:'Load sessions'}));
+  await user.click(await screen.findByRole('button',{name:/mission-1 · 18 records/}));
+  await screen.findByText(/Captured trajectory/);
+  await screen.findByText(/analyst · epoch 0/);
+  await user.type(screen.getByLabelText('Search memory'),'quadratic');
+  await user.click(screen.getByRole('button',{name:'Search'}));
+  await screen.findByText(/quadratic term hypothesis/);
 });
