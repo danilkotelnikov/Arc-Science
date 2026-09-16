@@ -79,7 +79,7 @@ impl TrustCategory {
 }
 
 /// A record to append. The engine assigns the per-session sequence and record id.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewRecord {
     pub project_id: String,
     pub session_id: String,
@@ -97,7 +97,7 @@ pub struct NewRecord {
 
 /// Authorization scope applied before candidate selection. A caller-supplied
 /// scope is a filter, not an access grant.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scope {
     pub project: String,
     pub session: Option<String>,
@@ -105,7 +105,7 @@ pub struct Scope {
 }
 
 /// One retrieval result: the record, a score, and the reason it was retrieved.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchHit {
     pub record: StoredRecord,
     pub score: f64,
@@ -113,7 +113,7 @@ pub struct SearchHit {
 }
 
 /// Summary of one session in a project, for navigation in the UI.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionSummary {
     pub session_id: String,
     pub record_count: i64,
@@ -124,7 +124,7 @@ pub struct SessionSummary {
 }
 
 /// A record read back from the store, with its original text decompressed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct StoredRecord {
     pub record_id: String,
     pub project_id: String,

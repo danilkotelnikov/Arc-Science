@@ -12,11 +12,13 @@
 mod embedding;
 mod engine;
 mod error;
+mod protocol;
 mod record;
 
 pub use embedding::Embedder;
 pub use engine::Engine;
 pub use error::{Error, Result};
+pub use protocol::{Request, Response, Worker, read_frame, serve, write_frame};
 pub use record::{NewRecord, Role, Scope, SearchHit, SessionSummary, StoredRecord, TrustCategory};
 
 /// Wire/IPC protocol version spoken by the stdio worker (see the design doc).
