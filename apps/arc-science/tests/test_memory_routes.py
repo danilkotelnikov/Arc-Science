@@ -80,3 +80,40 @@ def test_routes_report_unconfigured_worker(tmp_path):
     app.include_router(routes.router)
     with TestClient(app) as client:
         assert client.get("/api/memory/health").status_code == 503
+
+
+def test_client_created_once_under_concurrent_access(tmp_path, monkeypatch):
+    import threading
+    import time as _t
+
+    import arc_science.memory.web as web
+
+    count = {"n": 0}
+
+    class StubClient:
+        def __init__(self, worker_path, data_path):
+            count["n"] += 1
+            _t.sleep(0.03)  # widen the window between the None check and the assignment
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(web, "MemoryClient", StubClient)
+    routes = web.MemoryRoutes(tmp_path, worker_binary(), _authorized)
+
+    n = 16
+    barrier = threading.Barrier(n)
+    seen = []
+
+    def hit():
+        barrier.wait()
+        seen.append(routes._client_or_503())
+
+    threads = [threading.Thread(target=hit) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert count["n"] == 1, f"one worker per DB, but created {count['n']}"
+    assert len({id(s) for s in seen}) == 1

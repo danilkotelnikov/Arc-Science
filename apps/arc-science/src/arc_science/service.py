@@ -209,7 +209,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         def emit(state):
             nonlocal revision
             fresh=repository.save(mid,state,expected_revision=revision);revision=fresh['revision']
-            memory_routes.capture(mid,state)
+            # Best-effort capture off the event loop: blocking worker stdio must not
+            # stall mission progress, status polling or cancellation.
+            asyncio.get_running_loop().run_in_executor(None,memory_routes.capture,mid,state)
         def cancelled():return repository.get(mid)['state']['status']=='cancelled'
         try:
             async with httpx.AsyncClient(trust_env=False) as client:

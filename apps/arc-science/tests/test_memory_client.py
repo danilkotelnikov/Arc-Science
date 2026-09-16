@@ -56,3 +56,44 @@ def test_client_surfaces_worker_errors(tmp_path):
     with MemoryClient(worker_binary(), tmp_path / "memory.db") as mem:
         with pytest.raises(MemErr):
             mem.inspect("does-not-exist")
+
+
+def test_call_times_out_and_kills_a_hung_worker():
+    import io
+    import threading
+    import time as _t
+
+    from arc_science.memory.client import MemoryClient
+    from arc_science.memory.client import MemoryError as MemErr
+
+    mem = object.__new__(MemoryClient)
+    killed = threading.Event()
+
+    class Out:
+        def read(self, _n):
+            killed.wait(5)  # unblocks when the worker is killed, else after 5s
+            return b""       # EOF
+
+    class FakeProc:
+        def __init__(self):
+            self.stdin = io.BytesIO()
+            self.stdout = Out()
+
+        def poll(self):
+            return 1 if killed.is_set() else None
+
+        def kill(self):
+            killed.set()
+
+        def wait(self, timeout=None):
+            return 1
+
+    mem._proc = FakeProc()
+    mem._lock = threading.Lock()
+    mem._timeout = 0.2
+
+    start = _t.time()
+    with pytest.raises(MemErr):
+        mem.health()
+    assert _t.time() - start < 3, "a hung worker must be bounded by the call timeout"
+    assert killed.is_set()

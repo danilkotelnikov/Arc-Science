@@ -21,7 +21,12 @@ class MemoryError(RuntimeError):
 
 
 class MemoryClient:
-    def __init__(self, worker_path: os.PathLike[str] | str, data_path: os.PathLike[str] | str):
+    def __init__(
+        self,
+        worker_path: os.PathLike[str] | str,
+        data_path: os.PathLike[str] | str,
+        timeout: float = 30.0,
+    ):
         self._data_path = Path(data_path)
         self._data_path.parent.mkdir(parents=True, exist_ok=True)
         self._proc = subprocess.Popen(
@@ -31,6 +36,7 @@ class MemoryClient:
             stderr=subprocess.DEVNULL,
         )
         self._lock = threading.Lock()
+        self._timeout = timeout
 
     def _read_exact(self, count: int) -> bytes:
         assert self._proc.stdout is not None
@@ -50,11 +56,18 @@ class MemoryClient:
             if self._proc.poll() is not None:
                 raise MemoryError("memory worker is not running")
             assert self._proc.stdin is not None
-            self._proc.stdin.write(struct.pack("<I", len(body)))
-            self._proc.stdin.write(body)
-            self._proc.stdin.flush()
-            (length,) = struct.unpack("<I", self._read_exact(4))
-            payload = self._read_exact(length)
+            # Bound a hung worker: kill it if the round trip exceeds the timeout, so
+            # the pending read returns EOF instead of pinning the caller forever.
+            watchdog = threading.Timer(self._timeout, self._proc.kill)
+            watchdog.start()
+            try:
+                self._proc.stdin.write(struct.pack("<I", len(body)))
+                self._proc.stdin.write(body)
+                self._proc.stdin.flush()
+                (length,) = struct.unpack("<I", self._read_exact(4))
+                payload = self._read_exact(length)
+            finally:
+                watchdog.cancel()
         response = json.loads(payload)
         if response.get("status") != "ok":
             raise MemoryError(response.get("error", "unknown memory error"))

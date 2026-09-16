@@ -8,6 +8,7 @@ worker's stdio.
 """
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -39,6 +40,8 @@ class MemoryRoutes:
         self._data_dir = Path(data_dir)
         self._worker_path = Path(worker_path) if worker_path is not None else None
         self._client: Optional[MemoryClient] = None
+        self._client_lock = threading.Lock()
+        self._capture_lock = threading.Lock()
         self._captured: dict[str, tuple[int, int]] = {}
         self.router = APIRouter(prefix="/api/memory", dependencies=[Depends(authorized)])
         self._wire()
@@ -53,10 +56,11 @@ class MemoryRoutes:
             return
         try:
             client = self._client_or_503()
-            seen_events, seen_models = self._captured.get(session, (0, 0))
-            self._captured[session] = SessionCapture(client, session).observe(
-                state, seen_events, seen_models
-            )
+            with self._capture_lock:  # atomic high-water advance for a session
+                seen_events, seen_models = self._captured.get(session, (0, 0))
+                self._captured[session] = SessionCapture(client, session).observe(
+                    state, seen_events, seen_models
+                )
         except Exception:
             pass
 
@@ -64,7 +68,9 @@ class MemoryRoutes:
         if self._worker_path is None or not self._worker_path.exists():
             raise HTTPException(503, "Native memory worker is not configured")
         if self._client is None:
-            self._client = MemoryClient(self._worker_path, self._data_dir / "memory.db")
+            with self._client_lock:  # double-checked: exactly one worker per DB
+                if self._client is None:
+                    self._client = MemoryClient(self._worker_path, self._data_dir / "memory.db")
         return self._client
 
     def _wire(self) -> None:
