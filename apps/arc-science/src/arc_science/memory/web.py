@@ -14,6 +14,7 @@ from typing import Any, Callable, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from .capture import SessionCapture
 from .client import MemoryClient, MemoryError
 
 
@@ -38,8 +39,26 @@ class MemoryRoutes:
         self._data_dir = Path(data_dir)
         self._worker_path = Path(worker_path) if worker_path is not None else None
         self._client: Optional[MemoryClient] = None
+        self._captured: dict[str, tuple[int, int]] = {}
         self.router = APIRouter(prefix="/api/memory", dependencies=[Depends(authorized)])
         self._wire()
+
+    def capture(self, session: str, state: Any) -> None:
+        """Best-effort capture of an emitted mission state into memory.
+
+        Auxiliary to the mission: a capture failure is swallowed so it can never fail
+        the run. Idempotent appends plus a per-session high-water mark keep this cheap.
+        """
+        if self._worker_path is None or not self._worker_path.exists():
+            return
+        try:
+            client = self._client_or_503()
+            seen_events, seen_models = self._captured.get(session, (0, 0))
+            self._captured[session] = SessionCapture(client, session).observe(
+                state, seen_events, seen_models
+            )
+        except Exception:
+            pass
 
     def _client_or_503(self) -> MemoryClient:
         if self._worker_path is None or not self._worker_path.exists():

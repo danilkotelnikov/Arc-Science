@@ -209,6 +209,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         def emit(state):
             nonlocal revision
             fresh=repository.save(mid,state,expected_revision=revision);revision=fresh['revision']
+            memory_routes.capture(mid,state)
         def cancelled():return repository.get(mid)['state']['status']=='cancelled'
         try:
             async with httpx.AsyncClient(trust_env=False) as client:

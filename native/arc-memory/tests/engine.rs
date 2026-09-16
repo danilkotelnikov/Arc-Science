@@ -397,3 +397,16 @@ fn hybrid_search_fuses_and_dedupes() {
     assert_eq!(hits[0].record.text, "beacon flare protocol");
     assert_eq!(hits[0].reason, "hybrid");
 }
+
+#[test]
+fn captures_analyst_and_vision_roles() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    for role in [Role::Analyst, Role::Vision] {
+        let mut record = sample("reconciliation note");
+        record.role = role;
+        record.session_id = format!("sess-{role:?}");
+        let got = engine.inspect(&engine.append(&record).unwrap()).unwrap();
+        assert_eq!(got.role, role);
+    }
+}
