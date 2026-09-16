@@ -38,7 +38,7 @@ class AccessGrant:
             raise AuthorizationError('Credential binding mismatch')
         if self.expires_at<=now or not self.token or any(ord(x)<32 for x in self.token):
             raise AuthorizationError('Invalid or expired credential')
-        if self.auth_style=='bearer':return {'Authorization':'Bearer '+self.token}
+        if self.auth_style in ('bearer','oauth'):return {'Authorization':'Bearer '+self.token}
         if self.auth_style=='x-api-key':return {'x-api-key':self.token}
         raise AuthorizationError('Unsupported authentication style')
 

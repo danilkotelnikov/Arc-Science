@@ -221,7 +221,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                     def resolve(ref,principal,project):
                         cfg=first if ref=='planner' else (vision if ref=='vision' else second)
                         return AccessGrant(token=_secret(ref),principal=principal,project_id=project,resource=cfg.endpoint,
-                            credential_ref=ref,expires_at=int(time.time())+60,auth_style='x-api-key' if cfg.provider=='anthropic' else 'bearer')
+                            credential_ref=ref,expires_at=int(time.time())+60,
+                            auth_style=(('oauth' if os.environ.get('ARC_ANTHROPIC_AUTH')=='oauth' else 'x-api-key') if cfg.provider=='anthropic' else 'bearer'))
                     agent=HTTPAgent(first,reviewer_config=second,vision_config=vision,
                                     client=client,resolver=resolve,project=mid,principal='local-operator')
                     if os.environ.get('ARC_PUBLIC_READS')=='1':
