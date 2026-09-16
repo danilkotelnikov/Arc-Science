@@ -107,7 +107,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             except FileExistsError:pass
         token=token_path.read_text().strip()
     if len(token)<32:raise ValueError('Use a randomly generated API token of at least 32 characters')
-    repository=MissionRepository(root/'missions.db');running={}
+    repository=MissionRepository(root/'missions.db');running={};memory_holder={}
 
     @asynccontextmanager
     async def lifespan(app):
@@ -116,6 +116,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         for task in tuple(running.values()):task.cancel()
         for task in tuple(running.values()):
             with suppress(asyncio.CancelledError):await task
+        routes=memory_holder.get('memory')
+        if routes is not None:routes.close()
         repository.pause_interrupted()
 
     app=FastAPI(title='Arc Science',version=VERSION,lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
@@ -131,6 +133,12 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
 
     from .bioart.web import create_router as create_bioart_router
     app.include_router(create_bioart_router(root,authorized))
+
+    from .memory.web import MemoryRoutes
+    worker_path=os.environ.get('ARC_MEMORY_WORKER')
+    memory_routes=MemoryRoutes(root,Path(worker_path) if worker_path else None,authorized)
+    memory_holder['memory']=memory_routes
+    app.include_router(memory_routes.router)
 
     @app.middleware('http')
     async def security_headers(request,call_next):
