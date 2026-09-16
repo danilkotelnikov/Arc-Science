@@ -1,0 +1,264 @@
+//! Behavior tests for the arc-memory engine.
+
+use arc_memory::{Engine, NewRecord, Role, Scope, TrustCategory};
+use tempfile::tempdir;
+
+fn sample(text: &str) -> NewRecord {
+    NewRecord {
+        project_id: "proj-1".into(),
+        session_id: "sess-1".into(),
+        agent_id: "planner".into(),
+        role: Role::Planner,
+        text: text.into(),
+        source_uri: None,
+        trust: TrustCategory::ModelOutput,
+        compaction_epoch: 0,
+        wall_time_ms: 1_700_000_000_000,
+        idempotency_key: None,
+    }
+}
+
+/// The design requires SQLite >= 3.51.3 (the WAL-reset fix). The engine must run
+/// on a bundled build that includes it, independent of the host's Python sqlite3
+/// (which is 3.45.1 on the reference Windows machine).
+#[test]
+fn bundled_sqlite_meets_wal_reset_requirement() {
+    let version = arc_memory::sqlite_version();
+    let parts: Vec<u32> = version
+        .split('.')
+        .map(|p| p.parse().expect("numeric SQLite version component"))
+        .collect();
+    let triple = (parts[0], parts[1], parts[2]);
+    assert!(
+        triple >= (3, 51, 3),
+        "bundled SQLite {version} is below the required 3.51.3 WAL-reset fix"
+    );
+}
+
+#[test]
+fn append_then_inspect_round_trips_the_original_text() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+
+    let id = engine
+        .append(&sample("The analyst proposed hypothesis H1."))
+        .unwrap();
+    let got = engine.inspect(&id).unwrap();
+
+    assert_eq!(got.text, "The analyst proposed hypothesis H1.");
+    assert_eq!(got.role, Role::Planner);
+    assert_eq!(got.project_id, "proj-1");
+    assert_eq!(got.seq, 1);
+}
+
+#[test]
+fn sequence_increments_per_session() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+
+    let first = engine
+        .inspect(&engine.append(&sample("one")).unwrap())
+        .unwrap();
+    let second = engine
+        .inspect(&engine.append(&sample("two")).unwrap())
+        .unwrap();
+
+    assert_eq!(first.seq, 1);
+    assert_eq!(second.seq, 2);
+}
+
+#[test]
+fn keyed_append_is_idempotent() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    let mut record = sample("captured once");
+    record.idempotency_key = Some("evt-42".into());
+
+    let first = engine.inspect(&engine.append(&record).unwrap()).unwrap();
+    let second = engine.inspect(&engine.append(&record).unwrap()).unwrap();
+
+    assert_eq!(first.record_id, second.record_id);
+    assert_eq!(
+        second.seq, 1,
+        "a retried event must not create a second row"
+    );
+}
+
+#[test]
+fn reused_key_with_different_content_is_rejected() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    let mut original = sample("first payload");
+    original.idempotency_key = Some("k".into());
+    let mut clashing = sample("different payload");
+    clashing.idempotency_key = Some("k".into());
+
+    engine.append(&original).unwrap();
+    assert!(matches!(
+        engine.append(&clashing),
+        Err(arc_memory::Error::Conflict)
+    ));
+}
+
+#[test]
+fn text_is_compressed_and_deduplicated_at_rest() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let engine = Engine::open(&db).unwrap();
+    let long = "hydrogen bond between Asp30 and the ligand. ".repeat(400);
+
+    engine.append(&sample(&long)).unwrap();
+    engine.append(&sample(&long)).unwrap(); // identical content
+
+    let (blob_rows, stored_bytes): (i64, i64) = rusqlite::Connection::open(&db)
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*), COALESCE(SUM(LENGTH(data)), 0) FROM blobs",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+
+    assert_eq!(blob_rows, 1, "identical text is stored once");
+    assert!(
+        stored_bytes < long.len() as i64,
+        "stored {stored_bytes} bytes should be smaller than the {} byte original",
+        long.len()
+    );
+}
+
+#[test]
+fn session_list_and_fetch_expose_records_in_order() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    engine.append(&sample("a")).unwrap();
+    engine.append(&sample("b")).unwrap();
+    let mut other = sample("x");
+    other.session_id = "sess-2".into();
+    engine.append(&other).unwrap();
+
+    let sessions = engine.session_list("proj-1").unwrap();
+    assert_eq!(sessions.len(), 2);
+    let first = sessions.iter().find(|s| s.session_id == "sess-1").unwrap();
+    assert_eq!(first.record_count, 2);
+
+    let records = engine
+        .session_fetch("proj-1", "sess-1", None, None)
+        .unwrap();
+    assert_eq!(
+        records.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+        vec!["a", "b"]
+    );
+    assert_eq!(records[0].seq, 1);
+}
+
+#[test]
+fn records_retain_their_compaction_epoch() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    engine.append(&sample("pre-compaction")).unwrap();
+    let mut post = sample("post-compaction");
+    post.compaction_epoch = 1;
+    engine.append(&post).unwrap();
+
+    let summary = &engine.session_list("proj-1").unwrap()[0];
+    assert_eq!(summary.min_epoch, 0);
+    assert_eq!(summary.max_epoch, 1);
+
+    let records = engine
+        .session_fetch("proj-1", "sess-1", None, None)
+        .unwrap();
+    assert_eq!(records[1].compaction_epoch, 1);
+}
+
+#[test]
+fn session_fetch_can_range_by_sequence() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    for text in ["a", "b", "c", "d"] {
+        engine.append(&sample(text)).unwrap();
+    }
+    let middle = engine
+        .session_fetch("proj-1", "sess-1", Some(2), Some(3))
+        .unwrap();
+    assert_eq!(
+        middle.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+        vec!["b", "c"]
+    );
+}
+
+fn scope(project: &str) -> Scope {
+    Scope {
+        project: project.into(),
+        session: None,
+        agent: None,
+    }
+}
+
+#[test]
+fn disabled_records_are_excluded_from_session_fetch_but_still_inspectable() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    engine.append(&sample("keep")).unwrap();
+    let hidden = engine.append(&sample("hide")).unwrap();
+    engine.disable(&hidden).unwrap();
+
+    let visible = engine
+        .session_fetch("proj-1", "sess-1", None, None)
+        .unwrap();
+    assert_eq!(
+        visible.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+        vec!["keep"]
+    );
+    assert_eq!(engine.inspect(&hidden).unwrap().visibility, "hidden");
+}
+
+#[test]
+fn lexical_search_finds_scoped_records_and_abstains_otherwise() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    engine
+        .append(&sample("The ligand forms a hydrogen bond with Asp30."))
+        .unwrap();
+    engine
+        .append(&sample("Unrelated note about buffer preparation."))
+        .unwrap();
+
+    let hits = engine
+        .search(&scope("proj-1"), "hydrogen bond", 10)
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].record.text.contains("hydrogen bond"));
+
+    let none = engine
+        .search(&scope("proj-1"), "crystallography", 10)
+        .unwrap();
+    assert!(none.is_empty(), "no match must abstain, not error");
+}
+
+#[test]
+fn search_is_scoped_to_the_project() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    engine.append(&sample("shared keyword alpha")).unwrap();
+    let mut other = sample("shared keyword alpha");
+    other.project_id = "proj-2".into();
+    engine.append(&other).unwrap();
+
+    let hits = engine.search(&scope("proj-2"), "alpha", 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].record.project_id, "proj-2");
+}
+
+#[test]
+fn disabled_records_are_excluded_from_search() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    engine.append(&sample("alpha beacon one")).unwrap();
+    let hidden = engine.append(&sample("alpha beacon two")).unwrap();
+    engine.disable(&hidden).unwrap();
+
+    let hits = engine.search(&scope("proj-1"), "beacon", 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].record.text.contains("one"));
+}
