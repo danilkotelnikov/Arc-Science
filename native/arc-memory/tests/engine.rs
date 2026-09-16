@@ -410,3 +410,72 @@ fn captures_analyst_and_vision_roles() {
         assert_eq!(got.role, role);
     }
 }
+
+#[test]
+fn data_survives_engine_reopen() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let id = {
+        let engine = Engine::open(&db).unwrap();
+        engine.append(&sample("durable across restart")).unwrap()
+    }; // engine dropped: connection closed, WAL checkpointed on close
+    let reopened = Engine::open(&db).unwrap();
+    assert_eq!(
+        reopened.inspect(&id).unwrap().text,
+        "durable across restart"
+    );
+    let sessions = reopened.session_list("proj-1").unwrap();
+    assert_eq!(sessions[0].record_count, 1);
+}
+
+#[test]
+#[ignore = "measurement; run explicitly with `--ignored --nocapture`"]
+fn measure_retrieval_latency() {
+    use std::time::Instant;
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    let embedder = HashingEmbedder { dim: 384 };
+    let n = 5000usize;
+    for i in 0..n {
+        let mut r = sample(&format!(
+            "record {i} hydrogen bond ligand pocket residue Asp{} chain {}",
+            i % 97,
+            (b'A' + (i % 4) as u8) as char
+        ));
+        r.session_id = format!("s{}", i % 10);
+        engine.append(&r).unwrap();
+    }
+    let embedded = engine.embed_pending(&embedder).unwrap();
+    let sc = scope("proj-1");
+    let pct = |mut v: Vec<u128>, p: usize| {
+        v.sort();
+        v[v.len() * p / 100]
+    };
+    let bench = |label: &str, f: &dyn Fn()| {
+        let mut t = Vec::new();
+        for _ in 0..100 {
+            let s = Instant::now();
+            f();
+            t.push(s.elapsed().as_micros());
+        }
+        eprintln!(
+            "{label}: p50={}us p95={}us (n={n})",
+            pct(t.clone(), 50),
+            pct(t, 95)
+        );
+    };
+    eprintln!("indexed {embedded} embeddings, dim=384");
+    bench("lexical", &|| {
+        engine.search(&sc, "hydrogen ligand", 10).unwrap();
+    });
+    bench("semantic", &|| {
+        engine
+            .semantic_search(&sc, &embedder, "hydrogen bond pocket", 10)
+            .unwrap();
+    });
+    bench("hybrid", &|| {
+        engine
+            .hybrid_search(&sc, &embedder, "hydrogen bond pocket", 10)
+            .unwrap();
+    });
+}
