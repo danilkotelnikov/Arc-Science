@@ -13,6 +13,9 @@ pub enum Error {
     NotFound,
     /// An idempotency key was reused for different content.
     Conflict,
+    /// An embedder produced a vector with a wrong dimension, a non-finite value,
+    /// or an all-zero (unusable) vector.
+    InvalidVector,
     /// Stored bytes failed an integrity check against their recorded digest.
     Corrupt(&'static str),
 }
@@ -24,6 +27,7 @@ impl fmt::Display for Error {
             Error::Io(e) => write!(f, "io: {e}"),
             Error::NotFound => write!(f, "record not found"),
             Error::Conflict => write!(f, "idempotency key reused for different content"),
+            Error::InvalidVector => write!(f, "embedder produced an invalid vector"),
             Error::Corrupt(what) => write!(f, "corrupt: {what}"),
         }
     }

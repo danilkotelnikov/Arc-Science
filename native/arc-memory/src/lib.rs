@@ -9,10 +9,12 @@
 //! never replaces them and grants no authority to retrieved content. Retrieved
 //! passages are untrusted data, never instructions.
 
+mod embedding;
 mod engine;
 mod error;
 mod record;
 
+pub use embedding::Embedder;
 pub use engine::Engine;
 pub use error::{Error, Result};
 pub use record::{NewRecord, Role, Scope, SearchHit, SessionSummary, StoredRecord, TrustCategory};

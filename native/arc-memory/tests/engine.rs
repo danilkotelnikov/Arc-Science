@@ -262,3 +262,138 @@ fn disabled_records_are_excluded_from_search() {
     assert_eq!(hits.len(), 1);
     assert!(hits[0].record.text.contains("one"));
 }
+
+/// Deterministic, model-free embedder for tests: feature-hash tokens into a fixed
+/// dimension and L2-normalize. Identical text yields identical vectors; shared
+/// tokens raise cosine similarity.
+struct HashingEmbedder {
+    dim: usize,
+}
+
+impl arc_memory::Embedder for HashingEmbedder {
+    fn model_id(&self) -> &str {
+        "synthetic-hash-v1"
+    }
+    fn dim(&self) -> usize {
+        self.dim
+    }
+    fn embed(&self, texts: &[&str]) -> arc_memory::Result<Vec<Vec<f32>>> {
+        Ok(texts
+            .iter()
+            .map(|text| {
+                let mut v = vec![0f32; self.dim];
+                for token in text.split_whitespace() {
+                    let mut h: u64 = 1469598103934665603;
+                    for b in token.bytes() {
+                        h = h.wrapping_mul(131).wrapping_add(b as u64);
+                    }
+                    v[(h as usize) % self.dim] += 1.0;
+                }
+                let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+                if norm > 0.0 {
+                    for x in v.iter_mut() {
+                        *x /= norm;
+                    }
+                }
+                v
+            })
+            .collect())
+    }
+}
+
+struct BrokenEmbedder;
+impl arc_memory::Embedder for BrokenEmbedder {
+    fn model_id(&self) -> &str {
+        "broken"
+    }
+    fn dim(&self) -> usize {
+        4
+    }
+    fn embed(&self, texts: &[&str]) -> arc_memory::Result<Vec<Vec<f32>>> {
+        Ok(texts
+            .iter()
+            .map(|_| vec![f32::NAN, 0.0, 0.0, 0.0])
+            .collect())
+    }
+}
+
+#[test]
+fn semantic_search_ranks_by_similarity() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    let embedder = HashingEmbedder { dim: 64 };
+    engine
+        .append(&sample("ligand binding pocket hydrogen bond"))
+        .unwrap();
+    engine
+        .append(&sample("buffer preparation and pipetting"))
+        .unwrap();
+
+    let embedded = engine.embed_pending(&embedder).unwrap();
+    assert_eq!(embedded, 2);
+
+    let hits = engine
+        .semantic_search(
+            &scope("proj-1"),
+            &embedder,
+            "hydrogen bond in the binding pocket",
+            5,
+        )
+        .unwrap();
+    assert!(!hits.is_empty());
+    assert!(hits[0].record.text.contains("ligand binding pocket"));
+    assert_eq!(hits[0].reason, "semantic");
+}
+
+#[test]
+fn embed_pending_is_idempotent() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    let embedder = HashingEmbedder { dim: 32 };
+    engine.append(&sample("one")).unwrap();
+    engine.append(&sample("two")).unwrap();
+
+    assert_eq!(engine.embed_pending(&embedder).unwrap(), 2);
+    assert_eq!(
+        engine.embed_pending(&embedder).unwrap(),
+        0,
+        "already-embedded records are not re-embedded"
+    );
+}
+
+#[test]
+fn malformed_vectors_are_rejected() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    engine.append(&sample("anything")).unwrap();
+    assert!(matches!(
+        engine.embed_pending(&BrokenEmbedder),
+        Err(arc_memory::Error::InvalidVector)
+    ));
+}
+
+#[test]
+fn hybrid_search_fuses_and_dedupes() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    let embedder = HashingEmbedder { dim: 64 };
+    engine.append(&sample("beacon flare protocol")).unwrap();
+    engine.append(&sample("unrelated buffer note")).unwrap();
+    engine.embed_pending(&embedder).unwrap();
+
+    let hits = engine
+        .hybrid_search(&scope("proj-1"), &embedder, "beacon flare", 10)
+        .unwrap();
+
+    // The record matches both the lexical and semantic lists but must appear once.
+    let matches = hits
+        .iter()
+        .filter(|h| h.record.text == "beacon flare protocol")
+        .count();
+    assert_eq!(
+        matches, 1,
+        "a record in both lists is fused, not duplicated"
+    );
+    assert_eq!(hits[0].record.text, "beacon flare protocol");
+    assert_eq!(hits[0].reason, "hybrid");
+}

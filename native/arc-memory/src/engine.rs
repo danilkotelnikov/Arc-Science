@@ -4,13 +4,14 @@
 //! content-addressed (identical text is stored once). A record row carries the
 //! provenance and the per-session sequence. The engine bundles its own SQLite
 //! (>= 3.51.3) so it does not depend on the host's `sqlite3`.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, Row, ToSql, params};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::embedding::Embedder;
 use crate::error::{Error, Result};
 use crate::record::{
     NewRecord, Role, Scope, SearchHit, SessionSummary, StoredRecord, TrustCategory,
@@ -51,6 +52,13 @@ CREATE INDEX IF NOT EXISTS records_by_session ON records(project, session, seq);
 CREATE UNIQUE INDEX IF NOT EXISTS records_key
     ON records(project, idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(text, record_id UNINDEXED);
+CREATE TABLE IF NOT EXISTS embeddings (
+    record_id TEXT NOT NULL REFERENCES records(record_id),
+    generation TEXT NOT NULL,
+    dim INTEGER NOT NULL,
+    vector BLOB NOT NULL,
+    PRIMARY KEY(record_id, generation)
+);
 ";
 
 pub struct Engine {
@@ -254,6 +262,167 @@ impl Engine {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         raws.into_iter().map(hydrate).collect()
     }
+
+    /// Embed all visible records missing an embedding for this embedder's
+    /// generation. Returns the number embedded. A malformed vector aborts the whole
+    /// batch with [`Error::InvalidVector`] before anything is written.
+    pub fn embed_pending(&self, embedder: &dyn Embedder) -> Result<usize> {
+        let generation = embedder.model_id().to_string();
+        let pending: Vec<(String, String)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT r.record_id, b.data, b.original_size, r.content_digest \
+                 FROM records r JOIN blobs b ON b.content_digest = r.content_digest \
+                 LEFT JOIN embeddings e ON e.record_id = r.record_id AND e.generation = ?1 \
+                 WHERE e.record_id IS NULL AND r.visibility = 'visible'",
+            )?;
+            let raws = stmt
+                .query_map(params![generation], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            raws.into_iter()
+                .map(|(id, data, size, digest)| {
+                    let text = zstd::decode_all(data.as_slice())?;
+                    if text.len() as i64 != size || sha256_hex(&text) != digest {
+                        return Err(Error::Corrupt("record text failed integrity check"));
+                    }
+                    let text = String::from_utf8(text)
+                        .map_err(|_| Error::Corrupt("record text is not UTF-8"))?;
+                    Ok((id, text))
+                })
+                .collect::<Result<Vec<_>>>()?
+        };
+        if pending.is_empty() {
+            return Ok(0);
+        }
+
+        let texts: Vec<&str> = pending.iter().map(|(_, text)| text.as_str()).collect();
+        let vectors = embedder.embed(&texts)?;
+        if vectors.len() != pending.len() {
+            return Err(Error::InvalidVector);
+        }
+        for vector in &vectors {
+            validate_vector(vector, embedder.dim())?;
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+        for ((record_id, _), vector) in pending.iter().zip(vectors.iter()) {
+            tx.execute(
+                "INSERT OR IGNORE INTO embeddings(record_id, generation, dim, vector) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    record_id,
+                    generation,
+                    vector.len() as i64,
+                    encode_vector(vector)
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(pending.len())
+    }
+
+    /// Exact cosine search over the embedder's generation, scoped and visible.
+    /// Returns the top `limit` hits, or empty (abstention) when nothing is indexed.
+    pub fn semantic_search(
+        &self,
+        scope: &Scope,
+        embedder: &dyn Embedder,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>> {
+        let query_vector = embedder
+            .embed(&[query])?
+            .pop()
+            .ok_or(Error::InvalidVector)?;
+        validate_vector(&query_vector, embedder.dim())?;
+
+        let sql = format!(
+            "SELECT {RECORD_COLUMNS}, e.vector FROM embeddings e \
+             JOIN records r ON r.record_id = e.record_id \
+             JOIN blobs b ON b.content_digest = r.content_digest \
+             WHERE e.generation = ?1 AND r.project = ?2 \
+             AND (?3 IS NULL OR r.session = ?3) \
+             AND (?4 IS NULL OR r.agent = ?4) \
+             AND r.visibility = 'visible'"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let candidates = stmt
+            .query_map(
+                params![
+                    embedder.model_id(),
+                    scope.project,
+                    scope.session,
+                    scope.agent
+                ],
+                |row| Ok((read_raw(row)?, row.get::<_, Vec<u8>>(15)?)),
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut scored: Vec<(f64, StoredRecord)> = candidates
+            .into_iter()
+            .map(|(raw, bytes)| {
+                let score = cosine(&query_vector, &decode_vector(&bytes)) as f64;
+                hydrate(raw).map(|record| (score, record))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(scored
+            .into_iter()
+            .take(limit)
+            .map(|(score, record)| SearchHit {
+                record,
+                score,
+                reason: "semantic".to_string(),
+            })
+            .collect())
+    }
+
+    /// Hybrid retrieval: fuse the lexical and semantic result lists with
+    /// deterministic reciprocal-rank fusion (RRF, k=60). A record appearing in both
+    /// lists is fused once; ties break by record id for a stable order.
+    pub fn hybrid_search(
+        &self,
+        scope: &Scope,
+        embedder: &dyn Embedder,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>> {
+        const RRF_K: f64 = 60.0;
+        let pool = limit.max(1).saturating_mul(4);
+        let lexical = self.search(scope, query, pool)?;
+        let semantic = self.semantic_search(scope, embedder, query, pool)?;
+
+        let mut fused: HashMap<String, (f64, StoredRecord)> = HashMap::new();
+        for list in [lexical, semantic] {
+            for (rank, hit) in list.into_iter().enumerate() {
+                let entry = fused
+                    .entry(hit.record.record_id.clone())
+                    .or_insert((0.0, hit.record));
+                entry.0 += 1.0 / (RRF_K + rank as f64 + 1.0);
+            }
+        }
+        let mut items: Vec<(f64, StoredRecord)> = fused.into_values().collect();
+        items.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.1.record_id.cmp(&b.1.record_id))
+        });
+        Ok(items
+            .into_iter()
+            .take(limit)
+            .map(|(score, record)| SearchHit {
+                record,
+                score,
+                reason: "hybrid".to_string(),
+            })
+            .collect())
+    }
 }
 
 /// A record row as read from SQLite, before the text blob is decompressed.
@@ -331,6 +500,46 @@ fn fts_match_expression(query: &str) -> String {
         .map(|token| format!("\"{}\"", token.replace('"', "\"\"")))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Reject vectors that are the wrong dimension, contain a non-finite value, or are
+/// entirely zero (unusable for cosine). Comparisons are against zero, which is exact.
+fn validate_vector(vector: &[f32], dim: usize) -> Result<()> {
+    let all_zero = vector.iter().all(|x| *x == 0.0);
+    if vector.len() != dim || !vector.iter().all(|x| x.is_finite()) || all_zero {
+        return Err(Error::InvalidVector);
+    }
+    Ok(())
+}
+
+fn encode_vector(vector: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(vector.len() * 4);
+    for value in vector {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out
+}
+
+fn decode_vector(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
+}
+
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    let mut dot = 0f32;
+    let mut norm_a = 0f32;
+    let mut norm_b = 0f32;
+    for (x, y) in a.iter().zip(b.iter()) {
+        dot += x * y;
+        norm_a += x * x;
+        norm_b += y * y;
+    }
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    dot / (norm_a.sqrt() * norm_b.sqrt())
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
