@@ -18,6 +18,18 @@ use tao::window::{Icon, WindowBuilder};
 use wry::WebViewBuilder;
 
 const SNOGGO: &[u8] = include_bytes!("../assets/snoggo.svg");
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Owns the spawned service process and kills+reaps it when dropped, so no
+/// early-exit path (WebView init failure, window panic) can leave it orphaned.
+struct ServiceGuard(Child);
+
+impl Drop for ServiceGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 fn url() -> String {
     std::env::var("ARC_DESKTOP_URL").unwrap_or_else(|_| "http://127.0.0.1:8080/".to_string())
@@ -33,6 +45,15 @@ fn health_url() -> String {
     )
 }
 
+/// A timeout-bounded HTTP agent, so a stalled peer cannot hang startup forever
+/// (ureq blocks indefinitely by default).
+fn health_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(HEALTH_TIMEOUT))
+        .build()
+        .into()
+}
+
 /// Rasterize the Snöggo SVG to a 256×256 RGBA window icon.
 fn snoggo_icon() -> Option<Icon> {
     let tree = resvg::usvg::Tree::from_data(SNOGGO, &resvg::usvg::Options::default()).ok()?;
@@ -45,14 +66,14 @@ fn snoggo_icon() -> Option<Icon> {
     Icon::from_rgba(pixmap.data().to_vec(), size, size).ok()
 }
 
-fn is_healthy() -> bool {
-    ureq::get(&health_url()).call().is_ok()
+fn is_healthy(agent: &ureq::Agent) -> bool {
+    agent.get(&health_url()).call().is_ok()
 }
 
-fn wait_for_health(deadline: Duration) -> bool {
+fn wait_for_health(agent: &ureq::Agent, deadline: Duration) -> bool {
     let start = Instant::now();
     while start.elapsed() < deadline {
-        if is_healthy() {
+        if is_healthy(agent) {
             return true;
         }
         std::thread::sleep(Duration::from_millis(300));
@@ -61,24 +82,31 @@ fn wait_for_health(deadline: Duration) -> bool {
 }
 
 /// Start the local service from `ARC_DESKTOP_SERVE`, unless one is already healthy.
-fn start_service_if_needed() -> Option<Child> {
-    if is_healthy() {
+fn start_service_if_needed(agent: &ureq::Agent) -> Option<ServiceGuard> {
+    if is_healthy(agent) {
         return None; // reuse an already-running local service
     }
     let command = std::env::var("ARC_DESKTOP_SERVE").unwrap_or_else(|_| "arc-science serve".into());
     let mut parts = command.split_whitespace();
     let program = parts.next()?;
     let child = Command::new(program).args(parts).spawn().ok()?;
+    let guard = ServiceGuard(child);
     let timeout = std::env::var("ARC_DESKTOP_TIMEOUT")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(30u64);
-    wait_for_health(Duration::from_secs(timeout));
-    Some(child)
+    if !wait_for_health(agent, Duration::from_secs(timeout)) {
+        eprintln!(
+            "arc-science-desktop: service did not become healthy in {timeout}s; showing anyway"
+        );
+    }
+    Some(guard)
 }
 
 fn main() -> wry::Result<()> {
-    let mut service = start_service_if_needed();
+    let agent = health_agent();
+    // `service` is dropped (killing the child) on any early return/panic below.
+    let mut service = start_service_if_needed(&agent);
 
     let event_loop = EventLoop::new();
     let mut window = WindowBuilder::new()
@@ -98,10 +126,59 @@ fn main() -> wry::Result<()> {
             ..
         } = event
         {
-            if let Some(child) = service.as_mut() {
-                let _ = child.kill();
-            }
+            service.take(); // drop the guard -> kill + reap the service
             *control_flow = ControlFlow::Exit;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    #[test]
+    fn service_guard_kills_child_on_drop() {
+        // A long-running direct child (no shell wrapper, so kill reaps it).
+        let child = Command::new("ping")
+            .args(["127.0.0.1", "-n", "30"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn ping");
+        let pid = child.id();
+        {
+            let _guard = ServiceGuard(child);
+        } // dropped here -> kill + wait
+        let out = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}")])
+            .output()
+            .expect("tasklist");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !text.contains(&pid.to_string()),
+            "service child {pid} must be killed when the guard drops"
+        );
+    }
+
+    #[test]
+    fn health_agent_times_out_on_a_stalled_peer() {
+        // A peer that accepts the connection but never answers.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                std::thread::sleep(Duration::from_secs(30));
+                drop(stream);
+            }
+        });
+        let agent = health_agent();
+        let start = Instant::now();
+        let ok = agent.get(format!("http://{addr}/health")).call().is_ok();
+        assert!(!ok, "a stalled peer must not report healthy");
+        assert!(
+            start.elapsed() < Duration::from_secs(8),
+            "health check must time out (~2s), not hang: took {:?}",
+            start.elapsed()
+        );
+    }
 }
