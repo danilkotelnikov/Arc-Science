@@ -142,6 +142,7 @@ def test_oversized_coordinate_source_is_rejected_before_reading(tmp_path, monkey
         prepare(path,antibody_chains=('L','H'),antigen_chains=('A',))
 
 
+@pytest.mark.skipif(not hasattr(__import__('os'),'mkfifo'),reason='FIFOs are POSIX-only; S_ISREG covers non-regular rejection on Windows')
 def test_fifo_coordinate_source_is_rejected_without_waiting_for_writer(tmp_path):
     import os
     import subprocess
@@ -161,6 +162,19 @@ raise SystemExit(1)
         env={**os.environ,'PYTHONPATH':str(Path(__file__).resolve().parents[1]/'src')},timeout=3)
     assert result.returncode == 0
     assert 'regular file' in result.stdout
+
+
+def test_read_coordinate_source_returns_exact_bytes_including_crlf(tmp_path):
+    import hashlib
+    from arc_science.molecular import read_coordinate_source
+    # CRLF and an embedded ^Z must survive verbatim, or the recorded sha256 would not
+    # match the file. On Windows a text-mode read would strip \r and stop at \x1a.
+    path=tmp_path/'crlf.cif'
+    payload=b'data_x\r\n_a.b 1\r\n#\r\n\x1a still here\r\n'
+    path.write_bytes(payload)
+    data=read_coordinate_source(path)
+    assert data==payload
+    assert hashlib.sha256(data).hexdigest()==hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def test_source_growth_after_stat_cannot_bypass_read_cap(tmp_path, monkeypatch):

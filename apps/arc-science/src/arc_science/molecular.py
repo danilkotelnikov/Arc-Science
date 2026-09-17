@@ -19,7 +19,13 @@ SOURCE_LIMIT = 100 * 1024 * 1024
 
 def read_coordinate_source(source: Path) -> bytes:
     """Read a bounded regular file through one descriptor, rejecting stream input."""
-    fd=os.open(source,os.O_RDONLY|os.O_NONBLOCK|os.O_NOFOLLOW)
+    # O_NOFOLLOW/O_NONBLOCK are POSIX-only (absent on Windows); O_BINARY is Windows-only
+    # and required there so os.read returns the exact on-disk bytes the sha256 covers,
+    # with no CRLF or ^Z text-mode translation. getattr keeps each set where it exists;
+    # on Windows the pre-open islink guard stands in for O_NOFOLLOW's symlink refusal.
+    if os.path.islink(source):
+        raise ValueError('Coordinate source must not be a symbolic link')
+    fd=os.open(source,os.O_RDONLY|getattr(os,'O_NONBLOCK',0)|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_BINARY',0))
     try:
         before=os.fstat(fd)
         if not stat.S_ISREG(before.st_mode):
