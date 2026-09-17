@@ -1,0 +1,21 @@
+[package]
+name = "arc-desktop"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[[bin]]
+name = "arc-science-desktop"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[dependencies]
+resvg = "0.48.1"
+tao = "0.37.0"
+ureq = { version = "3.4.2", default-features = false }
+wry = "0.57.0"
