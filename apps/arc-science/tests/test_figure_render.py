@@ -13,6 +13,27 @@ import time
 from PIL import Image
 import pytest
 
+from arc_science import anchored
+
+
+def _symlinks_supported():
+    import tempfile
+    with tempfile.TemporaryDirectory() as work:
+        try:
+            os.symlink(work, os.path.join(work, 'probe'))
+            return True
+        except (OSError, NotImplementedError, AttributeError):
+            return False
+
+
+# The POSIX render sandbox (openat/dir_fd, killpg process group, control/status
+# pipes, rename of an open directory) has no Windows equivalent; the Windows path
+# is a bounded CREATE_NEW_PROCESS_GROUP subprocess, covered by the molecular tests.
+_POSIX_SANDBOX = pytest.mark.skipif(os.name == 'nt',
+    reason='POSIX openat/pipe/rename sandbox mechanism; Windows uses the path-based branch')
+_NEEDS_SYMLINK = pytest.mark.skipif(not _symlinks_supported(),
+    reason='requires privilege to create symlinks (Developer Mode / admin on Windows)')
+
 
 @pytest.fixture
 def valid_asset(tmp_path):
@@ -50,10 +71,17 @@ def test_worker_contract_biorender_public_detail(valid_asset, biorender_provenan
             with pytest.raises(ValueError):
                 validate_asset(fd, manifest['asset_id'])
     finally:
-        os.close(fd)
+        anchored.close_directory(fd)
 
 
 def _runtime(tmp_path, body):
+    if os.name == 'nt':
+        # Windows honours no shebang; wrap the body as a .cmd that runs it with Python.
+        script = tmp_path / 'runtime_body.py'
+        script.write_text(body)
+        path = tmp_path / 'runtime.cmd'
+        path.write_text('@echo off\r\n"%s" "%s" %%*\r\n' % (sys.executable, script))
+        return str(path)
     path = tmp_path / 'runtime'
     path.write_text('#!' + sys.executable + '\n' + body)
     path.chmod(0o700)
@@ -109,6 +137,7 @@ def test_runtime_options_exclusive_before_reservation(valid_asset,tmp_path):
     assert not (tmp_path/'project'/'renders').exists()
 
 
+@_NEEDS_SYMLINK
 @pytest.mark.parametrize('boundary',['source','project'])
 def test_tampering_and_symlink_escape_rejected_before_launch(valid_asset,tmp_path,boundary):
     if boundary=='source':
@@ -195,6 +224,7 @@ def test_forged_receipt_cannot_complete(valid_asset,tmp_path,extra):
     assert json.loads((run/'reservation.json').read_text())['status']=='failed'
 
 
+@_NEEDS_SYMLINK
 def test_failed_reservation_and_symlink_outputs_never_verify(valid_asset,tmp_path):
     from arc_science.figure_render import verify_render
     result=_run(valid_asset,tmp_path,blender=_successful_runtime(tmp_path))
@@ -235,7 +265,7 @@ def test_worker_contract_rejects_bypasses(valid_asset,tmp_path):
             with pytest.raises(ValueError): validate_job(bad,fd)
         (run/job['asset']).with_name('source.png').write_bytes(b'not PNG')
         with pytest.raises(ValueError): validate_job(job,fd)
-    finally: os.close(fd)
+    finally: anchored.close_directory(fd)
 
 
 def test_cli_render_and_verify_and_exclusive_runtime(valid_asset,tmp_path,capsys):
@@ -302,6 +332,7 @@ def test_direct_worker_validates_every_boundary_before_import(valid_asset,tmp_pa
     assert not (run/'render.png').exists()
 
 
+@_NEEDS_SYMLINK
 def test_isolated_module_mode_argv_preserves_venv_path(valid_asset,tmp_path):
     runtime=_successful_runtime(tmp_path, "assert sys.argv[1]=='-I'\nassert sys.argv[3]=='--'")
     alias=tmp_path/'venv-python'; alias.symlink_to(runtime)
@@ -309,6 +340,7 @@ def test_isolated_module_mode_argv_preserves_venv_path(valid_asset,tmp_path):
     assert result['passed'] is True
 
 
+@_POSIX_SANDBOX
 def test_missing_no_follow_primitive_fails_closed(valid_asset,tmp_path,monkeypatch):
     from arc_science.figure_render import render_figure
     monkeypatch.delattr(os,'O_NOFOLLOW')
@@ -317,6 +349,7 @@ def test_missing_no_follow_primitive_fails_closed(valid_asset,tmp_path,monkeypat
     assert not (tmp_path/'project').exists()
 
 
+@_POSIX_SANDBOX
 def test_child_exit_does_not_wait_for_inherited_pipe(valid_asset,tmp_path):
     runtime=_successful_runtime(tmp_path,
         "import subprocess\nsubprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])")
@@ -339,6 +372,7 @@ def test_framing_preserves_aspect_and_all_content(style,proof_size,frame_size):
     assert horizontal>fw and vertical>fh
 
 
+@_POSIX_SANDBOX
 def test_returned_run_path_cannot_be_replaced_after_verification(valid_asset,tmp_path,monkeypatch):
     import arc_science.figure_render as rendering
     real_verify=rendering._verified_outputs

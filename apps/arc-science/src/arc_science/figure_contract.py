@@ -16,6 +16,17 @@ import sys
 import zlib
 from urllib.parse import urlsplit
 
+try:
+    from . import anchored
+except ImportError:
+    # Loaded standalone (the -I isolated Blender worker execs this file directly, with
+    # no parent package): load the adjacent stdlib-only helper the same trusted way.
+    import importlib.util as _ilu
+    _anchored_spec = _ilu.spec_from_file_location(
+        '_arc_anchored', Path(__file__).absolute().with_name('anchored.py'))
+    anchored = _ilu.module_from_spec(_anchored_spec)
+    _anchored_spec.loader.exec_module(anchored)
+
 SOURCE_LIMIT = 16 * 1024 * 1024
 JSON_LIMIT = 64 * 1024
 IMAGE_LIMIT = 32 * 1024 * 1024
@@ -35,6 +46,8 @@ def digest(data):
 
 
 def require_filesystem():
+    if os.name == 'nt':
+        return  # anchored provides a path-based Windows implementation of these ops
     if (sys.platform != 'linux' or not getattr(os, 'O_NOFOLLOW', 0) or
             not getattr(os, 'O_DIRECTORY', 0) or
             not {os.open, os.mkdir, os.stat, os.unlink, os.rename} <= os.supports_dir_fd):
@@ -47,21 +60,9 @@ def absolute(path):
 
 def open_directory(path, *, create=False):
     require_filesystem()
-    path = absolute(path)
-    fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        for part in path.parts[1:]:
-            if create:
-                try:
-                    os.mkdir(part, 0o700, dir_fd=fd)
-                except FileExistsError:
-                    pass
-            next_fd = child_directory(fd, part)
-            os.close(fd)
-            fd = next_fd
-        return fd
-    except (OSError, ValueError):
-        os.close(fd)
+        return anchored.open_directory(path, create=create, mode=0o700)
+    except OSError:
         raise ValueError('Unsafe, missing, or symlink directory') from None
 
 
@@ -74,9 +75,9 @@ def basename(name):
 def child_directory(fd, name, *, create=False):
     basename(name)
     if create:
-        os.mkdir(name, 0o700, dir_fd=fd)
+        anchored.mkdir(fd, name, 0o700)  # strict: a run/inputs dir must not pre-exist
     try:
-        return os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        return anchored.child_directory(fd, name)
     except OSError:
         raise ValueError('Unsafe artifact directory') from None
 
@@ -84,7 +85,7 @@ def child_directory(fd, name, *, create=False):
 def read_regular(fd, name, limit, *, empty=False):
     basename(name)
     try:
-        opened = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        opened = anchored.open_read_fd(fd, name)
         try:
             before = os.fstat(opened)
             if not stat.S_ISREG(before.st_mode) or not (0 if empty else 1) <= before.st_size <= limit:
@@ -112,8 +113,7 @@ def read_regular(fd, name, limit, *, empty=False):
 
 def write_new(fd, name, data):
     basename(name)
-    out = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                  0o600, dir_fd=fd)
+    out = anchored.open_write_new_fd(fd, name, 0o600)
     try:
         view = memoryview(data)
         while view:
@@ -305,11 +305,12 @@ def validate_asset(fd, asset_id):
     source = exact(manifest['source'], 'file sha256 size media_type content_kind', 'source')
     preview = exact(manifest['preview'], 'file sha256 pixel_sha256 width height', 'proof')
     converter = exact(manifest['converter'], 'engine engine_version pillow_version', 'converter')
-    expected = {'source.svg':('image/svg+xml','CairoSVG'), 'source.pdf':('application/pdf','pypdfium2')}
+    # resvg is the Cairo-free SVG rasterizer used on Windows; CairoSVG on Linux.
+    expected = {'source.svg':('image/svg+xml',('CairoSVG','resvg')), 'source.pdf':('application/pdf',('pypdfium2',))}
     if not isinstance(source['file'],str) or source['file'] not in expected:
         raise ValueError('Invalid vector filename')
-    media,engine = expected[source['file']]
-    if source['media_type'] != media or source['content_kind'] not in ('vector','mixed_vector_image') or converter['engine'] != engine:
+    media,engines = expected[source['file']]
+    if source['media_type'] != media or source['content_kind'] not in ('vector','mixed_vector_image') or converter['engine'] not in engines:
         raise ValueError('Invalid source metadata')
     text(converter['engine_version'],100); text(converter['pillow_version'],100)
     integer(source['size'],1,SOURCE_LIMIT,'source size')
@@ -330,7 +331,7 @@ def asset_directory(run_fd, asset_id):
     hash_value(asset_id)
     inputs = child_directory(run_fd,'inputs')
     try: return child_directory(inputs,asset_id)
-    finally: os.close(inputs)
+    finally: anchored.close_directory(inputs)
 
 
 def validate_job(job, run_fd):
@@ -348,7 +349,7 @@ def validate_job(job, run_fd):
                 manifest['source']['sha256'] != job['source_sha256'] or manifest['preview']['sha256'] != job['proof_sha256']):
             raise ValueError('Job source binding mismatch')
         return manifest,proof
-    finally: os.close(fd)
+    finally: anchored.close_directory(fd)
 
 
 def validate_reservation(value, job, status):

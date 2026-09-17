@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 from pathlib import Path
 import sys
 import tempfile
@@ -133,7 +132,7 @@ def execute(job_path, run_dir):
         c.validate_reservation(c.read_json(fd,'reservation.json'),job,'reserved')
         c.read_regular(fd,'worker.log',c.LOG_LIMIT,empty=True)
         for name in ['scene.blend','render.png','render-receipt.json']:
-            try: os.stat(name,dir_fd=fd,follow_symlinks=False)
+            try: c.anchored.lstat(fd,name)
             except FileNotFoundError: continue
             raise ValueError('Worker output already exists: '+name)
         # No Blender import or scene allocation occurs before all input checks.
@@ -157,7 +156,7 @@ def execute(job_path, run_dir):
                 if (w,h) != (job['settings']['width'],job['settings']['height']):
                     raise ValueError('Blender output dimensions mismatch')
                 c.write_new(fd,'render.png',image)
-            finally: os.close(staging_fd)
+            finally: c.anchored.close_directory(staging_fd)
         receipt = {'format':'arc-figure-receipt/1','run_id':job['run_id'],
                    'job_sha256':c.digest(c.canonical(job)),'asset_id':job['asset_id'],
                    'source_sha256':job['source_sha256'],'proof_sha256':job['proof_sha256'],
@@ -168,7 +167,7 @@ def execute(job_path, run_dir):
                    'rights_verified':False,'scientific_validity_established':False,'renderer_reexecuted':False}
         c.validate_receipt(receipt,job,fd)
         c.write_new(fd,'render-receipt.json',c.canonical(receipt))
-    finally: os.close(fd)
+    finally: c.anchored.close_directory(fd)
 
 
 def main(argv=None):

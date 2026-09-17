@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 
+from . import anchored
 from . import figure_contract as c
 from .vector_assets import verify_asset, _verify_asset_contents
 
@@ -67,8 +68,8 @@ def _reservation(fd, job, status, failure=None):
     else:
         temporary = '.reservation-' + secrets.token_hex(12)
         c.write_new(fd,temporary,c.canonical(value))
-        os.replace(temporary,'reservation.json',src_dir_fd=fd,dst_dir_fd=fd)
-        os.fsync(fd)
+        anchored.replace(fd,temporary,'reservation.json')
+        anchored.fsync_dir(fd)
 
 
 def _append_log(fd, message):
@@ -255,17 +256,17 @@ def _capture(asset_json, manifest, run_fd):
         if captured != manifest: raise ValueError('Source asset changed during capture')
         files = {manifest['source']['file']:c.read_regular(source_fd,manifest['source']['file'],c.SOURCE_LIMIT),
                  'source.png':c.read_regular(source_fd,'source.png',c.SOURCE_LIMIT),'asset.json':raw}
-    finally: os.close(source_fd)
+    finally: anchored.close_directory(source_fd)
     inputs = c.child_directory(run_fd,'inputs',create=True)
     try:
         destination = c.child_directory(inputs,manifest['asset_id'],create=True)
         try:
             for name,data in files.items(): c.write_new(destination,name,data)
-            # Reproduce the captured proof from its captured source, pinned to this fd.
-            if _verify_asset_contents(os.dup(destination),manifest['asset_id']) != manifest:
+            # Reproduce the captured proof from its captured source, pinned to this handle.
+            if _verify_asset_contents(anchored.dup_handle(destination),manifest['asset_id']) != manifest:
                 raise ValueError('Captured asset does not reproduce')
-        finally: os.close(destination)
-    finally: os.close(inputs)
+        finally: anchored.close_directory(destination)
+    finally: anchored.close_directory(inputs)
     return c.digest(raw)
 
 
@@ -280,10 +281,9 @@ def _verified_outputs(fd, job):
 def _check_run_path(run_dir, fd):
     current = c.open_directory(run_dir)
     try:
-        expected, actual = os.fstat(fd), os.fstat(current)
-        if (expected.st_dev,expected.st_ino) != (actual.st_dev,actual.st_ino):
+        if anchored.identity(fd) != anchored.identity(current):
             raise ValueError('Run directory changed during operation')
-    finally: os.close(current)
+    finally: anchored.close_directory(current)
 
 
 def _result(run_dir,job):
@@ -313,18 +313,18 @@ def render_figure(asset_json: Path, project_dir: Path, *, blender: str | None = 
     manifest = verify_asset(asset_json)
     source_fd = c.open_directory(asset_json.parent)
     try: manifest_digest = c.digest(c.read_regular(source_fd,'asset.json',c.JSON_LIMIT))
-    finally: os.close(source_fd)
+    finally: anchored.close_directory(source_fd)
     project_dir = c.absolute(Path(project_dir))
     project_fd = c.open_directory(project_dir,create=True)
     try:
-        try: os.mkdir('renders',0o700,dir_fd=project_fd)
+        try: anchored.mkdir(project_fd,'renders',0o700)
         except FileExistsError: pass
         renders_fd = c.child_directory(project_fd,'renders')
-    finally: os.close(project_fd)
+    finally: anchored.close_directory(project_fd)
     try:
         run_id = secrets.token_hex(12)
         run_fd = c.child_directory(renders_fd,run_id,create=True)
-    finally: os.close(renders_fd)
+    finally: anchored.close_directory(renders_fd)
     run_dir = project_dir/'renders'/run_id
     job = {'format':'arc-figure-job/1','run_id':run_id,'asset_id':manifest['asset_id'],
            'asset':'inputs/'+manifest['asset_id']+'/asset.json',
@@ -336,7 +336,7 @@ def render_figure(asset_json: Path, project_dir: Path, *, blender: str | None = 
     try:
         c.write_new(run_fd,'job.json',c.canonical(job))
         _reservation(run_fd,job,'reserved'); reserved = True
-        log_fd = os.open('worker.log',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=run_fd)
+        log_fd = anchored.open_file_fd(run_fd,'worker.log',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
         if _capture(asset_json,manifest,run_fd) != manifest_digest:
             raise ValueError('Source manifest changed during capture')
         worker = Path(__file__).with_name('figure_worker.py').absolute()
@@ -361,7 +361,7 @@ def render_figure(asset_json: Path, project_dir: Path, *, blender: str | None = 
         raise
     finally:
         if log_fd is not None: os.close(log_fd)
-        os.close(run_fd)
+        anchored.close_directory(run_fd)
 
 
 def verify_render(run_dir: Path) -> dict:
@@ -375,4 +375,4 @@ def verify_render(run_dir: Path) -> dict:
         _verified_outputs(fd,job)
         _check_run_path(run_dir,fd)
         return _result(run_dir,job)
-    finally: os.close(fd)
+    finally: anchored.close_directory(fd)
