@@ -222,6 +222,14 @@ def identity(handle) -> tuple[int, int]:
     return (info.st_dev, info.st_ino)
 
 
+def dup_handle(handle):
+    """An independent handle to the same directory that a callee may close on its own.
+
+    On POSIX this dups the fd; on Windows the handle is a path and closing is a no-op,
+    so returning it as-is is already safe to share."""
+    return os.dup(handle) if _POSIX else handle
+
+
 def dir_fd(handle):
     """The POSIX directory fd, or None on Windows (callers then use the path)."""
     return handle if _POSIX else None
