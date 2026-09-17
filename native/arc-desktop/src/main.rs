@@ -17,7 +17,9 @@ use tao::event_loop::{ControlFlow, EventLoop};
 use tao::window::{Icon, WindowBuilder};
 use wry::WebViewBuilder;
 
-const SNOGGO: &[u8] = include_bytes!("../assets/snoggo.svg");
+// Transparent icon variant of the logo SVG (background rect stripped) so the icon
+// has no white padding — just the mark on alpha.
+const SNOGGO: &[u8] = include_bytes!("../assets/snoggo-icon.svg");
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Owns the spawned service process and kills+reaps it when dropped, so no
@@ -54,16 +56,23 @@ fn health_agent() -> ureq::Agent {
         .into()
 }
 
-/// Rasterize the Snöggo SVG to a 256×256 RGBA window icon.
-fn snoggo_icon() -> Option<Icon> {
+/// Rasterize the Snöggo mark to a `size`×`size` transparent RGBA buffer, cropped to
+/// its bounding box so the mark fills the square with no white (or empty) padding.
+fn render_icon_rgba(size: u32) -> Option<Vec<u8>> {
     let tree = resvg::usvg::Tree::from_data(SNOGGO, &resvg::usvg::Options::default()).ok()?;
-    let size: u32 = 256;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)?;
-    let svg = tree.size();
-    let scale = (size as f32 / svg.width()).min(size as f32 / svg.height());
-    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
+    let bbox = tree.root().abs_bounding_box();
+    let scale = (size as f32 / bbox.width()).min(size as f32 / bbox.height());
+    let tx = (size as f32 - bbox.width() * scale) / 2.0 - bbox.x() * scale;
+    let ty = (size as f32 - bbox.height() * scale) / 2.0 - bbox.y() * scale;
+    let transform = resvg::tiny_skia::Transform::from_row(scale, 0.0, 0.0, scale, tx, ty);
     resvg::render(&tree, transform, &mut pixmap.as_mut());
-    Icon::from_rgba(pixmap.data().to_vec(), size, size).ok()
+    Some(pixmap.data().to_vec())
+}
+
+fn snoggo_icon() -> Option<Icon> {
+    let size: u32 = 256;
+    Icon::from_rgba(render_icon_rgba(size)?, size, size).ok()
 }
 
 fn is_healthy(agent: &ureq::Agent) -> bool {
@@ -179,6 +188,28 @@ mod tests {
             start.elapsed() < Duration::from_secs(8),
             "health check must time out (~2s), not hang: took {:?}",
             start.elapsed()
+        );
+    }
+
+    #[test]
+    fn icon_has_no_white_padding() {
+        let size = 128u32;
+        let rgba = render_icon_rgba(size).expect("icon renders");
+        let alpha = |x: u32, y: u32| rgba[((y * size + x) * 4 + 3) as usize];
+        // No background rect: all four corners are fully transparent (not cream/white).
+        for (x, y) in [(0, 0), (size - 1, 0), (0, size - 1), (size - 1, size - 1)] {
+            assert_eq!(
+                alpha(x, y),
+                0,
+                "corner ({x},{y}) must be transparent, not padded"
+            );
+        }
+        // Cropped tight: the mark touches opposite edges on at least one axis.
+        let row_has = |y: u32| (0..size).any(|x| alpha(x, y) > 0);
+        let col_has = |x: u32| (0..size).any(|y| alpha(x, y) > 0);
+        assert!(
+            (row_has(0) && row_has(size - 1)) || (col_has(0) && col_has(size - 1)),
+            "mark must reach opposite icon edges (no margin)"
         );
     }
 }
