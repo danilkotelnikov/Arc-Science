@@ -108,8 +108,79 @@ def _render_cancellation():
             signal.signal(signum, handler)
 
 
+def _kill_tree_windows(process):
+    """Kill the renderer and any Blender children it spawned (taskkill /T = the tree).
+
+    The Windows stand-in for the POSIX watchdog's killpg(SIGKILL): weaker (no shared
+    process group, a hard parent-kill can still orphan children) but it reaps the
+    normal render subtree on timeout, error and cleanup."""
+    if process.poll() is not None and process.returncode is not None:
+        # Already exited; taskkill would just error. Still try, cheaply, for children.
+        pass
+    try:
+        subprocess.run(['taskkill','/F','/T','/PID',str(process.pid)],
+                       stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+                       creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),timeout=15)
+    except Exception:
+        try: process.kill()
+        except Exception: pass
+
+
+def _execute_windows(argv, run_dir, log_fd, timeout):
+    """Windows has no killpg/proc/pass_fds sandbox. Run the worker in its own process
+    group, anchored to the run directory, with a bounded lifetime and a capped log; a
+    reader thread drains stdout so the deadline holds even if the renderer goes silent.
+    Isolation is weaker than the POSIX watchdog; the run dir is the operator's own."""
+    with _render_cancellation() as check_cancelled, tempfile.TemporaryDirectory(prefix='arc-figure-runtime-') as private:
+        # Keep Windows DLL resolution intact (SystemRoot/PATH) while isolating the
+        # renderer's HOME, temp and Blender config into a private throwaway directory.
+        environment = {k:os.environ[k] for k in
+                       ('SystemRoot','SystemDrive','WINDIR','PATH','PATHEXT','NUMBER_OF_PROCESSORS')
+                       if k in os.environ}
+        environment.update({'HOME':private,'USERPROFILE':private,'TEMP':private,'TMP':private,
+                            'LANG':'C.UTF-8','LC_ALL':'C.UTF-8','OMP_NUM_THREADS':'4',
+                            'OPENBLAS_NUM_THREADS':'4','MKL_NUM_THREADS':'4',
+                            'BLENDER_USER_CONFIG':private,'BLENDER_USER_SCRIPTS':private,
+                            'BLENDER_USER_DATAFILES':private})
+        deadline = time.monotonic()+timeout
+        process = None
+        try:
+            check_cancelled()
+            process = subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT,env=environment,cwd=run_dir,
+                                       creationflags=getattr(subprocess,'CREATE_NEW_PROCESS_GROUP',0))
+            stdout_fd = process.stdout.fileno()
+            def pump():
+                retained = 0
+                while True:
+                    data = os.read(stdout_fd,64*1024)
+                    if not data: break
+                    if retained < c.LOG_LIMIT-4096:
+                        chunk = data[:c.LOG_LIMIT-4096-retained]
+                        os.write(log_fd,chunk); retained += len(chunk)
+            reader = threading.Thread(target=pump,daemon=True); reader.start()
+            while True:
+                check_cancelled()
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Render worker timeout')
+                status = process.poll()
+                if status is not None:
+                    reader.join(2)
+                    if status != 0: raise RuntimeError(f'Render worker exited with status {status}')
+                    return
+                time.sleep(0.05)
+        finally:
+            if process is not None:
+                _kill_tree_windows(process)
+                process.wait()
+                try: process.stdout.close()
+                except OSError: pass
+
+
 def _execute(argv, run_fd, log_fd, timeout):
     """Bound both retained bytes and lifetime, including inherited descendant pipes."""
+    if isinstance(run_fd, str):
+        return _execute_windows(argv, run_fd, log_fd, timeout)
     with _render_cancellation() as check_cancelled, tempfile.TemporaryDirectory(prefix='arc-figure-runtime-') as private:
         environment = {'PATH':os.defpath,'HOME':private,'TMPDIR':private,
                        'LANG':'C.UTF-8','LC_ALL':'C.UTF-8','OMP_NUM_THREADS':'4',

@@ -238,10 +238,15 @@ def render_complex(scene: dict, output: Path, *, blender_python: str,
         # Reuse the bounded local renderer executor: sanitized environment,
         # process-group timeout, and capped logs; no credentials in the worker.
         from .figure_render import _execute
-        fd=os.open(output,os.O_RDONLY|os.O_DIRECTORY)
-        log_fd=os.open(output/'worker.log',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
-        try: _execute(argv,fd,log_fd,900)
-        finally: os.close(log_fd); os.close(fd)
+        # POSIX anchors the run with a directory fd (/proc/self/fd cwd); Windows has no
+        # O_DIRECTORY/dir-fd, so pass the path and _execute runs a bounded subprocess there.
+        posix_dir=hasattr(os,'O_DIRECTORY')
+        run_handle=os.open(output,os.O_RDONLY|os.O_DIRECTORY) if posix_dir else str(output)
+        log_fd=os.open(output/'worker.log',os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_BINARY',0),0o600)
+        try: _execute(argv,run_handle,log_fd,900)
+        finally:
+            os.close(log_fd)
+            if isinstance(run_handle,int): os.close(run_handle)
         if json.loads((output/'scene.json').read_text())!=scene: raise ValueError('Scene changed during rendering')
         if hashlib.sha256((output/('source'+suffix)).read_bytes()).hexdigest()!=scene['source']['sha256']:
             raise ValueError('Captured source digest changed')

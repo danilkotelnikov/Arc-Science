@@ -16,6 +16,33 @@ def module(name):
     return __import__('arc_science.'+name, fromlist=['*'])
 
 
+@pytest.mark.skipif(__import__('os').name!='nt', reason='Windows subprocess sandbox branch (POSIX uses the watchdog)')
+def test_execute_windows_runs_bounded_subprocess_captures_log_and_kills_on_timeout(tmp_path):
+    import os, sys, time
+    from arc_science import figure_render
+    def run(script, run_dir, timeout):
+        log=run_dir/'worker.log'
+        fd=os.open(str(log),os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_BINARY,0o600)
+        try: figure_render._execute([sys.executable,'-I','-c',script],str(run_dir),fd,timeout)
+        finally: os.close(fd)
+        return log
+    # Success: runs in cwd=run_dir (writes a relative marker) and stdout reaches the log.
+    ok=tmp_path/'ok'; ok.mkdir()
+    log=run('import sys;sys.stdout.write("hello-log");open("marker","w").close()',ok,30)
+    assert (ok/'marker').exists()
+    assert b'hello-log' in log.read_bytes()
+    # Non-zero exit surfaces as a RuntimeError naming the status.
+    bad=tmp_path/'bad'; bad.mkdir()
+    with pytest.raises(RuntimeError, match='status'):
+        run('raise SystemExit(3)',bad,30)
+    # A silent over-running worker is killed and reported as a timeout, not left hanging.
+    slow=tmp_path/'slow'; slow.mkdir()
+    started=time.monotonic()
+    with pytest.raises(RuntimeError, match='timeout'):
+        run('import time;time.sleep(60)',slow,1)
+    assert time.monotonic()-started < 20
+
+
 def test_envelope_tracks_real_coordinates_and_bounds_memory():
     worker = module('molecular_worker')
     vertices, faces, info = worker.atomic_envelope([[10,20,30], [13,20,30]])
