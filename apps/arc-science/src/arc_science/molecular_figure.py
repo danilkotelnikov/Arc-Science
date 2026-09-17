@@ -18,9 +18,32 @@ def _json(path, value):
     path.write_text(json.dumps(value,indent=2,allow_nan=False)+'\n',encoding='utf-8')
 
 
+def _svg_to_png(svg_bytes: bytes, out_path: Path, width: int) -> None:
+    """Rasterize an SVG to PNG. Prefer cairosvg when its native Cairo library is
+    present; otherwise use a resvg-based tool named by ARC_SVG2PNG, so the collage
+    renders on Windows (where Cairo is typically absent) without it."""
+    try:
+        import cairosvg
+        cairosvg.svg2png(bytestring=svg_bytes, write_to=str(out_path))
+        return
+    except Exception:
+        pass
+    tool = os.environ.get('ARC_SVG2PNG')
+    if not tool:
+        raise RuntimeError('No SVG rasterizer available: install cairosvg (needs the Cairo '
+                           'library) or set ARC_SVG2PNG to a resvg-based tool '
+                           '(build native/arc-svg -> arc-svg2png)')
+    import tempfile
+    with tempfile.NamedTemporaryFile('wb', suffix='.svg', delete=False) as handle:
+        handle.write(svg_bytes); svg_tmp = handle.name
+    try:
+        subprocess.run([tool, svg_tmp, str(out_path), str(width)], check=True)
+    finally:
+        os.unlink(svg_tmp)
+
+
 def compose_complex(scene: dict, output: Path, *, width: int = 1400) -> dict:
     """White four-panel scientific figure; molecular annotations are projections."""
-    import cairosvg
     output=Path(output)
     fields=['antibody_residue','antigen_residue','antibody_atom','antigen_atom','distance','atom_pair_count']
     with (output/'contacts.csv').open('w',newline='') as stream:
@@ -122,7 +145,7 @@ def compose_complex(scene: dict, output: Path, *, width: int = 1400) -> dict:
     text(732,1064,f'{len(contacts)} residue pairs · heavy-atom distance ≤ {cutoff:g} Å',15,color='#59656E')
     svg.append('</svg>')
     (output/'collage.svg').write_text('\n'.join(svg)+'\n',encoding='utf-8')
-    cairosvg.svg2png(bytestring='\n'.join(svg).encode(),write_to=str(output/'collage.png'))
+    _svg_to_png('\n'.join(svg).encode(),output/'collage.png',width)
     from .molecular_worker import select_detail_contacts
     detail_pairs=select_detail_contacts(scene)
     pair_description=f'{len(detail_pairs)} closest geometric residue pair'+('' if len(detail_pairs)==1 else 's')

@@ -1,0 +1,18 @@
+[package]
+name = "arc-svg"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[[bin]]
+name = "arc-svg2png"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[dependencies]
+resvg = "0.48.1"
