@@ -121,10 +121,11 @@ def test_packet_rejects_oversize_or_nonregular_png_before_reading(tmp_path):
         handle.truncate(review.MAX_IMAGE_BYTES + 1)
     with pytest.raises(ValueError, match="bounded regular"):
         review.build_review_packet([oversized], [reference], candidate_id="candidate-03")
-    fifo = tmp_path / "image-fifo"
-    os.mkfifo(fifo)
-    with pytest.raises(ValueError, match="bounded regular"):
-        review.build_review_packet([fifo], [reference], candidate_id="candidate-03")
+    if hasattr(os, "mkfifo"):  # FIFO substitution is POSIX-only; anchored rejects non-regular on Windows too
+        fifo = tmp_path / "image-fifo"
+        os.mkfifo(fifo)
+        with pytest.raises(ValueError, match="bounded regular"):
+            review.build_review_packet([fifo], [reference], candidate_id="candidate-03")
 
 
 @pytest.mark.parametrize("mutation", ["swapped", "missing", "duplicate"])
@@ -314,6 +315,7 @@ def test_live_review_cli_rejects_oversize_packet_before_json_decode(tmp_path, ca
     assert not output.exists()
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO substitution is POSIX-only")
 def test_packet_reader_rejects_fifo_without_blocking(tmp_path):
     from arc_science.figure_review import read_review_packet
 

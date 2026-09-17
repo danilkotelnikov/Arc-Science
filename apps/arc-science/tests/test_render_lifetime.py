@@ -253,6 +253,7 @@ def test_executor_rejects_non_main_thread_before_spawn(tmp_path):
             pool.submit(_execute, ['/missing/renderer'], -1, -1, 1).result()
 
 
+@pytest.mark.skipif(not hasattr(signal, 'SIGALRM'), reason='SIGALRM signal handling is POSIX-only')
 @pytest.mark.parametrize('failure', [False, True])
 def test_executor_restores_existing_signal_handlers(tmp_path, failure):
     from arc_science.figure_render import _execute

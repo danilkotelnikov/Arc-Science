@@ -82,7 +82,11 @@ def test_store_rechecks_hash_and_refuses_symlinks(tmp_path):
     assert store.read(a)==b'abc'
     target=store.path(a.digest);target.write_bytes(b'bad')
     with pytest.raises(s.IntegrityError):store.read(a)
-    target.unlink();outside=tmp_path/'outside';outside.write_bytes(b'abc');target.symlink_to(outside)
+    target.unlink();outside=tmp_path/'outside';outside.write_bytes(b'abc')
+    try:
+        target.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip('symlink creation requires privilege (Developer Mode / admin on Windows)')
     with pytest.raises(s.IntegrityError):store.read(a)
 
 def test_store_is_content_addressed_and_bounded(tmp_path):

@@ -15,6 +15,7 @@ import httpx
 from PIL import Image
 from pydantic import Field, field_validator, model_validator
 
+from . import anchored
 from . import figure_contract as figure_files
 from .contracts import Digest, Record, digest
 from .exploration.providers import HTTPAgent, ModelEndpoint
@@ -172,7 +173,7 @@ def _read_image(path: Path) -> tuple[bytes, tuple[int, int]]:
     try:
         data = figure_files.read_regular(directory, path.name, MAX_IMAGE_BYTES)
     finally:
-        os.close(directory)
+        anchored.close_directory(directory)
     return data, _png_dimensions(data)
 
 
@@ -192,7 +193,7 @@ def read_review_packet(path: Path) -> dict:
     try:
         data = figure_files.read_regular(directory, path.name, MAX_PACKET_BYTES)
     finally:
-        os.close(directory)
+        anchored.close_directory(directory)
     try:
         value = json.loads(data, object_pairs_hook=_unique_object,
                            parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Nonfinite JSON")))
