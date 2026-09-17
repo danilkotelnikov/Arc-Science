@@ -12,8 +12,27 @@ import tempfile
 import threading
 import time
 
+from .. import anchored
 from .cache import encoded
 from ..vector_assets import _open_directory, _read_regular, _write_regular_at
+
+
+_ASYNC_SIGNALS = ({signal.SIGINT, signal.SIGTERM, signal.SIGALRM} if os.name == 'posix' else set())
+
+
+def _mask_async_signals():
+    """Block SIGINT/TERM/ALRM while acquiring the child handle (POSIX only)."""
+    return signal.pthread_sigmask(signal.SIG_BLOCK, _ASYNC_SIGNALS) if os.name == 'posix' else None
+
+
+def _reblock_async_signals():
+    if os.name == 'posix':
+        signal.pthread_sigmask(signal.SIG_BLOCK, _ASYNC_SIGNALS)
+
+
+def _restore_signal_mask(previous):
+    if os.name == 'posix' and previous is not None:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
 def _check_transfer(root,limit):
@@ -28,6 +47,10 @@ def _check_transfer(root,limit):
 
 @contextmanager
 def _cancel_on_termination():
+    if os.name != 'posix':
+        # Windows delivers no SIGTERM to a handler; the web supervisor kills the tree.
+        yield
+        return
     previous=signal.getsignal(signal.SIGTERM)
     def cancel(*_):raise KeyboardInterrupt('BioArt request cancelled by SIGTERM')
     signal.signal(signal.SIGTERM,cancel)
@@ -60,17 +83,16 @@ def _run_worker(command,request,*,timeout,limit):
         root=Path(directory)
         fd=_open_directory(root)
         try:_write_regular_at(fd,'request.json',data)
-        finally:os.close(fd)
+        finally:anchored.close_directory(fd)
         if time.monotonic()>=end:raise ValueError('BioArt request total timeout')
         # Defer asynchronous cancellation until the child handle is owned by the
         # cleanup scope. Otherwise SIGINT inside Popen can orphan a spawned child.
-        deferred={signal.SIGINT,signal.SIGTERM,signal.SIGALRM}
-        previous_mask=signal.pthread_sigmask(signal.SIG_BLOCK,deferred)
+        previous_mask=_mask_async_signals()
         process=None
         try:
             process=subprocess.Popen([*command,str(root)],stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True)
-            signal.pthread_sigmask(signal.SIG_SETMASK,previous_mask)
+            _restore_signal_mask(previous_mask)
             while True:
                 remaining=end-time.monotonic()
                 if remaining<=0:raise ValueError('BioArt request total timeout')
@@ -96,14 +118,14 @@ def _run_worker(command,request,*,timeout,limit):
             return response
         finally:
             # No worker survives timeout, Ctrl-C, malformed output, or file errors.
-            # SIGKILL terminates even when the child defers/ignores Python signals.
-            signal.pthread_sigmask(signal.SIG_BLOCK,deferred)
+            # kill() terminates even when the child defers/ignores Python signals.
+            _reblock_async_signals()
             try:
                 if process is not None:
                     if process.poll() is None:process.kill()
                     process.wait()
             finally:
-                signal.pthread_sigmask(signal.SIG_SETMASK,previous_mask)
+                _restore_signal_mask(previous_mask)
 
 
 def request_in_child(path,limit,mimes,limits):

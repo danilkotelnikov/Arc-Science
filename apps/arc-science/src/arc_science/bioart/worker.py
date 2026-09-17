@@ -5,6 +5,7 @@ from pathlib import Path
 import signal
 import sys
 
+from .. import anchored
 from .cache import encoded
 from .client import BioArtClient
 from .deadline import request_deadline
@@ -15,7 +16,8 @@ from ..vector_assets import _open_directory, _read_regular, _write_regular_at
 def main(directory):
     # Parent defers cancellation while acquiring the process handle. The new
     # interpreter owns its signal state; its own cooperative deadline can run.
-    signal.pthread_sigmask(signal.SIG_UNBLOCK,{signal.SIGINT,signal.SIGTERM,signal.SIGALRM})
+    if os.name=='posix':
+        signal.pthread_sigmask(signal.SIG_UNBLOCK,{signal.SIGINT,signal.SIGTERM,signal.SIGALRM})
     root=Path(directory)
     try:
         request=json.loads(_read_regular(root/'request.json',4096,'BioArt worker request'))
@@ -32,14 +34,14 @@ def main(directory):
             data=client._request_bounded(path,limit,set(mimes),remaining)
         fd=_open_directory(root)
         try:_write_regular_at(fd,'response.bin',data)
-        finally:os.close(fd)
+        finally:anchored.close_directory(fd)
         result={'ok':True}
     except (ValueError,OSError,TypeError,KeyError) as exc:
         # Transport messages are sanitized upstream; bound all errors on this boundary.
         result={'ok':False,'error':str(exc)[:2000]}
     fd=_open_directory(root)
     try:_write_regular_at(fd,'result.json',encoded(result))
-    finally:os.close(fd)
+    finally:anchored.close_directory(fd)
     return 0 if result['ok'] else 1
 
 

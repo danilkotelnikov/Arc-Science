@@ -1,4 +1,4 @@
-"""Main-thread POSIX deadline for the synchronous CLI transport, without workers."""
+"""Main-thread deadline for the synchronous CLI transport, without workers."""
 from contextlib import contextmanager
 import signal
 import threading
@@ -7,28 +7,33 @@ import time
 
 @contextmanager
 def request_deadline(seconds):
-    """Interrupt blocking Python socket I/O as well as check monotonic progress.
+    """Bound total request time, and on POSIX also interrupt blocking socket I/O.
 
-    SIGALRM belongs to this scope only. Refuse callers whose alarm/thread state
-    cannot support it; never replace another active timer or launch a worker.
+    On POSIX a SIGALRM interval timer preempts a stuck blocking read. Windows has no
+    such signal, so the deadline is cooperative: callers check remaining() and the
+    transport passes remaining() as its per-request timeout to bound each read.
     """
     if threading.current_thread() is not threading.main_thread():
         raise ValueError('BioArt network deadlines require the POSIX main thread; use the CLI')
+    end=time.monotonic()+seconds
+
+    def remaining():
+        budget=end-time.monotonic()
+        if budget<=0: raise ValueError('BioArt request total timeout')
+        return budget
+
     if not all(hasattr(signal,name) for name in ('SIGALRM','ITIMER_REAL','setitimer','getitimer','pthread_sigmask')):
-        raise ValueError('BioArt network deadlines require POSIX alarm support')
+        # No preemptive alarm (Windows): cooperative deadline plus transport timeouts.
+        yield remaining
+        remaining()
+        return
     if any(signal.getitimer(signal.ITIMER_REAL)):
         raise ValueError('BioArt network deadline cannot replace an existing alarm')
     if signal.SIGALRM in signal.pthread_sigmask(signal.SIG_BLOCK,set()):
         raise ValueError('BioArt network deadline requires an unblocked alarm signal')
-    end=time.monotonic()+seconds
 
     def expired(*_):
         raise ValueError('BioArt request total timeout')
-
-    def remaining():
-        budget=end-time.monotonic()
-        if budget<=0: expired()
-        return budget
 
     previous=signal.getsignal(signal.SIGALRM)
     signal.signal(signal.SIGALRM,expired)

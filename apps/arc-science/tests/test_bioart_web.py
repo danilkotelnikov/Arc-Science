@@ -19,7 +19,7 @@ SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect wid
 
 
 def _entry_page():
-    records = json.loads(ENTRY_FIXTURE.read_text())['records']
+    records = json.loads(ENTRY_FIXTURE.read_bytes())['records']
     flight = '11:' + json.dumps(records) + '\n'
     cut = len(flight) // 2
     return ''.join('<script>self.__next_f.push(' + json.dumps([1, chunk]) + ')</script>'

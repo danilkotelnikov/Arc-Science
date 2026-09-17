@@ -9,6 +9,12 @@ import time
 
 import pytest
 
+# This module exercises the POSIX process-group / SIGALRM / SIGTERM reaping semantics
+# of the owned transport. Windows has no equivalent (the port uses a cooperative
+# deadline + taskkill), and these tests block waiting for signals that never arrive,
+# so they run on POSIX only. The Windows isolation path is covered by test_bioart_selection.
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='POSIX signal/process-group reaping semantics')
+
 
 def supervisor():
     try:return importlib.import_module('arc_science.bioart.isolation').run_worker

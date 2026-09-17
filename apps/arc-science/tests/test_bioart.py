@@ -13,6 +13,24 @@ FIXTURE = Path(__file__).parent / 'fixtures/bioart/entry-18-reduced.json'
 SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10" fill="#ffffff"/></svg>'
 
 
+def _symlinks_supported():
+    import tempfile
+    with tempfile.TemporaryDirectory() as work:
+        try:
+            os.symlink(work, os.path.join(work, 'probe'))
+            return True
+        except (OSError, NotImplementedError, AttributeError):
+            return False
+
+
+# SIGALRM socket-interrupt and the POSIX no-follow capability check have no Windows
+# equivalent; on Windows the deadline is cooperative and anchored provides the guards.
+_POSIX_ONLY = pytest.mark.skipif(os.name != 'posix',
+    reason='POSIX signal/filesystem mechanism; Windows uses the cooperative/anchored equivalent')
+_NEEDS_SYMLINK = pytest.mark.skipif(not _symlinks_supported(),
+    reason='requires privilege to create symlinks (Developer Mode / admin on Windows)')
+
+
 def api():
     try:
         return importlib.import_module('arc_science.bioart')
@@ -22,7 +40,7 @@ def api():
 
 def page(records=None):
     if records is None:
-        records = json.loads(FIXTURE.read_text())['records']
+        records = json.loads(FIXTURE.read_bytes())['records']
     # Next serializes Flight rows within a JSON string, sometimes split mid-row.
     flight = '11:' + json.dumps(records) + '\n'
     cut = len(flight)//2
@@ -60,7 +78,7 @@ def test_source_derived_mapping_and_credit():
 
 @pytest.mark.parametrize('change', ['license','mapping','duplicate','binding','identity','malformed'])
 def test_schema_drift_rejected(change):
-    records = json.loads(FIXTURE.read_text())['records']
+    records = json.loads(FIXTURE.read_bytes())['records']
     if change == 'license': records.pop(4)
     if change == 'mapping': records[3]['filemapping']['64']['PNG'] = 9
     if change == 'duplicate': records[3]['filemapping']['64']['SVG'] = 626859
@@ -126,7 +144,7 @@ def test_missing_format_group_unknown_license(tmp_path):
     client,requests=transport_client(tmp_path)
     with pytest.raises(ValueError,match='representation'): client.fetch(18,999,'svg')
     with pytest.raises(ValueError,match='format'): client.fetch(18,64,'../../svg')
-    records=json.loads(FIXTURE.read_text())['records']; records[4]['children'][1][3]['children']='Rights reserved'
+    records=json.loads(FIXTURE.read_bytes())['records']; records[4]['children'][1][3]['children']='Rights reserved'
     client=api().BioArtClient(tmp_path/'other',allow_egress=True,client=httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(200,text=page(records),headers={'content-type':'text/html'}))))
     with pytest.raises(ValueError,match='license.*review'): client.fetch(18,64,'svg')
     assert len(requests)==1
@@ -138,11 +156,12 @@ def test_corrupt_source_and_receipt_traversal_rejected(tmp_path):
     original=receipt.source_path.read_bytes();receipt.source_path.write_bytes(b'tampered')
     with pytest.raises(ValueError,match='hash|digest|size'): client.verify(receipt.receipt_path)
     receipt.source_path.write_bytes(original)
-    value=json.loads(receipt.receipt_path.read_text());value['source_file']='../outside.svg'
+    value=json.loads(receipt.receipt_path.read_bytes());value['source_file']='../outside.svg'
     receipt.receipt_path.write_text(json.dumps(value))
     with pytest.raises(ValueError): client.verify(receipt.receipt_path)
 
 
+@_NEEDS_SYMLINK
 def test_symlink_cache_root_and_artifact_rejected(tmp_path):
     outside=tmp_path/'outside';outside.mkdir();(tmp_path/'cache').symlink_to(outside,target_is_directory=True)
     with pytest.raises(ValueError): transport_client(tmp_path)[0].inspect(18)
@@ -178,12 +197,13 @@ def test_cli_cache_commands_and_import_match_both_validators(tmp_path,capsys,mon
     manifest=Path(json.loads(capsys.readouterr().out)['asset_manifest'])
     from arc_science.vector_assets import verify_asset
     from arc_science.figure_contract import validate_asset
+    from arc_science import anchored
     value=verify_asset(manifest)
     assert value['provenance']['origin']=='nih_bioart'
     assert value['source']['sha256']==hashlib.sha256(SVG).hexdigest()
-    fd=os.open(manifest.parent,os.O_RDONLY|os.O_DIRECTORY)
+    fd=anchored.open_directory(manifest.parent)
     try: validate_asset(fd,manifest.parent.name)
-    finally: os.close(fd)
+    finally: anchored.close_directory(fd)
     assert main(['bioart','inspect','505','--project',str(tmp_path)])==1
     assert 'egress' in capsys.readouterr().err
 
@@ -223,7 +243,7 @@ def test_search_snapshot_cli_records_source_without_egress(tmp_path,capsys):
 @pytest.mark.parametrize('kind',['expired','corrupt','missing-page','truncated-index'])
 def test_metadata_cache_faults_do_not_trigger_hidden_network(tmp_path,kind):
     client,requests=transport_client(tmp_path);client.inspect(18)
-    index=next((tmp_path/'cache').glob('metadata-*.json'));value=json.loads(index.read_text())
+    index=next((tmp_path/'cache').glob('metadata-*.json'));value=json.loads(index.read_bytes())
     if kind=='expired': value['retrieved_at']=1;index.write_text(json.dumps(value))
     if kind=='corrupt': (tmp_path/'cache'/f"{value['sha256']}.html").write_text('bad')
     if kind=='missing-page': (tmp_path/'cache'/f"{value['sha256']}.html").unlink()
@@ -235,8 +255,8 @@ def test_metadata_cache_faults_do_not_trigger_hidden_network(tmp_path,kind):
 
 def test_changed_metadata_does_not_rebind_previous_receipt(tmp_path):
     client,requests=transport_client(tmp_path);first=client.fetch(18,64,'svg')
-    index=next((tmp_path/'cache').glob('metadata-*.json'));value=json.loads(index.read_text());value['retrieved_at']=1;index.write_text(json.dumps(value))
-    records=json.loads(FIXTURE.read_text())['records'];records[1]['children']='Updated Antibody'
+    index=next((tmp_path/'cache').glob('metadata-*.json'));value=json.loads(index.read_bytes());value['retrieved_at']=1;index.write_text(json.dumps(value))
+    records=json.loads(FIXTURE.read_bytes())['records'];records[1]['children']='Updated Antibody'
     def respond(request):
         if request.url.path=='/bioart/18':return httpx.Response(200,text=page(records),headers={'content-type':'text/html'})
         return httpx.Response(200,content=SVG,headers={'content-type':'image/svg+xml'})
@@ -259,7 +279,8 @@ def test_timeout_is_bounded_and_cache_budget_refuses_write(tmp_path):
     with pytest.raises(ValueError,match='budget'):client.inspect(18)
     entries=list((tmp_path/'cache').iterdir())
     assert [entry.name for entry in entries]==['.writer-lock']
-    assert stat.S_IMODE(entries[0].stat().st_mode)==0o600
+    if os.name=='posix':  # Windows does not honour 0o600 permission bits
+        assert stat.S_IMODE(entries[0].stat().st_mode)==0o600
 
 
 def test_stream_limit_without_content_length(tmp_path):
@@ -372,6 +393,7 @@ def test_malicious_duplicate_flight_mapping_json_rejected():
     with pytest.raises(ValueError,match='schema'):api().parse_entry(html,18)
 
 
+@_POSIX_ONLY
 def test_unsupported_filesystem_capability_fails_explicitly(tmp_path,monkeypatch):
     monkeypatch.setattr(os,'O_NOFOLLOW',0)
     with pytest.raises(ValueError,match='POSIX.*Windows'):
@@ -411,6 +433,7 @@ def test_deadline_includes_headers_before_consuming_body(tmp_path,monkeypatch):
     assert consumed==[]
 
 
+@_POSIX_ONLY
 @pytest.mark.parametrize('phase',['headers','body'])
 def test_deadline_interrupts_blocking_socket_io_without_worker(tmp_path,phase):
     import signal
@@ -447,6 +470,7 @@ def test_network_deadline_rejects_worker_thread_before_transport(tmp_path):
     assert calls==[]
 
 
+@_POSIX_ONLY
 def test_network_deadline_does_not_replace_existing_alarm(tmp_path):
     import signal
     calls=[]
@@ -494,6 +518,7 @@ def test_deadline_is_shared_by_retries_not_reset(tmp_path,monkeypatch):
     assert budgets==pytest.approx([1.0,0.6,0.2])
 
 
+@_POSIX_ONLY
 def test_network_deadline_rejects_blocked_alarm_without_transport(tmp_path):
     import signal
     calls=[]

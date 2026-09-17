@@ -70,11 +70,38 @@ def _receipt_path(client: BioArtClient, receipt_id: str):
 def _cli_environment():
     """Pass only locale and BioArt-specific configuration to the helper."""
     permitted = {'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'}
+    # Windows env var names are case-insensitive and stored uppercase; without
+    # SystemRoot the child's asyncio/Winsock import fails (WinError 10106), and none
+    # of these are secrets. Match them case-insensitively.
+    windows = ({'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'PATH', 'PATHEXT',
+                'NUMBER_OF_PROCESSORS', 'TEMP', 'TMP'} if os.name == 'nt' else set())
     return {key: value for key, value in os.environ.items()
-            if key in permitted or key.startswith('ARC_BIOART_')}
+            if key in permitted or key.upper() in windows or key.startswith('ARC_BIOART_')}
+
+
+async def _taskkill_tree(pid):
+    """Windows stand-in for killpg: terminate the CLI leader and its worker subtree."""
+    try:
+        killer = await asyncio.create_subprocess_exec(
+            'taskkill', '/F', '/T', '/PID', str(pid),
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        await killer.wait()
+    except (OSError, ProcessLookupError):
+        pass
 
 
 async def _stop_cli(process):
+    if os.name != 'posix':
+        # No process group to signal; taskkill /T reaps the leader and its worker.
+        if process.returncode is None:
+            await _taskkill_tree(process.pid)
+            try:
+                await asyncio.wait_for(process.wait(), 1)
+            except asyncio.TimeoutError:
+                await _taskkill_tree(process.pid)
+                await process.wait()
+        return
     if process.returncode is None:
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -112,8 +139,6 @@ async def _stop_cli_uninterruptibly(process):
 
 async def _run_bioart_cli(project: Path, arguments: tuple[str, ...], timeout: int):
     """Populate the cache through the existing main-thread, killable CLI path."""
-    if os.name != 'posix':
-        raise ValueError('BioArt web egress requires the qualified POSIX CLI provider')
     if not arguments:
         raise ValueError('Invalid BioArt CLI request')
     package_root = Path(__file__).resolve().parents[2]
@@ -121,12 +146,16 @@ async def _run_bioart_cli(project: Path, arguments: tuple[str, ...], timeout: in
                  'from arc_science.cli import main; raise SystemExit(main())')
     command = (sys.executable, '-I', '-c', bootstrap, str(package_root), 'bioart',
                arguments[0], '--project', str(project), *arguments[1:])
+    # POSIX groups the CLI and its worker with setsid so killpg reaps both; Windows
+    # uses a new process group so taskkill /T can reap the same subtree.
+    isolation = ({'start_new_session': True} if os.name == 'posix'
+                 else {'creationflags': getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)})
     try:
         with tempfile.TemporaryFile(mode='w+b') as errors:
             process = await asyncio.create_subprocess_exec(
                 *command, cwd=package_root, env=_cli_environment(),
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors,
-                close_fds=True, start_new_session=True)
+                close_fds=True, **isolation)
             try:
                 await asyncio.wait_for(process.wait(), timeout)
             except asyncio.TimeoutError:
