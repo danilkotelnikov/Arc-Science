@@ -15,6 +15,8 @@ from urllib.parse import urlsplit
 
 from PIL import Image
 
+from . import anchored
+from . import svg_raster
 from .contracts import canonical
 
 
@@ -70,47 +72,27 @@ def _absolute_path(path: Path) -> Path:
     return Path(os.path.abspath(os.fspath(path)))
 
 
-def _open_directory(path: Path, *, create: bool = False) -> int:
-    """Open every directory component without following symlinks."""
-    absolute = _absolute_path(path)
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(absolute.anchor, flags)
-    except OSError:
-        raise ValueError("Path does not have a safe directory root") from None
-    try:
-        for component in absolute.parts[1:]:
-            if create:
-                try:
-                    os.mkdir(component, mode=0o755, dir_fd=descriptor)
-                except FileExistsError:
-                    pass
-            next_descriptor = os.open(component, flags, dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = next_descriptor
-        return descriptor
-    except OSError:
-        os.close(descriptor)
-        raise ValueError("Path contains a missing, non-directory, or symlink component") from None
+def _open_directory(path: Path, *, create: bool = False):
+    """Open every directory component without following symlinks (anchored handle)."""
+    return anchored.open_directory(path, create=create, mode=0o755)
 
 
-def _read_regular_at(directory_fd: int, name: str, limit: int,
+def _read_regular_at(directory_fd, name: str, limit: int,
                      label: str = "Source or manifest") -> bytes:
     if Path(name).name != name or name in {"", ".", ".."}:
         raise ValueError(f"{label} filename is unsafe")
-    if not getattr(os, "O_NOFOLLOW", 0) or not getattr(os, "O_NONBLOCK", 0):
+    if os.name != "nt" and (not getattr(os, "O_NOFOLLOW", 0) or not getattr(os, "O_NONBLOCK", 0)):
         raise ValueError("Safe file reads require no-follow and nonblocking filesystem primitives")
     try:
-        before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        before = anchored.lstat(directory_fd, name)
     except OSError:
         raise ValueError(f"{label} is not a readable regular file") from None
     if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= limit:
         raise ValueError(f"{label} is not a bounded regular file")
     # A regular file can be replaced with a FIFO after stat. Never block before
     # fstat validates the descriptor, and keep reads anchored to directory_fd.
-    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
     try:
-        descriptor = os.open(name, flags, dir_fd=directory_fd)
+        descriptor = anchored.open_read_fd(directory_fd, name)
         try:
             opened = os.fstat(descriptor)
             if (not stat.S_ISREG(opened.st_mode) or opened.st_dev != before.st_dev or
@@ -146,12 +128,11 @@ def _read_regular(path: Path, limit: int, label: str = "Source or manifest") -> 
     try:
         return _read_regular_at(directory_fd, absolute.name, limit, label)
     finally:
-        os.close(directory_fd)
+        anchored.close_directory(directory_fd)
 
 
-def _write_regular_at(directory_fd: int, name: str, data: bytes) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(name, flags, 0o644, dir_fd=directory_fd)
+def _write_regular_at(directory_fd, name: str, data: bytes) -> None:
+    descriptor = anchored.open_write_new_fd(directory_fd, name, 0o644)
     try:
         view = memoryview(data)
         while view:
@@ -162,21 +143,17 @@ def _write_regular_at(directory_fd: int, name: str, data: bytes) -> None:
         os.close(descriptor)
 
 
-def _remove_temporary_at(assets_fd: int, name: str) -> None:
+def _remove_temporary_at(assets_fd, name: str) -> None:
     try:
-        temporary_fd = os.open(
-            name,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
-            dir_fd=assets_fd,
-        )
-    except OSError:
+        temporary = anchored.child_directory(assets_fd, name)
+    except (OSError, ValueError):
         return
     try:
-        for entry in os.listdir(temporary_fd):
-            os.unlink(entry, dir_fd=temporary_fd)
+        for entry in anchored.listdir(temporary):
+            anchored.unlink(temporary, entry)
     finally:
-        os.close(temporary_fd)
-    os.rmdir(name, dir_fd=assets_fd)
+        anchored.close_directory(temporary)
+    anchored.rmdir(assets_fd, name)
 
 
 def _plain_text(value: object, field: str, maximum: int) -> str:
@@ -342,8 +319,7 @@ def _render_svg(data: bytes) -> tuple[str, bytes, str, int, int]:
     width, height = _validate_svg(data)
     target = _bounded_dimensions(width, height)
     try:
-        import cairosvg
-        rendered = cairosvg.svg2png(bytestring=data, output_width=target[0], output_height=target[1])
+        rendered = svg_raster.render_png_bytes(data, target[0], target[1])
         with Image.open(BytesIO(rendered)) as image:
             preview, pixel_digest, actual_width, actual_height = _canonical_image(image, target)
     except ValueError:
@@ -404,8 +380,7 @@ def _render_pdf(data: bytes) -> tuple[str, bytes, str, int, int]:
 
 def _converter(extension: str) -> dict:
     if extension == ".svg":
-        return {"engine": "CairoSVG", "engine_version": version("CairoSVG"),
-                "pillow_version": version("Pillow")}
+        return svg_raster.engine()
     return {"engine": "pypdfium2", "engine_version": version("pypdfium2"),
             "pillow_version": version("Pillow")}
 
@@ -470,23 +445,19 @@ def import_vector(source: Path, project_dir: Path, provenance: dict, *, expected
     project_fd = _open_directory(project_dir, create=True)
     try:
         try:
-            os.mkdir("assets", mode=0o755, dir_fd=project_fd)
+            anchored.mkdir(project_fd, "assets", 0o755)
         except FileExistsError:
             pass
-        assets_fd = os.open(
-            "assets",
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
-            dir_fd=project_fd,
-        )
-    except OSError:
+        assets_fd = anchored.child_directory(project_fd, "assets")
+    except (OSError, ValueError):
         raise ValueError("Asset root is not a regular directory") from None
     finally:
-        os.close(project_fd)
+        anchored.close_directory(project_fd)
     temporary_name = ".asset-" + secrets.token_hex(12)
     temporary_created = False
     try:
         try:
-            existing = os.stat(asset_id, dir_fd=assets_fd, follow_symlinks=False)
+            existing = anchored.lstat(assets_fd, asset_id)
         except FileNotFoundError:
             existing = None
         if existing is not None:
@@ -496,26 +467,22 @@ def import_vector(source: Path, project_dir: Path, provenance: dict, *, expected
             if validated != manifest:
                 raise ValueError("Existing asset bundle does not match the import")
             return manifest_path
-        os.mkdir(temporary_name, mode=0o700, dir_fd=assets_fd)
+        anchored.mkdir(assets_fd, temporary_name, 0o700)
         temporary_created = True
-        temporary_fd = os.open(
-            temporary_name,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
-            dir_fd=assets_fd,
-        )
+        temporary_fd = anchored.child_directory(assets_fd, temporary_name)
         try:
             _write_regular_at(temporary_fd, source_name, data)
             _write_regular_at(temporary_fd, "source.png", preview)
             _write_regular_at(temporary_fd, "asset.json", canonical(manifest))
-            os.fsync(temporary_fd)
+            anchored.fsync_dir(temporary_fd)
         finally:
-            os.close(temporary_fd)
+            anchored.close_directory(temporary_fd)
         try:
-            os.rename(temporary_name, asset_id, src_dir_fd=assets_fd, dst_dir_fd=assets_fd)
+            anchored.rename(assets_fd, temporary_name, asset_id)
             temporary_created = False
         except OSError:
             try:
-                concurrent = os.stat(asset_id, dir_fd=assets_fd, follow_symlinks=False)
+                concurrent = anchored.lstat(assets_fd, asset_id)
             except FileNotFoundError:
                 raise
             if not stat.S_ISDIR(concurrent.st_mode):
@@ -527,7 +494,7 @@ def import_vector(source: Path, project_dir: Path, provenance: dict, *, expected
     finally:
         if temporary_created:
             _remove_temporary_at(assets_fd, temporary_name)
-        os.close(assets_fd)
+        anchored.close_directory(assets_fd)
 
 
 def _verify_asset_contents(directory_fd: int, directory_name: str) -> dict:
@@ -604,17 +571,13 @@ def _verify_asset_contents(directory_fd: int, directory_name: str) -> dict:
             raise ValueError("Asset preview does not reproduce from its source")
         return manifest
     finally:
-        os.close(directory_fd)
+        anchored.close_directory(directory_fd)
 
 
-def _verify_asset_at(assets_fd: int, asset_id: str) -> dict:
+def _verify_asset_at(assets_fd, asset_id: str) -> dict:
     try:
-        directory_fd = os.open(
-            asset_id,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
-            dir_fd=assets_fd,
-        )
-    except OSError:
+        directory_fd = anchored.child_directory(assets_fd, asset_id)
+    except (OSError, ValueError):
         raise ValueError("Asset destination is not a regular directory") from None
     return _verify_asset_contents(directory_fd, asset_id)
 

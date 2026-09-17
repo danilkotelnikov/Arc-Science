@@ -12,6 +12,24 @@ from PIL import Image
 from reportlab.pdfgen import canvas
 
 
+def _symlinks_supported() -> bool:
+    import tempfile
+    with tempfile.TemporaryDirectory() as work:
+        try:
+            os.symlink(work, os.path.join(work, "probe"))
+            return True
+        except (OSError, NotImplementedError, AttributeError):
+            return False
+
+
+# openat/dir_fd binding and no-follow-primitive fail-closed are POSIX mechanisms;
+# on Windows the same guarantees come from anchored's path-based reparse rejection.
+_POSIX_OPENAT = pytest.mark.skipif(os.name == "nt",
+    reason="POSIX openat/dir_fd mechanism; Windows uses path-based anchored IO")
+_NEEDS_SYMLINK = pytest.mark.skipif(not _symlinks_supported(),
+    reason="requires privilege to create symlinks (Developer Mode / admin on Windows)")
+
+
 SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">'
     '<rect width="200" height="100" fill="#ffffff"/>'
@@ -410,6 +428,7 @@ print('FIFO_REJECTED_BEFORE_READ')
     assert result.stdout.strip() == "FIFO_REJECTED_BEFORE_READ"
 
 
+@_POSIX_OPENAT
 @pytest.mark.parametrize("primitive", ["O_NONBLOCK", "O_NOFOLLOW"])
 def test_vector_reads_fail_closed_without_safe_open_primitives(tmp_path, monkeypatch, primitive):
     from arc_science.vector_assets import import_vector
@@ -421,6 +440,7 @@ def test_vector_reads_fail_closed_without_safe_open_primitives(tmp_path, monkeyp
     assert not (tmp_path / "project").exists()
 
 
+@_POSIX_OPENAT
 def test_existing_asset_verification_stays_bound_to_opened_assets_directory(tmp_path, monkeypatch):
     import arc_science.vector_assets as vector_assets
 
@@ -450,6 +470,7 @@ def test_existing_asset_verification_stays_bound_to_opened_assets_directory(tmp_
     assert (held / "assets" / asset_id / "source.png").read_bytes() == b"corrupt"
 
 
+@_POSIX_OPENAT
 def test_concurrent_asset_verification_stays_bound_to_opened_assets_directory(tmp_path, monkeypatch):
     import arc_science.vector_assets as vector_assets
 
@@ -483,6 +504,7 @@ def test_concurrent_asset_verification_stays_bound_to_opened_assets_directory(tm
     assert (held / "assets" / asset_id / "source.png").read_bytes() == b"corrupt"
 
 
+@_NEEDS_SYMLINK
 @pytest.mark.parametrize("boundary", ["source", "project", "verify"])
 def test_rejects_symlinks_in_ancestor_path_components(tmp_path, boundary):
     from arc_science.vector_assets import import_vector, verify_asset
@@ -506,6 +528,7 @@ def test_rejects_symlinks_in_ancestor_path_components(tmp_path, boundary):
             verify_asset(aliased_asset)
 
 
+@_NEEDS_SYMLINK
 def test_import_rejects_dangling_symlink_at_asset_destination(tmp_path):
     from arc_science.vector_assets import import_vector
 
@@ -519,6 +542,7 @@ def test_import_rejects_dangling_symlink_at_asset_destination(tmp_path):
         import_vector(source, tmp_path / "second-project", _provenance())
 
 
+@_NEEDS_SYMLINK
 @pytest.mark.parametrize("target_name", ["source.svg", "source.png"])
 def test_verify_rejects_source_and_preview_symlinks(tmp_path, target_name):
     from arc_science.vector_assets import import_vector, verify_asset
@@ -650,6 +674,7 @@ def test_figure_import_cli_reads_bounded_regular_provenance_file(tmp_path, capsy
     assert output["asset_id"] == _manifest(Path(output["asset_manifest"]))["asset_id"]
 
 
+@_NEEDS_SYMLINK
 def test_figure_import_cli_rejects_symlinked_provenance_file(tmp_path, capsys):
     from arc_science.cli import main
 

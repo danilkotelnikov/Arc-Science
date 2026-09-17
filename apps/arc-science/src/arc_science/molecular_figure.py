@@ -9,9 +9,10 @@ import math
 import os
 from pathlib import Path
 import shutil
-import subprocess
 
 from PIL import Image
+
+from . import svg_raster
 
 
 def _json(path, value):
@@ -19,27 +20,9 @@ def _json(path, value):
 
 
 def _svg_to_png(svg_bytes: bytes, out_path: Path, width: int) -> None:
-    """Rasterize an SVG to PNG. Prefer cairosvg when its native Cairo library is
-    present; otherwise use a resvg-based tool named by ARC_SVG2PNG, so the collage
-    renders on Windows (where Cairo is typically absent) without it."""
-    try:
-        import cairosvg
-        cairosvg.svg2png(bytestring=svg_bytes, write_to=str(out_path))
-        return
-    except Exception:
-        pass
-    tool = os.environ.get('ARC_SVG2PNG')
-    if not tool:
-        raise RuntimeError('No SVG rasterizer available: install cairosvg (needs the Cairo '
-                           'library) or set ARC_SVG2PNG to a resvg-based tool '
-                           '(build native/arc-svg -> arc-svg2png)')
-    import tempfile
-    with tempfile.NamedTemporaryFile('wb', suffix='.svg', delete=False) as handle:
-        handle.write(svg_bytes); svg_tmp = handle.name
-    try:
-        subprocess.run([tool, svg_tmp, str(out_path), str(width)], check=True)
-    finally:
-        os.unlink(svg_tmp)
+    """Rasterize the collage SVG to PNG via the shared cairosvg-or-resvg rasterizer,
+    so it renders on Windows (where Cairo is typically absent) without it."""
+    svg_raster.render_png_file(svg_bytes, out_path, width)
 
 
 def compose_complex(scene: dict, output: Path, *, width: int = 1400) -> dict:
