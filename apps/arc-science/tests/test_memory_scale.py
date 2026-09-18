@@ -46,7 +46,7 @@ def release_worker() -> Path:
 
 def describe(binary: Path) -> str:
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
-    return f'{binary.name} sha256={digest[:16]}… mtime={time.strftime("%Y-%m-%d %H:%M", time.localtime(binary.stat().st_mtime))}'
+    return f'{binary.name} sha256={digest} mtime={time.strftime("%Y-%m-%d %H:%M", time.localtime(binary.stat().st_mtime))}'
 
 
 def mission_state(index: int) -> SimpleNamespace:

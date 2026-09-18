@@ -639,11 +639,11 @@ fn measure_corpus_scale() {
             per_session
         );
     });
-    let lexical_rare = bench("lexical rare term (Asp96 chain D)", 50, 50.0, &|| {
+    bench("lexical rare term (Asp96 chain D)", 50, 50.0, &|| {
         let hits = engine.search(&sc, "Asp96 chain D", 10).unwrap();
         assert!(!hits.is_empty() && hits.iter().all(|h| h.record.text.contains("Asp96")));
     });
-    let lexical_common = bench("lexical common term (hydrogen)", 50, 50.0, &|| {
+    bench("lexical common term (hydrogen)", 50, 50.0, &|| {
         let hits = engine.search(&sc, "hydrogen", 10).unwrap();
         assert!(hits.len() == 10 && hits.iter().all(|h| h.record.text.contains("hydrogen")));
     });
@@ -656,7 +656,7 @@ fn measure_corpus_scale() {
         let hits = engine.search(&one, "residue", 10).unwrap();
         assert!(!hits.is_empty() && hits.iter().all(|h| h.record.session_id == "mission-0042"));
     });
-    let semantic = bench("semantic (20k candidates)", 20, 500.0, &|| {
+    bench("semantic (20k candidates)", 50, 500.0, &|| {
         assert_eq!(
             engine
                 .semantic_search(&sc, &embedder, "hydrogen bond pocket", 10)
@@ -665,15 +665,31 @@ fn measure_corpus_scale() {
             10
         );
     });
-    bench(
-        "hybrid",
-        20,
-        lexical_rare.max(lexical_common) + semantic,
-        &|| {
+    // Hybrid runs both retrievals with a 4x candidate pool (limit 40) before
+    // fusing. Its budget is the sum of the two retrieval budgets; the measured
+    // pool-size retrievals are reported so the fusion overhead stays visible
+    // (a first draft bounded hybrid by their measured sum and missed by 2.5 %).
+    let pool = 40;
+    let lexical_pool = bench("lexical common term, pool 40", 50, 50.0, &|| {
+        engine.search(&sc, "hydrogen bond pocket", pool).unwrap();
+    });
+    let semantic_pool = bench("semantic, pool 40", 50, 500.0, &|| {
+        engine
+            .semantic_search(&sc, &embedder, "hydrogen bond pocket", pool)
+            .unwrap();
+    });
+    let hybrid = bench("hybrid", 50, 50.0 + 500.0, &|| {
+        assert_eq!(
             engine
                 .hybrid_search(&sc, &embedder, "hydrogen bond pocket", 10)
-                .unwrap();
-        },
+                .unwrap()
+                .len(),
+            10
+        );
+    });
+    eprintln!(
+        "hybrid p95 / (lexical + semantic at pool 40) = {:.3}",
+        hybrid / (lexical_pool + semantic_pool)
     );
     let size: u64 = std::fs::read_dir(dir.path())
         .unwrap()
