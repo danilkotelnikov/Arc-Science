@@ -49,6 +49,17 @@ summary { cursor: pointer; font-weight: 500; }
 .figure-toolbar>.button { border-radius: 5px; gap: 7px; }
 .figure-stage { background: #fff; overflow: auto; flex: 1; height: calc(100vh - 172px); min-height: 380px; padding: 20px; }
 .figure-stage img { display: block; height: auto; background: #fff; margin: 0 auto; }
+.molecular-render-panel label { display: block; margin: 16px 0 6px; }
+.molecular-render-panel fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.molecular-render-panel .button { margin-top: 10px; padding: 7px 9px; }
+.molecular-render-panel input[type="file"] { padding: 7px 5px; font-size: 10px; }
+.molecular-render-panel h2,.molecular-advanced { margin-top: 20px; }
+.molecular-render-panel .button[aria-pressed="true"] { background: #eaf0f4; }
+.molecular-render-summary,.molecular-render-downloads { padding: 18px 22px; }
+.molecular-render-summary p+p { margin-top: 6px; }
+.molecular-render-stage { height: auto; min-height: 300px; }
+.molecular-render-stage img { width: 100%; max-width: 1400px; }
+.molecular-render-downloads { border-top: 1px solid #edf0f2; }
 .stage-footer { min-height: 48px; border-top: 1px solid #edf0f2; padding: 8px 20px; display: flex; justify-content: space-between; gap: 12px; align-items: center; color: #4d5962; font-size: 10px; }
 .zoom-controls { display: flex; gap: 3px; align-items: center; flex-shrink: 0; }
 .zoom-controls .button { min-width: 28px; font-size: 11px; }

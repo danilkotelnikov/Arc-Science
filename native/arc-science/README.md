@@ -1,5 +1,21 @@
 # Arc Science native supervisor
 
+**2026-09-18 desktop integration:** `serve --parent-stdin` opts into parent-owned
+lifetime. Closing the parent's stdin pipe cancels the existing worker process
+group/Windows JobObject; ordinary `serve` and `worker` keep their existing stdin-EOF
+semantics. The Rust desktop uses this opt-in contract and waits up to three seconds
+before direct-child fallback. A Windows regression observes worker and descendant
+sockets both close after parent EOF. Windows leader polling avoids consuming the
+process-wrap 9.0 job-completion queue before its final wait. That dependency does
+**not** set kill-on-job-close; directly killing the supervisor itself remains outside
+this containment guarantee.
+
+The native BioArt bridge now delegates on Windows as well as POSIX. Its argument,
+egress and offline-snapshot contracts are unchanged. Provider/cache runtime evidence
+is separate from native dispatch; the historical Windows limitations below describe
+the earlier qualification, not a current unconditional CLI rejection. The desktop
+is implemented separately in [arc-desktop](../arc-desktop/README.md).
+
 **Qualification gate I1:** the Linux figure executor now gives each renderer an
 isolated watchdog process group and non-inherited parent-liveness pipe. Deterministic
 regressions cover both repeated native termination while Python cannot clean up and a
@@ -18,8 +34,8 @@ A small Rust CLI for configuring and supervising the existing Python scientific
 worker. Commands: `init`, `config`, `doctor`, `serve`, `worker`, and
 `bioart`; global
 `--project <existing-directory>`. No GUI, browser engine, scientific rewrite,
-installer, automatic download, or startup network call is included. Tauri is a
-possible later desktop-window integration, not a shipped feature.
+installer, automatic download, or startup network call is included in this supervisor.
+The separate Rust desktop host uses Tao/Wry and the compiled workbench.
 
 ## Build and use
 
@@ -59,6 +75,8 @@ native/arc-science/target/release/arc-science-native --project arc-project serve
 
 `serve` runs `<python> -m arc_science serve --host 127.0.0.1 --port 8080 --data <resolved-data>`.
 Stop it with Ctrl-C. `worker -- token` shows the configured data directory's token.
+Desktop parents can instead invoke `serve --parent-stdin` with a private stdin pipe
+kept open for the desired lifetime; EOF requests cancellation (exit code 130).
 `worker -- fixture --output 'output with spaces'` delegates an explicit synthetic
 fixture. Put **all worker arguments after `--`**, including the worker's own
 `--project` option. Arguments are passed separately; metacharacters are data, not
@@ -99,11 +117,11 @@ configured, not executed in this Linux session. On Windows, build with Cargo as
 above, use `target\release\arc-science-native.exe`, and configure the venv's
 `Scripts\python.exe` (use TOML single-quoted literal paths for backslashes).
 Only `.exe`/`.com` executable files are launched there, not batch/shell scripts.
-The native supervisor is intended to be portable; **Windows BioArt is currently
-unsupported**, because the Python cache requires POSIX no-follow filesystem APIs.
-Direct native `bioart` operations fail before Python launch on Windows; native
-`init`, `config`, `doctor`, and generic `worker` support remain available.
-No Windows importer or scientific-worker qualification is implied by a build.
+The native supervisor delegates BioArt on Windows as well as POSIX. A local
+Windows run on 2026-09-18 searched the supplied offline DOM snapshot through the
+real Python provider and returned its seven entry IDs with the expected source
+digest. That establishes offline dispatch/cache behavior; live downloads, import
+rights and scientific-worker qualification are separate from a native build.
 Only Linux native-to-application BioArt execution is qualified here; macOS remains
 source/stdlib-matrix coverage, not an execution claim.
 
@@ -158,7 +176,8 @@ child immediately after OS creation and before fallible post-spawn/JobObject
 setup; setup failure kills and waits that child before returning an error. The
 guard disarms only after wrapper acquisition succeeds, handing lifecycle ownership
 to the supervisor. This closes an unguarded setup-error path in the pinned
-dependency; Windows execution still requires its own qualification.
+dependency; Windows parent-EOF cancellation was exercised on 2026-09-18 as described
+above. Signal-driven and forced-supervisor-termination cases retain separate gates.
 On Unix, Ctrl-C/SIGTERM/SIGHUP request group SIGTERM and
 allow at most two seconds for Python cleanup; another signal skips the grace.
 Then the group is force-killed and the direct child reaped. Descendants are also

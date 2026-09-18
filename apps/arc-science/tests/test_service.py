@@ -13,7 +13,10 @@ def auth():return {'Authorization':'Bearer '+TOKEN}
 
 def test_health_public_but_mission_data_requires_token(tmp_path):
     with TestClient(app(tmp_path)) as c:
-        assert c.get('/health').status_code==200
+        health=c.get('/health')
+        assert health.status_code==200
+        assert health.headers['X-Arc-Science-Service']=='arc-science-v1'
+        assert health.json()['status']=='ready'
         assert c.get('/api/missions').status_code==401
         assert c.get('/api/missions',headers=auth()).json()==[]
 

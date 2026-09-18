@@ -53,6 +53,42 @@ fn health_reports_protocol_version() {
     let health = call(&worker(), r#"{"op":"health"}"#);
     assert_eq!(health["status"], "ok");
     assert_eq!(health["data"]["protocol"], "arc-memory/1");
+    assert_eq!(
+        health["data"]["retrieval_modes"],
+        serde_json::json!(["lexical"])
+    );
+}
+
+#[test]
+fn rejects_unbounded_search_and_reversed_session_ranges() {
+    let worker = worker();
+    for op in ["search", "semantic", "hybrid"] {
+        for limit in [0, 101, usize::MAX] {
+            let response = call(
+                &worker,
+                &format!(
+                    r#"{{"op":"{op}","scope":{{"project":"p"}},"query":"bond","limit":{limit}}}"#
+                ),
+            );
+            assert_eq!(response["status"], "error");
+            assert!(response["error"].as_str().unwrap().contains("limit"));
+        }
+    }
+    let response = call(
+        &worker,
+        r#"{"op":"session_fetch","project":"p","session":"s","from_seq":10,"to_seq":1}"#,
+    );
+    assert_eq!(response["status"], "error");
+}
+
+#[test]
+fn outbound_frames_have_the_same_bound_as_inbound_frames() {
+    let mut output = Vec::new();
+    assert!(arc_memory::write_frame(&mut output, &vec![b' '; 16 * 1024 * 1024 + 1]).is_err());
+    assert!(
+        output.is_empty(),
+        "reject before writing any part of the frame"
+    );
 }
 
 #[test]

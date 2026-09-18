@@ -68,6 +68,64 @@ fn sequence_increments_per_session() {
 }
 
 #[test]
+fn session_overflow_is_explicit_and_sequence_ranges_remain_available() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    for _ in 0..1001 {
+        engine.append(&sample("bounded history")).unwrap();
+    }
+    let error = engine
+        .session_fetch("proj-1", "sess-1", None, None)
+        .unwrap_err();
+    assert!(error.to_string().contains("narrow the session range"));
+    let page = engine
+        .session_fetch("proj-1", "sess-1", Some(1000), Some(1001))
+        .unwrap();
+    assert_eq!(page.len(), 2);
+    assert_eq!(page[0].seq, 1000);
+}
+
+#[test]
+fn session_checks_decoded_byte_budget_before_hydrating_record() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("memory.db");
+    let engine = Engine::open(&path).unwrap();
+    engine.append(&sample("small text")).unwrap();
+    // A corrupt size must be rejected before decoding, not trusted as capacity.
+    rusqlite::Connection::open(path)
+        .unwrap()
+        .execute("UPDATE blobs SET original_size=9000000", [])
+        .unwrap();
+    let error = engine
+        .session_fetch("proj-1", "sess-1", None, None)
+        .unwrap_err();
+    assert!(error.to_string().contains("narrow the session range"));
+}
+
+#[test]
+fn all_search_modes_bound_the_aggregate_decoded_text() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    let text = format!("hydrogen {}", "a".repeat(4 * 1024 * 1024));
+    engine.append(&sample(&text)).unwrap();
+    engine.append(&sample(&text)).unwrap();
+    let embedder = HashingEmbedder { dim: 16 };
+    engine.embed_pending(&embedder).unwrap();
+    let sc = scope("proj-1");
+    assert_eq!(engine.search(&sc, "hydrogen", 1).unwrap().len(), 1);
+    for result in [
+        engine.search(&sc, "hydrogen", 2),
+        engine.semantic_search(&sc, &embedder, "hydrogen", 2),
+        engine.hybrid_search(&sc, &embedder, "hydrogen", 2),
+    ] {
+        let Err(error) = result else {
+            panic!("search must enforce its aggregate text budget");
+        };
+        assert!(error.to_string().contains("read budget"));
+    }
+}
+
+#[test]
 fn keyed_append_is_idempotent() {
     let dir = tempdir().unwrap();
     let engine = Engine::open(dir.path().join("memory.db")).unwrap();

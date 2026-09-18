@@ -111,3 +111,23 @@ def test_replay_rejects_observation_action_identity_mismatch():
     raw['observations'][0]['branch_id']='some-other-branch'
     report=verify_capsule(export_capsule(request,MissionState.model_validate(raw)))
     assert report['reproduction_passed'] is False
+def test_repository_operations_close_database_handles_on_success_and_error(tmp_path, monkeypatch):
+    import sqlite3
+    from arc_science.exploration import repository
+
+    opened = []
+    connect = sqlite3.connect
+
+    def track_connection(*args, **kwargs):
+        connection = connect(*args, **kwargs)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(repository.sqlite3, 'connect', track_connection)
+    repo = repository.MissionRepository(tmp_path / 'handles.db')
+    assert repo.list() == []
+    with pytest.raises(KeyError):
+        repo.get('missing')
+    for connection in opened:
+        with pytest.raises(sqlite3.ProgrammingError, match='closed'):
+            connection.execute('SELECT 1')

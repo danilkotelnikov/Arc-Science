@@ -107,18 +107,22 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             except FileExistsError:pass
         token=token_path.read_text().strip()
     if len(token)<32:raise ValueError('Use a randomly generated API token of at least 32 characters')
-    repository=MissionRepository(root/'missions.db');running={};memory_holder={}
+    repository=MissionRepository(root/'missions.db');running={}
 
     @asynccontextmanager
     async def lifespan(app):
         repository.pause_interrupted()
+        memory_routes.schedule_reconcile()
         yield
+        await molecular_jobs.close()
         for task in tuple(running.values()):task.cancel()
         for task in tuple(running.values()):
             with suppress(asyncio.CancelledError):await task
-        routes=memory_holder.get('memory')
-        if routes is not None:routes.close()
         repository.pause_interrupted()
+        # Capture final paused/cancelled/error snapshots, then drain the single
+        # capture worker before closing its stdio process.
+        memory_routes.schedule_reconcile()
+        await asyncio.to_thread(memory_routes.close)
 
     app=FastAPI(title='Arc Science',version=VERSION,lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
     from .molecular_web import router as molecular_router
@@ -134,10 +138,24 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     from .bioart.web import create_router as create_bioart_router
     app.include_router(create_bioart_router(root,authorized))
 
+    from .molecular_jobs import MolecularJobs
+    molecular_jobs=MolecularJobs(root,authorized)
+    app.state.molecular_jobs=molecular_jobs
+    app.include_router(molecular_jobs.router)
+
     from .memory.web import MemoryRoutes
     worker_path=os.environ.get('ARC_MEMORY_WORKER')
     memory_routes=MemoryRoutes(root,Path(worker_path) if worker_path else None,authorized)
-    memory_holder['memory']=memory_routes
+    app.state.memory_routes=memory_routes
+    def memory_snapshots():
+        # Reconciliation is a bounded repair of the visible retained missions.
+        # Overflow remains degraded, never an assertion of complete capture.
+        retained=repository.list(limit=101)
+        for item in retained[:100]:
+            row=repository.get(item['id'])
+            yield row['id'],MissionState.model_validate(row['state'])
+        if len(retained)>100:raise RuntimeError('Retained mission replay exceeds bounded repair limit')
+    memory_routes.set_snapshot_source(memory_snapshots)
     app.include_router(memory_routes.router)
 
     @app.middleware('http')
@@ -156,7 +174,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         except KeyError:raise HTTPException(404,'Unknown mission') from None
 
     @app.get('/health')
-    async def health():return {'status':'ready','version':VERSION,'deployment':'single-trust-domain'}
+    async def health(response:Response):
+        # Public compatibility marker for the local desktop, never authentication.
+        response.headers['X-Arc-Science-Service']='arc-science-v1'
+        return {'status':'ready','version':VERSION,'deployment':'single-trust-domain'}
 
     @app.get('/api/missions',dependencies=[Depends(authorized)])
     async def list_missions():return repository.list()
@@ -192,7 +213,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             if os.environ.get('ARC_BIORENDER_READS')=='1':
                 try:biorender_configuration()
                 except Exception:raise HTTPException(409,'Configure the separate BioRender credential, protocol and schema pin before enabling reads') from None
-        try:return repository.create(request,initialize(request),key=idempotency_key or uuid.uuid4().hex)
+        try:
+            row=repository.create(request,initialize(request),key=idempotency_key or uuid.uuid4().hex)
+            memory_routes.schedule_capture(row['id'],MissionState.model_validate(row['state']))
+            return row
         except RevisionConflict:raise HTTPException(409,'Idempotency key conflicts with an earlier request') from None
         except ValueError:raise HTTPException(422,'Invalid creation key or mission state') from None
 
@@ -211,7 +235,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             fresh=repository.save(mid,state,expected_revision=revision);revision=fresh['revision']
             # Best-effort capture off the event loop: blocking worker stdio must not
             # stall mission progress, status polling or cancellation.
-            asyncio.get_running_loop().run_in_executor(None,memory_routes.capture,mid,state)
+            memory_routes.schedule_capture(mid,state)
         def cancelled():return repository.get(mid)['state']['status']=='cancelled'
         try:
             async with httpx.AsyncClient(trust_env=False) as client:
@@ -251,7 +275,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             if fresh['state']['status']!='cancelled':
                 error=MissionState.model_validate({**fresh['state'],'status':'error','stop_reason':'Service execution failed; inspect configuration. No success inferred.'})
                 with suppress(RevisionConflict):repository.save(mid,error,expected_revision=fresh['revision'])
-        finally:running.pop(mid,None)
+        finally:
+            fresh=repository.get(mid)
+            memory_routes.schedule_capture(mid,MissionState.model_validate(fresh['state']))
+            running.pop(mid,None)
 
     @app.post('/api/missions/{mid}/start',status_code=202,dependencies=[Depends(authorized)])
     async def start(mid:str):
@@ -267,6 +294,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         try:row=repository.cancel(mid)
         except RevisionConflict:raise HTTPException(409,'Mission changed; retry cancellation') from None
         if mid in running:running[mid].cancel()
+        memory_routes.schedule_capture(mid,MissionState.model_validate(row['state']))
         return row
 
     @app.get('/api/missions/{mid}/artifacts/{artifact_digest}',dependencies=[Depends(authorized)])

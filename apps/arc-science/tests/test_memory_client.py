@@ -97,3 +97,25 @@ def test_call_times_out_and_kills_a_hung_worker():
         mem.health()
     assert _t.time() - start < 3, "a hung worker must be bounded by the call timeout"
     assert killed.is_set()
+
+
+def test_rejects_oversized_response_before_reading_payload():
+    import io
+    import struct
+    import threading
+    from arc_science.memory.client import MemoryError as MemErr
+
+    class FakeProc:
+        stdin = io.BytesIO()
+        stdout = io.BytesIO(struct.pack('<I', 16 * 1024 * 1024 + 1))
+        killed = False
+        def poll(self): return 1 if self.killed else None
+        def kill(self): self.killed = True
+
+    mem = object.__new__(MemoryClient)
+    mem._proc = FakeProc()
+    mem._lock = threading.Lock()
+    mem._timeout = 1
+    with pytest.raises(MemErr, match='frame'):
+        mem.health()
+    assert mem._proc.killed, 'invalid framing must retire a desynchronized worker'

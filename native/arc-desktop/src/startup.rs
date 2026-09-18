@@ -1,0 +1,277 @@
+//! Local startup contract. The public service marker is compatibility, not auth.
+use std::{
+    collections::BTreeMap,
+    ffi::OsString,
+    net::IpAddr,
+    process::{Child, Command, Stdio},
+    time::{Duration, Instant},
+};
+
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
+const POLL: Duration = Duration::from_millis(100);
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
+const SERVICE_HEADER: &str = "x-arc-science-service";
+const SERVICE_ID: &str = "arc-science-v1";
+
+#[derive(Clone, Debug)]
+pub struct LocalUrl {
+    pub display: String,
+    pub health: String,
+    origin: (IpAddr, u16),
+}
+
+impl LocalUrl {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        if value.contains('\\') || value.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err("ARC_DESKTOP_URL contains invalid URL characters".into());
+        }
+        let uri: ureq::http::Uri = value
+            .split('#')
+            .next()
+            .unwrap_or(value)
+            .parse()
+            .map_err(|_| "ARC_DESKTOP_URL must be an absolute HTTP URL")?;
+        let authority = uri
+            .authority()
+            .ok_or("ARC_DESKTOP_URL requires an authority")?;
+        if uri.scheme_str() != Some("http") || authority.as_str().contains('@') {
+            return Err("ARC_DESKTOP_URL requires HTTP without credentials".into());
+        }
+        let ip: IpAddr = authority
+            .host()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse()
+            .map_err(|_| "ARC_DESKTOP_URL host must be a numeric loopback IP")?;
+        if !ip.is_loopback() {
+            return Err("ARC_DESKTOP_URL host must be loopback".into());
+        }
+        // http::Authority::port() returns None for an invalid/out-of-range port;
+        // do not accidentally reinterpret such a URL as port 80.
+        let suffix = authority
+            .as_str()
+            .strip_prefix(authority.host())
+            .ok_or("ARC_DESKTOP_URL has an invalid authority")?;
+        let port = if suffix.is_empty() {
+            80
+        } else {
+            suffix
+                .strip_prefix(':')
+                .and_then(|port| port.parse::<u16>().ok())
+                .ok_or("ARC_DESKTOP_URL port must be 1..65535")?
+        };
+        if port == 0 {
+            return Err("ARC_DESKTOP_URL port must be 1..65535".into());
+        }
+        let host = match ip {
+            IpAddr::V4(ip) => ip.to_string(),
+            IpAddr::V6(ip) => format!("[{ip}]"),
+        };
+        Ok(Self {
+            display: value.into(),
+            health: format!("http://{host}:{port}/health"),
+            origin: (ip, port),
+        })
+    }
+
+    pub fn allows(&self, value: &str) -> bool {
+        // Workbench downloads are object URLs with the creating page's origin.
+        let target = value.strip_prefix("blob:").unwrap_or(value);
+        Self::parse(target).is_ok_and(|url| url.origin == self.origin)
+    }
+}
+
+#[derive(Debug)]
+pub struct Config {
+    pub url: LocalUrl,
+    pub executable: OsString,
+    pub args: Vec<OsString>,
+    pub timeout: Duration,
+}
+
+impl Config {
+    pub fn from_env() -> Result<Self, String> {
+        // Capture once: health, navigation and launch all use the same configuration.
+        Self::parse(&std::env::vars_os().collect())
+    }
+
+    fn parse(env: &BTreeMap<OsString, OsString>) -> Result<Self, String> {
+        let string = |key: &str| -> Result<Option<&str>, String> {
+            env.get(std::ffi::OsStr::new(key))
+                .map(|s| s.to_str().ok_or_else(|| format!("{key} must be Unicode")))
+                .transpose()
+        };
+        let url = LocalUrl::parse(string("ARC_DESKTOP_URL")?.unwrap_or("http://127.0.0.1:8080/"))?;
+        let timeout = string("ARC_DESKTOP_TIMEOUT")?
+            .unwrap_or("30")
+            .parse::<u64>()
+            .ok()
+            .filter(|seconds| (1..=300).contains(seconds))
+            .ok_or("ARC_DESKTOP_TIMEOUT must be an integer from 1 to 300 seconds")?;
+        let explicit = env.get(std::ffi::OsStr::new("ARC_DESKTOP_EXECUTABLE"));
+        if let Some(legacy) = string("ARC_DESKTOP_SERVE")?
+            && (legacy != "arc-science serve" || explicit.is_some())
+        {
+            return Err("ARC_DESKTOP_SERVE only supports the legacy value 'arc-science serve'; use ARC_DESKTOP_EXECUTABLE and ARC_DESKTOP_ARG_COUNT/ARC_DESKTOP_ARG_0... for literal arguments (no shell quoting)".into());
+        }
+        let (executable, args) = if let Some(executable) = explicit {
+            if executable.is_empty() || executable.to_string_lossy().contains('\0') {
+                return Err("ARC_DESKTOP_EXECUTABLE must name one executable".into());
+            }
+            #[cfg(windows)]
+            if std::path::Path::new(executable)
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
+            {
+                return Err(
+                    "ARC_DESKTOP_EXECUTABLE must be a native executable, not a batch script".into(),
+                );
+            }
+            let count = string("ARC_DESKTOP_ARG_COUNT")?
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|count| *count <= 64)
+                .ok_or("Set ARC_DESKTOP_ARG_COUNT to 0..64 with an explicit executable")?;
+            let args = (0..count)
+                .map(|i| {
+                    let key = format!("ARC_DESKTOP_ARG_{i}");
+                    let value = env
+                        .get(std::ffi::OsStr::new(&key))
+                        .ok_or_else(|| format!("Missing {key}"))?;
+                    if value.to_string_lossy().contains('\0') {
+                        return Err(format!("{key} contains NUL"));
+                    }
+                    Ok(value.clone())
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            (executable.clone(), args)
+        } else {
+            if string("ARC_DESKTOP_ARG_COUNT")?.is_some() {
+                return Err("ARC_DESKTOP_ARG_COUNT requires ARC_DESKTOP_EXECUTABLE".into());
+            }
+            ("arc-science".into(), vec!["serve".into()])
+        };
+        Ok(Self {
+            url,
+            executable,
+            args,
+            timeout: Duration::from_secs(timeout),
+        })
+    }
+}
+
+/// Closes the supervisor's stdin to request tree shutdown. Arbitrary commands that
+/// do not implement that contract receive only direct-child kill/reap on timeout.
+pub struct ServiceGuard(pub Child);
+
+impl Drop for ServiceGuard {
+    fn drop(&mut self) {
+        drop(self.0.stdin.take());
+        let started = Instant::now();
+        loop {
+            match self.0.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) if started.elapsed() < SHUTDOWN_GRACE => std::thread::sleep(POLL),
+                _ => break,
+            }
+        }
+        eprintln!(
+            "arc-science-desktop: shutdown grace expired; terminating direct child (descendants require the native supervisor --parent-stdin contract)"
+        );
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+pub fn health_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .proxy(None)
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .timeout_connect(Some(Duration::from_millis(250)))
+        .timeout_global(Some(HEALTH_TIMEOUT))
+        .build()
+        .into()
+}
+
+fn is_healthy(agent: &ureq::Agent, url: &LocalUrl, remaining: Duration) -> Result<bool, String> {
+    let response = match agent
+        .get(&url.health)
+        .config()
+        .timeout_global(Some(HEALTH_TIMEOUT.min(remaining)))
+        .build()
+        .call()
+    {
+        Ok(response) => response,
+        Err(_) => return Ok(false),
+    };
+    if response.status() != 200
+        || response
+            .headers()
+            .get(SERVICE_HEADER)
+            .and_then(|v| v.to_str().ok())
+            != Some(SERVICE_ID)
+    {
+        return Err(format!(
+            "{} did not return Arc Science readiness (expected HTTP 200 and {SERVICE_HEADER}: {SERVICE_ID}); refusing to use that listener",
+            url.health
+        ));
+    }
+    Ok(true)
+}
+
+pub fn start_service(config: &Config) -> Result<Option<ServiceGuard>, String> {
+    let started = Instant::now();
+    let agent = health_agent();
+    if is_healthy(&agent, &config.url, config.timeout)? {
+        return Ok(None);
+    }
+    if started.elapsed() >= config.timeout {
+        return Err(format!(
+            "Service readiness timed out after {} seconds",
+            config.timeout.as_secs()
+        ));
+    }
+    let mut command = Command::new(&config.executable);
+    command.args(&config.args).stdin(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW for the background worker.
+    }
+    let mut guard = ServiceGuard(command.spawn().map_err(|e| {
+        format!(
+            "Cannot start service executable {:?}: {e}",
+            config.executable
+        )
+    })?);
+    loop {
+        if let Some(status) = guard
+            .0
+            .try_wait()
+            .map_err(|e| format!("Cannot inspect service process: {e}"))?
+        {
+            return Err(format!("Service exited before readiness: {status}"));
+        }
+        let remaining = config.timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Err(format!(
+                "Service readiness timed out after {} seconds",
+                config.timeout.as_secs()
+            ));
+        }
+        if is_healthy(&agent, &config.url, remaining)? {
+            if let Some(status) = guard
+                .0
+                .try_wait()
+                .map_err(|e| format!("Cannot inspect service process: {e}"))?
+            {
+                return Err(format!("Service exited during readiness: {status}"));
+            }
+            return Ok(Some(guard));
+        }
+        std::thread::sleep(POLL.min(config.timeout.saturating_sub(started.elapsed())));
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -6,11 +6,13 @@ test_artifact: docs/arc-science/usability-thesis/thesis.md
 
 # Arc Science usability evaluation
 
-A usability/workflow test of Arc Science, using a genuinely novel small bioinformatics
-thesis as the driving task ([thesis.md](thesis.md): *cross-modal PLM–gLM disagreement
+A historical usability/workflow test of Arc Science, using an unvalidated bioinformatics
+methodological hypothesis as the driving task ([thesis.md](thesis.md): *cross-modal PLM–gLM disagreement
 as a training-free classifier of variant mechanism*). Scored 1–10 per axis with
 evidence and the concrete gap. **What was runnable was run; what is credential-gated
-is marked.**
+is marked.** These subjective scores are not an empirical product benchmark.
+The [18 September novelty audit](novelty-audit-2026-09-18.md) supersedes the earlier
+novelty verdict and identifies necessary changes to the proposed statistical tests.
 
 ## What I could and could not exercise
 
@@ -28,10 +30,10 @@ is marked.**
 | --- | ---: | --- |
 | Scientific claims tree | 8/10 | Arc's three coupled graphs — execution / **evidence** / scene — and the analyst↔falsifier reconciliation are a near-exact structural match for the thesis's T→S1…S5 tree (claim → sub-claim → *evidence vs assumption* → *test*). Arc **retains contradictions** rather than voting, which is exactly what S4's "may fail" claim needs. Gap: the graph is built from *mission observations*, not free-text; importing an authored claims tree needs a live mission or a new ingest path. |
 | Fact-checking / provenance | 7/10 | Arc's discipline maps cleanly onto the thesis's fact-check table: `CaptionClaim.status ∈ {supported, hypothesis, simulation}` and `Check.status ∈ {pass, fail, unknown}` mirror the thesis's supported/partial/**unverified-absence** verdicts, and Arc forbids a supported claim without an evidence digest. Gap: Arc does not *fetch or verify* literature itself — the PMID/DOI checks here came from connectors (pubmed/consensus/arxiv), not Arc. Arc anchors provenance; it does not source it. |
-| Math capability | 4/10 | **Ran live.** On synthetic D-vs-\|Δψ\| data, `execute_numeric` gave `describe_data` (n=80), a degree-1 fit (validation MSE **0.0117**, held-out split, self-labeled "not confirmatory"), and `permutation_control` (128 fixed-seed shuffles, mean shuffled MSE **0.0542** ≫ 0.0117 — the real link beats the null, honestly "not a p-value"). This genuinely supports the thesis's S4 permutation-null logic. Gap: the catalog is **three tools**; there is no partial-correlation (S4 conditions on a splice oracle), no PLM/gLM embedding compute, no arbitrary statistic. Arc is a *bounded, reproducible* calculator, not a general math engine. |
+| Math capability | 4/10 | **Ran live.** On synthetic D-vs-\|Δψ\| data, `execute_numeric` gave `describe_data` (n=80), a degree-1 fit (validation MSE **0.0117**, held-out split, self-labeled "not confirmatory"), and `permutation_control` (128 fixed-seed shuffles, mean shuffled MSE **0.0542** ≫ 0.0117 — the real link beats the null, honestly "not a p-value"). This exercises a marginal association in synthetic data; it does not validate S4's conditional incremental-information test beyond a splice oracle. Gap: the catalog is **three tools**; there is no partial-correlation (S4 conditions on a splice oracle), no PLM/gLM embedding compute, no arbitrary statistic. Arc is a *bounded, reproducible* calculator, not a general math engine. |
 | Visual appearance | 6/10 | The workbench (now in a **native Rust window**, `arc-desktop`) is clean, accessible HeroUI, and the figure model separates structural identity from aesthetics and refuses to invent bonds/contacts. The figure pipeline renders molecular views, imports authorized vector figures, and plots deterministic numerical fits. Gap: the thesis's figures are *statistical scatter/PR/strip plots*; Arc's numerical renderer does fit/residual plots only — arbitrary data-plot rendering needs a plotting adapter. |
 | Infographics | 4/10 | Arc can produce reproducible, provenance-bound *figures*, and its VLM figure-review can (credential-gated) check that a caption matches a panel and that labels don't hide a ligand. But it is not an infographic/layout tool: the thesis's "mechanism scatter" and "incremental-information" panels would need a data→plot adapter plus the multi-format scene compiler, which is not built. |
-| Novelty checking | 2/10 | By design Arc is a figure/evidence workbench, **not** a literature engine. The novelty verdict for this thesis (novel framing, incremental components) came entirely from connectors + reasoning, not Arc. This is an honest scope boundary, not a defect — but if "check novelty" is a required workflow, Arc needs a literature-connector adapter feeding the evidence graph. |
+| Novelty checking | 2/10 | By design Arc is a figure/evidence workbench, **not** a literature engine. The novelty verdict for this thesis (candidate incremental proposal; novelty unestablished) came entirely from connectors + reasoning, not Arc. This is an honest scope boundary, not a defect — but if "check novelty" is a required workflow, Arc needs a literature-connector adapter feeding the evidence graph. |
 | Format / output | 6/10 | Arc emits rigorous, reproducible artifacts — the **replay capsule** (frozen inputs + re-executable numeric code + hashes + `scientific_validation: not_established`) is a stronger provenance object than a thesis PDF. Gap: Arc does not author narrative prose or compile a thesis document; that stays a Markdown/authoring task outside the app. |
 
 ## Workflow verdict

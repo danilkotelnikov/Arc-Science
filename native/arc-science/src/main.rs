@@ -1,4 +1,3 @@
-#[cfg(not(windows))]
 use arc_science_native::bioart;
 use arc_science_native::{
     Result,
@@ -34,7 +33,11 @@ enum Action {
     /// Report local executable availability, not scientific qualification; no network.
     Doctor,
     /// Start the configured loopback Python service (stdin EOF).
-    Serve,
+    Serve {
+        /// Opt in to parent-owned lifetime: stdin EOF cancels the worker tree.
+        #[arg(long)]
+        parent_stdin: bool,
+    },
     /// Run a noninteractive Python CLI command; put all worker arguments after --.
     Worker {
         #[arg(last = true, required = true)]
@@ -57,9 +60,9 @@ fn run() -> Result<i32> {
         }
         Action::Config => println!("{}", toml::to_string_pretty(&Config::load(&project)?)?),
         Action::Doctor => return process::doctor(&Config::load(&project)?, &project),
-        Action::Serve => {
+        Action::Serve { parent_stdin } => {
             let config = Config::load(&project)?;
-            return process::run(
+            return process::serve(
                 &config,
                 &project,
                 &[
@@ -71,15 +74,11 @@ fn run() -> Result<i32> {
                     "--data".into(),
                     config.worker.data.clone().into_os_string(),
                 ],
+                parent_stdin,
             );
         }
         Action::Worker { args } => return process::run(&Config::load(&project)?, &project, &args),
         Action::Bioart { command } => {
-            #[cfg(windows)]
-            let _ = command;
-            #[cfg(windows)]
-            return Err("Native BioArt operations require the POSIX cache/import implementation and are unsupported on Windows".into());
-            #[cfg(not(windows))]
             return process::run(
                 &Config::load(&project)?,
                 &project,

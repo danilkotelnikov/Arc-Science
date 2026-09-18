@@ -132,7 +132,7 @@ pub fn doctor(config: &Config, project: &Path) -> Result<i32> {
         "Scientific validation: not performed; native supervisor availability is not worker qualification"
     );
     println!(
-        "Windows BioArt: unsupported (provider requires POSIX no-follow filesystem primitives)"
+        "BioArt: delegates to the installed Python provider; cache/runtime qualification is separate from CLI availability"
     );
     println!(
         "Owned BioArt transport: spawned Python child; main-thread POSIX parent deadline covers setup/DNS/headers/body/retries; kills and reaps on cancellation"
@@ -187,6 +187,17 @@ fn exit_code(status: ExitStatus) -> i32 {
 }
 
 pub fn run(config: &Config, project: &Path, args: &[OsString]) -> Result<i32> {
+    serve(config, project, args, false)
+}
+
+/// The desktop owns a pipe connected to our stdin. EOF requests the same tree
+/// cancellation as Ctrl-C; ordinary CLI commands keep their existing lifetime.
+pub fn serve(
+    config: &Config,
+    project: &Path,
+    args: &[OsString],
+    parent_stdin: bool,
+) -> Result<i32> {
     validate_environment()?;
     let python = executable(&config.worker.python, project).ok_or_else(|| format!("Python executable missing or not executable: {}; install/configure the existing Arc Science worker explicitly", config.worker.python))?;
     let cancelled = Arc::new(AtomicUsize::new(0));
@@ -195,6 +206,23 @@ pub fn run(config: &Config, project: &Path, args: &[OsString]) -> Result<i32> {
     ctrlc::set_handler(move || {
         signal_count.fetch_add(1, Ordering::SeqCst);
     })?;
+    if parent_stdin {
+        let parent_closed = Arc::clone(&cancelled);
+        thread::spawn(move || {
+            use std::io::Read;
+            let mut stdin = std::io::stdin().lock();
+            let mut bytes = [0; 64];
+            loop {
+                match stdin.read(&mut bytes) {
+                    Ok(0) => break,
+                    Ok(_) => (),
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
+            parent_closed.fetch_add(1, Ordering::SeqCst);
+        });
+    }
     let mut command = Command::new(python);
     command
         .args(["-m", "arc_science"])
@@ -239,7 +267,14 @@ pub fn run(config: &Config, project: &Path, args: &[OsString]) -> Result<i32> {
                 child.start_kill()?;
             }
         }
-        if let Some(status) = child.try_wait()? {
+        // process-wrap 9.0 JobObject::try_wait consumes completion-port events.
+        // Poll only the leader on Windows, leaving the job event for wait();
+        // otherwise a short-lived/cancelled worker can block shutdown forever.
+        #[cfg(windows)]
+        let status = child.inner_mut().try_wait()?;
+        #[cfg(not(windows))]
+        let status = child.try_wait()?;
+        if let Some(status) = status {
             // The leader exiting does not prove its owned transport exited.
             finish_tree(child.as_mut())?;
             break if cancellation_started.is_some() {

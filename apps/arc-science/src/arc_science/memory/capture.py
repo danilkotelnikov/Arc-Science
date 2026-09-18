@@ -14,6 +14,7 @@ idempotent by `(session, kind, index)`, so resume/replay re-emits never duplicat
 from __future__ import annotations
 
 import json
+import hashlib
 import time
 from typing import Any
 
@@ -90,5 +91,22 @@ class SessionCapture:
                     "idempotency_key": f"{self._session}:model:{index}",
                 }
             )
+
+        # Service cancellation, failures and restart pauses need not emit an engine
+        # event. Retain their authoritative status as an explicitly typed snapshot.
+        if hasattr(state, "status"):
+            text = _payload_text({
+                "kind": "mission_snapshot", "status": state.status,
+                "round": state.round, "stop_reason": state.stop_reason,
+                "events": len(events), "model_records": len(models),
+            })
+            fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            self._client.append({
+                "project_id": self._project, "session_id": self._session,
+                "agent_id": "service", "role": "system", "text": text,
+                "source_uri": f"mission://{self._session}/snapshot", "trust": "operator",
+                "compaction_epoch": state.round, "wall_time_ms": now,
+                "idempotency_key": f"{self._session}:snapshot:{fingerprint}",
+            })
 
         return (len(events), len(models))

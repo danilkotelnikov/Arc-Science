@@ -12,6 +12,8 @@ import pytest
 
 ENTRY_FIXTURE = Path(__file__).parent / "fixtures/bioart/entry-18-reduced.json"
 NATIVE = Path(__file__).parents[3] / "native/arc-science/target/debug/arc-science-native"
+if os.name == 'nt':
+    NATIVE = NATIVE.with_suffix('.exe')
 # Deliberately synthetic fixture bytes: no NIH file transfer occurred.
 SVG = (
     b'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10">'
@@ -145,7 +147,8 @@ def test_native_init_and_default_svg_fetch_use_configured_offline_cache(tmp_path
     assert value["preview_eligible"] is True
     assert value["import_eligible"] is True
     assert value["limitation"] is None
-    assert Path(value["receipt"]) == cache / receipt_name
+    # Windows canonicalization may retain the extended-length \\?\ prefix.
+    assert Path(value["receipt"]).samefile(cache / receipt_name)
     assert Path(value["source"]).read_bytes() == SVG
 
     verified = run_native(project, "bioart", "verify", value["receipt"])

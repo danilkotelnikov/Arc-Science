@@ -1,60 +1,12 @@
-//! Arc Science desktop: a fast, local Rust shell for the Arc Science workbench.
-//!
-//! It launches the local Arc Science service (unless one is already listening),
-//! waits for it to be healthy, then shows the workbench in a native WebView2 window
-//! branded with the Snöggo icon. No browser, no remote host — everything is local.
-//!
-//! Configuration (all optional, via environment):
-//! - `ARC_DESKTOP_URL` — workbench URL (default `http://127.0.0.1:8080/`).
-//! - `ARC_DESKTOP_SERVE` — command to start the service, space-separated (default
-//!   `arc-science serve`); skipped if a service is already healthy.
-//! - `ARC_DESKTOP_TIMEOUT` — seconds to wait for health (default `30`).
-use std::process::{Child, Command};
-use std::time::{Duration, Instant};
-
+//! Native Rust host for the local Arc Science workbench. See README for lifecycle limits.
+mod startup;
+use startup::{Config, start_service};
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoop};
 use tao::window::{Icon, WindowBuilder};
 use wry::WebViewBuilder;
 
-// Transparent icon variant of the logo SVG (background rect stripped) so the icon
-// has no white padding — just the mark on alpha.
 const SNOGGO: &[u8] = include_bytes!("../assets/snoggo-icon.svg");
-const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// Owns the spawned service process and kills+reaps it when dropped, so no
-/// early-exit path (WebView init failure, window panic) can leave it orphaned.
-struct ServiceGuard(Child);
-
-impl Drop for ServiceGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-fn url() -> String {
-    std::env::var("ARC_DESKTOP_URL").unwrap_or_else(|_| "http://127.0.0.1:8080/".to_string())
-}
-
-fn health_url() -> String {
-    let base = url();
-    format!(
-        "{}health",
-        base.strip_suffix('/')
-            .map(|s| format!("{s}/"))
-            .unwrap_or(base)
-    )
-}
-
-/// A timeout-bounded HTTP agent, so a stalled peer cannot hang startup forever
-/// (ureq blocks indefinitely by default).
-fn health_agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .timeout_global(Some(HEALTH_TIMEOUT))
-        .build()
-        .into()
-}
 
 /// Rasterize the Snöggo mark to a `size`×`size` transparent RGBA buffer, cropped to
 /// its bounding box so the mark fills the square with no white (or empty) padding.
@@ -75,48 +27,27 @@ fn snoggo_icon() -> Option<Icon> {
     Icon::from_rgba(render_icon_rgba(size)?, size, size).ok()
 }
 
-fn is_healthy(agent: &ureq::Agent) -> bool {
-    agent.get(&health_url()).call().is_ok()
-}
-
-fn wait_for_health(agent: &ureq::Agent, deadline: Duration) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < deadline {
-        if is_healthy(agent) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(300));
+fn run() -> Result<(), String> {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let check_only = args.as_slice() == ["--check-startup"];
+    if !args.is_empty() && !check_only {
+        return Err("Usage: arc-science-desktop [--check-startup]; configure via ARC_DESKTOP_* environment variables".into());
     }
-    false
-}
-
-/// Start the local service from `ARC_DESKTOP_SERVE`, unless one is already healthy.
-fn start_service_if_needed(agent: &ureq::Agent) -> Option<ServiceGuard> {
-    if is_healthy(agent) {
-        return None; // reuse an already-running local service
-    }
-    let command = std::env::var("ARC_DESKTOP_SERVE").unwrap_or_else(|_| "arc-science serve".into());
-    let mut parts = command.split_whitespace();
-    let program = parts.next()?;
-    let child = Command::new(program).args(parts).spawn().ok()?;
-    let guard = ServiceGuard(child);
-    let timeout = std::env::var("ARC_DESKTOP_TIMEOUT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(30u64);
-    if !wait_for_health(agent, Duration::from_secs(timeout)) {
-        eprintln!(
-            "arc-science-desktop: service did not become healthy in {timeout}s; showing anyway"
+    let config = Config::from_env()?;
+    let mut service = start_service(&config)?;
+    if check_only {
+        println!(
+            "Arc Science readiness verified; service {}",
+            if service.is_some() {
+                "owned (shutdown requested on exit)"
+            } else {
+                "reused (left running)"
+            }
         );
+        return Ok(());
     }
-    Some(guard)
-}
 
-fn main() -> wry::Result<()> {
-    let agent = health_agent();
-    // `service` is dropped (killing the child) on any early return/panic below.
-    let mut service = start_service_if_needed(&agent);
-
+    // No event loop, window or WebView is created until local readiness passes.
     let event_loop = EventLoop::new();
     let mut window = WindowBuilder::new()
         .with_title("Arc Science")
@@ -124,10 +55,18 @@ fn main() -> wry::Result<()> {
     if let Some(icon) = snoggo_icon() {
         window = window.with_window_icon(Some(icon));
     }
-    let window = window.build(&event_loop).expect("window");
-
-    let _webview = WebViewBuilder::new().with_url(url()).build(&window)?;
-
+    let window = window
+        .build(&event_loop)
+        .map_err(|e| format!("Cannot create desktop window: {e}"))?;
+    let origin = config.url.clone();
+    let download_origin = origin.clone();
+    let _webview = WebViewBuilder::new()
+        .with_url(&config.url.display)
+        .with_navigation_handler(move |target| origin.allows(&target))
+        .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny)
+        .with_download_started_handler(move |target, _| download_origin.allows(&target))
+        .build(&window)
+        .map_err(|e| format!("Cannot initialize desktop WebView: {e}"))?;
     event_loop.run(move |event, _target, control_flow| {
         *control_flow = ControlFlow::Wait;
         if let Event::WindowEvent {
@@ -135,62 +74,25 @@ fn main() -> wry::Result<()> {
             ..
         } = event
         {
-            service.take(); // drop the guard -> kill + reap the service
+            service.take();
             *control_flow = ControlFlow::Exit;
         }
     });
 }
 
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("arc-science-desktop: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::TcpListener;
-
-    #[test]
-    fn service_guard_kills_child_on_drop() {
-        // A long-running direct child (no shell wrapper, so kill reaps it).
-        let child = Command::new("ping")
-            .args(["127.0.0.1", "-n", "30"])
-            .stdout(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn ping");
-        let pid = child.id();
-        {
-            let _guard = ServiceGuard(child);
-        } // dropped here -> kill + wait
-        let out = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}")])
-            .output()
-            .expect("tasklist");
-        let text = String::from_utf8_lossy(&out.stdout);
-        assert!(
-            !text.contains(&pid.to_string()),
-            "service child {pid} must be killed when the guard drops"
-        );
-    }
-
-    #[test]
-    fn health_agent_times_out_on_a_stalled_peer() {
-        // A peer that accepts the connection but never answers.
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let addr = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
-            if let Ok((stream, _)) = listener.accept() {
-                std::thread::sleep(Duration::from_secs(30));
-                drop(stream);
-            }
-        });
-        let agent = health_agent();
-        let start = Instant::now();
-        let ok = agent.get(format!("http://{addr}/health")).call().is_ok();
-        assert!(!ok, "a stalled peer must not report healthy");
-        assert!(
-            start.elapsed() < Duration::from_secs(8),
-            "health check must time out (~2s), not hang: took {:?}",
-            start.elapsed()
-        );
-    }
-
     #[test]
     fn icon_has_no_white_padding() {
         let size = 128u32;

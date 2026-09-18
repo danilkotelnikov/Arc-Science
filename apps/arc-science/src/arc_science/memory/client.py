@@ -15,9 +15,15 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
+MAX_FRAME = 16 * 1024 * 1024  # arc-memory/1, symmetric in both directions
+
 
 class MemoryError(RuntimeError):
     """Raised when the worker reports an error or the connection is lost."""
+
+
+class MemoryUnavailable(MemoryError):
+    """Transport failure; a fresh worker may safely serve the next operation."""
 
 
 class MemoryClient:
@@ -34,6 +40,7 @@ class MemoryClient:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         self._lock = threading.Lock()
         self._timeout = timeout
@@ -45,30 +52,43 @@ class MemoryClient:
         while remaining > 0:
             chunk = self._proc.stdout.read(remaining)
             if not chunk:
-                raise MemoryError("memory worker closed the connection")
+                raise MemoryUnavailable("memory worker closed the connection")
             chunks.append(chunk)
             remaining -= len(chunk)
         return b"".join(chunks)
 
     def _call(self, request: dict[str, Any]) -> Any:
         body = json.dumps(request).encode("utf-8")
+        if len(body) > MAX_FRAME:
+            raise MemoryError("request exceeds frame limit")
         with self._lock:
             if self._proc.poll() is not None:
-                raise MemoryError("memory worker is not running")
+                raise MemoryUnavailable("memory worker is not running")
             assert self._proc.stdin is not None
             # Bound a hung worker: kill it if the round trip exceeds the timeout, so
             # the pending read returns EOF instead of pinning the caller forever.
-            watchdog = threading.Timer(self._timeout, self._proc.kill)
+            watchdog = threading.Timer(self._timeout, self._kill)
             watchdog.start()
             try:
                 self._proc.stdin.write(struct.pack("<I", len(body)))
                 self._proc.stdin.write(body)
                 self._proc.stdin.flush()
                 (length,) = struct.unpack("<I", self._read_exact(4))
+                if length > MAX_FRAME:
+                    raise MemoryUnavailable("response exceeds frame limit")
                 payload = self._read_exact(length)
+                response = json.loads(payload)
+                if not isinstance(response, dict) or response.get("status") not in ("ok", "error"):
+                    raise MemoryUnavailable("invalid memory response")
+                if response["status"] == "ok" and "data" not in response:
+                    raise MemoryUnavailable("invalid memory response")
+            except (OSError, ValueError, MemoryUnavailable) as exc:
+                self._kill()  # uncertain framing must never be reused
+                if isinstance(exc, MemoryUnavailable):
+                    raise
+                raise MemoryUnavailable("memory worker connection failed") from None
             finally:
                 watchdog.cancel()
-        response = json.loads(payload)
         if response.get("status") != "ok":
             raise MemoryError(response.get("error", "unknown memory error"))
         return response["data"]
@@ -119,16 +139,27 @@ class MemoryClient:
         return self._call({"op": "embed"})["embedded"]
 
     # --- lifecycle --------------------------------------------------------
-    def close(self) -> None:
-        if self._proc.poll() is not None:
-            return
+    def is_alive(self) -> bool:
+        return self._proc.poll() is None
+
+    def _kill(self) -> None:
         try:
-            if self._proc.stdin is not None:
-                self._proc.stdin.close()
-            self._proc.wait(timeout=5)
-        except Exception:
             self._proc.kill()
-            self._proc.wait()
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        with self._lock:
+            try:
+                if self._proc.stdin is not None:
+                    self._proc.stdin.close()
+                self._proc.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                self._kill()
+                self._proc.wait()
+            finally:
+                if self._proc.stdout is not None:
+                    self._proc.stdout.close()
 
     def __enter__(self) -> "MemoryClient":
         return self

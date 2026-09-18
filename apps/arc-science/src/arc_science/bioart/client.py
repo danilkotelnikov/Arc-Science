@@ -17,12 +17,14 @@ from .deadline import request_deadline
 from .isolation import request_in_child
 from .models import BioArtLimits, BioArtReceipt, ORIGIN, _is_neutral_caption, positive_id
 from .parsing import parse_entry, parse_search
-from ..vector_assets import _read_regular, _validate_svg, _SOURCE_LIMIT, import_vector
+from ..vector_assets import (_read_regular, _validate_svg, _SOURCE_LIMIT, _SVG_NS,
+    _local_name, _LOCAL_URL, _MAX_SVG_NODES, _MAX_SVG_DEPTH, import_vector)
 
 _HASH = re.compile(r'[0-9a-f]{64}')
 _MIME = {'SVG':{'image/svg+xml'}, 'PNG':{'image/png'},
          'AI':{'application/postscript','application/pdf','application/illustrator','application/octet-stream'},
          'EPS':{'application/postscript','application/eps','application/octet-stream'}}
+_FILE_PATH = re.compile(r'/api/bioarts/[1-9][0-9]*/files/[1-9][0-9]*')
 
 
 class BioArtCacheMiss(ValueError):
@@ -42,11 +44,61 @@ def _load(raw):
         raise ValueError('Corrupt BioArt cache JSON') from None
 
 
+def _svg_root(data, *, reject_stylesheet=False):
+    """Recognize SVG identity without confusing a namespace prefix with its name."""
+    try:
+        from defusedxml import ElementTree
+        if reject_stylesheet:
+            parsed = ElementTree.iterparse(BytesIO(data), events=('pi',),
+                forbid_dtd=True, forbid_entities=True, forbid_external=True)
+            for _, instruction in parsed:
+                target = (instruction.text or '').split(None, 1)
+                if target and target[0].casefold() == 'xml-stylesheet':
+                    raise ValueError('SVG cannot reference a stylesheet')
+            root = parsed.root
+        else:
+            root = ElementTree.fromstring(data, forbid_dtd=True, forbid_entities=True, forbid_external=True)
+    except Exception:
+        raise ValueError('Invalid or unsafe SVG XML') from None
+    name, namespace = _local_name(root.tag)
+    if name != 'svg' or namespace not in {None, _SVG_NS}:
+        raise ValueError('File is not an SVG')
+    return root
+
+
+def _validate_untyped_svg(data):
+    """Bounded passive-source intake only; this never grants rendering eligibility."""
+    root = _svg_root(data, reject_stylesheet=True)
+    stack = [(root, 1)]
+    count = 0
+    while stack:
+        element, depth = stack.pop()
+        count += 1
+        if count > _MAX_SVG_NODES or depth > _MAX_SVG_DEPTH:
+            raise ValueError('SVG complexity exceeds limits')
+        name, _ = _local_name(element.tag)
+        if name.lower() in {'script', 'foreignobject', 'set', 'animate',
+                            'animatemotion', 'animatetransform', 'animatecolor', 'discard'}:
+            raise ValueError('Untyped SVG contains active content')
+        css = [element.text or ''] if name == 'style' else []
+        for raw_name, value in element.attrib.items():
+            attribute, _ = _local_name(raw_name)
+            if attribute.lower().startswith('on'):
+                raise ValueError('Untyped SVG contains an event handler')
+            if attribute in {'href', 'src', 'base'} and not value.startswith('#'):
+                raise ValueError('Untyped SVG contains an external reference')
+            css.append(value)
+        for value in css:
+            if '@' in value or '\\' in value or re.search(r'url\s*\(', _LOCAL_URL.sub('', value), re.IGNORECASE):
+                raise ValueError('Untyped SVG contains unsupported CSS or an external reference')
+        stack.extend((child, depth + 1) for child in element)
+
+
 def _eligibility(data, format):
     if format=='SVG':
-        # Never render here. XML signature rejects HTML, unsafe XML remains download-only.
-        head = data.lstrip()[:1024].lower()
-        if b'<svg' not in head or b'<html' in head: raise ValueError('File is not an SVG')
+        # Source identity and rendering eligibility are separate. Retain unsupported
+        # originals as downloads; the existing vector validator still controls import.
+        _svg_root(data)
         try:
             width,height=_validate_svg(data)
             if max(width,height)>1_000_000:
@@ -80,6 +132,7 @@ class BioArtClient:
         if type(allow_egress) is not bool: raise ValueError('Explicit boolean egress required')
         self.allow_egress=allow_egress; self.limits=limits or BioArtLimits()
         self.cache=Cache(cache_dir,self.limits.max_cache_bytes); self.client=client
+        self._last_content_type = None
 
     def _request(self,path,limit,mimes):
         if not self.allow_egress: raise BioArtCacheMiss('Missing or stale cache; explicit --allow-egress required')
@@ -87,6 +140,11 @@ class BioArtClient:
         if not path.startswith('/') or path.startswith('//') or '\\' in path:
             raise ValueError('Invalid BioArt endpoint')
         if self.client is None:
+            if _FILE_PATH.fullmatch(path):
+                metadata = {}
+                data = request_in_child(path,limit,mimes,self.limits,metadata=metadata)
+                self._last_content_type = metadata['content_type']
+                return data
             return request_in_child(path,limit,mimes,self.limits)
         # Injected transports are trusted test/integration code, not an arbitrary
         # native-code sandbox. Owned production HTTPX always uses process isolation.
@@ -118,8 +176,12 @@ class BioArtClient:
                         if status!=200: raise ValueError(f'BioArt HTTP {status}; no redirect or access fallback')
                         if response.headers.get('content-encoding','identity').lower()!='identity':
                             raise ValueError('Unsupported BioArt content encoding; bounded identity transfer required')
-                        mime=response.headers.get('content-type','').split(';')[0].strip().lower()
-                        if mime not in mimes: raise ValueError('Unexpected BioArt MIME type')
+                        content_type=response.headers.get('content-type')
+                        mime=(content_type or '').split(';')[0].strip().lower()
+                        untyped_svg=(content_type is None and mimes==_MIME['SVG']
+                                     and _FILE_PATH.fullmatch(path) is not None)
+                        if (content_type is not None and len(content_type)>1024) or (mime not in mimes and not untyped_svg):
+                            raise ValueError('Unexpected BioArt MIME type')
                         length=response.headers.get('content-length')
                         if length is not None:
                             if not length.isdigit() or int(length)>limit: raise ValueError('BioArt response size exceeds limit')
@@ -133,7 +195,9 @@ class BioArtClient:
                             data.extend(chunk)
                         if not size: raise ValueError('Empty BioArt response')
                         if length is not None and size!=int(length): raise ValueError('BioArt response content length mismatch or truncated body')
+                        if untyped_svg: _validate_untyped_svg(bytes(data))
                         remaining()
+                        self._last_content_type = content_type
                         return bytes(data)
                 except httpx.TransportError:
                     if attempt>=self.limits.max_retries: raise ValueError('BioArt transport timeout or connection failure') from None
@@ -221,6 +285,7 @@ class BioArtClient:
             'collection':entry.collection,'citation':entry.citation,'representation_id':representation_id,
             'caption':representation.caption,'format':format,'file_id':file_id,'retrieved_at':time.time(),
             'source_page_sha256':page_hash,'sha256':sha,'size':len(data),'source_file':source,
+            'source_content_type':self._last_content_type,
             'preview_eligible':preview,'import_eligible':eligible,'limitation':limitation,
             'rights_verified':False,'scientific_validity_established':False}
         receipt_data=encoded(value); name=digest(receipt_data)+'.receipt.json'
@@ -239,7 +304,7 @@ class BioArtClient:
         required={'schema','entry_id','entry_url','title','license','credit','creator','collection','citation',
             'representation_id','caption','format','file_id','retrieved_at','source_page_sha256','sha256','size',
             'source_file','preview_eligible','import_eligible','limitation','rights_verified','scientific_validity_established'}
-        if not isinstance(value,dict) or set(value)!=required or value['schema']!='arc-bioart-asset/1': raise ValueError('Invalid receipt schema')
+        if not isinstance(value,dict) or set(value) not in (required,required|{'source_content_type'}) or value['schema']!='arc-bioart-asset/1': raise ValueError('Invalid receipt schema')
         for field in ('sha256','source_page_sha256'):
             if not isinstance(value[field],str) or not _HASH.fullmatch(value[field]): raise ValueError('Invalid receipt hash')
         positive_id(value['entry_id']); positive_id(value['representation_id']); positive_id(value['file_id'])
@@ -257,6 +322,14 @@ class BioArtClient:
             raise ValueError('Receipt entry/file/license binding mismatch')
         data=self.cache.read(value['source_file'],self.limits.max_file_bytes)
         if data is None or type(value['size']) is not int or len(data)!=value['size'] or digest(data)!=value['sha256']: raise ValueError('Source size/hash mismatch')
+        if 'source_content_type' in value:
+            content_type=value['source_content_type']
+            if content_type is None:
+                if format!='SVG': raise ValueError('Missing source MIME is only supported for validated SVG')
+                _validate_untyped_svg(data)
+            elif (not isinstance(content_type,str) or len(content_type)>1024 or
+                    content_type.split(';')[0].strip().lower() not in _MIME[format]):
+                raise ValueError('Invalid receipt source MIME')
         preview,eligible,limitation=_eligibility(data,format)
         if (value['preview_eligible'] is not preview or value['import_eligible'] is not eligible or value['limitation']!=limitation or
                 value['rights_verified'] is not False or value['scientific_validity_established'] is not False):

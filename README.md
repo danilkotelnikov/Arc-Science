@@ -2,17 +2,42 @@
 
 Arc Science is an evidence-bound research workbench under development in the existing Vedix repository. It combines a molecular figure workspace with bounded research missions: competing hypotheses, permitted computations, independent role reviews and reproducible evidence.
 
-This checkpoint is **not merge-ready**. The Linux renderer executor now uses a
+This is a development checkpoint. The Windows-native port and native memory are
+implemented; the molecular workbench now connects local coordinate files to the
+existing Blender renderer. See [local rendering setup](docs/arc-science/molecular-workbench-2026-09-18.md),
+[Windows port boundaries](docs/arc-science/windows-native-port-2026-09-18.md), and
+[native memory qualification](docs/arc-science/native-session-memory-qualification-2026-09-16.md).
+The Linux renderer executor uses a
 private process-group watchdog and kernel parent-liveness pipe; deterministic tests
 cover repeated native cancellation and cleanup after a successful renderer leader
 exit. Independent code review approved this boundary with no remaining findings.
-The complete application suite passes locally, while official Blender,
-Windows/macOS rendering, live BioArt, and the inherited root suite remain separate
-qualification gates. See the current
+Historical qualification for Linux, live BioArt, macOS, and the inherited root suite
+remains separately scoped. See the retained
 [containment verification](docs/arc-science/renderer-containment-verification-2026-09-09.md)
 and the retained [earlier record](docs/arc-science/bioart-setup-verification-2026-09-08.md).
 
 The application is in [apps/arc-science](apps/arc-science). Vedix's plugin code, identifiers, installers and history are preserved; use the [original Vedix installation guide](docs/legacy/VEDIX_README.md) for those plugins. The repository slug has not been renamed.
+
+Development follows [Harness-of-Harness](docs/hoh/index.md), with separate plans,
+implementation and independent evaluation. The current
+[release-candidate evidence](docs/hoh/2026-09-18-qualification.md) covers the native
+Windows launcher, memory reliability, interactive browser flows and scientific audit.
+
+## Windows desktop
+
+From this repository in PowerShell, use the supervised launcher:
+
+```powershell
+.\scripts\start-arc-science.ps1 -Build
+```
+
+Later launches can omit `-Build`. Existing Python application dependencies and Rust
+must be installed; the script does not install packages. It creates a native project
+under `%LOCALAPPDATA%\ArcScience\workspace` only when none exists and preserves its
+configuration. Use `-ProjectPath` for another workspace, `-Python` for initialization
+with a specific interpreter, and `-BlenderPython` for the separate molecular runtime.
+`-CheckStartup` checks readiness and supervised shutdown without opening a window.
+See [desktop lifecycle and configuration](native/arc-desktop/README.md).
 
 ## Run locally
 
@@ -51,8 +76,9 @@ native/arc-science/target/release/arc-science-native --project arc-project serve
 ```
 
 Linux native tests/build and module help are checked; this does not qualify the
-scientific worker. Windows/macOS CI is configured but not run here, and Windows
-BioArt is unsupported. The supervisor is noninteractive (stdin EOF), with no
+scientific worker. Windows BioArt now has a native path with the weaker filesystem
+and deadline guarantees documented in the Windows port record. Live NIH transfer
+and macOS execution remain separate qualification gates. The supervisor is noninteractive (stdin EOF), with no
 shell, PTY, or automatic install. See [native setup and lifecycle limits](native/arc-science/README.md).
 
 ## NIH BioArt assets
@@ -91,7 +117,9 @@ license and byte hash. Use `bioart verify RECEIPT` before `bioart import RECEIPT
 --project ./arc-project` to import an eligible SVG. Omit `--allow-egress` for
 verified fresh-cache access only. AI/EPS are archive-only, and PNG is preview-only.
 Automation currently accepts exact Public Domain entries, not every license in
-the collection. Live NIH vector transfer and Windows BioArt are not qualified.
+the collection. Live entry 18 SVG transfer, receipt verification and original download
+were exercised on Windows. That NIH SVG remains download-only under the strict import
+validator; broad NIH vector import and browser-rendered keyword search remain unqualified.
 See [provider behavior](apps/arc-science/docs/bioart.md) and the separate
 [access/setup research](docs/arc-science/bioart-setup-research-2026-09-08.md).
 
@@ -103,7 +131,7 @@ The default is frozen candidate 03: HyHEL-63 Fab author chains A+B with lysozyme
 
 The complete CSV contains 49 residue pairs at minimum heavy-atom distance ≤4 Å. This geometric criterion does not establish hydrogen bonds, affinity or energetic hotspots. The surface is an approximate Gaussian atomic envelope, not a solvent-excluded surface; the rotated detail shows only the three nearest pairs.
 
-Public downloads include coordinates, scene specification, captured worker and integrity/review metadata. Large editable `.blend` scenes remain in the separately delivered bundle. There is no inactive server render or upload control.
+Public downloads include coordinates, scene specification, captured worker and integrity/review metadata. Large editable `.blend` scenes remain in the separately delivered bundle. The authenticated **Render your structure locally** panel accepts coordinate files, tracks a bounded render job, and provides its white collage and provenance downloads. Set the server's Blender runtime as described in [local rendering setup](docs/arc-science/molecular-workbench-2026-09-18.md).
 
 To render your own authorized coordinates, install `'.[structure]'` in the app environment and prepare a **separate** Blender Python runtime using [the rendering setup](apps/arc-science/docs/vector-rendering.md) and [the historical Blender lock](apps/arc-science/requirements-blender.lock). Then:
 
@@ -123,7 +151,7 @@ Offline mode uses a scripted planner and real numerical analysis; it is not live
 
 HoH's fixed roles, single writer, frozen candidates and independent QA are the foundation. Self-evolving harness proposals, broader scientific composition and Lean proof obligations remain separate development requirements. Reproducibility, model agreement and attractive figures do not establish scientific validity or publication authorization.
 
-The React/HeroUI 3 UI is built and tested through DOM interactions and served artifact bytes. Browser pixel layout remains unverified: on 9 September 2026 the managed browser rejected the running loopback page with `ERR_BLOCKED_BY_CLIENT`. No alternate browser or hosting path was used. Historical candidate image acceptance is scoped to illustration clarity, not the running page.
+The React/HeroUI 3 UI is built and tested through DOM interactions and served artifact bytes. On 18 September 2026 the local browser displayed the molecular workbench, authenticated renderer readiness, restored job history and a newly generated collage. [Current qualification](docs/arc-science/molecular-workbench-qualification-2026-09-18.md) distinguishes these checks from historical illustration acceptance and untested workflows.
 
 ## Develop and test
 

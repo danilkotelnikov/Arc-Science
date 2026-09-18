@@ -35,7 +35,7 @@ def main(directory):
         fd=_open_directory(root)
         try:_write_regular_at(fd,'response.bin',data)
         finally:anchored.close_directory(fd)
-        result={'ok':True}
+        result={'ok':True,'content_type':client._last_content_type}
     except (ValueError,OSError,TypeError,KeyError) as exc:
         # Transport messages are sanitized upstream; bound all errors on this boundary.
         result={'ok':False,'error':str(exc)[:2000]}

@@ -1,0 +1,92 @@
+#requires -Version 5.1
+<#
+Launch the local Rust desktop with the native supervisor's parent-owned lifetime.
+Build existing Rust crates first with -Build. No packages are installed by this script.
+#>
+[CmdletBinding()]
+param(
+    [string]$ProjectPath = (Join-Path $env:LOCALAPPDATA 'ArcScience\workspace'),
+    [string]$Python = 'python',
+    [string]$BlenderPython,
+    [switch]$Build,
+    [switch]$CheckStartup
+)
+$ErrorActionPreference = 'Stop'
+$arcRepository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$arcPython = (Get-Command $Python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$arcProject = [IO.Path]::GetFullPath($ProjectPath)
+$arcExecutables = @{
+    Desktop = Join-Path $arcRepository 'native\arc-desktop\target\release\arc-science-desktop.exe'
+    Supervisor = Join-Path $arcRepository 'native\arc-science\target\release\arc-science-native.exe'
+    Memory = Join-Path $arcRepository 'native\arc-memory\target\release\arc-memory-worker.exe'
+    Svg = Join-Path $arcRepository 'native\arc-svg\target\release\arc-svg2png.exe'
+}
+if ($Build) {
+    foreach ($arcCrate in @('arc-science', 'arc-memory', 'arc-svg', 'arc-desktop')) {
+        & cargo build --release --locked --manifest-path (Join-Path $arcRepository "native\$arcCrate\Cargo.toml")
+        if ($LASTEXITCODE -ne 0) { throw "Build failed for $arcCrate" }
+    }
+}
+foreach ($arcExecutable in $arcExecutables.Values) {
+    if (-not (Test-Path -LiteralPath $arcExecutable -PathType Leaf)) {
+        throw "Missing $arcExecutable. Run this launcher with -Build first."
+    }
+}
+New-Item -ItemType Directory -Path $arcProject -Force | Out-Null
+$arcConfigPath = Join-Path $arcProject 'arc-science.toml'
+if (-not (Test-Path -LiteralPath $arcConfigPath)) {
+    & $arcExecutables.Supervisor --project $arcProject init --python $arcPython
+    if ($LASTEXITCODE -ne 0) { throw 'Native project initialization failed.' }
+}
+# Ask the native supervisor to validate all configuration before using host/port.
+& $arcExecutables.Supervisor --project $arcProject config | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Native project configuration is invalid.' }
+$arcConfigReader = @'
+import json, sys, tomllib
+with open(sys.argv[1], "rb") as stream:
+    print(json.dumps(tomllib.load(stream)["worker"]))
+'@
+$arcWorkerJson = $arcConfigReader | & $arcPython -X utf8 - $arcConfigPath
+if ($LASTEXITCODE -ne 0) { throw 'Configuration reading requires Python 3.11 or newer.' }
+$arcWorker = $arcWorkerJson | ConvertFrom-Json
+$arcHost = [string]$arcWorker.host
+if ($arcHost.Contains(':')) { $arcHost = "[$arcHost]" }
+$arcEnvironment = @{
+    PYTHONUTF8 = '1'
+    PYTHONPATH = (Join-Path $arcRepository 'apps\arc-science\src')
+    ARC_DESKTOP_URL = "http://${arcHost}:$($arcWorker.port)/"
+    ARC_DESKTOP_EXECUTABLE = $arcExecutables.Supervisor
+    ARC_DESKTOP_ARG_COUNT = '4'
+    ARC_DESKTOP_ARG_0 = '--project'
+    ARC_DESKTOP_ARG_1 = $arcProject
+    ARC_DESKTOP_ARG_2 = 'serve'
+    ARC_DESKTOP_ARG_3 = '--parent-stdin'
+    ARC_DESKTOP_SERVE = $null
+    ARC_MEMORY_WORKER = $arcExecutables.Memory
+    ARC_SVG2PNG = $arcExecutables.Svg
+}
+if ($BlenderPython) {
+    $arcEnvironment.ARC_MOLECULAR_BLENDER_PYTHON = (Get-Command $BlenderPython -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+}
+$arcPrevious = @{}
+try {
+    foreach ($arcKey in $arcEnvironment.Keys) {
+        $arcPrevious[$arcKey] = [Environment]::GetEnvironmentVariable($arcKey, 'Process')
+        if ($null -eq $arcEnvironment[$arcKey]) {
+            Remove-Item -LiteralPath "Env:$arcKey" -ErrorAction SilentlyContinue
+        } else {
+            [Environment]::SetEnvironmentVariable($arcKey, $arcEnvironment[$arcKey], 'Process')
+        }
+    }
+    if ($CheckStartup) { & $arcExecutables.Desktop --check-startup }
+    else { & $arcExecutables.Desktop }
+    if ($LASTEXITCODE -ne 0) { throw "Arc Science exited with status $LASTEXITCODE." }
+} finally {
+    foreach ($arcKey in $arcPrevious.Keys) {
+        if ($null -eq $arcPrevious[$arcKey]) {
+            Remove-Item -LiteralPath "Env:$arcKey" -ErrorAction SilentlyContinue
+        } else {
+            [Environment]::SetEnvironmentVariable($arcKey, $arcPrevious[$arcKey], 'Process')
+        }
+    }
+}

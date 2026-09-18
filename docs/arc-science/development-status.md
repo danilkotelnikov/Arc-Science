@@ -2,6 +2,11 @@
 
 This is a development application, not a certified scientific platform or a completed Rust rewrite. The verification record and retained reviews identify the exact tested revision.
 
+Current continuation: [local molecular workbench](molecular-workbench-2026-09-18.md),
+[Windows-native port](windows-native-port-2026-09-18.md), and
+[native memory implementation](native-session-memory-qualification-2026-09-16.md).
+Older verification records below remain historical evidence with their original scope.
+
 **Important finding I1 is independently approved and locally resolved for the Linux
 executor:** a private watchdog owns the renderer group and observes
 Python through a non-inherited liveness pipe. Deterministic regressions prove cleanup
@@ -16,12 +21,12 @@ and [fresh qualification](qualification-2026-09-11.md) distinguish those runs.
 | --- | --- | --- |
 | Arc Science in the Vedix repository | App under `apps/arc-science`, Arc Science root README, original Vedix plugins and history preserved | GitHub write access and repository-slug rename |
 | HeroUI workbench | Actual HeroUI components, molecular views, zoom, export, authenticated BioArt and Research workspaces | Browser pixel review; current evidence is DOM interaction, build and served bytes |
-| White molecular collages | Frozen 1DQJ candidate03, three transparent Blender views, annotated SVG views, coordinate-derived contact CSV and matrix | New structures, official Blender requalification, and publication-specific review |
+| White molecular collages | Frozen 1DQJ candidate03 plus authenticated local coordinate-to-Blender jobs, white collage, contact CSV and provenance downloads | Structure-specific visual review and publication-specific review; successful computation is not scientific validation |
 | NIH BioArt intake | CLI and HeroUI search/inspection, format-aware neutral selection with explicit override, entry-bound files, consent-gated transfer, verified previews/downloads, cache receipts and checked SVG import | Live vector retrieval and real NIH file compatibility |
 | BioArt rights | Entry-specific credit retained; automation currently limited to exact Public Domain entries | Other license policies require review; no whole-catalog reuse assumption |
 | Reliable network behavior | Owned transport in a deadline-bound process; no redirects or permission bypass; offline fault tests | Service availability and future website-schema compatibility |
-| Native Rust application | Strict TOML configuration, exclusive `init --python`, config/doctor/serve/worker and typed BioArt commands, direct argument launch, tested cooperative and repeated cancellation, Python-owned renderer watchdog; fresh Linux build and installed-wheel bridge qualified on 2026-09-11 | Windows/macOS execution and signed desktop installers; Windows cross-target check is not runtime qualification; calculations still run in Python |
-| Native agent/session memory | [Researched proposal](native-session-memory-proposal-2026-09-11.md): project-scoped verbatim storage, hybrid retrieval, warm Rust service and optional MemPalace import | Design approval, implementation, real embedding/recall/latency tests and context-evidence integration |
+| Native Rust application | Native supervisor plus `native/arc-desktop` WebView shell and transparent Snöggo SVG icon; scientific calculations remain in Python. Windows worker/renderer paths are implemented | Signed desktop installers, macOS execution, and qualification of each process-lifecycle boundary |
+| Native agent/session memory | Rust SQLite/zstd storage and worker, lexical search, Python capture/API and Memory workspace; see [qualification](native-session-memory-qualification-2026-09-16.md) | Provision a real embedder, benchmark semantic recall/latency, freeze retrieved context into replay evidence, and expose capture failures |
 | HoH foundation | Bounded candidate work, fixed roles, single writer, independent QA and evidence preservation | Broader harness evolution and scientific-validity evaluation |
 | Scientific image review | Exact candidate bytes/hashes and separate reference roles supported by provider protocol | Live provider-based comparison in this environment |
 | Programming/ML diagrams | React Flow with ELK researched as a later editor | Shared graph model, editor and controlled SVG export not shipped |
@@ -43,6 +48,9 @@ The preserved Vedix plugin suite passed 443 tests, but the broader inherited roo
 
 The current scientific test environment reports NumPy/scikit-image marching-cubes deprecation warnings. The client-only HeroUI build reports three `use client` directive warnings. Passing tests do not erase this dependency-maintenance work; the warnings are not blanket-suppressed.
 
-The BioArt cache requires POSIX no-follow/descriptor primitives and rejects unsupported platforms before creating a cache. A portable native launcher cannot make the Python importer Windows-compatible by itself. Neither source-level CI configuration nor a Linux binary qualifies unexecuted Windows/macOS builds.
+The BioArt cache now has separate POSIX and Windows paths. Windows rejects reparse
+points but lacks POSIX directory-descriptor anchoring, and its fetch deadline is
+cooperative. Passing POSIX-only tests through skips does not establish equivalent
+Windows guarantees. Live NIH transfer remains a separate qualification gate.
 
 The native launcher is noninteractive, with null input and inherited output. Its `doctor` checks local executable presence, not package imports or scientific validity. [Native setup and limits](../../native/arc-science/README.md) describe the Python bridge, cancellation scope and Linux measurements.

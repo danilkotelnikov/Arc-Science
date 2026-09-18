@@ -100,10 +100,22 @@ impl Worker {
     }
 
     pub fn handle(&self, request: Request) -> Response {
+        if let Request::Search { limit, .. }
+        | Request::Semantic { limit, .. }
+        | Request::Hybrid { limit, .. } = &request
+            && !(1..=100).contains(limit)
+        {
+            return Response::error("limit must be between 1 and 100");
+        }
         match request {
             Request::Health => Response::ok(json!({
                 "protocol": crate::PROTOCOL_VERSION,
                 "sqlite": crate::sqlite_version(),
+                "retrieval_modes": if self.embedder.is_some() {
+                    vec!["lexical", "semantic", "hybrid"]
+                } else {
+                    vec!["lexical"]
+                },
             })),
             Request::Append { record } => match self.engine.append(&record) {
                 Ok(id) => Response::ok(json!({ "record_id": id })),
@@ -121,10 +133,18 @@ impl Worker {
                 session,
                 from_seq,
                 to_seq,
-            } => serialize(
-                self.engine
-                    .session_fetch(&project, &session, from_seq, to_seq),
-            ),
+            } => {
+                if from_seq.is_some_and(|seq| seq < 0)
+                    || to_seq.is_some_and(|seq| seq < 0)
+                    || matches!((from_seq, to_seq), (Some(from), Some(to)) if from > to)
+                {
+                    return Response::error("invalid session sequence range");
+                }
+                serialize(
+                    self.engine
+                        .session_fetch(&project, &session, from_seq, to_seq),
+                )
+            }
             Request::Disable { record_id } => match self.engine.disable(&record_id) {
                 Ok(()) => Response::ok(json!({ "disabled": true })),
                 Err(error) => Response::error(error.to_string()),
@@ -173,6 +193,12 @@ fn serialize<T: Serialize>(result: Result<T>) -> Response {
 
 /// Write one length-prefixed frame.
 pub fn write_frame<W: Write>(writer: &mut W, payload: &[u8]) -> io::Result<()> {
+    if payload.len() > MAX_FRAME {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "frame too large",
+        ));
+    }
     let length = u32::try_from(payload.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "frame too large"))?;
     writer.write_all(&length.to_le_bytes())?;
@@ -207,7 +233,11 @@ pub fn serve<R: Read, W: Write>(worker: &Worker, input: &mut R, output: &mut W) 
         let body = serde_json::to_vec(&response).unwrap_or_else(|_| {
             br#"{"status":"error","error":"failed to serialize response"}"#.to_vec()
         });
-        write_frame(output, &body)?;
+        if body.len() > MAX_FRAME {
+            write_frame(output, br#"{"status":"error","error":"response exceeds frame limit; narrow the query or session range"}"#)?;
+        } else {
+            write_frame(output, &body)?;
+        }
     }
     Ok(())
 }

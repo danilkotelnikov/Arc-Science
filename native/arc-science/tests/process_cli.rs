@@ -87,7 +87,6 @@ fn bioart_help_needs_no_project_or_python() {
     }
 }
 
-#[cfg(not(windows))]
 #[test]
 fn bioart_search_preserves_offline_snapshot_and_egress_is_opt_in() {
     let temp = fixture();
@@ -138,7 +137,6 @@ fn bioart_search_preserves_offline_snapshot_and_egress_is_opt_in() {
     );
 }
 
-#[cfg(not(windows))]
 #[test]
 fn bioart_inspect_and_fetch_forward_typed_ids_and_exact_format_spelling() {
     let temp = fixture();
@@ -216,7 +214,6 @@ fn bioart_inspect_and_fetch_forward_typed_ids_and_exact_format_spelling() {
     }
 }
 
-#[cfg(not(windows))]
 #[test]
 fn bioart_verify_and_import_never_accept_egress_and_forward_project_once() {
     let temp = fixture();
@@ -276,7 +273,6 @@ fn bioart_rejects_malformed_values_before_worker_launch() {
     }
 }
 
-#[cfg(not(windows))]
 #[test]
 fn bioart_preserves_leading_hyphen_positionals_and_option_paths_as_data() {
     let temp = fixture();
@@ -322,29 +318,6 @@ fn bioart_preserves_leading_hyphen_positionals_and_option_paths_as_data() {
             "-receipt 日本.json"
         ])
     );
-}
-
-#[cfg(windows)]
-#[test]
-fn direct_bioart_is_rejected_before_worker_launch_on_windows() {
-    let temp = fixture();
-    let output = worker(&temp)
-        .args([
-            "bioart",
-            "search",
-            "antibody",
-            "--search-html",
-            "snapshot.html",
-        ])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("POSIX cache/import")
-    );
-    assert!(!temp.path().join("record.json").exists());
 }
 
 #[test]
@@ -449,6 +422,88 @@ fn serve_passes_configured_values_as_separate_arguments() {
 }
 
 #[test]
+fn supervised_serve_reaps_worker_and_descendant_when_parent_pipe_closes() {
+    use std::{
+        io::Read,
+        net::TcpListener,
+        process::Stdio,
+        thread,
+        time::{Duration, Instant},
+    };
+    let temp = fixture();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    fs::write(temp.path().join("arc_science/__main__.py"), r#"
+import os, socket, subprocess, sys, time
+port = int(os.environ['ARC_TEST_OBSERVER_PORT'])
+observer = socket.create_connection(('127.0.0.1', port))
+observer.sendall(b'P')
+code = "import socket,time; s=socket.create_connection(('127.0.0.1'," + str(port) + ")); s.sendall(b'C'); time.sleep(15)"
+subprocess.Popen([sys.executable, '-c', code], stdin=subprocess.DEVNULL)
+time.sleep(15)
+"#).unwrap();
+    let mut child = worker(&temp)
+        .args(["serve", "--parent-stdin"])
+        .env(
+            "ARC_TEST_OBSERVER_PORT",
+            listener.local_addr().unwrap().port().to_string(),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut streams = vec![];
+    while streams.len() < 2 && Instant::now() < deadline {
+        if let Ok((mut stream, _)) = listener.accept() {
+            stream
+                .set_read_timeout(Some(Duration::from_secs(4)))
+                .unwrap();
+            let mut marker = [0];
+            stream.read_exact(&mut marker).unwrap();
+            streams.push(stream);
+        }
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut live = child.try_wait().unwrap().is_none();
+    drop(child.stdin.take());
+    let shutdown = Instant::now();
+    while child.try_wait().unwrap().is_none() && shutdown.elapsed() < Duration::from_secs(4) {
+        thread::sleep(Duration::from_millis(10));
+    }
+    if child.try_wait().unwrap().is_none() {
+        live = false;
+        child.kill().unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(
+        streams.len(),
+        2,
+        "worker and descendant must both connect: {output:?}"
+    );
+    assert!(
+        live,
+        "parent pipe must govern a live worker, with bounded shutdown: {output:?}"
+    );
+    assert_eq!(output.status.code(), Some(130), "{output:?}");
+    for mut stream in streams {
+        match stream.read(&mut [0]) {
+            Ok(0) => (),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                ) => {}
+            other => panic!("owned process must release its observer socket: {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn worker_propagates_nonzero_exit_and_rejects_missing_arguments() {
     let temp = fixture();
     assert_eq!(
@@ -494,7 +549,7 @@ fn doctor_reports_local_availability_without_executing_worker_or_validation() {
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains("Python executable: available"));
     assert!(text.contains("Scientific validation: not performed"));
-    assert!(text.contains("Windows BioArt: unsupported"));
+    assert!(text.contains("BioArt: delegates to the installed Python provider"));
     assert!(text.contains("Blender"));
     assert!(text.contains("Lean"));
     assert!(!temp.path().join("record.json").exists());

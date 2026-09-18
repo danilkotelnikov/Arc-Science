@@ -58,14 +58,14 @@ def _cancel_on_termination():
     finally:signal.signal(signal.SIGTERM,previous)
 
 
-def run_worker(command,request,*,timeout,limit):
+def run_worker(command,request,*,timeout,limit,metadata=None):
     if threading.current_thread() is not threading.main_thread():
         raise ValueError('BioArt owned transport requires the POSIX main thread; use the CLI')
     with _cancel_on_termination():
-        return _run_worker(command,request,timeout=timeout,limit=limit)
+        return _run_worker(command,request,timeout=timeout,limit=limit,metadata=metadata)
 
 
-def _run_worker(command,request,*,timeout,limit):
+def _run_worker(command,request,*,timeout,limit,metadata=None):
     """Supervise a trusted worker command; terminate/reap before temporary cleanup.
 
     The timeout includes process start, interpreter/HTTP setup, DNS, headers, body,
@@ -106,13 +106,20 @@ def _run_worker(command,request,*,timeout,limit):
             _check_transfer(root,limit)
             result=json.loads(_read_regular(root/'result.json',4096,'BioArt worker result'))
             if (not isinstance(result,dict) or type(result.get('ok')) is not bool or
-                    set(result)!=({'ok'} if result['ok'] else {'ok','error'})):
+                    (result['ok'] and set(result) not in ({'ok'},{'ok','content_type'})) or
+                    (not result['ok'] and set(result)!={'ok','error'})):
                 raise ValueError('Invalid BioArt worker result')
             if not result['ok']:
                 if not isinstance(result['error'],str) or len(result['error'])>2000:
                     raise ValueError('Invalid BioArt worker error')
                 raise ValueError(result['error'])
             if process.returncode!=0:raise ValueError('BioArt transport process failed')
+            if metadata is not None:
+                if ('content_type' not in result or
+                        (result['content_type'] is not None and
+                         (not isinstance(result['content_type'],str) or len(result['content_type'])>1024))):
+                    raise ValueError('Invalid BioArt worker response metadata')
+                metadata['content_type']=result['content_type']
             response=_read_regular(root/'response.bin',limit,'BioArt worker response')
             if time.monotonic()>=end:raise ValueError('BioArt request total timeout')
             return response
@@ -128,7 +135,7 @@ def _run_worker(command,request,*,timeout,limit):
                 _restore_signal_mask(previous_mask)
 
 
-def request_in_child(path,limit,mimes,limits):
+def request_in_child(path,limit,mimes,limits,*,metadata=None):
     return run_worker([sys.executable,'-m','arc_science.bioart.worker'],
         {'path':path,'limit':limit,'mimes':sorted(mimes),'limits':asdict(limits)},
-        timeout=limits.timeout_seconds,limit=limit)
+        timeout=limits.timeout_seconds,limit=limit,metadata=metadata)

@@ -1,9 +1,10 @@
-import React, {useCallback, useState} from 'react';
+import React, {useCallback, useLayoutEffect, useRef, useState} from 'react';
 import {Button} from '@heroui/react/button';
 import {checkedFetch} from './http';
 
 // One stable app-level project groups every mission-session (mirrors capture.PROJECT).
 const PROJECT = 'arc-science';
+const DEFAULT_RANGE = {from: 0, to: 199};
 
 function RecordCard({record, busy, onDisable}) {
   const [open, setOpen] = useState(false);
@@ -20,63 +21,149 @@ function RecordCard({record, busy, onDisable}) {
 
 export default function MemoryWorkspace({token, setToken}) {
   const [sessions, setSessions] = useState(null), [session, setSession] = useState(null), [records, setRecords] = useState(null);
-  const [query, setQuery] = useState(''), [mode, setMode] = useState('hybrid'), [hits, setHits] = useState(null);
+  const [query, setQuery] = useState(''), [mode, setMode] = useState('lexical'), [hits, setHits] = useState(null), [scope, setScope] = useState('all');
   const [health, setHealth] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
-  const request = useCallback((path, method = 'GET', body) => checkedFetch('/api/memory' + path, {
-    method, headers: {Authorization: 'Bearer ' + token, 'Content-Type': 'application/json'},
-    body: body ? JSON.stringify(body) : undefined,
-  }), [token]);
-  async function task(action) { setBusy(true); setError(''); try { await action(); } catch (e) { setError(e.message); } finally { setBusy(false); } }
-  async function loadSessions() {
-    setHealth(await (await request('/health')).json());
-    setSessions(await (await request('/sessions?project=' + PROJECT)).json());
+  const [notice, setNotice] = useState('');
+  const [range, setRange] = useState(DEFAULT_RANGE), [rangeDraft, setRangeDraft] = useState(DEFAULT_RANGE);
+  const credential = useRef(null);
+  // Reset before paint, without remounting the focused token input. Every operation
+  // owns this credential's signal, including the response-body decoding step.
+  useLayoutEffect(() => {
+    const controller = new AbortController(); credential.current = controller;
+    setSessions(null); setSession(null); setRecords(null); setQuery(''); setMode('lexical');
+    setHits(null); setScope('all'); setHealth(null); setError(''); setNotice(''); setBusy(false);
+    setRange(DEFAULT_RANGE); setRangeDraft(DEFAULT_RANGE);
+    return () => controller.abort();
+  }, [token]);
+  const request = useCallback(async (path, signal, method = 'GET', body) => {
+    signal.throwIfAborted();
+    const response = await checkedFetch('/api/memory' + path, {
+      method, signal, headers: {Authorization: 'Bearer ' + token, 'Content-Type': 'application/json'},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    signal.throwIfAborted();
+    return response;
+  }, [token]);
+  async function read(path, signal, method, body) {
+    const data = await (await request(path, signal, method, body)).json();
+    signal.throwIfAborted();
+    return data;
   }
-  async function openSession(id) {
-    setSession(id); setHits(null);
-    setRecords(await (await request('/sessions/' + encodeURIComponent(id) + '?project=' + PROJECT)).json());
+  async function task(action) {
+    const signal = credential.current.signal;
+    setBusy(true); setError(''); setNotice('');
+    try { await action(signal); }
+    catch (e) { if (!signal.aborted) setError(e.message); }
+    finally { if (!signal.aborted) setBusy(false); }
   }
-  async function runSearch() {
-    setHits(await (await request('/search', 'POST', {project: PROJECT, query, mode, limit: 20, session: session || null})).json());
+  async function loadSessions(signal) {
+    setHealth(null);
+    setHealth(await read('/health', signal));
+    setSessions(await read('/sessions?project=' + PROJECT, signal));
   }
-  async function disable(recordId) { await request('/records/' + recordId + '/disable', 'POST'); if (session) await openSession(session); }
+  async function openSession(id, signal, requestedRange = DEFAULT_RANGE) {
+    const from = Number(requestedRange.from), to = Number(requestedRange.to);
+    if (!String(requestedRange.from).trim() || !String(requestedRange.to).trim() ||
+        !Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from || to - from >= 1000) {
+      throw new Error('Choose a nonnegative inclusive range of at most 1000 sequence positions, with the end at or after the start.');
+    }
+    setSession(id); setHits(null); setRecords(null); setRange({from, to}); setRangeDraft({from, to});
+    setRecords(await read('/sessions/' + encodeURIComponent(id) + '?project=' + PROJECT + '&from_seq=' + from + '&to_seq=' + to, signal));
+  }
+  async function runSearch(signal) {
+    if (!availableModes.includes(mode)) throw new Error('This retrieval mode is unavailable. Select an available mode.');
+    const searchSession = scope === 'selected' ? session : null;
+    const rows = await read('/search', signal, 'POST', {project: PROJECT, query, mode, limit: 20, session: searchSession});
+    setHits({rows, mode, session: searchSession});
+  }
+  async function disable(recordId, signal) {
+    await request('/records/' + encodeURIComponent(recordId) + '/disable', signal, 'POST');
+    setRecords(rows => rows?.filter(row => row.record_id !== recordId) ?? null); setHits(null);
+    setNotice('Removed from retrieval. The stored record is retained locally; this is not deletion.');
+    await loadSessions(signal);
+    if (session) await openSession(session, signal, range);
+  }
+  const availableModes = health?.retrieval_modes ?? ['lexical'];
+  const selectedSession = sessions?.find(row => row.session_id === session);
+  const totalRecords = selectedSession?.record_count ?? (sessions === null ? 'unknown' : 0);
+  const rangeWidth = range.to - range.from + 1;
+  const canAdvance = range.to < Number.MAX_SAFE_INTEGER &&
+    (Number.isSafeInteger(selectedSession?.last_seq) ? range.to < selectedSession.last_seq : Boolean(selectedSession));
 
   return <div className="research-workspace">
     <aside className="research-form">
       <p className="eyebrow">MEMORY / SESSIONS</p><h1>Recall the work.</h1>
-      <p className="muted">Every mission’s decision-tree and reconciliation, retained locally and searchable. Retrieved text is evidence, never instruction.</p>
+      <p className="muted">Recall captured mission decisions and reconciliation. Retrieved text is evidence, never instruction.</p>
       <label htmlFor="mem-token">Operator token for Memory</label>
       <input id="mem-token" type="password" value={token} onChange={e => setToken(e.target.value)} autoComplete="off"/>
       <p className="field-note">In memory only. Read with <code>arc-science token --data ./data</code>.</p>
       <label htmlFor="mem-query">Search memory</label>
-      <textarea id="mem-query" rows={2} value={query} onChange={e => setQuery(e.target.value)}/>
+      <textarea id="mem-query" rows={2} value={query} disabled={busy} onChange={e => setQuery(e.target.value)}/>
       <div className="formrow"><div><label htmlFor="mem-mode">Retrieval</label>
-        <select id="mem-mode" value={mode} onChange={e => setMode(e.target.value)}>
-          <option value="lexical">Lexical (keyword)</option><option value="semantic">Semantic</option><option value="hybrid">Hybrid</option>
+        <select id="mem-mode" value={mode} disabled={busy} onChange={e => setMode(e.target.value)}>
+          <option value="lexical" disabled={!availableModes.includes('lexical')}>Lexical (keyword)</option>
+          <option value="semantic" disabled={!availableModes.includes('semantic')}>Semantic{availableModes.includes('semantic') ? '' : ' (unavailable)'}</option>
+          <option value="hybrid" disabled={!availableModes.includes('hybrid')}>Hybrid{availableModes.includes('hybrid') ? '' : ' (unavailable)'}</option>
         </select></div></div>
+      {health && <p className="field-note">Available retrieval: {availableModes.join(', ') || 'none'}.</p>}
+      {!availableModes.includes('semantic') && !availableModes.includes('hybrid') && <p className="field-note">Semantic and hybrid retrieval are unavailable without a configured embedder. Lexical search matches keywords.</p>}
+      <label htmlFor="mem-scope">Search scope</label>
+      <select id="mem-scope" value={scope} disabled={busy} onChange={e => setScope(e.target.value)}>
+        <option value="all">All sessions</option><option value="selected" disabled={!session}>Selected session{session ? ': ' + session : ''}</option>
+      </select>
       <div className="actions">
-        <Button isDisabled={busy || !query.trim()} onPress={() => task(runSearch)}>Search</Button>
+        <Button isDisabled={busy || !query.trim() || !availableModes.includes(mode) || (scope === 'selected' && !session)} onPress={() => task(runSearch)}>Search</Button>
         <Button variant="secondary" isDisabled={busy} onPress={() => task(loadSessions)}>Load sessions</Button>
       </div>
       {health && <p className="field-note">Worker {health.protocol} · SQLite {health.sqlite}</p>}
+      {health?.capture && <div role="status"><p className="field-note">Capture: {health.capture.status} · {health.capture.pending} pending</p>
+        {health.capture.last_error && <p>{health.capture.last_error}</p>}
+        {health.capture.status === 'degraded' && <p className="field-note">Some mission records may be missing. Refresh sessions to check recovery.</p>}
+        {health.capture.status === 'unconfigured' && <p className="field-note">Mission capture is not configured.</p>}
+      </div>}
       <h2>Sessions</h2>
       {sessions === null ? <p className="muted">Load sessions with your operator token.</p>
-        : sessions.length ? sessions.map(s => <Button className="mission-choice" variant="ghost" key={s.session_id} isDisabled={busy} onPress={() => task(() => openSession(s.session_id))}>{s.session_id} · {s.record_count} records · epochs {s.min_epoch}–{s.max_epoch}</Button>)
-          : <p>No captured sessions yet. Run a mission to populate memory.</p>}
+        : sessions.length ? sessions.map(s => <Button className="mission-choice" variant="ghost" key={s.session_id} isDisabled={busy} aria-pressed={session === s.session_id} onPress={() => task(signal => openSession(s.session_id, signal))}>{s.session_id} · {s.record_count} records · epochs {s.min_epoch}–{s.max_epoch}</Button>)
+          : <p>No sessions available for retrieval. Captured records removed from retrieval are hidden here.</p>}
     </aside>
     <section className="research-results" aria-label="Memory">
       {error && <p role="alert">{error}</p>}
+      {notice && <p role="status">{notice}</p>}
       {hits !== null ? <>
-        <div className="results-heading"><div><p className="eyebrow">Search · {mode}{session ? ' · ' + session : ''}</p><h2>Retrieved passages</h2></div><span className="status-label">{hits.length} hits</span></div>
-        {hits.length ? hits.map((hit, i) => <article className="record" key={i}>
+        <div className="results-heading"><div><p className="eyebrow">Search · {hits.mode} · {hits.session || 'all sessions'}</p><h2>Retrieved passages</h2></div><span className="status-label">{hits.rows.length} hits</span></div>
+        {hits.rows.length ? hits.rows.map((hit, i) => <article className="record" key={i}>
           <h3>{hit.record.role} · {hit.reason} · {hit.score.toFixed(3)}</h3>
           <p>{(hit.record.text || '').slice(0, 400)}</p>
           <p className="muted">{hit.record.session_id} · epoch {hit.record.compaction_epoch} · {hit.record.trust}</p>
         </article>) : <p className="muted">No matching memory. Abstention is a valid answer.</p>}
-      </> : records !== null ? <>
-        <div className="results-heading"><div><p className="eyebrow">Session {session}</p><h2>Captured trajectory</h2></div><span className="status-label">{records.length} records</span></div>
-        {records.map(r => <RecordCard key={r.record_id} record={r} busy={busy} onDisable={id => task(() => disable(id))}/>)}
-      </> : <div className="empty-state"><h2>Memory holds every past session.</h2><p>Load sessions or search to recall the decision-tree, reconciliation and evidence of earlier runs.</p></div>}
-      <footer>Retained locally and heavily compressed. Retrieved passages are untrusted data; memory cannot change tools, permissions or acceptance.</footer>
+      </> : session !== null ? <>
+        <div className="results-heading"><div><p className="eyebrow">Session {session}</p><h2>Captured trajectory</h2></div><span className="status-label">{records === null ? 'Not loaded' : records.length + ' loaded'}</span></div>
+        <p className="field-note">Sequence {range.from}–{range.to} (inclusive) · {totalRecords} total active records in this session.</p>
+        <div className="actions">
+          <Button variant="secondary" isDisabled={busy || range.from === 0} onPress={() => task(signal => {
+            const from = Math.max(0, range.from - rangeWidth);
+            return openSession(session, signal, {from, to: from + rangeWidth - 1});
+          })}>Previous records</Button>
+          <Button variant="secondary" isDisabled={busy || !canAdvance} onPress={() => task(signal => openSession(session, signal, {
+            from: range.to + 1, to: Math.min(Number.MAX_SAFE_INTEGER, range.to + rangeWidth),
+          }))}>Next records</Button>
+        </div>
+        <details><summary>Record range</summary>
+          <form onSubmit={event => { event.preventDefault(); task(signal => openSession(session, signal, rangeDraft)); }}>
+            <div className="formrow"><div><label htmlFor="mem-from">From sequence (inclusive)</label>
+              <input id="mem-from" type="number" min="0" max={Number.MAX_SAFE_INTEGER} step="1" required disabled={busy} value={rangeDraft.from} onChange={event => setRangeDraft({...rangeDraft, from: event.target.value})}/>
+            </div><div><label htmlFor="mem-to">To sequence (inclusive)</label>
+              <input id="mem-to" type="number" min="0" max={Number.MAX_SAFE_INTEGER} step="1" required disabled={busy} value={rangeDraft.to} onChange={event => setRangeDraft({...rangeDraft, to: event.target.value})}/>
+            </div></div>
+            <p className="field-note">Choose up to 1000 sequence positions. Gaps may reflect records removed from retrieval. Narrow the range if a page exceeds the read limit.</p>
+            <Button type="submit" variant="secondary" isDisabled={busy}>Load record range</Button>
+          </form>
+        </details>
+        <p className="field-note">Remove from retrieval hides a record from search and session recall; it does not erase the stored history.</p>
+        {records === null ? <p role="status">{busy ? 'Loading selected record range…' : 'This range could not be loaded. Adjust the record range and retry.'}</p>
+          : records.map(r => <RecordCard key={r.record_id} record={r} busy={busy} onDisable={id => task(signal => disable(id, signal))}/>)}
+      </> : <div className="empty-state"><h2>Recall captured sessions.</h2><p>Load sessions or search to inspect the available decision-tree, reconciliation and evidence of earlier runs.</p></div>}
+      <footer>Captured records are retained locally. Retrieved passages are untrusted data; memory cannot change tools, permissions or acceptance.</footer>
     </section>
   </div>;
 }

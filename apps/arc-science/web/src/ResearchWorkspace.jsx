@@ -1,6 +1,20 @@
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from 'react';
 import {Button} from '@heroui/react/button';
 import {checkedFetch, downloadResponse} from './http';
+
+const DEFAULT_GOAL='Compare competing explanations of the nonlinear response and challenge the preferred fit.';
+
+function VerificationReport({report}) {
+  const outcome=value=>value===true?'passed':value===false?'failed':'not reported';
+  return <section className="record" aria-label="Verification report">
+    <h3>Replay verification: {outcome(report.reproduction_passed)}</h3>
+    <p>Integrity: {outcome(report.integrity)} · Evidence graph: {outcome(report.evidence_graph_valid)}</p>
+    <p>Recomputed: {report.reproduced ?? 'unreported'} computations · {report.artifacts_reproduced ?? 'unreported'} artifacts.</p>
+    <p>Scientific validity is not established by replay verification.</p>
+    {report.failures?.length>0&&<p role="alert">{report.failures.length} verification failures. Inspect the details before relying on this replay.</p>}
+    <details><summary>Verification details</summary><pre>{JSON.stringify(report,null,2)}</pre></details>
+  </section>;
+}
 
 function Artifact({missionId,artifact,request}) {
   const [url,setUrl]=useState('');
@@ -17,30 +31,58 @@ function Artifact({missionId,artifact,request}) {
 }
 
 export default function ResearchWorkspace({token,setToken}) {
-  const [goal,setGoal]=useState('Compare competing explanations of the nonlinear response and challenge the preferred fit.');
+  const [goal,setGoal]=useState(DEFAULT_GOAL);
   const [mode,setMode]=useState('demo'),[egress,setEgress]=useState(false),[vision,setVision]=useState(false),[rounds,setRounds]=useState(5),[points,setPoints]=useState('');
   const [mission,setMission]=useState(null),[missions,setMissions]=useState(null),[verification,setVerification]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
-  const selected=useRef(null),generation=useRef(0);
-  const request=useCallback((path,method='GET',body,signal)=>checkedFetch('/api'+path,{method,signal,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined}),[token]);
-  async function task(action){setBusy(true);setError('');try{await action();}catch(e){setError(e.message);}finally{setBusy(false);}}
+  const selected=useRef(null),generation=useRef(0),credential=useRef(null);
+  // Clear all private state before paint while keeping token entry focused.
+  useLayoutEffect(()=>{
+    const controller=new AbortController();credential.current=controller;
+    generation.current++;selected.current=null;
+    setMission(null);setMissions(null);setVerification(null);setError('');setBusy(false);
+    setGoal(DEFAULT_GOAL);setMode('demo');setEgress(false);setVision(false);setRounds(5);setPoints('');
+    return()=>controller.abort();
+  },[token]);
+  const request=useCallback(async(path,method='GET',body,signal)=>{
+    signal.throwIfAborted();
+    const response=await checkedFetch('/api'+path,{method,signal,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+    signal.throwIfAborted();return response;
+  },[token]);
+  const read=useCallback(async(path,signal,method='GET',body)=>{
+    const data=await(await request(path,method,body,signal)).json();
+    signal.throwIfAborted();return data;
+  },[request]);
+  async function task(action){
+    const signal=credential.current.signal;
+    setBusy(true);setError('');
+    try{await action(signal);}catch(e){if(!signal.aborted)setError(e.message);}finally{if(!signal.aborted)setBusy(false);}
+  }
   const refresh=useCallback(async(id,signal)=>{
     const epoch=generation.current;
-    const row=await(await request('/missions/'+id,'GET',undefined,signal)).json();
-    if(epoch===generation.current&&selected.current===id&&!signal?.aborted)setMission(row);
+    const row=await read('/missions/'+id,signal);
+    if(epoch===generation.current&&selected.current===id&&!signal.aborted)setMission(row);
     return row;
-  },[request]);
-  async function select(id){generation.current++;selected.current=id;setMission(null);setVerification(null);await refresh(id);}
+  },[read]);
+  async function select(id,signal){generation.current++;selected.current=id;setMission(null);setVerification(null);await refresh(id,signal);}
   useEffect(()=>{
     if(!mission||!['ready','running'].includes(mission.state.status))return;
     const controller=new AbortController();let timer;
-    async function poll(){try{await refresh(mission.id,controller.signal);}catch(e){if(e.name!=='AbortError')setError(e.message);}if(!controller.signal.aborted)timer=setTimeout(poll,1000);}
+    const owner=credential.current;
+    const abort=()=>controller.abort();owner.signal.addEventListener('abort',abort,{once:true});
+    async function poll(){try{await refresh(mission.id,controller.signal);}catch(e){if(!controller.signal.aborted&&e.name!=='AbortError')setError(e.message);}if(!controller.signal.aborted)timer=setTimeout(poll,1000);}
     timer=setTimeout(poll,1000);
-    return ()=>{controller.abort();clearTimeout(timer);};
+    return ()=>{controller.abort();clearTimeout(timer);owner.signal.removeEventListener('abort',abort);};
   },[mission?.id,mission?.state.status,refresh]);
-  async function start(){
-    const row=await(await request('/missions','POST',{goal,mode,max_rounds:Number(rounds),allow_egress:egress,vision_review:vision,points:points.trim()?JSON.parse(points):null})).json();
+  async function start(signal){
+    const row=await read('/missions',signal,'POST',{goal,mode,max_rounds:Number(rounds),allow_egress:egress,vision_review:vision,points:points.trim()?JSON.parse(points):null});
     generation.current++;selected.current=row.id;setMission(row);setVerification(null);
-    await request('/missions/'+row.id+'/start','POST');await refresh(row.id);
+    await request('/missions/'+row.id+'/start','POST',undefined,signal);await refresh(row.id,signal);
+  }
+  async function exportCapsule(signal){
+    const response=await request('/missions/'+mission.id+'/capsule','GET',undefined,signal);
+    await downloadResponse({blob:async()=>{
+      const blob=await response.blob();signal.throwIfAborted();return blob;
+    }},'arc-'+mission.id+'.zip');
   }
   const state=mission?.state;
   return <div className="research-workspace">
@@ -51,17 +93,17 @@ export default function ResearchWorkspace({token,setToken}) {
       <details><summary>Optional x/y measurements</summary><label htmlFor="points">Measurement JSON</label><textarea id="points" rows={4} value={points} onChange={e=>setPoints(e.target.value)}/><p className="muted">8–2000 numeric x/y points. Leave empty for public-source exploration in live mode.</p></details>
       <label className="check"><input type="checkbox" checked={egress} onChange={e=>setEgress(e.target.checked)}/>Permit sending this mission’s data to configured models.</label>
       <label className="check"><input type="checkbox" checked={vision} onChange={e=>setVision(e.target.checked)}/>Require configured visual review of each new fit image.</label>
-      <div className="actions"><Button isDisabled={busy||!goal.trim()} onPress={()=>task(start)}>Create and start</Button><Button variant="secondary" isDisabled={busy} onPress={()=>task(async()=>setMissions(await(await request('/missions')).json()))}>Load missions</Button></div>
+      <div className="actions"><Button isDisabled={busy||!goal.trim()} onPress={()=>task(start)}>Create and start</Button><Button variant="secondary" isDisabled={busy} onPress={()=>task(async signal=>setMissions(await read('/missions',signal)))}>Load missions</Button></div>
       <p className="muted">Offline mode uses a scripted planner and real numerical computations. It is not a live-model benchmark.</p>
-      <h2>Saved missions</h2>{missions===null?<p className="muted">Load missions with your operator token.</p>:missions.length?missions.map(row=><Button className="mission-choice" variant="ghost" key={row.id} isDisabled={busy} onPress={()=>task(()=>select(row.id))}>{row.status} · {row.goal}</Button>):<p>No saved missions. Create a mission to begin.</p>}
+      <h2>Saved missions</h2>{missions===null?<p className="muted">Load missions with your operator token.</p>:missions.length?missions.map(row=><Button className="mission-choice" variant="ghost" key={row.id} isDisabled={busy} onPress={()=>task(signal=>select(row.id,signal))}>{row.status} · {row.goal}</Button>):<p>No saved missions. Create a mission to begin.</p>}
     </aside>
     <section className="research-results" aria-label="Research results">
       {error&&<p role="alert">{error}</p>}
       {!state?<div className="empty-state"><h2>Evidence begins with a mission.</h2><p>Create one or load a saved run to inspect its decision frontier.</p></div>:<>
         <div className="results-heading"><div><p className="eyebrow">Selected mission: {mission.id}</p><h2>Decision frontier</h2></div><span className="status-label">{state.status}</span></div>
         <p className="muted">Round {state.round} · {state.actions_used} actions · {state.model_calls_used} model-role calls · data: {state.data_origin}</p>
-        <div className="actions"><Button isDisabled={busy} onPress={()=>task(async()=>setVerification(await(await request('/missions/'+mission.id+'/verify')).json()))}>Verify and recompute</Button><Button variant="secondary" isDisabled={busy} onPress={()=>task(async()=>downloadResponse(await request('/missions/'+mission.id+'/capsule'),'arc-'+mission.id+'.zip'))}>Export replay capsule</Button><Button variant="ghost" isDisabled={busy||!['ready','paused'].includes(state.status)} onPress={()=>task(async()=>{await request('/missions/'+mission.id+'/start','POST');await refresh(mission.id);})}>Resume</Button><Button variant="danger" isDisabled={busy||state.status==='cancelled'} onPress={()=>task(async()=>{await request('/missions/'+mission.id+'/cancel','POST');await refresh(mission.id);})}>Cancel</Button></div>
-        <p role="status">{state.stop_reason}</p>{verification&&<pre>{JSON.stringify(verification,null,2)}</pre>}
+        <div className="actions"><Button isDisabled={busy} onPress={()=>task(async signal=>setVerification(await read('/missions/'+mission.id+'/verify',signal)))}>Verify and recompute</Button><Button variant="secondary" isDisabled={busy} onPress={()=>task(exportCapsule)}>Export replay capsule</Button><Button variant="ghost" isDisabled={busy||!['ready','paused'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/start','POST',undefined,signal);await refresh(mission.id,signal);})}>Resume</Button><Button variant="danger" isDisabled={busy||state.status==='cancelled'} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/cancel','POST',undefined,signal);await refresh(mission.id,signal);})}>Cancel</Button></div>
+        <p role="status">{state.stop_reason}</p>{verification&&<VerificationReport report={verification}/>}
         <div className="branches">{state.branches.map(branch=><article key={branch.id} className={'branch'+(state.focus===branch.id?' focus':'')}><h3>{branch.title}</h3><p>{branch.hypothesis}</p><p>Falsifier: {branch.falsifier}</p><p className="muted">Opened round {branch.created_round} · parents: {branch.parents.join(', ')||'root'}</p></article>)}</div>
         <h2>Visual artifacts</h2><div className="artifacts">{state.artifacts.length?state.artifacts.map(artifact=><Artifact key={mission.id+artifact.digest} missionId={mission.id} artifact={artifact} request={request}/>):<p className="muted">No visual artifacts in this mission.</p>}</div>
         <h2>Visual review</h2>{state.visual_reports.length?state.visual_reports.map((report,i)=><div className="record" key={i}><h3>{report.model} · round {report.round} · {report.verdict}</h3>{report.findings.map((finding,j)=><p key={j}>{finding.category}: {finding.detail}</p>)}</div>):<p className="muted">No visual review report. No passing qualification is implied.</p>}

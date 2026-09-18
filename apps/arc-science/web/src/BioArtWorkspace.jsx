@@ -22,6 +22,7 @@ function ProtectedPreview({receipt,request}) {
 
 export default function BioArtWorkspace({token,setToken}) {
   const [query,setQuery]=useState('antibody'),[metadataEgress,setMetadataEgress]=useState(false),[fetchEgress,setFetchEgress]=useState(false);
+  const [entryId,setEntryId]=useState('');
   const [hits,setHits]=useState(null),[entry,setEntry]=useState(null),[receipt,setReceipt]=useState(null),[imported,setImported]=useState(null);
   const [format,setFormat]=useState('SVG'),[representation,setRepresentation]=useState('auto');
   const [error,setError]=useState(''),[busy,setBusy]=useState(false);
@@ -51,6 +52,8 @@ export default function BioArtWorkspace({token,setToken}) {
     await downloadResponse(response,`bioart-${receipt.entry_id}.${receipt.format.toLowerCase()}`);
   }
   const formats=useMemo(()=>entry?formatOrder.filter(candidate=>entry.representations.some(item=>candidate in item.files)):[],[entry]);
+  const validEntryId=/^[0-9]+$/.test(entryId.trim())&&Number.isSafeInteger(Number(entryId))&&Number(entryId)>0;
+  const nihSearchUrl='https://bioart.niaid.nih.gov/discover?'+new URLSearchParams({q:query.trim(),sort:'relevance'});
   return <div className="bioart-workspace" aria-busy={busy}>
     <aside className="bioart-search" aria-label="BioArt search">
       <p className="eyebrow">BIOART / NIH</p><h1>Source vectors.</h1>
@@ -61,6 +64,10 @@ export default function BioArtWorkspace({token,setToken}) {
       <label className="check"><input type="checkbox" checked={metadataEgress} disabled={busy} onChange={event=>setMetadataEgress(event.target.checked)}/>Permit NIH network access for the next search or inspection</label>
       <Button isDisabled={busy||!token||!query.trim()} onPress={()=>task(search,{consent:metadataEgress,clearConsent:setMetadataEgress})}><Icon name="search"/>Search NIH BioArt</Button>
       <p className="field-note">Consent is consumed by one action and then cleared. Cache hits remain offline.</p>
+      <p className="field-note">NIH’s live search currently requires browser rendering. <a href={nihSearchUrl} target="_blank" rel="noreferrer">Open NIH search</a> to find an entry ID, then inspect it here.</p>
+      <label htmlFor="bioart-entry-id">NIH entry ID</label><input id="bioart-entry-id" inputMode="numeric" value={entryId} disabled={busy} aria-describedby="bioart-entry-id-help" aria-invalid={entryId.trim()!==''&&!validEntryId} onChange={event=>setEntryId(event.target.value)}/>
+      <p id="bioart-entry-id-help" className="field-note">Enter the positive whole-number ID. For BIOART-000018, enter 18.</p>
+      <Button variant="secondary" isDisabled={busy||!token||!validEntryId} onPress={()=>task(consent=>inspect(Number(entryId),consent),{consent:metadataEgress,clearConsent:setMetadataEgress})}>Inspect entry</Button>
       {busy&&<p role="status" className="operation-status">BioArt request in progress…</p>}
       <h2>Results</h2>
       {hits===null?<p className="muted">No search run in this session.</p>:hits.length?<div className="bioart-results-list">{hits.map(hit=><Button className="bioart-result" variant="ghost" key={hit.entry_id} isDisabled={busy} onPress={()=>task(consent=>inspect(hit.entry_id,consent),{consent:metadataEgress,clearConsent:setMetadataEgress})}>{hit.title} · BIOART-{String(hit.entry_id).padStart(6,'0')}</Button>)}</div>:<p>No matching entries in the returned metadata.</p>}

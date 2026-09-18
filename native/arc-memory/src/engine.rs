@@ -5,6 +5,7 @@
 //! provenance and the per-session sequence. The engine bundles its own SQLite
 //! (>= 3.51.3) so it does not depend on the host's `sqlite3`.
 use std::collections::{BTreeMap, HashMap};
+use std::io::Read;
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, Row, ToSql, params};
@@ -19,6 +20,8 @@ use crate::record::{
 
 /// zstd level for at-rest text ("heavily compressed" per the design).
 const ZSTD_LEVEL: i32 = 19;
+const MAX_FETCH_RECORDS: usize = 1000;
+const MAX_FETCH_TEXT_BYTES: usize = 8 * 1024 * 1024;
 
 /// Columns selected for a full record read, joined to the decompressible blob.
 const RECORD_COLUMNS: &str = "r.record_id, r.project, r.session, r.agent, r.seq, r.role, \
@@ -160,6 +163,17 @@ impl Engine {
     /// Lexical search within a scope. Returns ranked visible hits, or an empty
     /// vector (abstention) when nothing matches. A blank query abstains.
     pub fn search(&self, scope: &Scope, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+        let mut remaining = MAX_FETCH_TEXT_BYTES;
+        self.search_bounded(scope, query, limit, &mut remaining)
+    }
+
+    fn search_bounded(
+        &self,
+        scope: &Scope,
+        query: &str,
+        limit: usize,
+        remaining: &mut usize,
+    ) -> Result<Vec<SearchHit>> {
         let match_expr = fts_match_expression(query);
         if match_expr.is_empty() {
             return Ok(Vec::new());
@@ -176,31 +190,29 @@ impl Engine {
              ORDER BY score LIMIT ?5"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(
-                params![
-                    match_expr,
-                    scope.project,
-                    scope.session,
-                    scope.agent,
-                    limit as i64
-                ],
-                |row| {
-                    let raw = read_raw(row)?;
-                    let score: f64 = row.get(15)?;
-                    Ok((raw, score))
-                },
-            )?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        rows.into_iter()
-            .map(|(raw, score)| {
-                Ok(SearchHit {
-                    record: hydrate(raw)?,
-                    score,
-                    reason: "lexical".to_string(),
-                })
+        let rows = stmt.query_map(
+            params![
+                match_expr,
+                scope.project,
+                scope.session,
+                scope.agent,
+                limit as i64
+            ],
+            |row| {
+                let raw = read_raw(row)?;
+                let score: f64 = row.get(15)?;
+                Ok((raw, score))
+            },
+        )?;
+        rows.map(|row| {
+            let (raw, score) = row?;
+            Ok(SearchHit {
+                record: hydrate_bounded(raw, remaining)?,
+                score,
+                reason: "lexical".to_string(),
             })
-            .collect()
+        })
+        .collect()
     }
 
     /// Read one record back by id (regardless of visibility), integrity-checked.
@@ -254,13 +266,20 @@ impl Engine {
     fn query_records(&self, tail: &str, bind: &[&dyn ToSql]) -> Result<Vec<StoredRecord>> {
         let sql = format!(
             "SELECT {RECORD_COLUMNS} FROM records r \
-             JOIN blobs b ON b.content_digest = r.content_digest WHERE {tail}"
+             JOIN blobs b ON b.content_digest = r.content_digest WHERE {tail} LIMIT 1001"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let raws = stmt
-            .query_map(bind, read_raw)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        raws.into_iter().map(hydrate).collect()
+        let raws = stmt.query_map(bind, read_raw)?;
+        let mut records = Vec::new();
+        let mut remaining = MAX_FETCH_TEXT_BYTES;
+        for raw in raws {
+            let raw = raw?;
+            if records.len() == MAX_FETCH_RECORDS {
+                return Err(read_budget_error());
+            }
+            records.push(hydrate_bounded(raw, &mut remaining)?);
+        }
+        Ok(records)
     }
 
     /// Embed all visible records missing an embedding for this embedder's
@@ -336,6 +355,18 @@ impl Engine {
         query: &str,
         limit: usize,
     ) -> Result<Vec<SearchHit>> {
+        let mut remaining = MAX_FETCH_TEXT_BYTES;
+        self.semantic_search_bounded(scope, embedder, query, limit, &mut remaining)
+    }
+
+    fn semantic_search_bounded(
+        &self,
+        scope: &Scope,
+        embedder: &dyn Embedder,
+        query: &str,
+        limit: usize,
+        remaining: &mut usize,
+    ) -> Result<Vec<SearchHit>> {
         let query_vector = embedder
             .embed(&[query])?
             .pop()
@@ -376,7 +407,7 @@ impl Engine {
             .into_iter()
             .map(|(score, raw)| {
                 Ok(SearchHit {
-                    record: hydrate(raw)?,
+                    record: hydrate_bounded(raw, remaining)?,
                     score,
                     reason: "semantic".to_string(),
                 })
@@ -396,8 +427,10 @@ impl Engine {
     ) -> Result<Vec<SearchHit>> {
         const RRF_K: f64 = 60.0;
         let pool = limit.max(1).saturating_mul(4);
-        let lexical = self.search(scope, query, pool)?;
-        let semantic = self.semantic_search(scope, embedder, query, pool)?;
+        let mut remaining = MAX_FETCH_TEXT_BYTES;
+        let lexical = self.search_bounded(scope, query, pool, &mut remaining)?;
+        let semantic =
+            self.semantic_search_bounded(scope, embedder, query, pool, &mut remaining)?;
 
         let mut fused: HashMap<String, (f64, StoredRecord)> = HashMap::new();
         for list in [lexical, semantic] {
@@ -465,8 +498,31 @@ fn read_raw(row: &Row) -> rusqlite::Result<Raw> {
     })
 }
 
+fn read_budget_error() -> Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "retrieval exceeds the bounded read budget; narrow the session range or search limit",
+    )
+    .into()
+}
+
+fn hydrate_bounded(raw: Raw, remaining: &mut usize) -> Result<StoredRecord> {
+    if raw.original_size < 0 || raw.original_size as u64 > *remaining as u64 {
+        return Err(read_budget_error());
+    }
+    *remaining -= raw.original_size as usize;
+    hydrate(raw)
+}
+
 fn hydrate(raw: Raw) -> Result<StoredRecord> {
-    let text_bytes = zstd::decode_all(raw.data.as_slice())?;
+    // Even corrupt metadata or a compressed bomb cannot allocate without a cap.
+    let mut text_bytes = Vec::new();
+    zstd::Decoder::new(raw.data.as_slice())?
+        .take(MAX_FETCH_TEXT_BYTES as u64 + 1)
+        .read_to_end(&mut text_bytes)?;
+    if text_bytes.len() > MAX_FETCH_TEXT_BYTES {
+        return Err(Error::Corrupt("record exceeds decoded text limit"));
+    }
     if text_bytes.len() as i64 != raw.original_size || sha256_hex(&text_bytes) != raw.content_digest
     {
         return Err(Error::Corrupt("record text failed integrity check"));

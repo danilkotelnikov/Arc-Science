@@ -16,7 +16,7 @@ export function App() {
     <div className="app-body"><nav className="workspace-nav" aria-label="Workspaces"><p className="eyebrow">WORKSPACE</p><Button variant="ghost" aria-pressed={workspace==='molecules'} onPress={()=>setWorkspace('molecules')}><Icon name="atom"/>Molecules</Button><Button variant="ghost" aria-pressed={workspace==='bioart'} onPress={()=>setWorkspace('bioart')}><Icon name="scan-search"/>BioArt</Button><Button variant="ghost" aria-pressed={workspace==='research'} onPress={()=>setWorkspace('research')}><Icon name="search"/>Research</Button><Button variant="ghost" aria-pressed={workspace==='memory'} onPress={()=>setWorkspace('memory')}><Icon name="database"/>Memory</Button><p className="nav-footnote">Explore.<br/>Inspect.<br/>Reproduce.</p></nav>
       <main className="workspace-content">
         {/* Keep both workspaces mounted: credentials, goal and selection stay in memory. */}
-        <div hidden={workspace!=='molecules'}><MolecularWorkspace/></div>
+        <div hidden={workspace!=='molecules'}><MolecularWorkspace token={token} setToken={setToken}/></div>
         <div hidden={workspace!=='bioart'}><BioArtWorkspace token={token} setToken={setToken}/></div>
         <div hidden={workspace!=='research'}><ResearchWorkspace token={token} setToken={setToken}/></div>
         <div hidden={workspace!=='memory'}><MemoryWorkspace token={token} setToken={setToken}/></div>

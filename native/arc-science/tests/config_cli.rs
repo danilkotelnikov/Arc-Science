@@ -171,7 +171,14 @@ fn rejects_unknown_fields_schema_ports_hosts_and_limits() {
             "cache_dir = '../outside'",
         ),
         ("cache_dir = \".arc-science/bioart\"", "cache_dir = '.'"),
-        ("python = \"python3\"", "python = ''"),
+        (
+            if cfg!(windows) {
+                "python = \"python\""
+            } else {
+                "python = \"python3\""
+            },
+            "python = ''",
+        ),
     ] {
         let temp = init();
         mutate(&temp, from, to);

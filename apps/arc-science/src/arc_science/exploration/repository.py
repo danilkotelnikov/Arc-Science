@@ -1,5 +1,6 @@
 """Transactional mission snapshots, cancellation fencing and hash-chained receipts."""
 from __future__ import annotations
+from contextlib import closing, contextmanager
 import json
 import sqlite3
 import uuid
@@ -21,7 +22,13 @@ class MissionRepository:
                     mission TEXT NOT NULL, revision INTEGER NOT NULL, state_digest TEXT NOT NULL,
                     previous TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY(mission,revision));''')
 
-    def _connect(self):return sqlite3.connect(self.path,timeout=15,isolation_level=None)
+    @contextmanager
+    def _connect(self):
+        # SQLite's transaction context commits/rolls back but does not close the
+        # connection. Release handles deterministically, including error paths.
+        with closing(sqlite3.connect(self.path,timeout=15,isolation_level=None)) as db:
+            with db:
+                yield db
 
     @staticmethod
     def _row(row):
