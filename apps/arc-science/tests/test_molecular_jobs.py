@@ -46,6 +46,8 @@ assert 'ANTHROPIC_API_KEY' not in os.environ
 assert os.environ['HOME']==str(root/'private')
 if mode=='sleep':
     time.sleep(60)
+if mode=='chain':
+    sys.stderr.write('ValueError: Requested author chain is missing: H, L\\n'); sys.exit(1)
 if mode=='fail':
     raise RuntimeError('private /operator/secret/path must not reach the API')
 output=root/'output'; output.mkdir()
@@ -436,3 +438,14 @@ def test_shutdown_during_readiness_probe_never_starts_a_render(tmp_path, runtime
                 with suppress(asyncio.CancelledError):
                     await manager.task
     asyncio.run(exercise())
+
+
+def test_domain_failure_reason_is_surfaced_without_private_paths(tmp_path, runtime):
+    """A wrong chain ID is the common user mistake; the worker's bounded domain error
+    must reach the record, while path-bearing errors (see the 'fail' mode) stay generic."""
+    runtime['value'] = 'chain'
+    with TestClient(make_app(tmp_path)) as client:
+        row = terminal(client, client.post(PREFIX + '/renders', headers=AUTH, json=REQUEST).json()['id'])
+        assert row['status'] == 'failed' and row['assets'] == {}
+        assert 'Requested author chain is missing: H, L' in row['error']
+        assert 'private' not in row['error'] and str(tmp_path) not in row['error']

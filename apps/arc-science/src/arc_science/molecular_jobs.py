@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from typing import Annotated, Literal
 import uuid
@@ -130,6 +131,34 @@ def _environment(private, svg2png):
     return environment
 
 
+STDERR_TAIL_BYTES = 4096
+MAX_REASON_CHARS = 200
+
+
+class WorkerFailure(RuntimeError):
+    """The molecular worker exited non-zero; `reason` is a surfaceable domain error or None."""
+
+    def __init__(self, reason=None):
+        super().__init__('Molecular process failed')
+        self.reason = reason
+
+
+def _failure_reason(stderr_tail, forbidden):
+    """The worker's last stderr line, only when it is a bounded domain error that
+    names no path. The CLI prints `ValueError: ...`/`RuntimeError: ...` for its own
+    checks (wrong chain, bad cutoff, failed image checks); tracebacks, OSErrors and
+    anything path-like stay behind the generic message."""
+    lines = bytes(stderr_tail).decode('utf-8', errors='replace').splitlines()
+    last = lines[-1].strip() if lines else ''
+    for prefix in ('ValueError: ', 'RuntimeError: '):
+        if last.startswith(prefix):
+            reason = last[len(prefix):].strip()
+            if (0 < len(reason) <= MAX_REASON_CHARS and '/' not in reason and chr(92) not in reason
+                    and not any(ord(c) < 32 for c in reason) and not any(f and f in reason for f in forbidden)):
+                return reason
+    return None
+
+
 def _stop_process(process):
     from .figure_render import _kill_renderer, _kill_tree_windows
     if os.name == 'nt':
@@ -223,10 +252,28 @@ class MolecularJobs:
         private.mkdir(mode=0o700, exist_ok=True)
         options = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {'start_new_session': True}
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                   stderr=subprocess.DEVNULL, cwd=directory,
+                                   stderr=subprocess.PIPE, cwd=directory,
                                    env=_environment(private, self.svg2png), **options)
         if track:
             self.process = process
+        # Keep only a bounded tail of stderr so a failure can name its domain error
+        # without ever buffering an unbounded log or writing it next to the outputs.
+        stderr_tail = bytearray()
+        stderr_fd = process.stderr.fileno()
+
+        def drain():
+            while True:
+                try:
+                    chunk = os.read(stderr_fd, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                stderr_tail.extend(chunk)
+                if len(stderr_tail) > STDERR_TAIL_BYTES:
+                    del stderr_tail[:-STDERR_TAIL_BYTES]
+        drainer = threading.Thread(target=drain, daemon=True)
+        drainer.start()
         try:
             deadline = time.monotonic() + timeout
             while process.poll() is None:
@@ -234,7 +281,8 @@ class MolecularJobs:
                     raise TimeoutError('Molecular render deadline exceeded.')
                 await asyncio.sleep(.05)
             if process.returncode:
-                raise RuntimeError('Molecular process failed')
+                drainer.join(2)
+                raise WorkerFailure(_failure_reason(stderr_tail, (str(directory), str(self.root))))
         finally:
             # Await cleanup before exposing a terminal status or accepting a new job.
             # A shutdown can cancel a job already being cancelled by its HTTP request.
@@ -246,6 +294,8 @@ class MolecularJobs:
                 except asyncio.CancelledError as error:
                     cancellation = error
             cleanup.result()
+            with suppress(OSError):
+                process.stderr.close()
             if track:
                 self.process = None
             if cancellation is not None:
@@ -401,6 +451,9 @@ class MolecularJobs:
             raise
         except TimeoutError:
             self._finish(row, 'failed', 'Molecular render exceeded its total deadline.')
+        except WorkerFailure as failure:
+            self._finish(row, 'failed', 'Molecular rendering failed: ' + failure.reason if failure.reason else
+                         'Molecular rendering or artifact checks failed. Verify coordinates, chain selections and server runtime.')
         except Exception:
             self._finish(row, 'failed', 'Molecular rendering or artifact checks failed. Verify coordinates, chain selections and server runtime.')
         finally:
