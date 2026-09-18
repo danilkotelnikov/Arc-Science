@@ -109,6 +109,75 @@ def _render_cancellation():
             signal.signal(signum, handler)
 
 
+def _kill_on_close_job():
+    """A Windows job object whose whole process tree the kernel terminates when the
+    last handle to it closes -- which happens when this process dies for any reason.
+
+    This is the crash-containment guarantee taskkill cannot give: a forced kill or
+    crash of the owner leaves no cooperative cleanup to run, but every handle it held
+    is closed by the OS, and JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE does the rest. The
+    caller must keep the returned handle open for the child's lifetime and close it
+    (or simply exit) to reap the tree. Windows 8+ nests jobs, so an owner already
+    inside a job (a terminal, the native supervisor) can still create this one."""
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+
+    class BasicLimits(ctypes.Structure):
+        _fields_ = [('PerProcessUserTimeLimit', ctypes.c_int64), ('PerJobUserTimeLimit', ctypes.c_int64),
+                    ('LimitFlags', wintypes.DWORD), ('MinimumWorkingSetSize', ctypes.c_size_t),
+                    ('MaximumWorkingSetSize', ctypes.c_size_t), ('ActiveProcessLimit', wintypes.DWORD),
+                    ('Affinity', ctypes.c_size_t), ('PriorityClass', wintypes.DWORD),
+                    ('SchedulingClass', wintypes.DWORD)]
+
+    class IoCounters(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_uint64) for name in (
+            'ReadOperationCount', 'WriteOperationCount', 'OtherOperationCount',
+            'ReadTransferCount', 'WriteTransferCount', 'OtherTransferCount')]
+
+    class ExtendedLimits(ctypes.Structure):
+        _fields_ = [('BasicLimitInformation', BasicLimits), ('IoInfo', IoCounters),
+                    ('ProcessMemoryLimit', ctypes.c_size_t), ('JobMemoryLimit', ctypes.c_size_t),
+                    ('PeakProcessMemoryUsed', ctypes.c_size_t), ('PeakJobMemoryUsed', ctypes.c_size_t)]
+
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        raise OSError(ctypes.get_last_error(), 'CreateJobObjectW failed')
+    limits = ExtendedLimits()
+    limits.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    job_object_extended_limit_information = 9
+    if not kernel32.SetInformationJobObject(wintypes.HANDLE(job), job_object_extended_limit_information,
+                                            ctypes.byref(limits), ctypes.sizeof(limits)):
+        error = ctypes.get_last_error()
+        kernel32.CloseHandle(wintypes.HANDLE(job))
+        raise OSError(error, 'SetInformationJobObject failed')
+    return job
+
+
+def _assign_process_to_job(job, process):
+    """Place a just-spawned child (and every descendant it spawns afterwards) in the job."""
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    process_set_quota, process_terminate = 0x0100, 0x0001
+    handle = kernel32.OpenProcess(process_set_quota | process_terminate, False, process.pid)
+    if not handle:
+        raise OSError(ctypes.get_last_error(), 'OpenProcess failed')
+    try:
+        if not kernel32.AssignProcessToJobObject(wintypes.HANDLE(job), wintypes.HANDLE(handle)):
+            raise OSError(ctypes.get_last_error(), 'AssignProcessToJobObject failed')
+    finally:
+        kernel32.CloseHandle(wintypes.HANDLE(handle))
+
+
+def _close_job(job):
+    import ctypes
+    from ctypes import wintypes
+    ctypes.WinDLL('kernel32').CloseHandle(wintypes.HANDLE(job))
+
+
 def _kill_tree_windows(process):
     """Kill the renderer and any Blender children it spawned (taskkill /T = the tree).
 

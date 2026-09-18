@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, Validation
 
 from . import anchored
 from .figure_contract import read_regular, write_new
+from .figure_render import _assign_process_to_job, _close_job, _kill_on_close_job
 
 MAX_SOURCE_BYTES = 750000
 MAX_BODY_BYTES = 1024 * 1024
@@ -251,9 +252,28 @@ class MolecularJobs:
         private = directory / 'private'
         private.mkdir(mode=0o700, exist_ok=True)
         options = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {'start_new_session': True}
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                   stderr=subprocess.PIPE, cwd=directory,
-                                   env=_environment(private, self.svg2png), **options)
+        # Crash containment (Windows): the render tree lives in a kill-on-close job
+        # object. If this service dies for any reason -- crash, forced kill -- the OS
+        # closes the handle and terminates the CLI and its Blender descendants, which
+        # no cooperative cleanup could do. POSIX uses the process group for this.
+        job = _kill_on_close_job() if os.name == 'nt' else None
+        try:
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.PIPE, cwd=directory,
+                                       env=_environment(private, self.svg2png), **options)
+        except BaseException:
+            if job is not None:
+                _close_job(job)
+            raise
+        if job is not None:
+            try:
+                _assign_process_to_job(job, process)
+            except OSError:
+                # Assignment can only fail before the CLI spawns Blender; fall back to
+                # the cooperative tree kill rather than run an uncontained render.
+                _stop_process(process)
+                _close_job(job)
+                raise
         if track:
             self.process = process
         # Keep only a bounded tail of stderr so a failure can name its domain error
@@ -296,6 +316,8 @@ class MolecularJobs:
             cleanup.result()
             with suppress(OSError):
                 process.stderr.close()
+            if job is not None:
+                _close_job(job)  # kill-on-close reaps anything taskkill missed
             if track:
                 self.process = None
             if cancellation is not None:

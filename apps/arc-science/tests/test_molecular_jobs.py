@@ -449,3 +449,41 @@ def test_domain_failure_reason_is_surfaced_without_private_paths(tmp_path, runti
         assert row['status'] == 'failed' and row['assets'] == {}
         assert 'Requested author chain is missing: H, L' in row['error']
         assert 'private' not in row['error'] and str(tmp_path) not in row['error']
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows job-object crash containment')
+def test_job_object_kills_render_subtree_when_owner_handle_closes(tmp_path):
+    """Crash containment: closing the job handle is what happens when the service dies
+    for any reason. The whole assigned subtree -- including a grandchild spawned later --
+    must be terminated by the OS without any cooperative cleanup."""
+    import os, ctypes
+    from arc_science.figure_render import _kill_on_close_job, _assign_process_to_job
+    child = tmp_path / 'child.py'
+    child.write_text('import subprocess, sys, time\n'
+                     'g = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])\n'
+                     'open(sys.argv[1], "w").write(str(g.pid))\n'
+                     'time.sleep(60)\n', encoding='utf-8')
+    pid_file = tmp_path / 'grandchild.pid'
+    job = _kill_on_close_job()
+    parent = subprocess.Popen([sys.executable, '-I', str(child), str(pid_file)],
+                              creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+    try:
+        _assign_process_to_job(job, parent)
+        for _ in range(200):
+            if pid_file.exists() and pid_file.read_text():
+                break
+            time.sleep(.05)
+        grandchild = int(pid_file.read_text())
+        ctypes.windll.kernel32.CloseHandle(job)           # the owner dies
+        parent.wait(timeout=5)
+        assert parent.returncode is not None
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            probe = subprocess.run(['tasklist', '/FI', f'PID eq {grandchild}', '/NH'], capture_output=True, text=True)
+            if str(grandchild) not in probe.stdout:
+                break
+            time.sleep(.1)
+        assert str(grandchild) not in probe.stdout, 'grandchild survived the owner death'
+    finally:
+        if parent.poll() is None:
+            parent.kill()
