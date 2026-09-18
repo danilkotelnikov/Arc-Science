@@ -1,12 +1,47 @@
 //! Native Rust host for the local Arc Science workbench. See README for lifecycle limits.
+mod external;
 mod startup;
 use startup::{Config, start_service};
 use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoop};
+use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::{Icon, WindowBuilder};
 use wry::WebViewBuilder;
 
 const SNOGGO: &[u8] = include_bytes!("../assets/snoggo-icon.svg");
+
+/// Shell events delivered to the event loop from WebView callbacks.
+enum Shell {
+    /// A download finished; the page is told so it can show the outcome, because
+    /// the WebView hosts no download UI of its own here.
+    DownloadFinished {
+        file: Option<String>,
+        folder: Option<String>,
+        success: bool,
+    },
+}
+
+/// A JavaScript string literal (or `null`) for text that came from the file system.
+fn js_string(value: Option<&str>) -> String {
+    let Some(value) = value else {
+        return "null".into();
+    };
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if c.is_control() || c == '\u{2028}' || c == '\u{2029}' => {
+                out.push_str(&format!("\\u{{{:x}}}", c as u32))
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
 
 /// Rasterize the Snöggo mark to a `size`×`size` transparent RGBA buffer, cropped to
 /// its bounding box so the mark fills the square with no white (or empty) padding.
@@ -25,6 +60,30 @@ fn render_icon_rgba(size: u32) -> Option<Vec<u8>> {
 fn snoggo_icon() -> Option<Icon> {
     let size: u32 = 256;
     Icon::from_rgba(render_icon_rgba(size)?, size, size).ok()
+}
+
+/// Browser profile (cache, storage) under the user's local application data, so it
+/// is never written beside the executable, which an installed copy cannot write.
+fn profile_directory() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os(if cfg!(windows) {
+        "LOCALAPPDATA"
+    } else {
+        "HOME"
+    })?;
+    let directory = std::path::PathBuf::from(base)
+        .join(if cfg!(windows) {
+            "ArcScience"
+        } else {
+            ".arc-science"
+        })
+        .join("webview");
+    match std::fs::create_dir_all(&directory) {
+        Ok(()) => Some(directory),
+        Err(error) => {
+            eprintln!("arc-science-desktop: using the default browser profile location ({error})");
+            None
+        }
+    }
 }
 
 fn run() -> Result<(), String> {
@@ -48,7 +107,8 @@ fn run() -> Result<(), String> {
     }
 
     // No event loop, window or WebView is created until local readiness passes.
-    let event_loop = EventLoop::new();
+    let event_loop = EventLoopBuilder::<Shell>::with_user_event().build();
+    let shell = event_loop.create_proxy();
     let mut window = WindowBuilder::new()
         .with_title("Arc Science")
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 860.0));
@@ -59,23 +119,64 @@ fn run() -> Result<(), String> {
         .build(&event_loop)
         .map_err(|e| format!("Cannot create desktop window: {e}"))?;
     let origin = config.url.clone();
-    let download_origin = origin.clone();
-    let _webview = WebViewBuilder::new()
+    let mut context = wry::WebContext::new(profile_directory());
+    // Every downloadable URL is same-origin by construction because navigation is;
+    // the download itself is left to the WebView and only its outcome is reported.
+    let webview = WebViewBuilder::new_with_web_context(&mut context)
         .with_url(&config.url.display)
         .with_navigation_handler(move |target| origin.allows(&target))
-        .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny)
-        .with_download_started_handler(move |target, _| download_origin.allows(&target))
+        .with_download_completed_handler(move |_uri, path, success| {
+            let text = |p: Option<&std::path::Path>| p.and_then(|p| p.to_str()).map(str::to_owned);
+            let _ = shell.send_event(Shell::DownloadFinished {
+                file: text(
+                    path.as_deref()
+                        .and_then(|p| p.file_name())
+                        .map(std::path::Path::new),
+                ),
+                folder: text(path.as_deref().and_then(|p| p.parent())),
+                success,
+            });
+        })
+        .with_new_window_req_handler(|target, _| {
+            match external::external_target(&target) {
+                Some(url) => {
+                    if let Err(error) = external::open(&url) {
+                        eprintln!(
+                            "arc-science-desktop: cannot open {url} in the system browser: {error}"
+                        );
+                    }
+                }
+                None => eprintln!("arc-science-desktop: refused a new window for {target}"),
+            }
+            wry::NewWindowResponse::Deny
+        })
         .build(&window)
         .map_err(|e| format!("Cannot initialize desktop WebView: {e}"))?;
     event_loop.run(move |event, _target, control_flow| {
         *control_flow = ControlFlow::Wait;
-        if let Event::WindowEvent {
-            event: WindowEvent::CloseRequested,
-            ..
-        } = event
-        {
-            service.take();
-            *control_flow = ControlFlow::Exit;
+        match event {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                service.take();
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::UserEvent(Shell::DownloadFinished {
+                file,
+                folder,
+                success,
+            }) => {
+                let script = format!(
+                    "window.dispatchEvent(new CustomEvent('arc-download', {{detail: {{file: {}, folder: {}, success: {success}}}}}))",
+                    js_string(file.as_deref()),
+                    js_string(folder.as_deref())
+                );
+                if let Err(error) = webview.evaluate_script(&script) {
+                    eprintln!("arc-science-desktop: cannot report a download to the page: {error}");
+                }
+            }
+            _ => {}
         }
     });
 }
@@ -93,6 +194,21 @@ fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_report_is_a_safe_javascript_literal() {
+        assert_eq!(js_string(None), "null");
+        assert_eq!(js_string(Some("1dqj-collage.svg")), "\"1dqj-collage.svg\"");
+        assert_eq!(
+            js_string(Some(r"C:\Users\a b\Downloads")),
+            r#""C:\\Users\\a b\\Downloads""#
+        );
+        assert_eq!(
+            js_string(Some("x\"</script>\n\u{2028}\u{7}")),
+            r#""x\"</script>\n\u{2028}\u{7}""#
+        );
+    }
+
     #[test]
     fn icon_has_no_white_padding() {
         let size = 128u32;

@@ -1,6 +1,6 @@
 import React from 'react';
 import {beforeEach, afterEach, expect, test, vi} from 'vitest';
-import {render, screen, waitFor} from '@testing-library/react';
+import {act, render, screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {App} from './main.jsx';
 
@@ -281,4 +281,14 @@ test('memory workspace loads a captured session and searches its reasoning',asyn
   await user.type(screen.getByLabelText('Search memory'),'quadratic');
   await user.click(screen.getByRole('button',{name:'Search'}));
   await screen.findByText(/quadratic term hypothesis/);
+});
+
+test('native shell download outcomes are announced in the header and replace each other',async()=>{
+  render(<App/>);await screen.findByRole('img',{name:'Annotated collage'});
+  expect(document.querySelector('.download-notice')).toBeNull();
+  act(()=>{window.dispatchEvent(new CustomEvent('arc-download',{detail:{file:'1dqj-collage.svg',folder:'C:\Users\a b\Downloads',success:true}}));});
+  expect(screen.getByText('Saved 1dqj-collage.svg in C:\Users\a b\Downloads')).toHaveAttribute('role','status');
+  act(()=>{window.dispatchEvent(new CustomEvent('arc-download',{detail:{file:'1dqj-contacts.csv',folder:null,success:false}}));});
+  expect(screen.getByRole('alert')).toHaveTextContent('Download failed: 1dqj-contacts.csv. Nothing was saved.');
+  expect(screen.queryByText(/Saved 1dqj-collage/)).toBeNull();
 });

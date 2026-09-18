@@ -66,8 +66,18 @@ listener, failed executable, early child exit or timeout produces an error and n
 exit, before constructing a window or WebView.
 
 Main navigation stays on the configured scheme/IP/port. Same-origin `blob:` object
-URLs remain allowed for workbench downloads; other origins, file/data/script URLs and
-new windows are blocked. External links currently remain blocked in this host.
+URLs remain allowed for workbench downloads; other origins and file/data/script URLs
+are blocked. A new-window request (`target="_blank"`, `window.open`) never creates a
+second WebView: a clean `https:` target is handed to the operating system's default
+browser (`ShellExecuteW` on Windows, `open`/`xdg-open` elsewhere, never a shell), and
+anything else is refused with a note on stderr.
+
+Downloads are performed by the WebView itself. On this Windows runtime the WebView
+showed no download dialog of its own, so the host reports each finished download to
+the page as an `arc-download` window event (`file`, `folder`, `success`), which the
+workbench header announces. The browser profile (cache, storage) lives under
+`%LOCALAPPDATA%\ArcScience\webview` (`~/.arc-science/webview` elsewhere), never beside
+the executable.
 
 The desktop closes its private child-stdin pipe on normal close or startup/WebView
 failure. `arc-science-native serve --parent-stdin` treats EOF as cancellation and
@@ -82,11 +92,12 @@ The compatibility default `arc-science serve`, or an arbitrary configured comman
 has **direct-child-only fallback**; it cannot guarantee descendant cleanup. Always use
 the native supervisor for owned scientific workers. A reused service is never killed.
 
-The supervisor's process-wrap 9.0 JobObject does not enable kill-on-job-close. EOF
-supervision must remain active; forcibly killing the supervisor itself is not qualified
-as whole-tree containment. Platform crash/forced-termination guarantees and signed
-installer distribution remain separate release gates. Browser automation of the shared
-workbench does not prove native-window interaction or native download behavior.
+The supervisor's process-wrap 9.0 JobObject does not enable kill-on-job-close, so the
+supervisor joins its own kill-on-close job object before spawning (`containment.rs`);
+a forced supervisor kill reaps the worker and its descendants on Windows. Signed
+installer distribution and other platforms remain separate release gates. Browser
+automation of the shared workbench does not prove native-window behaviour; the native
+window was driven separately through UI Automation (see the HoH ledger).
 
 ## Verification
 
@@ -99,7 +110,8 @@ cargo clippy --locked --manifest-path native/arc-desktop/Cargo.toml --all-target
 
 Tests cover loopback/authority validation, root health paths, status/identity checks,
 redirect/proxy settings, remaining-deadline behavior, literal argv, reuse, spawn errors,
-early exits, timeout cleanup, local navigation and icon transparency. One ignored test
+early exits, timeout cleanup, local navigation, external-target filtering, the
+download-report script literal and icon transparency. One ignored test
 is an intentional subprocess fixture executed by its owning timeout regression.
 
 Developer verification on Windows, 2026-09-18: 12 desktop tests passed, 24 supervisor

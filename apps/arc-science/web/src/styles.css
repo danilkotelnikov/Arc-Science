@@ -20,6 +20,8 @@ button svg { flex-shrink: 0; }
 .development { color: #68727a; border-left: 1px solid #dce0e3; padding-left: 18px; font-size: 11px; font-weight: 400; letter-spacing: 0; }
 .header-note { color: #4d5962; margin-left: auto; font-size: 11px; }
 .app-header>a { font-size: 11px; color: #68727a; }
+.download-notice { margin: 0; padding: 5px 10px; font-size: 11px; border-radius: 4px; color: #315d7c; background: #eaf0f4; border: 1px solid #d9e3e9; }
+.download-notice.alert { color: #a23d3d; background: #fbeeee; border-color: #efd3d3; padding: 5px 10px; }
 .app-body { display: grid; grid-template-columns: 150px minmax(0,1fr); min-height: calc(100vh - 58px); }
 .workspace-nav { background: #f8f9fa; border-right: 1px solid #e4e7e9; padding: 25px 12px; display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
 .eyebrow { font-size: 10px; letter-spacing: 1.1px; color: #4d5962; font-weight: 600; }
