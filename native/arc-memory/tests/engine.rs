@@ -486,54 +486,374 @@ fn data_survives_engine_reopen() {
     assert_eq!(sessions[0].record_count, 1);
 }
 
+/// One mission-shaped session: short engine event lines and larger JSON model
+/// payloads that share a scientific vocabulary, keyed like the Python capture.
+fn mission_corpus(session: usize, records: usize) -> Vec<NewRecord> {
+    const TERMS: [&str; 12] = [
+        "hydrogen",
+        "bond",
+        "ligand",
+        "pocket",
+        "residue",
+        "epitope",
+        "paratope",
+        "salt",
+        "bridge",
+        "solvent",
+        "contact",
+        "interface",
+    ];
+    (0..records)
+        .map(|i| {
+            let term = |k: usize| TERMS[(session * 7 + i * 3 + k) % TERMS.len()];
+            let (agent, role, text) = if i % 10 < 7 {
+                (
+                    "engine",
+                    Role::System,
+                    format!(
+                        "[observation] round {} {} {} between Asp{} and chain {} scored {}",
+                        i / 10,
+                        term(0),
+                        term(1),
+                        (session * 13 + i) % 97,
+                        (b'A' + ((session + i) % 4) as u8) as char,
+                        (i * 37 % 100) as f32 / 100.0
+                    ),
+                )
+            } else {
+                let mut body = String::from("{\"assessments\":[");
+                for k in 0..(20 + (session + i) % 60) {
+                    if k > 0 {
+                        body.push(',');
+                    }
+                    body.push_str(&format!(
+                        "{{\"position\":\"{}\",\"evidence\":\"{} {} near residue {}\",\"weight\":{}}}",
+                        if k % 3 == 0 { "support" } else { "challenge" },
+                        term(k),
+                        term(k + 1),
+                        (session + i + k) % 300,
+                        k as f32 / 10.0
+                    ));
+                }
+                body.push_str("]}");
+                ("analyst", Role::Analyst, body)
+            };
+            let mut r = sample(&text);
+            r.session_id = format!("mission-{session:04}");
+            r.agent_id = agent.into();
+            r.role = role;
+            r.compaction_epoch = (i / 10) as i64;
+            r.idempotency_key = Some(format!("mission-{session:04}:{i}"));
+            r
+        })
+        .collect()
+}
+
+/// Corpus-scale measurement for the "memory scope" gate: 200 mission sessions of
+/// 100 records each (20k records, mixed short lines and 2-8 KiB JSON), timing the
+/// operations the service and UI actually issue. Budgets live in the HoH plan.
 #[test]
-#[ignore = "measurement; run explicitly with `--ignored --nocapture`"]
-fn measure_retrieval_latency() {
+#[ignore = "measurement; run explicitly with `--release --ignored --nocapture`"]
+fn measure_corpus_scale() {
     use std::time::Instant;
+    let sessions = 200usize;
+    let per_session = 100usize;
     let dir = tempdir().unwrap();
-    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    let db = dir.path().join("memory.db");
+    let engine = Engine::open(&db).unwrap();
     let embedder = HashingEmbedder { dim: 384 };
-    let n = 5000usize;
-    for i in 0..n {
-        let mut r = sample(&format!(
-            "record {i} hydrogen bond ligand pocket residue Asp{} chain {}",
-            i % 97,
-            (b'A' + (i % 4) as u8) as char
-        ));
-        r.session_id = format!("s{}", i % 10);
-        engine.append(&r).unwrap();
+
+    let mut bytes = 0usize;
+    let start = Instant::now();
+    for session in 0..sessions {
+        for r in mission_corpus(session, per_session) {
+            bytes += r.text.len();
+            engine.append(&r).unwrap();
+        }
     }
+    let n = sessions * per_session;
+    let append = start.elapsed();
+    let per_record_ms = append.as_secs_f64() * 1000.0 / n as f64;
+    eprintln!(
+        "append: {n} records, {:.1} MiB text, {per_record_ms:.2} ms/record mean, {:.1} s total (budget mean<=20ms)",
+        bytes as f64 / 1048576.0,
+        append.as_secs_f64()
+    );
+    assert!(
+        per_record_ms <= 20.0,
+        "append mean {per_record_ms:.2} ms exceeds 20 ms"
+    );
+    let start = Instant::now();
     let embedded = engine.embed_pending(&embedder).unwrap();
+    eprintln!(
+        "embed_pending: {embedded} vectors dim=384 in {:.1} s",
+        start.elapsed().as_secs_f64()
+    );
+    let start = Instant::now();
+    let replay = mission_corpus(7, per_session);
+    for r in &replay {
+        engine.append(r).unwrap();
+    }
+    let replayed = replay.len();
+    eprintln!(
+        "idempotent replay: {replayed} records in {:.2} ms",
+        start.elapsed().as_secs_f64() * 1000.0
+    );
+
     let sc = scope("proj-1");
     let pct = |mut v: Vec<u128>, p: usize| {
         v.sort();
-        v[v.len() * p / 100]
+        v[(v.len() * p / 100).min(v.len() - 1)]
     };
-    let bench = |label: &str, f: &dyn Fn()| {
+    // Each measurement prints p50/p95 and returns p95 in milliseconds, checked
+    // against the budget from docs/hoh/2026-09-19-plan.md so the run is decidable.
+    let bench = |label: &str, rounds: usize, budget_ms: f64, f: &dyn Fn()| -> f64 {
         let mut t = Vec::new();
-        for _ in 0..100 {
+        for _ in 0..rounds {
             let s = Instant::now();
             f();
             t.push(s.elapsed().as_micros());
         }
-        eprintln!(
-            "{label}: p50={}us p95={}us (n={n})",
-            pct(t.clone(), 50),
-            pct(t, 95)
+        let (p50, p95) = (
+            pct(t.clone(), 50) as f64 / 1000.0,
+            pct(t, 95) as f64 / 1000.0,
         );
+        eprintln!(
+            "{label}: p50={p50:.1}ms p95={p95:.1}ms (rounds={rounds}, budget p95<={budget_ms}ms)"
+        );
+        assert!(
+            p95 <= budget_ms,
+            "{label}: p95 {p95:.1} ms exceeds {budget_ms} ms"
+        );
+        p95
     };
-    eprintln!("indexed {embedded} embeddings, dim=384");
-    bench("lexical", &|| {
-        engine.search(&sc, "hydrogen ligand", 10).unwrap();
+    bench("session_list (200 sessions)", 50, 50.0, &|| {
+        assert_eq!(engine.session_list("proj-1").unwrap().len(), sessions);
     });
-    bench("semantic", &|| {
+    bench("session_fetch (100 records)", 50, 50.0, &|| {
+        assert_eq!(
+            engine
+                .session_fetch("proj-1", "mission-0042", None, None)
+                .unwrap()
+                .len(),
+            per_session
+        );
+    });
+    let lexical_rare = bench("lexical rare term (Asp96 chain D)", 50, 50.0, &|| {
+        let hits = engine.search(&sc, "Asp96 chain D", 10).unwrap();
+        assert!(!hits.is_empty() && hits.iter().all(|h| h.record.text.contains("Asp96")));
+    });
+    let lexical_common = bench("lexical common term (hydrogen)", 50, 50.0, &|| {
+        let hits = engine.search(&sc, "hydrogen", 10).unwrap();
+        assert!(hits.len() == 10 && hits.iter().all(|h| h.record.text.contains("hydrogen")));
+    });
+    let one = Scope {
+        project: "proj-1".into(),
+        session: Some("mission-0042".into()),
+        agent: None,
+    };
+    bench("lexical in one session", 50, 50.0, &|| {
+        let hits = engine.search(&one, "residue", 10).unwrap();
+        assert!(!hits.is_empty() && hits.iter().all(|h| h.record.session_id == "mission-0042"));
+    });
+    let semantic = bench("semantic (20k candidates)", 20, 500.0, &|| {
+        assert_eq!(
+            engine
+                .semantic_search(&sc, &embedder, "hydrogen bond pocket", 10)
+                .unwrap()
+                .len(),
+            10
+        );
+    });
+    bench(
+        "hybrid",
+        20,
+        lexical_rare.max(lexical_common) + semantic,
+        &|| {
+            engine
+                .hybrid_search(&sc, &embedder, "hydrogen bond pocket", 10)
+                .unwrap();
+        },
+    );
+    let size: u64 = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok()?.metadata().ok())
+        .map(|m| m.len())
+        .sum();
+    eprintln!(
+        "database on disk: {:.1} MiB for {:.1} MiB of text plus {} embeddings; SQLite {}",
+        size as f64 / 1048576.0,
+        bytes as f64 / 1048576.0,
+        embedded,
+        arc_memory::sqlite_version()
+    );
+}
+
+/// The first index layout kept a second, uncompressed copy of every text. Opening
+/// such a database rebuilds the contentless index from the compressed records in
+/// one step: visible records searchable, hidden ones not, and the copy gone.
+#[test]
+fn older_lexical_index_is_rebuilt_from_compressed_records() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("memory.db");
+    let engine = Engine::open(&path).unwrap();
+    let kept = engine.append(&sample("hydrogen bond kept")).unwrap();
+    let hidden = engine.append(&sample("hydrogen bond hidden")).unwrap();
+    engine.disable(&hidden).unwrap();
+    drop(engine);
+
+    // Downgrade the file to the original layout by hand.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "DROP TABLE records_fts; DROP TABLE IF EXISTS records_fts_content; \
+         CREATE VIRTUAL TABLE records_fts USING fts5(text, record_id UNINDEXED); \
+         INSERT INTO records_fts(text, record_id) VALUES ('hydrogen bond kept', 'x'), \
+         ('hydrogen bond hidden', 'y'); \
+         PRAGMA user_version = 0;",
+    )
+    .unwrap();
+    let copies: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM records_fts_content WHERE c0 IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(copies, 2, "the old layout stores the text twice");
+    drop(conn);
+
+    let engine = Engine::open(&path).unwrap();
+    let hits = engine.search(&scope("proj-1"), "hydrogen", 10).unwrap();
+    assert_eq!(
+        hits.iter()
+            .map(|h| h.record.record_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![kept.as_str()]
+    );
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 2);
+    let sql: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name = 'records_fts'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        sql.contains("content=''"),
+        "index must be contentless: {sql}"
+    );
+    let text_columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('records_fts_content') WHERE name = 'c0'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        text_columns, 0,
+        "the index must not keep a text column at all"
+    );
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM records_fts", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, 1, "only the visible record is indexed");
+}
+
+/// Scope narrowing happens on the index with exact tokens: session or agent ids
+/// that share words, differ by case or contain punctuation never cross-match, and
+/// a disabled record leaves the index but stays inspectable.
+#[test]
+fn scope_tokens_are_exact_and_disable_leaves_the_index() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    let mut ids = Vec::new();
+    for (session, agent) in [
+        ("mission 0042", "planner"),
+        ("mission-0042", "planner"),
+        ("MISSION-0042", "Planner"),
+        ("mission-0042 \"quoted\" (x)", "plan ner"),
+    ] {
+        let mut r = sample("hydrogen bond");
+        r.session_id = session.into();
+        r.agent_id = agent.into();
+        ids.push(engine.append(&r).unwrap());
+    }
+    for (i, (session, agent)) in [
+        ("mission 0042", "planner"),
+        ("mission-0042", "planner"),
+        ("MISSION-0042", "Planner"),
+        ("mission-0042 \"quoted\" (x)", "plan ner"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let sc = Scope {
+            project: "proj-1".into(),
+            session: Some(session.into()),
+            agent: Some(agent.into()),
+        };
+        let hits = engine.search(&sc, "hydrogen", 10).unwrap();
+        assert_eq!(
+            hits.iter()
+                .map(|h| h.record.record_id.clone())
+                .collect::<Vec<_>>(),
+            vec![ids[i].clone()],
+            "scope {session:?}/{agent:?} must match exactly one record"
+        );
+    }
+    assert_eq!(
         engine
-            .semantic_search(&sc, &embedder, "hydrogen bond pocket", 10)
-            .unwrap();
-    });
-    bench("hybrid", &|| {
+            .search(&scope("proj-1"), "hydrogen", 10)
+            .unwrap()
+            .len(),
+        4
+    );
+    engine.disable(&ids[1]).unwrap();
+    assert_eq!(
         engine
-            .hybrid_search(&sc, &embedder, "hydrogen bond pocket", 10)
-            .unwrap();
-    });
+            .search(&scope("proj-1"), "hydrogen", 10)
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(engine.inspect(&ids[1]).unwrap().visibility, "hidden");
+}
+
+/// An empty scope value cannot name anything: the search abstains instead of
+/// handing the index parser an expression it rejects.
+#[test]
+fn empty_scope_values_abstain() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    engine.append(&sample("hydrogen bond")).unwrap();
+    for scope in [
+        Scope {
+            project: "".into(),
+            session: None,
+            agent: None,
+        },
+        Scope {
+            project: "proj-1".into(),
+            session: Some("".into()),
+            agent: None,
+        },
+        Scope {
+            project: "proj-1".into(),
+            session: None,
+            agent: Some("".into()),
+        },
+    ] {
+        assert!(engine.search(&scope, "hydrogen", 10).unwrap().is_empty());
+    }
+    assert_eq!(
+        engine
+            .search(&scope("proj-1"), "hydrogen", 10)
+            .unwrap()
+            .len(),
+        1
+    );
 }

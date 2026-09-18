@@ -54,7 +54,6 @@ CREATE TABLE IF NOT EXISTS records (
 CREATE INDEX IF NOT EXISTS records_by_session ON records(project, session, seq);
 CREATE UNIQUE INDEX IF NOT EXISTS records_key
     ON records(project, idempotency_key) WHERE idempotency_key IS NOT NULL;
-CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(text, record_id UNINDEXED);
 CREATE TABLE IF NOT EXISTS embeddings (
     record_id TEXT NOT NULL REFERENCES records(record_id),
     generation TEXT NOT NULL,
@@ -63,6 +62,19 @@ CREATE TABLE IF NOT EXISTS embeddings (
     PRIMARY KEY(record_id, generation)
 );
 ";
+
+/// Lexical index: contentless, so the only copy of a text is the compressed blob;
+/// the scope columns hold one hex token each so a search can narrow on the index
+/// before ranking; `record_id` is kept (unindexed) for the join back to `records`.
+/// `PRAGMA user_version` records this layout so an older database is rebuilt once.
+const FTS_VERSION: i64 = 2;
+const FTS_SCHEMA: &str = "CREATE VIRTUAL TABLE records_fts USING fts5(\
+    text, project, session, agent, record_id UNINDEXED, \
+    content='', contentless_delete=1, contentless_unindexed=1)";
+/// Rank on the text column alone: the scope columns weigh nothing, so no scope
+/// token scores as a term. (Each row still carries its three scope tokens in the
+/// length that bm25 normalizes by, uniformly for every row.)
+const FTS_RANK: &str = "bm25(1.0, 0.0, 0.0, 0.0)";
 
 pub struct Engine {
     conn: Connection,
@@ -74,7 +86,62 @@ impl Engine {
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Self { conn })
+        let engine = Self { conn };
+        engine.ensure_lexical_index()?;
+        Ok(engine)
+    }
+
+    /// Create the lexical index, or rebuild an older layout from the compressed
+    /// records in one transaction: a crash leaves either the old index or the new.
+    fn ensure_lexical_index(&self) -> Result<()> {
+        let version: i64 = self
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version >= FTS_VERSION {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        // SQLite 3.53 leaves the `_content` shadow table behind when a
+        // contentless_unindexed table is dropped (sqlite3Fts5DropAll only drops
+        // it for normal content), so drop it explicitly before recreating.
+        tx.execute_batch(
+            "DROP TABLE IF EXISTS records_fts; DROP TABLE IF EXISTS records_fts_content;",
+        )?;
+        tx.execute_batch(FTS_SCHEMA)?;
+        let mut visible = 0i64;
+        {
+            let mut stmt = tx.prepare(
+                "SELECT r.record_id, r.project, r.session, r.agent, b.data, b.original_size, \
+                 r.content_digest FROM records r \
+                 JOIN blobs b ON b.content_digest = r.content_digest \
+                 WHERE r.visibility = 'visible'",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Vec<u8>>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })?;
+            for row in rows {
+                let (record_id, project, session, agent, data, size, digest) = row?;
+                let text = decode_verified(&data, size, &digest)?;
+                index_text(&tx, &record_id, &project, &session, &agent, &text)?;
+                visible += 1;
+            }
+        }
+        let indexed: i64 =
+            tx.query_row("SELECT COUNT(*) FROM records_fts", [], |row| row.get(0))?;
+        if indexed != visible {
+            return Err(Error::Corrupt("lexical index rebuild lost records"));
+        }
+        tx.execute_batch(&format!("PRAGMA user_version = {FTS_VERSION}"))?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// Append one record. Returns its `record_id`.
@@ -139,9 +206,13 @@ impl Engine {
                 record.idempotency_key,
             ],
         )?;
-        tx.execute(
-            "INSERT INTO records_fts(text, record_id) VALUES (?1, ?2)",
-            params![record.text, record_id],
+        index_text(
+            &tx,
+            &record_id,
+            &record.project_id,
+            &record.session_id,
+            &record.agent_id,
+            &record.text,
         )?;
         tx.commit()?;
         Ok(record_id)
@@ -150,13 +221,21 @@ impl Engine {
     /// Remove a record from future retrieval (tombstone). The record and its text
     /// stay intact and directly inspectable; this is not an erase.
     pub fn disable(&self, record_id: &str) -> Result<()> {
-        let updated = self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+        let updated = tx.execute(
             "UPDATE records SET visibility = 'hidden' WHERE record_id = ?1",
             params![record_id],
         )?;
         if updated == 0 {
             return Err(Error::NotFound);
         }
+        // The derived index row goes with it, so hidden text neither costs a scan
+        // nor shapes ranking statistics; the record and its blob stay inspectable.
+        tx.execute(
+            "DELETE FROM records_fts WHERE record_id = ?1",
+            params![record_id],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -174,20 +253,24 @@ impl Engine {
         limit: usize,
         remaining: &mut usize,
     ) -> Result<Vec<SearchHit>> {
-        let match_expr = fts_match_expression(query);
-        if match_expr.is_empty() {
+        let Some(match_expr) = fts_match_expression(scope, query) else {
             return Ok(Vec::new());
-        }
+        };
+        // Rank and cut on the index alone (scope tokens narrow the posting walk),
+        // then join the survivors to their record rows and compressed text with an
+        // exact scope check, so the index is a prefilter and never the authority.
         let sql = format!(
-            "SELECT {RECORD_COLUMNS}, bm25(records_fts) AS score \
-             FROM records_fts \
-             JOIN records r ON r.record_id = records_fts.record_id \
+            "SELECT {RECORD_COLUMNS}, top.score FROM (\
+                 SELECT record_id, rank AS score FROM records_fts \
+                 WHERE records_fts MATCH ?1 AND rank MATCH ?5 ORDER BY rank LIMIT ?6\
+             ) top \
+             JOIN records r ON r.record_id = top.record_id \
              JOIN blobs b ON b.content_digest = r.content_digest \
-             WHERE records_fts MATCH ?1 AND r.project = ?2 \
+             WHERE r.project = ?2 \
              AND (?3 IS NULL OR r.session = ?3) \
              AND (?4 IS NULL OR r.agent = ?4) \
              AND r.visibility = 'visible' \
-             ORDER BY score LIMIT ?5"
+             ORDER BY top.score"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(
@@ -196,6 +279,7 @@ impl Engine {
                 scope.project,
                 scope.session,
                 scope.agent,
+                FTS_RANK,
                 limit as i64
             ],
             |row| {
@@ -305,15 +389,7 @@ impl Engine {
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             raws.into_iter()
-                .map(|(id, data, size, digest)| {
-                    let text = zstd::decode_all(data.as_slice())?;
-                    if text.len() as i64 != size || sha256_hex(&text) != digest {
-                        return Err(Error::Corrupt("record text failed integrity check"));
-                    }
-                    let text = String::from_utf8(text)
-                        .map_err(|_| Error::Corrupt("record text is not UTF-8"))?;
-                    Ok((id, text))
-                })
+                .map(|(id, data, size, digest)| Ok((id, decode_verified(&data, size, &digest)?)))
                 .collect::<Result<Vec<_>>>()?
         };
         if pending.is_empty() {
@@ -373,17 +449,18 @@ impl Engine {
             .ok_or(Error::InvalidVector)?;
         validate_vector(&query_vector, embedder.dim())?;
 
-        let sql = format!(
-            "SELECT {RECORD_COLUMNS}, e.vector FROM embeddings e \
+        // The candidate scan touches vectors and scope columns only; each candidate's
+        // row and compressed text are read for the top-k alone. Carrying every
+        // candidate's blob through the scan cost ~385 ms p50 at 20k records (measured).
+        let mut stmt = self.conn.prepare(
+            "SELECT e.record_id, e.vector FROM embeddings e \
              JOIN records r ON r.record_id = e.record_id \
-             JOIN blobs b ON b.content_digest = r.content_digest \
              WHERE e.generation = ?1 AND r.project = ?2 \
              AND (?3 IS NULL OR r.session = ?3) \
              AND (?4 IS NULL OR r.agent = ?4) \
-             AND r.visibility = 'visible'"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let candidates = stmt
+             AND r.visibility = 'visible'",
+        )?;
+        let mut scored = stmt
             .query_map(
                 params![
                     embedder.model_id(),
@@ -391,21 +468,24 @@ impl Engine {
                     scope.session,
                     scope.agent
                 ],
-                |row| Ok((read_raw(row)?, row.get::<_, Vec<u8>>(15)?)),
+                |row| {
+                    let id: String = row.get(0)?;
+                    let bytes: Vec<u8> = row.get(1)?;
+                    Ok((cosine(&query_vector, &decode_vector(&bytes)) as f64, id))
+                },
             )?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-
-        // Score on vectors only, then decompress just the top-k records. Hydrating
-        // every candidate's text dominated latency (measured ~480ms p50 at 5k).
-        let mut scored: Vec<(f64, Raw)> = candidates
-            .into_iter()
-            .map(|(raw, bytes)| (cosine(&query_vector, &decode_vector(&bytes)) as f64, raw))
-            .collect();
+            .collect::<rusqlite::Result<Vec<(f64, String)>>>()?;
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(limit);
+        let sql = format!(
+            "SELECT {RECORD_COLUMNS} FROM records r \
+             JOIN blobs b ON b.content_digest = r.content_digest WHERE r.record_id = ?1"
+        );
+        let mut fetch = self.conn.prepare(&sql)?;
         scored
             .into_iter()
-            .map(|(score, raw)| {
+            .map(|(score, id)| {
+                let raw = fetch.query_row(params![id], read_raw)?;
                 Ok(SearchHit {
                     record: hydrate_bounded(raw, remaining)?,
                     score,
@@ -547,16 +627,73 @@ fn hydrate(raw: Raw) -> Result<StoredRecord> {
     })
 }
 
+/// One tokenizer-safe token per scope value: the hex of its bytes, which the
+/// default tokenizer keeps whole, so scope matching is exact, never fuzzy.
+fn scope_token(value: &str) -> String {
+    hex::encode(value.as_bytes())
+}
+
+/// Insert a record's text and scope tokens into the lexical index.
+fn index_text(
+    conn: &Connection,
+    record_id: &str,
+    project: &str,
+    session: &str,
+    agent: &str,
+    text: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO records_fts(text, project, session, agent, record_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            text,
+            scope_token(project),
+            scope_token(session),
+            scope_token(agent),
+            record_id
+        ],
+    )?;
+    Ok(())
+}
+
 /// Build a safe FTS5 MATCH expression from arbitrary user text: each whitespace
-/// token becomes a quoted phrase (internal quotes doubled), joined by space so the
-/// terms are ANDed. Returns an empty string when the query has no usable tokens,
-/// which the caller treats as abstention.
-fn fts_match_expression(query: &str) -> String {
-    query
+/// token becomes a quoted phrase (internal quotes doubled), ANDed together and
+/// restricted to the text column, with the scope's tokens ANDed in front. Returns
+/// `None` when the query has no usable tokens, which the caller treats as abstention.
+fn fts_match_expression(scope: &Scope, query: &str) -> Option<String> {
+    let phrases: Vec<String> = query
         .split_whitespace()
         .map(|token| format!("\"{}\"", token.replace('"', "\"\"")))
-        .collect::<Vec<_>>()
-        .join(" ")
+        .collect();
+    if phrases.is_empty() {
+        return None;
+    }
+    // An empty scope value has no token to match, so such a scope abstains rather
+    // than producing an expression the parser rejects.
+    let scopes = [
+        ("project", Some(scope.project.as_str())),
+        ("session", scope.session.as_deref()),
+        ("agent", scope.agent.as_deref()),
+    ];
+    let mut parts = Vec::with_capacity(4);
+    for (column, value) in scopes {
+        match value {
+            Some("") => return None,
+            Some(value) => parts.push(format!("{column}:{}", scope_token(value))),
+            None => {}
+        }
+    }
+    parts.push(format!("text:({})", phrases.join(" ")));
+    Some(parts.join(" AND "))
+}
+
+/// Decompress a stored blob and check it against its recorded size and digest.
+fn decode_verified(data: &[u8], size: i64, digest: &str) -> Result<String> {
+    let text = zstd::decode_all(data)?;
+    if text.len() as i64 != size || sha256_hex(&text) != digest {
+        return Err(Error::Corrupt("record text failed integrity check"));
+    }
+    String::from_utf8(text).map_err(|_| Error::Corrupt("record text is not UTF-8"))
 }
 
 /// Reject vectors that are the wrong dimension, contain a non-finite value, or are
