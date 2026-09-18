@@ -802,3 +802,73 @@ mod cancellation {
         exercise("exit-tree", None);
     }
 }
+
+/// Crash containment: a forced kill of the supervisor (TerminateProcess, no
+/// cooperative shutdown) must still reap the worker and its descendant. The
+/// kill-on-close job the supervisor joins before spawning makes the kernel do it.
+#[cfg(windows)]
+#[test]
+fn supervised_serve_reaps_worker_and_descendant_when_supervisor_is_force_killed() {
+    use std::{
+        io::Read,
+        net::TcpListener,
+        process::Stdio,
+        thread,
+        time::{Duration, Instant},
+    };
+    let temp = fixture();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    fs::write(temp.path().join("arc_science/__main__.py"), r#"
+import os, socket, subprocess, sys, time
+port = int(os.environ['ARC_TEST_OBSERVER_PORT'])
+observer = socket.create_connection(('127.0.0.1', port))
+observer.sendall(b'P')
+code = "import socket,time; s=socket.create_connection(('127.0.0.1'," + str(port) + ")); s.sendall(b'C'); time.sleep(30)"
+subprocess.Popen([sys.executable, '-c', code], stdin=subprocess.DEVNULL)
+time.sleep(30)
+"#).unwrap();
+    let mut child = worker(&temp)
+        .args(["serve", "--parent-stdin"])
+        .env(
+            "ARC_TEST_OBSERVER_PORT",
+            listener.local_addr().unwrap().port().to_string(),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut streams = vec![];
+    while streams.len() < 2 && Instant::now() < deadline {
+        if let Ok((mut stream, _)) = listener.accept() {
+            // Blocking with a bounded timeout: EOF/reset proves death, a timeout proves survival.
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(4)))
+                .unwrap();
+            let mut marker = [0];
+            stream.read_exact(&mut marker).unwrap();
+            streams.push(stream);
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(streams.len(), 2, "worker and descendant must both connect");
+    // Force-kill only the supervisor: no parent-pipe EOF, no Ctrl-C, no cleanup loop.
+    child.kill().unwrap();
+    child.wait().unwrap();
+    for mut stream in streams {
+        match stream.read(&mut [0]) {
+            Ok(0) => (),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                ) => {}
+            other => panic!(
+                "a worker-tree process survived the supervisor's forced termination: {other:?}"
+            ),
+        }
+    }
+}

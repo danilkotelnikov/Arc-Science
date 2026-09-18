@@ -199,6 +199,13 @@ pub fn serve(
     parent_stdin: bool,
 ) -> Result<i32> {
     validate_environment()?;
+    // Before any worker exists: a crash or forced kill of this supervisor must still
+    // reap the Python worker and its descendants (kill-on-close job on Windows).
+    if let Err(error) = crate::containment::contain_process_tree() {
+        eprintln!(
+            "Warning: worker tree is not crash-contained ({error}); a forced supervisor exit may leave the worker running"
+        );
+    }
     let python = executable(&config.worker.python, project).ok_or_else(|| format!("Python executable missing or not executable: {}; install/configure the existing Arc Science worker explicitly", config.worker.python))?;
     let cancelled = Arc::new(AtomicUsize::new(0));
     let signal_count = Arc::clone(&cancelled);
