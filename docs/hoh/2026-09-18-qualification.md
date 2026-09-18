@@ -111,9 +111,12 @@ independent findings as passing without the reviewer retest.
 
 ## Remaining gates
 
-- **Native GUI acceptance:** automatic approval review rejected the combined shell
-  GUI-launch command with only `blocked by policy`; native-window automation is not
-  enabled. Actual native visual interaction/download completion remains unverified.
+- **Native GUI acceptance:** closed on 2026-09-18 (Claude native-GUI loop, below).
+  The real WebView2 window was driven through Windows UI Automation: workbench
+  controls exposed, window captured, a real Export SVG download completed and hashed,
+  the external link opened the system browser after its fix, and closing the window
+  released the supervisor, service and port. Manual mouse/keyboard use of the native
+  window and other platforms remain unobserved.
 - **Crash containment:** closed on 2026-09-18 (Claude follow-up loop, below). Both
   halves were reproduced as real orphans before the fix and now hold under forced
   termination: a Windows kill-on-close job object in the Python service contains each
@@ -156,3 +159,52 @@ with clippy `-D warnings` and rustfmt clean; interactive browser pass of the Mol
 render panel and the Memory workspace against a live service with no console errors.
 Still open and unchanged: native GUI acceptance, memory scope/embedder, NIH search
 adapter, scientific novelty, providers and release.
+
+## Native GUI loop — 2026-09-18, Claude (native window acceptance on the accepted candidate)
+
+The desktop was launched five times through `scripts/start-arc-science.ps1` (real
+supervisor, Python service, workspace under `%LOCALAPPDATA%\ArcScience\workspace`, port
+8080) and driven with `scripts/native-gui-acceptance.ps1`: Windows UI Automation against
+the WebView2 tree (`WRY_WEBVIEW` → `Chrome_WidgetWin_1`), `PrintWindow(PW_RENDERFULLCONTENT)`
+for pixels, file-system and process checks for outcomes. This is accessibility-driven
+interaction, not manual mouse acceptance.
+
+| Check | Observed |
+| --- | --- |
+| Window and tree | `Arc Science` window from `arc-science-desktop.exe`; supervisor and service PIDs as its descendants; 84 UIA elements, 60 named; Molecules/BioArt/Research/Memory buttons, tabs, Export SVG and hyperlinks exposed and enabled. Chromium accessibility needed one initial walk plus retries (about 20 s before the navigation group answered). |
+| Visual | PrintWindow rendered the workbench (collage, inspector, navigation) at 2586×1630 physical px on a 200 % display; a plain screen copy was abandoned because it captured whichever window was in front. |
+| Download | UIA `InvokePattern` on Export SVG → `1dqj-collage.svg`, 765,081 bytes, SHA-256 `71cfeb7a…2682c6`, byte-identical to the served asset and its recorded digest; a second export produced `1dqj-collage (1).svg` (WebView2 writes `<guid>.tmp` then renames). Files remain in the user's Downloads folder. |
+| External link (before fix) | `InvokePattern` on `1DQJ ↗ RCSB PDB`: no new window, no browser process — every `target="_blank"` link (RCSB, NIH search, NIH source) was dead in the native shell because new windows were denied outright. |
+| External link (after fix) | The default browser opened `RCSB PDB - 1DQJ: …` (window title observed); no second WebView was created. |
+| Download feedback | Neither wry's silent handler nor the handler-free default produced any WebView2 download dialog on this runtime (Evergreen 153.0.4234.32), even with wry's `msWebOOUI` disabling removed as an experiment; a download was invisible to the user. After the fix the header announces `Saved 1dqj-collage (4).svg in C:\Users\…\Downloads` (native capture). |
+| Lifecycle | `WindowPattern.Close` → desktop exit, supervisor and service exited within 2 s, no listener on 8080, launcher exit 0 — five of five runs. |
+
+Fixes (desktop crate; no dependency change; `native/arc-desktop/src/external.rs`, `main.rs`):
+
+- New-window requests hand a clean `https:` target to the system browser via
+  `ShellExecuteW` (no shell) and deny the WebView; other schemes, userinfo, whitespace
+  and control characters are refused. Unit test covers accept/refuse cases.
+- The download-started gate (which forced `Handled` and hid all UI) was removed: every
+  downloadable URL is same-origin by construction because navigation is; a
+  download-completed handler posts a `Shell::DownloadFinished` event that the event
+  loop turns into an `arc-download` window event (`file`, `folder`, `success`) with a
+  tested JavaScript-literal escaper. The React header shows the outcome for 12 s
+  (`DownloadNotice`, RED→GREEN test).
+- The WebView2 profile moved from beside the executable (`target/release/…exe.WebView2`,
+  unwritable for an installed copy) to `%LOCALAPPDATA%\ArcScience\webview`.
+
+Not explained: on the very first launch the `Rotated detail` tab was selected by the
+time the first capture was taken (~20 s after the window appeared) and the window was
+later found minimized; a remote-desktop session was the foreground window on this
+workstation at the time. Four later launches with the identical automation sequence,
+including a probe that captured before any accessibility client attached, all showed
+`Collage` selected. It is recorded as a single unreproduced observation, most likely a
+human interaction, not as a defect.
+
+Checks after the loop: desktop crate 14 passed (clippy `-D warnings`, rustfmt clean);
+frontend 45 passed; Python 647 passed, 63 skipped (with `ARC_SVG2PNG` set, as the
+launcher does); packaged bundle rebuilt (`index-DDlXz42c.js`, 382,990 bytes).
+Sol (GPT-5.6) was consulted on the plan; the first attempt hit the Codex usage limit
+and the second answered after the user renewed it. A leftover verification service
+from the earlier Codex loop (`python -m arc_science serve --port 8091`, with its memory
+worker) was still running on this workstation and was left untouched.

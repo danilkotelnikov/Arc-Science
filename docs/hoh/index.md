@@ -36,6 +36,16 @@ production readiness is a set of evidence-backed gates, not a styling label.
 - Evidence and the closed gate: [qualification, follow-up section](2026-09-18-qualification.md).
   Python 647/63, supervisor 26, clippy/fmt clean, browser pass of Molecules and Memory.
 
+## Native GUI loop — 2026-09-18, Claude (native window acceptance)
+
+- Drove the real WebView2 window through Windows UI Automation with
+  `scripts/native-gui-acceptance.ps1`: controls exposed, window captured, a real
+  download hashed against the served asset, close-through-window releases the tree.
+- Found and fixed in the desktop shell: dead `target="_blank"` links (now the system
+  browser), invisible downloads (now announced in the header), and a browser profile
+  written beside the executable. Evidence: [qualification, native GUI section](2026-09-18-qualification.md).
+- Desktop 14, frontend 45, Python 647/63. Manual use and other platforms stay open.
+
 ## External limits retained
 
 Claude pairing previously failed with `Credit balance is too low` before inference.
