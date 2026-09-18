@@ -27,6 +27,15 @@ production readiness is a set of evidence-backed gates, not a styling label.
   Final app checks: 644 Python passed/63 skipped;44 frontend passed;native suites
   passed. Native GUI/production/scientific gates remain explicitly open.
 
+## Follow-up loop — 2026-09-18, Claude (bug fixing)
+
+- Re-verified every suite on this workstation before edits; all matched the ledger.
+- Fixed four defects with failing tests or live reproductions first: a render starting
+  after shutdown began, opaque render failures, and both halves of the crash-containment
+  gate (service→render tree, supervisor→service) via Windows kill-on-close job objects.
+- Evidence and the closed gate: [qualification, follow-up section](2026-09-18-qualification.md).
+  Python 647/63, supervisor 26, clippy/fmt clean, browser pass of Molecules and Memory.
+
 ## External limits retained
 
 Claude pairing previously failed with `Credit balance is too low` before inference.

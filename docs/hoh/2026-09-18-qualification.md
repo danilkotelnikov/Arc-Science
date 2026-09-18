@@ -114,8 +114,11 @@ independent findings as passing without the reviewer retest.
 - **Native GUI acceptance:** automatic approval review rejected the combined shell
   GUI-launch command with only `blocked by policy`; native-window automation is not
   enabled. Actual native visual interaction/download completion remains unverified.
-- **Crash containment:** the Windows supervisor's cooperative parent-pipe exit is
-  tested. Forced supervisor termination does not guarantee kill-on-job-close cleanup.
+- **Crash containment:** closed on 2026-09-18 (Claude follow-up loop, below). Both
+  halves were reproduced as real orphans before the fix and now hold under forced
+  termination: a Windows kill-on-close job object in the Python service contains each
+  render tree, and the native supervisor joins its own kill-on-close job before
+  spawning so a forced supervisor kill reaps the worker and descendants.
 - **Memory scope:** recovery deliberately covers the latest 100 retained missions and
   reports degraded status beyond that. A real embedder, semantic-quality evaluation
   and large-corpus session-list/candidate-scan benchmarks remain outstanding.
@@ -134,3 +137,22 @@ independent findings as passing without the reviewer retest.
 The accepted outcome is a tested local development candidate with specific corrected
 defects and preserved evidence. Remaining gates must not be relabelled production
 readiness, originality or scientific validity.
+
+## Follow-up loop — 2026-09-18, Claude (bug fixing on the accepted candidate)
+
+Every suite was re-run on this workstation before edits and matched the table above
+(Python 644/63, frontend 44, Rust 12/24/32). The fixes below each began with a failing
+test or a live reproduction; nothing was relabelled from test passes alone.
+
+| Defect | Evidence | Fix |
+| --- | --- | --- |
+| A render could start after service shutdown began: `close()` did not take the job lock, and `submit` checks `closing` before awaiting the first readiness probe (a multi-second subprocess). | Test parks `submit` on a gated probe, runs `close()`, releases the probe; a `_worker` task was left running. | `close()` serializes on the lock; `submit` re-checks `closing` after its await and returns 409. |
+| Render failures were opaque: stderr was discarded, so a wrong chain ID reported only "verify coordinates, chain selections and server runtime" while the CLI had printed `Requested author chain is missing: H, L`. | Live service: wrong chains and an unknown assembly both returned the generic text. | Bounded 4 KiB stderr tail; only a sanitized `ValueError:`/`RuntimeError:` last line (<=200 chars, no paths, no control characters, no job/root directory string) is surfaced. Path-bearing errors stay generic, as the existing private-path test requires. |
+| Service crash orphaned the render tree. | Live: after `taskkill /F` of only the service, the CLI and its Blender child kept running at full CPU (2 processes). | Kill-on-close job object around each render (`figure_render._kill_on_close_job`); 0 processes after the same crash; job recovers as `interrupted` on restart. Windows-only test closes the job handle and asserts a spawned grandchild dies. |
+| Supervisor crash orphaned the Python service. | Live: `taskkill /F` of only `arc-science-native.exe` left the service listening; the next launch failed to bind (WinError 10048). `process-wrap`'s std `JobObject` is created with `kill_on_drop=false` and keeps its handle private. | Supervisor joins its own kill-on-close job before spawning (`native/arc-science/src/containment.rs`, raw kernel32 FFI, no dependency change). Integration test force-kills the supervisor and requires the worker and its descendant to disconnect; it failed before the fix. |
+
+Final checks after the loop: Python **647 passed, 63 skipped**; supervisor crate 26 passed
+with clippy `-D warnings` and rustfmt clean; interactive browser pass of the Molecules
+render panel and the Memory workspace against a live service with no console errors.
+Still open and unchanged: native GUI acceptance, memory scope/embedder, NIH search
+adapter, scientific novelty, providers and release.
