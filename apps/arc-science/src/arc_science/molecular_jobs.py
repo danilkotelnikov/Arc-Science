@@ -311,6 +311,9 @@ class MolecularJobs:
                 raise HTTPException(409, 'Molecular job storage is full; stop the service, archive old job directories, then restart')
             if not (await self.capabilities())['configured']:
                 raise HTTPException(409, 'Molecular rendering is unavailable; check server capabilities')
+            if self.closing:
+                # Shutdown began while the readiness probe ran; start nothing nobody will reap.
+                raise HTTPException(409, 'A molecular render is already active or the service is stopping')
             job_id = uuid.uuid4().hex
             directory = self.root / job_id
             source = parameters.source_text.encode('utf-8')
@@ -420,16 +423,19 @@ class MolecularJobs:
 
     async def close(self):
         self.closing = True
-        if self.task is not None:
-            job_id, task = self.active_id, self.task
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
-            row = self.jobs[job_id]
-            if row['status'] in ('queued', 'rendering'):
-                self._finish(row, 'interrupted', 'Service stopped before rendering finished.')
-            self.active_id = None
-            self.task = None
+        # Serialize with submit: a submit parked in the readiness probe still holds the
+        # lock and would otherwise assign self.task after this check.
+        async with self.lock:
+            if self.task is not None:
+                job_id, task = self.active_id, self.task
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+                row = self.jobs[job_id]
+                if row['status'] in ('queued', 'rendering'):
+                    self._finish(row, 'interrupted', 'Service stopped before rendering finished.')
+                self.active_id = None
+                self.task = None
 
     async def asset(self, job_id: str, filename: str):
         row = await self.get_job(job_id)

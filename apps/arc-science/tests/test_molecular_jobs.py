@@ -394,3 +394,45 @@ def test_total_deadline_includes_artifact_verification(tmp_path, runtime, monkey
         assert row['status'] == 'failed'
         assert 'deadline' in row['error'].lower()
         assert row['assets'] == {}
+
+
+def test_shutdown_during_readiness_probe_never_starts_a_render(tmp_path, runtime, monkeypatch):
+    """close() must serialize with an in-flight submit.
+
+    submit checks `closing` before awaiting the readiness probe inside its lock; the
+    first probe runs a subprocess for seconds. A shutdown that begins during that await
+    must not let the resumed submit start a render nobody will interrupt or reap.
+    """
+    import arc_science.molecular_jobs as jobs
+    from fastapi import HTTPException
+    runtime['value'] = 'sleep'
+    gate = asyncio.Event()
+
+    async def parked_probe(self):
+        await gate.wait()
+        return True, 'Runtime probe passed.'
+    monkeypatch.setattr(jobs.MolecularJobs, '_probe_runtime', parked_probe)
+
+    class Upload:
+        async def stream(self):
+            yield json.dumps(REQUEST).encode()
+
+    async def exercise():
+        manager = jobs.MolecularJobs(tmp_path, lambda: None)
+        submit = asyncio.create_task(manager.submit(Upload()))
+        await asyncio.sleep(.05)                  # submit holds the lock, parked in the probe
+        closing = asyncio.create_task(manager.close())
+        await asyncio.sleep(.05)                  # shutdown has begun during the probe
+        gate.set()                                # probe completes; submit resumes
+        try:
+            with suppress(HTTPException):
+                await submit
+            await closing
+            assert manager.task is None, 'a render was started after shutdown began'
+            assert not any(row['status'] in ('queued', 'rendering') for row in manager.jobs.values())
+        finally:
+            if manager.task is not None:          # never leak the stand-in renderer on failure
+                manager.task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await manager.task
+    asyncio.run(exercise())
