@@ -46,6 +46,20 @@ production readiness is a set of evidence-backed gates, not a styling label.
   written beside the executable. Evidence: [qualification, native GUI section](2026-09-18-qualification.md).
 - Desktop 14, frontend 45, Python 647/63. Manual use and other platforms stay open.
 
+## Loop — 2026-09-19, Claude (memory at corpus scale)
+
+- Plan: [memory at corpus scale](2026-09-19-plan.md); record and evaluation:
+  [memory-scale](2026-09-19-memory-scale.md).
+- Measured 20k mission-shaped records: common-term lexical search failed its budget
+  (160 ms) and the index kept an uncompressed copy of every text. Fixed with a
+  contentless, scope-indexed FTS layout (versioned one-step rebuild) and two-phase
+  retrieval: common term 18 ms, one session 4.3 ms, semantic 385 → 170 ms, DB −28 MiB.
+- Python: 100 missions × 61 records replay on restart in 2.3 s; beyond 100 stays
+  degraded, serves, and costs one bounded replay per health read.
+- Sol rejected the first candidate with six findings; five fixed, one accepted and
+  documented. Memory crate 35, Python memory 21 + 2 opt-in scale tests.
+  Still open: real embedder and semantic quality.
+
 ## External limits retained
 
 Claude pairing previously failed with `Credit balance is too low` before inference.

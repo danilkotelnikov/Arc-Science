@@ -123,8 +123,10 @@ independent findings as passing without the reviewer retest.
   render tree, and the native supervisor joins its own kill-on-close job before
   spawning so a forced supervisor kill reaps the worker and descendants.
 - **Memory scope:** recovery deliberately covers the latest 100 retained missions and
-  reports degraded status beyond that. A real embedder, semantic-quality evaluation
-  and large-corpus session-list/candidate-scan benchmarks remain outstanding.
+  reports degraded status beyond that. Large-corpus session-list/candidate-scan
+  benchmarks were measured and the failing lexical case fixed on 2026-09-19
+  ([record](2026-09-19-memory-scale.md)). A real embedder and semantic-quality
+  evaluation remain outstanding.
 - **NIH compatibility:** dynamic keyword search needs a reviewed rendered-search
   adapter. The actual NIH SVG has unsupported dimensions/metadata/style features;
   transforming it for import is a separate provenance/renderer qualification gate.
