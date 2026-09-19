@@ -93,6 +93,7 @@ PROTECTED = (
                   r'[OPQ][0-9][A-Z0-9]{3}[0-9](?:-\d+)?|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2}(?:-\d+)?|'
                   r'CHEMBL\d+|CID\s?\d+|[1-9][A-Za-z0-9]{3})\b'),
     ('sequence', r'\b[ACDEFGHIKLMNPQRSTVWY]{8,}\b|\b[ACGTUN]{12,}\b'),
+    ('mixed_case', r'\b[a-z]+[A-Z][A-Za-z0-9]*(?:[-/][A-Za-z0-9]+)*\b|\b[a-z]{1,3}-[A-Z][A-Za-z0-9]*(?:[-/][A-Za-z0-9]+)*\b'),
     ('symbol', r'\b[A-Za-z]+(?:\d[A-Za-z0-9]*|[α-ωΑ-Ω][A-Za-z0-9]*)[A-Za-z0-9]*(?:[-/][A-Za-z0-9α-ωΑ-Ω]+)*\+?\b|'
                r'\b[A-Z][A-Z0-9]+(?:[-/][A-Za-z0-9α-ωΑ-Ω]+)*\+?\b|\b[A-Za-z]+[α-ωΑ-Ω][A-Za-z0-9-]*\b'),
     ('chemistry', r'\b(?:[A-Z][a-z]?\d*){2,}(?:[+-]{1,2}|\d[+-])?\b|\b\d+[A-Z][a-z]?\b|→|⇌|↔'),
@@ -143,7 +144,7 @@ def rewrite(text: str) -> dict:
             new = match.expand(replacement)
             if new == match.group(0):
                 continue
-            if name == 'opener' and end < len(text) and text[end].islower() \
+            if name == 'opener' and re.match(r'[a-z]+(?![\w/-])', text[end:]) \
                     and not any(s <= end < e for s, e in protected):
                 end, new = end + 1, text[end].upper()
             replacements.append((start, end, new))
@@ -196,13 +197,27 @@ class Detector:
                             'rules': len(RULES), 'egress': False, 'note': REWRITE_NOTE}}
 
     def _key(self) -> bytes:
-        self.root.mkdir(parents=True, exist_ok=True)
-        path = self.root / 'audit.key'
-        if not path.exists():
-            path.write_bytes(secrets.token_bytes(32))
-            with _suppress():
-                os.chmod(path, 0o600)
-        return path.read_bytes()
+        """The audit key: created exclusively (never through a link) with mode 0600 and read
+        without following links; a key that is not exactly 32 bytes is refused. Like the
+        service token file, no Windows owner-only ACL is applied beyond the mode."""
+        from . import anchored
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        handle = anchored.open_directory(self.root)
+        try:
+            try:
+                fd = anchored.open_write_new_fd(handle, 'audit.key', 0o600)
+            except FileExistsError:
+                pass
+            else:
+                with os.fdopen(fd, 'wb') as out:
+                    out.write(secrets.token_bytes(32))
+            with os.fdopen(anchored.open_read_fd(handle, 'audit.key'), 'rb') as source:
+                key = source.read(64)
+        finally:
+            anchored.close_directory(handle)
+        if len(key) != 32:
+            raise ProseRefused('audit_key', 'The prose audit key is not a 32-byte file; detection refused')
+        return key
 
     def _audit(self, record: dict) -> None:
         with (self.root / 'detections.jsonl').open('a', encoding='utf-8') as handle:
@@ -293,9 +308,3 @@ def normalise(payload) -> list[dict]:
     return out
 
 
-class _suppress:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return True

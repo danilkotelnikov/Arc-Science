@@ -63,3 +63,27 @@ test('detection needs the rules loaded and a fresh consent for every request, an
   expect(consent).not.toBeChecked();
   expect(screen.getByRole('button', {name: 'Detect (sends text)'})).toBeDisabled();
 });
+
+test('a failed detection still spends the consent, and a credential change clears the private text', async () => {
+  const user = userEvent.setup();
+  function Switching() {
+    const [token, setToken] = useState('operator');
+    return <><button onClick={() => setToken('other')}>switch</button><ProseWorkspace token={token} setToken={setToken}/></>;
+  }
+  fetch.mockImplementation(async (path, options = {}) => {
+    if (path === '/api/prose/rules') return json(rules);
+    if (path === '/api/prose/detect') return json({detail: {code: 'http_503', detail: 'The detection service answered HTTP 503', spans: []}}, 502);
+    throw new Error('Unexpected path: ' + path);
+  });
+  render(<Switching/>);
+  await user.type(screen.getByLabelText('Text'), 'The fit reproduced the measurements on the split.');
+  await user.click(screen.getByRole('button', {name: 'Show rules and detection terms'}));
+  const consent = await screen.findByLabelText(/I consent to sending this text to api.edgeshop.ai/);
+  await user.click(consent);
+  await user.click(screen.getByRole('button', {name: 'Detect (sends text)'}));
+  expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 503');
+  expect(consent).not.toBeChecked();
+  expect(screen.getByRole('button', {name: 'Detect (sends text)'})).toBeDisabled();
+  await user.click(screen.getByRole('button', {name: 'switch'}));
+  expect(screen.getByLabelText('Text')).toHaveValue('');
+});

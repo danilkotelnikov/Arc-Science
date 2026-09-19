@@ -13,7 +13,7 @@ export default function ProseWorkspace({token, setToken}) {
   const credential = useRef(null);
   useLayoutEffect(() => {
     const controller = new AbortController(); credential.current = controller;
-    setRules(null); setRewritten(null); setReceipt(null); setConsent(false); setError(''); setBusy(false);
+    setText(''); setRules(null); setRewritten(null); setReceipt(null); setConsent(false); setError(''); setBusy(false);
     return () => controller.abort();
   }, [token]);
   const read = useCallback(async (path, signal, method = 'GET', body) => {
@@ -36,9 +36,9 @@ export default function ProseWorkspace({token, setToken}) {
   async function loadRules(signal) { setRules(await read('/rules', signal)); }
   async function rewrite(signal) { setRewritten(await read('/rewrite', signal, 'POST', {text})); }
   async function detect(signal) {
-    // Consent is spent on this one request; the next one asks again.
-    const result = await read('/detect', signal, 'POST', {text, allow_egress: consent});
-    setConsent(false); setReceipt(result);
+    // Consent is spent on this one request, whatever its outcome; the next one asks again.
+    const granted = consent; setConsent(false);
+    setReceipt(await read('/detect', signal, 'POST', {text, allow_egress: granted}));
   }
   const detection = rules?.detection;
   return <div className="research-workspace">

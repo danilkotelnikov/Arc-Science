@@ -214,7 +214,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
 
     def prose_error(refused):
         status={'consent_required':422,'bounds':422,'empty':422,'too_long':422,'disabled':409,'busy':409,
-                'preservation_failed':409}.get(refused.code,502)
+                'preservation_failed':409,'audit_key':409}.get(refused.code,502)
         raise HTTPException(status,{'code':refused.code,'detail':str(refused),'spans':list(refused.spans)})
 
     @app.post('/api/prose/rewrite',dependencies=[Depends(authorized)])

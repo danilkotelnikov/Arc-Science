@@ -181,3 +181,32 @@ def test_routes_expose_rules_rewrite_and_consented_detection(tmp_path, monkeypat
         c.app.state.detector.transport = httpx.MockTransport(lambda r: httpx.Response(503))
         failed = c.post('/api/prose/detect', headers=AUTH, json={'text': SCIENTIFIC, 'allow_egress': True})
         assert failed.status_code == 502 and failed.json()['detail']['code'] == 'http_503'
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('Moreover, c-Myc expression increased.', 'c-Myc expression increased.'),
+    ('Furthermore, qPCR and scRNA-seq agreed with mRNA levels in eLife.', 'qPCR and scRNA-seq agreed with mRNA levels in eLife.'),
+    ('Additionally, p53 was lost.', 'p53 was lost.'),
+    ('Additionally, the fit held.', 'The fit held.'),
+])
+def test_opener_removal_never_recases_an_identifier(text, expected):
+    result = prose.rewrite(text)
+    assert result['text'] == expected
+    for token in ('c-Myc', 'qPCR', 'scRNA-seq', 'mRNA', 'eLife', 'p53'):
+        if token in text:
+            assert token in [lit for _, _, _, lit in prose.protected_spans(text)]
+
+
+def test_the_audit_key_is_created_once_and_a_wrong_key_refuses_detection(tmp_path):
+    handler = lambda request: httpx.Response(200, json=[{'detectionType': 'HEMINGWAY', 'detectionResult': {'grade': '8'}}])  # noqa: E731
+    d = detector(tmp_path, handler)
+    first = asyncio.run(d.detect('k' * 40, allow_egress=True))
+    key = (tmp_path / 'prose' / 'audit.key').read_bytes()
+    assert len(key) == 32
+    second = asyncio.run(d.detect('k' * 40, allow_egress=True))
+    lines = audit(tmp_path)
+    assert lines[0]['text_hmac'] == lines[2]['text_hmac'] and first['text_sha256'] == second['text_sha256']
+    (tmp_path / 'prose' / 'audit.key').write_bytes(b'short')
+    with pytest.raises(prose.ProseRefused) as refused:
+        asyncio.run(d.detect('k' * 40, allow_egress=True))
+    assert refused.value.code == 'audit_key' and len(audit(tmp_path)) == 4
