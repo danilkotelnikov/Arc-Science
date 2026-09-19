@@ -137,3 +137,34 @@ plan, or credits on the Console organisation the login belongs to).
 
 Sol's own limit: its `claude auth status` in the review sandbox reported logged out,
 so the author's authenticated state was not independently reproduced there.
+
+## Loop A — explicit check states and a fail-closed release decision (`a1ff66e`, `bed8e9c`, `4738118`, `2214c9a`)
+
+Design (Sol consulted before implementation): a release ledger with eight named
+checks — operational status, event-chain integrity, replay integrity, numerical
+reproduction, artifact reproduction, evidence graph, reconciliation, visual review —
+each in one of six states (`satisfied`, `failed`, `unknown`, `error`, `stale`,
+`not_applicable`). Every check records the digest of what it looked at, so a later
+change stales only the checks that depended on it. `unknown` and `error` are never
+promoted to satisfied; `not_applicable` needs a written reason; a decision must
+follow its checks (validator). The verification receipt is persisted with the
+mission, the decision is recomputed on every read, and the only positive outcome is
+"eligible for human review" — never validated, never publication. The capsule export
+and the explicit PNG download consult the decision; inline inspection does not.
+
+Checks: `test_release.py` 10; service tests for gating, restart survival, staleness
+after resume, refusal beside an active worker; frontend 44; Playwright 15; full
+Python suite 687 passed / 65 skipped with the native workers configured.
+
+## Evaluation of loop A (Sol): changes required → addressed
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| `GET /verify` wrote the ledger and could race the mission worker | architectural | `POST /verify`; refused (409) while a worker is active or the persisted status is `running`; the revision lock catches a start that slips in; console and workspace call POST |
+| A required visual review with no artifacts became `not_applicable`, i.e. waived | major | Now `unknown` ("the gate never ran"), which blocks |
+| The authenticated PNG download bypassed the release decision | major | The download link appears only when the decision is eligible; a muted note explains the withholding; inline inspection stays |
+| Capsule bytes differed from verified bytes because `state.json` carried the ledger | major | The capsule drops `release` before serialising; service test reads the zip back |
+| Event-chain basis and reproduction attribution were inexact | moderate | Dedicated event-chain basis (status + events); replay integrity requires integrity and reproduction; numerical and artifact checks count items (`n of m`) |
+
+Sol's design notes for loops B–D (repair cycles, claim scope, change effects) are
+carried forward in the program file.

@@ -72,7 +72,10 @@ production readiness is a set of evidence-backed gates, not a styling label.
   cancel-after-finish defect found by the suite is fixed. Loop 4 (Claude OAuth seats):
   a tool-less `claude-code` transport uses the operator's own Claude Code login; live
   probe reached the API and was refused for credits — gate blocked, not passed.
-  Sol: accept-with-findings / changes-required on each loop, all addressed.
+  Loop A (release ledger): eight named checks in six explicit states with per-check
+  bases; the only positive decision is "eligible for human review"; capsule export
+  and PNG download consult it. Sol: accept-with-findings / changes-required on each
+  loop, all addressed.
 
 ## External limits retained
 
