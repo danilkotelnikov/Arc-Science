@@ -76,7 +76,11 @@ production readiness is a set of evidence-backed gates, not a styling label.
   bases; the only positive decision is "eligible for human review"; capsule export
   and PNG download consult it. Loop B (repair cycles): presentation-only findings
   are answered by at most two re-render-and-review cycles per round, each bound to
-  its trigger, renders, policy and fresh verdict in the evidence graph. Sol:
+  its trigger, renders, policy and fresh verdict in the evidence graph. Loop C (claim
+  scope): every stop derives, per hypothesis, the requested claim, the evidence-supported
+  scope, the remaining uncertainty and the next test; provisional support needs two
+  distinct reviewer identities; the derivation is checked by the evidence graph, the
+  capsule and the ledger. Sol:
   accept-with-findings / changes-required on each loop, all addressed.
 
 ## External limits retained

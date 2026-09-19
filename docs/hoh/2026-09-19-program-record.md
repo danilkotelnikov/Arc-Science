@@ -209,3 +209,36 @@ with the repair history, four gated downloads).
 
 Sol's own limit: the read-only sandbox could not execute Python or Vitest, so the
 suite counts above are the author's runs.
+
+## Loop C — claim-strength adjustment (`591c6d2`, `f880f6b`)
+
+Design (from the design review's operation "requested claim → evidence-supported
+scope → remaining uncertainty → next discriminating experiment; a narrower conclusion
+is a valid research output"): at every stop (`completed`, `budget_exhausted`,
+`needs_input`) the engine derives a `ClaimScope` per hypothesis from the recorded
+reconciliation — the requested claim (the hypothesis), the evidence-supported scope
+(each role's supporting finding, qualified as exploratory-split evidence), the
+remaining uncertainty with a reason code (`challenged`, `uncertain`,
+`missing_independent_role`, `untested`, `shared_identity`) and the next
+discriminating tests both roles proposed. Status is `provisionally_supported` only
+when both roles support under two distinct model identities and nothing is open;
+otherwise `contradicted`, `unresolved` or `unassessed`. The scope is derived, never
+authored: the evidence graph, the capsule verifier and a `claim_scope` ledger check
+reject a scope that does not follow from the recorded assessments; a resumed mission
+clears it and derives it again at its next stop; verification derives it for a
+mission that stopped before scopes existed. The workspace shows the four parts per
+hypothesis.
+
+Checks: `test_claim_scope.py` 13; full Python suite 714 passed / 65 skipped with the
+native workers; frontend 46; Playwright 16 (the demo mission shows the linear route
+contradicted and the quadratic route unresolved for shared identity, with the
+qualifier and the next tests visible; ledger 8 satisfied + 1 not applicable).
+
+## Evaluation of loop C (Sol): changes required → addressed → accept
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| One role recording several positions in a round let tuple order decide; a challenge could be hidden | major | The most cautious position of the latest round stands (challenge > uncertain > support); both orderings tested |
+| Two roles run as one model identity counted as independent support | moderate | `shared_identity` uncertainty; provisional support requires two distinct identities; the scripted fixture therefore never reaches it, and the UI says why |
+| The ledger reason asserted a next test for every hypothesis although none may exist | moderate | The reason counts "proposed for k of n"; `without_next_test` is in the scope counts |
+| Missions that stopped before scopes existed were blocked with no path to eligibility | major | `POST /verify` derives and persists the scope for such a mission before evaluating the ledger; service test |
