@@ -35,7 +35,7 @@ def test_public_http_lifecycle_exports_and_reproduces(tmp_path):
         assert row['state']['status']=='completed'
         assert len(row['state']['branches'])>=3
         assert row['state']['publication_eligible'] is False
-        assert c.get(f'/api/missions/{mid}/verify',headers=auth()).json()['reproduction_passed']
+        assert c.post(f'/api/missions/{mid}/verify',headers=auth()).json()['reproduction_passed']
         exported=c.get(f'/api/missions/{mid}/capsule',headers=auth())
         assert exported.status_code==200 and exported.content[:2]==b'PK'
         from arc_science.exploration.capsule import verify_capsule
@@ -128,6 +128,8 @@ def _finished(c,mid):
 def test_release_ledger_gates_the_capsule_and_survives_restart(tmp_path):
     with TestClient(app(tmp_path)) as c:
         mid=c.post('/api/missions',headers=auth(),json={'goal':'Release ledger'}).json()['id']
+        # Verification writes the ledger, so it refuses to run against an unfinished mission.
+        assert c.post(f'/api/missions/{mid}/verify',headers=auth()).status_code==409
         c.post(f'/api/missions/{mid}/start',headers=auth())
         row=_finished(c,mid)
         # Before verification the decision is blocked by unknown replay checks and the export is refused.
@@ -138,11 +140,16 @@ def test_release_ledger_gates_the_capsule_and_survives_restart(tmp_path):
         blocked=c.get(f'/api/missions/{mid}/capsule',headers=auth())
         assert blocked.status_code==409 and 'replay_integrity:unknown' in blocked.json()['detail']
         # Verification persists a receipt and the decision; the export is then allowed.
-        verified=c.get(f'/api/missions/{mid}/verify',headers=auth()).json()
+        verified=c.post(f'/api/missions/{mid}/verify',headers=auth()).json()
         assert verified['release']['status']=='eligible_for_human_review'
         assert verified['release']['verification']['reproduction_passed'] is True
         assert c.get(f'/api/missions/{mid}/release',headers=auth()).json()['eligible_for_human_review'] is True
-        assert c.get(f'/api/missions/{mid}/capsule',headers=auth()).status_code==200
+        capsule=c.get(f'/api/missions/{mid}/capsule',headers=auth())
+        assert capsule.status_code==200
+        # The exported state is the verified state: the ledger is evidence about it, not part of it.
+        import io,zipfile
+        with zipfile.ZipFile(io.BytesIO(capsule.content)) as z:
+            assert json.loads(z.read('state.json'))['release'] is None
         assert all(check['state']!='unknown' for check in verified['release']['checks'])
         assert 'validated' not in json.dumps(verified['release']).lower()
     # A restart keeps the ledger: the decision is derived from the persisted receipt.
@@ -158,7 +165,7 @@ def test_a_mission_that_changes_after_verification_is_stale_until_verified_again
         c.post(f'/api/missions/{mid}/start',headers=auth())
         row=_finished(c,mid)
         assert row['state']['status']=='budget_exhausted'
-        assert c.get(f'/api/missions/{mid}/verify',headers=auth()).json()['release']['status']=='eligible_for_human_review'
+        assert c.post(f'/api/missions/{mid}/verify',headers=auth()).json()['release']['status']=='eligible_for_human_review'
         # Interrupt-and-resume changes the subject: the persisted receipt no longer applies.
         from arc_science.exploration.models import MissionState
         repo=c.app.state.repository

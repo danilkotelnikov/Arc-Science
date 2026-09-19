@@ -33,7 +33,7 @@ async function load(mid){render(await(await api('/missions/'+mid)).json());}
 function poll(mid){clearInterval(timer);timer=setInterval(()=>load(mid).catch(message),700);}
 $('run').onclick=async()=>{try{$('run').disabled=true;const row=await(await api('/missions','POST',{goal:$('goal').value,mode:$('mode').value,max_rounds:Number($('rounds').value),allow_egress:$('egress').checked,vision_review:$('vision').checked})).json();render(row);await api('/missions/'+row.id+'/start','POST');await load(row.id);poll(row.id);}catch(e){message(e);}finally{$('run').disabled=false;}};
 $('list').onclick=async()=>{try{const rows=await(await api('/missions')).json();$('missions').replaceChildren(...rows.map(r=>{const b=text('button',`${r.status} · ${r.goal}`);b.onclick=()=>{load(r.id).then(()=>poll(r.id)).catch(message);};return b;}));}catch(e){message(e);}};
-$('verify').onclick=async()=>{try{$('verification').textContent=JSON.stringify(await(await api('/missions/'+selected+'/verify')).json(),null,2);}catch(e){message(e);}};
+$('verify').onclick=async()=>{try{$('verification').textContent=JSON.stringify(await(await api('/missions/'+selected+'/verify','POST')).json(),null,2);}catch(e){message(e);}};
 $('export').onclick=async()=>{try{const r=await api('/missions/'+selected+'/capsule');const u=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=u;a.download='arc-'+selected+'.zip';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}catch(e){message(e);}};
 $('cancel').onclick=async()=>{try{await api('/missions/'+selected+'/cancel','POST');await load(selected);}catch(e){message(e);}};
 $('resume').onclick=async()=>{try{await api('/missions/'+selected+'/start','POST');poll(selected);}catch(e){message(e);}};

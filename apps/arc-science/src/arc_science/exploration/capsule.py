@@ -19,6 +19,8 @@ MAX_CAPSULE=20*1024*1024
 
 def export_capsule(request:MissionRequest,state:MissionState)->bytes:
     if state.request_digest!=digest(request):raise ValueError('Unbound mission')
+    # The release ledger is service-side evidence about the state, not part of it.
+    state=state.model_copy(update={'release':None})
     entries={'request.json':canonical(request),'state.json':canonical(state),
              'runtime.json':canonical({'format':CAPSULE_FORMAT,'arc_version':__version__,
                  'numeric_version':tools.TOOL_VERSION,'numeric_source_sha256':hashlib.sha256(Path(tools.__file__).read_bytes()).hexdigest(),

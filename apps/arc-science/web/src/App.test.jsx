@@ -95,6 +95,7 @@ test('selected mission exposes authenticated artifacts, visual reports, verify, 
 
 test('a blocked release ledger explains itself and withholds the capsule until verification',async()=>{
   selectedRow.release=blockedRelease;
+  selectedRow.state.artifacts=[{digest:'d'.repeat(64),source_observation_id:'obs-1',media_type:'image/png'}];
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
   await user.type(screen.getByLabelText('Local operator token'),'private');
   await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
@@ -104,11 +105,17 @@ test('a blocked release ledger explains itself and withholds the capsule until v
   expect(ledger).toHaveTextContent('Blocked by: replay_integrity:unknown.');
   expect(ledger).toHaveTextContent('never scientific validation');
   expect(screen.getByRole('button',{name:'Export replay capsule'})).toBeDisabled();
+  // Inline inspection stays; the explicit file download consults the same ledger.
+  expect(await screen.findByRole('img',{name:'Artifact from obs-1'})).toBeInTheDocument();
+  expect(screen.queryByRole('link',{name:'Download authenticated PNG'})).toBeNull();
+  expect(screen.getByText(/Download withheld until the release decision is eligible/)).toBeInTheDocument();
   // Verification refreshes the mission; the service's new decision opens the export.
   fetch.mockImplementation(async(path,options={})=>{requests.push({path,options});if(path.endsWith('/verify'))return json({reproduction_passed:true,release:eligibleRelease});return json({...selectedRow,release:eligibleRelease});});
   await user.click(screen.getByRole('button',{name:'Verify and recompute'}));
   await waitFor(()=>expect(screen.getByRole('region',{name:'Release decision'})).toHaveTextContent('Eligible for human review'));
   expect(screen.getByRole('button',{name:'Export replay capsule'})).toBeEnabled();
+  expect(requests.find(r=>r.path?.endsWith('/verify')).options.method).toBe('POST');
+  expect(await screen.findByRole('link',{name:'Download authenticated PNG'})).toBeInTheDocument();
 });
 
 test('a finished mission keeps its outcome: Cancel is disabled, Verify and export stay available',async()=>{

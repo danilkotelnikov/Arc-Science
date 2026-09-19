@@ -118,3 +118,26 @@ def test_reconciliation_needs_both_roles_on_every_evidence_bearing_branch():
     both = MissionState.model_validate({**with_obs.model_dump(), 'assessments': [assessment, {**assessment, 'role': 'falsifier'}]})
     assert states(release.evaluate_release(request, both, None, event_chain_ok=True))['reconciliation'] == 'satisfied'
     assert release.check_basis('reconciliation', request, both) != release.check_basis('reconciliation', request, with_obs)
+
+
+def test_requested_visual_review_without_artifacts_is_unknown_not_waived():
+    request = MissionRequest(goal='Explore the fixture', mode='demo', max_rounds=2, vision_review=True)
+    state = MissionState.model_validate({**initialize(request).model_dump(), 'status': 'completed'})
+    decision = release.evaluate_release(request, state, receipt(state), event_chain_ok=True)
+    assert states(decision)['visual_review'] == 'unknown'
+    assert 'visual_review:unknown' in decision.blocking_reasons
+
+
+def test_reproduction_checks_count_every_replayable_item():
+    request, state = mission(status='completed')
+    branch = {'id': 'linear', 'title': 'Linear', 'hypothesis': 'h', 'falsifier': 'f', 'parents': [], 'created_round': 0}
+    observation = {'id': 'obs-1', 'branch_id': 'linear', 'tool': 'polynomial_fit', 'tool_version': 'v', 'round': 0,
+                   'status': 'ok', 'data': {'validation_mse': 0.01}, 'dataset_digest': state.dataset_digest,
+                   'request_digest': state.request_digest,
+                   'action': {'id': 'fit-linear', 'branch_id': 'linear', 'tool': 'polynomial_fit', 'arguments': {'degree': 1}}}
+    with_obs = MissionState.model_validate({**state.model_dump(), 'branches': [branch], 'observations': [observation]})
+    partial = receipt(with_obs, reproduced=0, reproduction_passed=True)
+    decision = release.evaluate_release(request, with_obs, partial, event_chain_ok=True)
+    assert states(decision)['numerical_reproduction'] == 'failed'
+    assert '0 of 1' in next(c.reason for c in decision.checks if c.name == 'numerical_reproduction')
+    assert states(release.evaluate_release(request, with_obs, receipt(with_obs, reproduced=1), event_chain_ok=True))['numerical_reproduction'] == 'satisfied'

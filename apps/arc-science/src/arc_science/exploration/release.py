@@ -40,6 +40,8 @@ def check_basis(name: MissionCheck, request: MissionRequest, state: MissionState
     """The exact dependencies of one check, so staleness is per check, not per mission."""
     if name == 'operational_status':
         return digest({'status': state.status})
+    if name == 'event_chain_integrity':
+        return digest({'status': state.status, 'events': [e.model_dump(mode='json') for e in state.events]})
     if name == 'reconciliation':
         return digest({'branches': [b.id for b in state.branches],
                        'observations': [o.model_dump(mode='json') for o in state.observations],
@@ -88,7 +90,7 @@ def _visual(request, state):
     if not request.vision_review:
         return 'not_applicable', 'Visual review was not requested for this mission.', ()
     if not state.artifacts:
-        return 'not_applicable', 'Visual review was requested but the mission produced no artifacts.', ()
+        return 'unknown', 'Visual review was requested but the mission produced nothing reviewable; the gate never ran.', ()
     if any(r.status == 'rejected' for r in state.vision_records):
         return 'error', 'A visual review call was rejected or malformed; no verdict can be inferred from it.', ()
     reviewed = {}
@@ -110,8 +112,9 @@ def _replay(name, receipt: VerificationReceipt | None, current_subject, state):
         return 'stale', 'The mission changed after the last replay verification; verify again.', ()
     evidence = (receipt.report_digest,)
     if name == 'replay_integrity':
-        return ('satisfied', 'Capsule members, manifest and runtime contract verified.', evidence) if receipt.integrity \
-            else ('failed', 'Capsule integrity failed: ' + '; '.join(receipt.failures)[:500], evidence)
+        return ('satisfied', 'Capsule members, manifest, runtime contract and recorded outputs verified.', evidence) \
+            if receipt.integrity and receipt.reproduction_passed \
+            else ('failed', 'Capsule verification failed: ' + '; '.join(receipt.failures)[:500], evidence)
     if name == 'evidence_graph':
         return ('satisfied', 'The evidence graph is well formed.', evidence) if receipt.evidence_graph_valid \
             else ('failed', 'The evidence graph is invalid.', evidence)
@@ -119,14 +122,15 @@ def _replay(name, receipt: VerificationReceipt | None, current_subject, state):
         replayable = [o for o in state.observations if o.status == 'ok' and o.tool in ('polynomial_fit', 'permutation_control', 'describe_data')]
         if not replayable:
             return 'not_applicable', 'No replayable numerical observation exists in this mission.', evidence
-        return ('satisfied', f'{receipt.reproduced} numerical analyses recomputed within tolerance.', evidence) if receipt.reproduction_passed \
-            else ('failed', 'Recomputation disagreed: ' + '; '.join(receipt.failures)[:500], evidence)
+        return ('satisfied', f'{receipt.reproduced} numerical analyses recomputed within tolerance.', evidence) \
+            if receipt.reproduced == len(replayable) \
+            else ('failed', f'{receipt.reproduced} of {len(replayable)} numerical analyses recomputed: ' + '; '.join(receipt.failures)[:400], evidence)
     if name == 'artifact_reproduction':
         if not state.artifacts:
             return 'not_applicable', 'The mission produced no artifacts to reproduce.', evidence
         return ('satisfied', f'{receipt.artifacts_reproduced} artifacts reproduced byte for byte.', evidence) \
-            if receipt.artifacts_reproduced == len(state.artifacts) and receipt.reproduction_passed \
-            else ('failed', 'Not every artifact was reproduced from recorded inputs.', evidence)
+            if receipt.artifacts_reproduced == len(state.artifacts) \
+            else ('failed', f'{receipt.artifacts_reproduced} of {len(state.artifacts)} artifacts reproduced from recorded inputs.', evidence)
     raise ValueError(name)
 
 
