@@ -9,7 +9,7 @@ import time
 import uuid
 import httpx
 import json
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import Body, FastAPI, Depends, Header, HTTPException, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,7 +20,9 @@ from .exploration.models import MissionRequest, MissionState
 from .exploration.engine import initialize, explore, MissionCancelled
 from .exploration.agents import DemoAgent, DemoVisionAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
+from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, mission_change
 from .exploration.claim_scope import derive_claim_scope
+from .exploration.models import Change
 from .exploration.repository import MissionRepository, MissionFinished, RevisionConflict
 from .exploration.capsule import export_capsule, verify_capsule
 from .exploration import release as release_ledger
@@ -29,6 +31,11 @@ from .exploration.catalog import TrustedPublicTools
 
 VERSION=__version__
 
+
+class ChangeDeclaration(BaseModel):
+    kind:str=Field(min_length=1,max_length=40)
+    declared_effects:list[str]=Field(default_factory=list,max_length=5)
+    note:str=Field(default='',max_length=400)
 
 class ProbeRequest(BaseModel):
     """Explicit consent: a provider probe spends real tokens."""
@@ -395,13 +402,48 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             memory_routes.schedule_capture(mid,MissionState.model_validate(fresh['state']))
             running.pop(mid,None)
 
+    def record_resume(row,declared,note):
+        # Resuming is a declared change: it is recorded on the mission with the effects
+        # the server derives, and every release check goes stale until re-verified.
+        derived,checks=mission_change('resume',declared)
+        state=MissionState.model_validate(row['state'])
+        change=Change(id=uuid.uuid4().hex,kind='resume',declared_effects=tuple(declared),derived_effects=derived,
+                      required_checks=checks,base_digest=release_ledger.subject_digest(state),note=note[:400],
+                      round=state.round,at=int(time.time()))
+        updates={'changes':state.changes+(change,)}
+        if state.release is not None:
+            updates['release']=release_ledger.invalidate_release(state.release,RESUME_STALE,
+                'Declared change '+change.id[:8]+' (resume): '+', '.join(derived)+'; verify again after the mission stops.')
+        try:repository.save(row['id'],state.model_copy(update=updates),expected_revision=row['revision'])
+        except RevisionConflict:raise HTTPException(409,'Mission changed; retry') from None
+        return change
+
     @app.post('/api/missions/{mid}/start',status_code=202,dependencies=[Depends(authorized)])
     async def start(mid:str):
         row=get(mid)
         if mid in running or row['state']['status'] not in ('ready','paused'):
             raise HTTPException(409,'Only ready or interrupted missions can start or resume')
+        if row['state']['status']=='paused':
+            record_resume(row,MISSION_CHANGES['resume']['derived'],'Resumed from the workspace.')
         running[mid]=asyncio.create_task(worker(mid))
         return {'id':mid,'status':'scheduled'}
+
+    @app.get('/api/changes',dependencies=[Depends(authorized)])
+    async def change_kinds():
+        return {kind:{'applies':entry['applies'],'derived_effects':list(entry['derived']),'reason':entry['reason']}
+                for kind,entry in MISSION_CHANGES.items()}
+
+    @app.post('/api/missions/{mid}/changes',status_code=202,dependencies=[Depends(authorized)])
+    async def declare_change(mid:str,declaration:ChangeDeclaration=Body(...)):
+        row=get(mid)
+        # The declaration is checked before anything moves; a refusal names the table's reason.
+        try:derived,checks=mission_change(declaration.kind,declaration.declared_effects)
+        except ChangeRefused as refused:raise HTTPException(409,str(refused)) from None
+        if mid in running or row['state']['status']!='paused':
+            raise HTTPException(409,'Only an interrupted mission can be resumed')
+        change=record_resume(row,declaration.declared_effects,declaration.note)
+        running[mid]=asyncio.create_task(worker(mid))
+        return {'id':mid,'status':'scheduled','change':change.model_dump(mode='json')}
 
     @app.post('/api/missions/{mid}/cancel',dependencies=[Depends(authorized)])
     async def cancel(mid:str):

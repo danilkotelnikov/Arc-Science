@@ -48,6 +48,10 @@ test('an offline mission explores competing branches, reconciles them and verifi
   await expect(quadratic).toHaveText(/Next discriminating test/);
   await expect(scope.locator('article[data-status="provisionally_supported"]')).toHaveCount(0);
   await expect(scope.getByText(/Nothing above is scientific validation/)).toBeVisible();
+  // No operator change was declared on this mission; the section says what a change would mean.
+  const declared = page.getByRole('region', {name: 'Declared changes'});
+  await expect(declared).toHaveText(/No change declared\. Resuming declares an analysis change; claims cannot be edited/);
+  await expect(results.getByRole('button', {name: /^Resume/})).toBeDisabled();
   await expect(ledger.locator('li[data-state="satisfied"]').filter({hasText: 'claim scope'})).toHaveText(/contradicted 2, unresolved 1\); a next discriminating test is proposed for 3 of 3/);
   await expect(ledger).toContainText('never scientific validation');
   await expect(results.locator('footer')).toContainText('Publication is not authorized');

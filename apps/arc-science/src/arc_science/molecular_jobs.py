@@ -46,10 +46,17 @@ Chain = Annotated[str, StringConstraints(pattern=r'^[A-Za-z0-9_.-]{1,32}$')]
 JobStatus = Literal['queued', 'rendering', 'completed', 'failed', 'cancelled', 'interrupted']
 
 
+SETTINGS = ('antibody_chains', 'antigen_chains', 'assembly', 'model_index', 'cutoff', 'width', 'samples', 'seed')
+
+
 class RenderRequest(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     filename: str = Field(min_length=1, max_length=120)
     source_text: str = Field(min_length=1, max_length=MAX_SOURCE_BYTES)
+    # A change of an earlier render of the same coordinates: what the operator declares
+    # it affects; the server derives the actual effects and refuses a narrower declaration.
+    base_job: str | None = Field(default=None, pattern=r'^[0-9a-f]{32}$')
+    declared_effects: list[str] = Field(default_factory=list, max_length=5)
     antibody_chains: list[Chain] = Field(min_length=1, max_length=16)
     antigen_chains: list[Chain] = Field(min_length=1, max_length=16)
     assembly: str = Field(default='asymmetric_unit', pattern=r'^[A-Za-z0-9_.-]{1,64}$')
@@ -84,6 +91,15 @@ class RenderRequest(BaseModel):
         return self
 
 
+class ChangeRecord(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    base_job: str = Field(pattern=r'^[0-9a-f]{32}$')
+    declared_effects: list[str] = Field(max_length=5)
+    derived_effects: list[str] = Field(min_length=1, max_length=5)
+    changed_fields: list[str] = Field(min_length=1, max_length=len(SETTINGS))
+    required_checks: list[str] = Field(min_length=1, max_length=12)
+
+
 class AssetRecord(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     url: str = Field(max_length=256)
@@ -103,6 +119,10 @@ class JobRecord(BaseModel):
     error: str | None = Field(default=None, max_length=256)
     contact_pairs: int | None = Field(default=None, ge=0, le=2000000)
     assets: dict[str, AssetRecord] = Field(default_factory=dict, max_length=len(ASSETS))
+    # Render settings (never the coordinates) so a later render can declare itself a
+    # change of this one; None for records written before settings were kept.
+    settings: dict | None = None
+    change: ChangeRecord | None = None
 
 
 def _json_bytes(value):
@@ -196,6 +216,31 @@ class MolecularJobs:
         self.router.add_api_route('/renders/{job_id}', self.get_job, methods=['GET'])
         self.router.add_api_route('/renders/{job_id}/cancel', self.cancel, methods=['POST'])
         self.router.add_api_route('/renders/{job_id}/assets/{filename:path}', self.asset, methods=['GET'])
+
+    def _change_of(self, parameters, settings):
+        """Derive the effects of re-rendering an earlier job's coordinates with new settings.
+        The earlier job is never touched: the new render is a new candidate."""
+        from .exploration.changes import ChangeRefused, check_declaration, molecular_effects, required_checks
+        if parameters.base_job is None:
+            raise HTTPException(409, 'Declared effects need a base render to be a change of')
+        base = self.jobs.get(parameters.base_job)
+        if base is None:
+            raise HTTPException(404, 'Base render not found')
+        if base['source_sha256'] != hashlib.sha256(parameters.source_text.encode('utf-8')).hexdigest() \
+                or base['filename'] != parameters.filename:
+            raise HTTPException(409, 'Different coordinates are a new subject, not a change of the base render')
+        if base.get('settings') is None:
+            raise HTTPException(409, 'The base render predates change tracking; render it again first')
+        derived, changed = molecular_effects(base['settings'], settings)
+        if not derived:
+            raise HTTPException(409, 'The settings equal the base render; nothing changes')
+        try:
+            check_declaration(parameters.declared_effects, derived)
+        except ChangeRefused as refused:
+            raise HTTPException(409, str(refused)) from None
+        return ChangeRecord(base_job=parameters.base_job, declared_effects=list(parameters.declared_effects),
+                            derived_effects=list(derived), changed_fields=list(changed),
+                            required_checks=list(required_checks(derived))).model_dump()
 
     @staticmethod
     def _resolve_executable(value):
@@ -376,6 +421,10 @@ class MolecularJobs:
             parameters = RenderRequest.model_validate_json(bytes(body))
         except (ValueError, ValidationError):
             raise HTTPException(422, 'Invalid coordinate upload or rendering settings') from None
+        settings = parameters.model_dump(include=set(SETTINGS))
+        change = None
+        if parameters.base_job is not None or parameters.declared_effects:
+            change = self._change_of(parameters, settings)
         async with self.lock:
             if self.closing or self.task is not None:
                 raise HTTPException(409, 'A molecular render is already active or the service is stopping')
@@ -405,7 +454,8 @@ class MolecularJobs:
                 anchored.close_directory(handle)
             now = time.time()
             row = JobRecord(id=job_id, status='queued', filename=parameters.filename,
-                            source_sha256=hashlib.sha256(source).hexdigest(), created_at=now, updated_at=now).model_dump()
+                            source_sha256=hashlib.sha256(source).hexdigest(), created_at=now, updated_at=now,
+                            settings=settings, change=change).model_dump()
             self._save(row)
             self.jobs[job_id] = row
             self.active_id = job_id

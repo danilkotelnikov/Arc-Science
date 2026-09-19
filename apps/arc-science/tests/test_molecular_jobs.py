@@ -489,3 +489,39 @@ def test_job_object_kills_render_subtree_when_owner_handle_closes(tmp_path):
     finally:
         if parent.poll() is None:
             parent.kill()
+
+
+def test_a_rerender_of_the_same_coordinates_declares_its_effects_and_keeps_the_base_render(tmp_path, runtime):
+    with TestClient(make_app(tmp_path)) as client:
+        base = terminal(client, client.post(PREFIX + '/renders', headers=AUTH, json=REQUEST).json()['id'])
+        assert base['settings']['cutoff'] == 4.0 and base['change'] is None
+        # Declared presentation, but the cutoff changed too: refused, base untouched, no job created.
+        narrow = client.post(PREFIX + '/renders', headers=AUTH,
+                             json={**REQUEST, 'cutoff': 5.0, 'width': 1600, 'base_job': base['id'], 'declared_effects': ['presentation']})
+        assert narrow.status_code == 409 and 'also affects analysis' in narrow.json()['detail']
+        assert len(client.get(PREFIX + '/renders', headers=AUTH).json()) == 1
+        # Different coordinates are a new subject, not a change.
+        other = client.post(PREFIX + '/renders', headers=AUTH,
+                            json={**REQUEST, 'source_text': 'data_other\n', 'base_job': base['id'], 'declared_effects': ['presentation']})
+        assert other.status_code == 409 and 'new subject' in other.json()['detail']
+        same = client.post(PREFIX + '/renders', headers=AUTH, json={**REQUEST, 'base_job': base['id'], 'declared_effects': ['presentation']})
+        assert same.status_code == 409 and 'nothing changes' in same.json()['detail']
+        assert client.post(PREFIX + '/renders', headers=AUTH, json={**REQUEST, 'declared_effects': ['presentation']}).status_code == 409
+        assert client.post(PREFIX + '/renders', headers=AUTH, json={**REQUEST, 'base_job': '0' * 32, 'declared_effects': ['presentation']}).status_code == 404
+        # A wider declaration is accepted; the server records what actually changed and the checks it obliges.
+        accepted = client.post(PREFIX + '/renders', headers=AUTH,
+                               json={**REQUEST, 'antigen_chains': ['D'], 'width': 1600, 'base_job': base['id'],
+                                     'declared_effects': ['presentation', 'scientific_depiction', 'analysis']})
+        assert accepted.status_code == 202, accepted.text
+        row = terminal(client, accepted.json()['id'])
+        assert row['status'] == 'completed'
+        assert row['change'] == {'base_job': base['id'], 'declared_effects': ['presentation', 'scientific_depiction', 'analysis'],
+                                 'derived_effects': ['presentation', 'scientific_depiction'],
+                                 'changed_fields': ['width', 'antigen_chains'],
+                                 'required_checks': ['geometry', 'readability', 'structural_identity', 'visibility', 'interpretation']}
+        # The base render is a separate candidate and is never touched.
+        again = client.get(f'{PREFIX}/renders/{base["id"]}', headers=AUTH).json()
+        assert again == base
+    # The change survives a restart with its record.
+    with TestClient(make_app(tmp_path)) as client:
+        assert client.get(f'{PREFIX}/renders/{row["id"]}', headers=AUTH).json()['change']['changed_fields'] == ['width', 'antigen_chains']

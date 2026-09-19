@@ -158,3 +158,21 @@ test('a failed authenticated preview can be retried without submitting a new ren
   expect(await screen.findByRole('img',{name:'Rendered molecular collage: complex.cif'})).toBeInTheDocument();
   expect(calls.filter(call=>call.options.method==='POST')).toHaveLength(0);
 });
+
+test('a render can be declared a change of the selected completed render, and the record shows what the server derived',async()=>{
+  jobs=[{...completed,settings:{antibody_chains:['A','B'],antigen_chains:['C'],assembly:'asymmetric_unit',model_index:0,cutoff:4,width:1400,samples:96,seed:23}}];
+  submitted={...submitted,id:'job-1',change:{base_job:'job-1',declared_effects:['presentation','scientific_depiction'],derived_effects:['presentation'],changed_fields:['width'],required_checks:['geometry','readability']}};
+  const user=userEvent.setup();render(<Harness/>);await loadPanel(user);
+  await user.click(screen.getByRole('button',{name:'completed · complex.cif'}));
+  await user.click(screen.getByRole('button',{name:'Render structure'}).closest('form').querySelector('summary'));
+  await user.click(screen.getByLabelText(/Render as a declared change of job-1/));
+  await user.click(screen.getByLabelText('Presentation (width, samples, seed)'));
+  await user.click(screen.getByLabelText('Scientific depiction (chains, assembly, model)'));
+  await fillSource(user);
+  const width=screen.getByLabelText('Width (px)');await user.clear(width);await user.type(width,'1600');
+  await user.click(screen.getByRole('button',{name:'Render structure'}));
+  await screen.findByText('Render status: queued');
+  const sent=JSON.parse(calls.find(call=>call.path==='/api/molecular/renders'&&call.options.method==='POST').options.body);
+  expect(sent.base_job).toBe('job-1');expect(sent.declared_effects).toEqual(['presentation','scientific_depiction']);expect(sent.width).toBe(1600);
+  expect(screen.getByText(/Declared change of render job-1/)).toHaveTextContent('declared presentation, scientific_depiction; derived presentation (width); checks obliged: geometry, readability.');
+});

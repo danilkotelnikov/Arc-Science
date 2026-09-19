@@ -299,6 +299,29 @@ class ClaimScope(Record):
     rule: str = Field(min_length=1, max_length=400)
 
 
+# Change-effect declarations (loop D): what an operator declared, what the server
+# derived, and the checks that obliges. Recorded on the mission it changed.
+ChangeEffect = Literal['presentation', 'scientific_depiction', 'analysis', 'claim', 'permission']
+
+
+class Change(Record):
+    id: Id
+    kind: Literal['resume']
+    declared_effects: tuple[ChangeEffect, ...] = Field(min_length=1, max_length=5)
+    derived_effects: tuple[ChangeEffect, ...] = Field(min_length=1, max_length=5)
+    required_checks: tuple[str, ...] = Field(min_length=1, max_length=12)
+    base_digest: Digest
+    note: str = Field(default='', max_length=400)
+    round: int = Field(ge=0)
+    at: int = Field(ge=0)
+
+    @model_validator(mode='after')
+    def declaration_covers_derivation(self):
+        if any(effect not in self.declared_effects for effect in self.derived_effects):
+            raise ValueError('A change declaration cannot be narrower than its derived effects')
+        return self
+
+
 # Release ledger (loop A of the 2026-09-19 program). A check is one named question
 # about the mission with one of six states; unknown and error never count as
 # satisfied, not_applicable must say why, and every check remembers the digest of
@@ -369,6 +392,7 @@ class MissionState(Record):
     repairs: tuple[RepairCycle, ...] = Field(default=(), max_length=64)
     # Derived at every stop from the reconciliation; cleared when the mission resumes.
     claim_scope: ClaimScope | None = None
+    changes: tuple[Change, ...] = Field(default=(), max_length=64)
     events: tuple[Event, ...] = ()
     actions_used: int = 0
     model_calls_used: int = 0

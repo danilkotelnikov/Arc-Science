@@ -87,9 +87,9 @@ test('selected mission exposes authenticated artifacts, visual reports, verify, 
   expect(await screen.findByText(/"reproduction_passed": true/)).toBeInTheDocument();
   await user.click(screen.getByRole('button',{name:'Export replay capsule'}));
   await waitFor(()=>expect(requests.some(r=>r.download==='arc-mission-1.zip')).toBe(true));
-  await user.click(screen.getByRole('button',{name:'Resume'}));await user.click(screen.getByRole('button',{name:'Cancel'}));
+  await user.click(screen.getByRole('button',{name:'Resume (declares an analysis change)'}));await user.click(screen.getByRole('button',{name:'Cancel'}));
   await waitFor(()=>expect(requests.some(r=>r.path==='/api/missions/mission-1/cancel')).toBe(true));
-  expect(screen.getByRole('button',{name:'Resume'})).toBeDisabled();
+  expect(screen.getByRole('button',{name:/^Resume/})).toBeDisabled();
   expect(screen.getByRole('button',{name:'Cancel'})).toBeDisabled();
 });
 
@@ -170,7 +170,7 @@ test('a finished mission keeps its outcome: Cancel is disabled, Verify and expor
   await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
   expect(await screen.findByText('completed')).toBeInTheDocument();
   expect(screen.getByRole('button',{name:'Cancel'})).toBeDisabled();
-  expect(screen.getByRole('button',{name:'Resume'})).toBeDisabled();
+  expect(screen.getByRole('button',{name:/^Resume/})).toBeDisabled();
   expect(screen.getByRole('button',{name:'Verify and recompute'})).toBeEnabled();
   expect(screen.getByRole('button',{name:'Export replay capsule'})).toBeEnabled();
   expect(requests.some(r=>r.path==='/api/missions/mission-1/cancel')).toBe(false);

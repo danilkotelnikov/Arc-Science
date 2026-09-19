@@ -95,7 +95,7 @@ input[type="checkbox"] { margin-top: 3px; accent-color: #315d7c; }
 .record p,.branch p { margin-top: 6px; }
 .branch.focus { border-left: 2px solid #91aec5; padding-left: 14px; }
 .artifacts { display: grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap: 20px; }
-.artifact { margin: 0; min-width: 0; }.claim dl { display: grid; grid-template-columns: 11rem 1fr; gap: 4px 12px; margin: 6px 0 0; font-size: 13px; }.claim dt { font-weight: 600; }.claim dd { margin: 0; }.claim ul { margin: 0; padding-left: 18px; }.repairs { padding-left: 18px; font-size: 13px; }.repairs li { margin: 4px 0; }.artifact img { display: block; max-width: 100%; }.artifact a,.artifact figcaption { font-size: 11px; }
+.artifact { margin: 0; min-width: 0; }.claim dl { display: grid; grid-template-columns: 11rem 1fr; gap: 4px 12px; margin: 6px 0 0; font-size: 13px; }.claim dt { font-weight: 600; }.claim dd { margin: 0; }.claim ul { margin: 0; padding-left: 18px; }.repairs, .changes { padding-left: 18px; font-size: 13px; }.molecular-change { margin-top: 8px; }.repairs li { margin: 4px 0; }.artifact img { display: block; max-width: 100%; }.artifact a,.artifact figcaption { font-size: 11px; }
 .bioart-workspace { display: grid; grid-template-columns: 310px minmax(0,1fr); min-height: calc(100vh - 58px); }
 .bioart-search { padding: 28px 22px; border-right: 1px solid #e9ebed; }
 .bioart-search h1 { margin: 10px 0; }

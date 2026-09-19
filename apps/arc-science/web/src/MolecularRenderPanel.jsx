@@ -4,6 +4,7 @@ import {checkedFetch} from './http';
 
 const pending=status=>status==='queued'||status==='rendering';
 const defaults={assembly:'asymmetric_unit',model_index:0,cutoff:4,width:1400,samples:96,seed:23};
+const EFFECTS=[['presentation','Presentation (width, samples, seed)'],['scientific_depiction','Scientific depiction (chains, assembly, model)'],['analysis','Analysis (contact cutoff)']];
 const settings=[['model_index','Model index (zero-based)',0,99,1],['cutoff','Contact cutoff (Å)',0.1,10,0.1],['width','Width (px)',640,2400,1],['samples','Samples',1,128,1],['seed','Seed',0,2147483647,1]];
 
 function request(token,path,signal,body) {
@@ -28,6 +29,9 @@ function RenderControls({token,onJobChange,onShowJob}) {
   const [capabilities,setCapabilities]=useState(null),[jobs,setJobs]=useState(null),[job,setJob]=useState(null);
   const [file,setFile]=useState(null),[antibody,setAntibody]=useState(''),[antigen,setAntigen]=useState('');
   const [options,setOptions]=useState(defaults),[busy,setBusy]=useState(false),[error,setError]=useState(''),[pollAttempt,setPollAttempt]=useState(0);
+  // A render can declare itself a change of the selected completed render of the same
+  // coordinates; the server derives the real effects and refuses a narrower declaration.
+  const [asChange,setAsChange]=useState(false),[declared,setDeclared]=useState([]);
   const operation=useRef(null),polling=useRef(null);
   const updateJob=useCallback(data=>{
     setJob(data);onJobChange(data);
@@ -83,6 +87,7 @@ function RenderControls({token,onJobChange,onShowJob}) {
     const source=await readSource(file,signal);
     if(signal.aborted)return;
     const body={...options,filename:file.name,source_text:source,antibody_chains:antibodyChains,antigen_chains:antigenChains};
+    if(asChange&&job){body.base_job=job.id;body.declared_effects=declared;}
     const data=await(await request(token,'/api/molecular/renders',signal,body)).json();
     if(!signal.aborted){updateJob(data);onShowJob(true);}
   }
@@ -107,6 +112,11 @@ function RenderControls({token,onJobChange,onShowJob}) {
           <p className="field-note">Use asymmetric_unit or an assembly ID recorded in the source.</p>
           {settings.map(([name,label,min,max,step])=><React.Fragment key={name}><label htmlFor={'molecular-'+name}>{label}</label><input id={'molecular-'+name} type="number" min={min} max={max} step={step} required value={options[name]} onChange={event=>setOptions({...options,[name]:event.target.value===''?'':Number(event.target.value)})}/></React.Fragment>)}
         </details>
+        {job?.status==='completed'&&job.settings&&<fieldset className="molecular-change"><legend>Change of the selected render</legend>
+          <label className="check"><input type="checkbox" checked={asChange} onChange={event=>{setAsChange(event.target.checked);if(!event.target.checked)setDeclared([]);}}/>Render as a declared change of {job.id.slice(0,8)}… (same coordinates; the earlier render is kept)</label>
+          {asChange&&<>{EFFECTS.map(([effect,label])=><label className="check" key={effect}><input type="checkbox" checked={declared.includes(effect)} onChange={event=>setDeclared(event.target.checked?[...declared,effect]:declared.filter(e=>e!==effect))}/>{label}</label>)}
+          <p className="field-note">Declare every effect the new settings have; the server derives the actual effects and refuses a declaration that is narrower than them.</p></>}
+        </fieldset>}
       </fieldset>
       <Button type="submit" isDisabled={busy||!token||!capabilities?.configured||!file||!antibody.trim()||!antigen.trim()||pending(job?.status)}>Render structure</Button>
     </form>
@@ -161,7 +171,7 @@ export function MolecularRenderResult({job,token,onReturn}) {
   }
   return <section className="figure-workspace" aria-label="Generated molecular figure">
     <div className="figure-toolbar"><div><p className="eyebrow">LOCAL RENDER</p><h2>{job.filename}</h2></div><Button variant="secondary" size="sm" onPress={onReturn}>Close render</Button></div>
-    <div className="molecular-render-summary"><p role="status">Render status: {job.status}</p><p className="muted">Job {job.id}{job.contact_pairs!==null&&job.contact_pairs!==undefined?' · '+job.contact_pairs+' residue pairs':''}</p>
+    <div className="molecular-render-summary"><p role="status">Render status: {job.status}</p>{job.change&&<p className="molecular-change-record">Declared change of render {job.change.base_job.slice(0,8)}…: declared {job.change.declared_effects.join(', ')||'nothing'}; derived {job.change.derived_effects.join(', ')} ({job.change.changed_fields.join(', ')}); checks obliged: {job.change.required_checks.join(', ')}.</p>}<p className="muted">Job {job.id}{job.contact_pairs!==null&&job.contact_pairs!==undefined?' · '+job.contact_pairs+' residue pairs':''}</p>
       <p className="muted">Rendering does not establish scientific validity, visual acceptance, or publication approval. The surface is a Gaussian atomic envelope; dashed distances indicate proximity, not hydrogen bonds or affinity.</p>
       {job.error&&<p role="alert">{job.error}</p>}
       {job.status==='interrupted'&&<p>The server stopped before this render finished. Submit the structure again to create a new job.</p>}
