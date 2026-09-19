@@ -8,7 +8,9 @@ import secrets
 import time
 import uuid
 import httpx
-from fastapi import FastAPI, Depends, Header, HTTPException, Response
+import json
+from pydantic import BaseModel
+from fastapi import Body, FastAPI, Depends, Header, HTTPException, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from . import __version__
@@ -24,6 +26,17 @@ from .exploration.evidence import evidence_graph
 from .exploration.catalog import TrustedPublicTools
 
 VERSION=__version__
+
+
+class ProbeRequest(BaseModel):
+    """Explicit consent: a provider probe spends real tokens."""
+    spend_tokens:bool=False
+
+
+class ProbeReply(BaseModel):
+    """The smallest schema-valid answer: a probe proves reachability and identity, nothing more."""
+    ok:bool
+
 ENDPOINTS={'openai':'https://api.openai.com/v1/responses',
            'anthropic':'https://api.anthropic.com/v1/messages'}
 
@@ -220,34 +233,47 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         command=claude_code_command()
         if time.monotonic()-transport_cache['at']>30 or transport_cache['value'] is None:
             transport_cache['value']={'transport':'claude-code','executable':Path(command[0]).name,
-                'executable_sha256':claude_code.executable_digest(command[0]),
+                'executable_sha256':await claude_code.executable_digest(command[0]),
                 'version':await claude_code.version(command),**await claude_code.auth_status(command),
-                'tools':'disabled','network_sandboxed':False,'contract':claude_code.CONTRACT_VERSION}
+                'checked_at':int(time.time()),'tools':'disabled','network_sandboxed':False,
+                'contract':claude_code.CONTRACT_VERSION,
+                'note':'logged_in reports that a login exists, not that inference will succeed; run the probe for that'}
             transport_cache['at']=time.monotonic()
         return {**transport_cache['value'],'last_probe':probes['claude-code']}
 
+    probe_lock=asyncio.Lock();probe_last={'at':0.0}
+    PROBE_COOLDOWN=30.0
+
     @app.post('/api/providers/claude-code/probe',dependencies=[Depends(authorized)])
-    async def probe_claude_code():
-        """An explicit, token-spending minimal call through the production adapter, per model."""
+    async def probe_claude_code(consent:ProbeRequest=Body(...)):
+        """An explicit, token-spending minimal call through the production adapter, per model:
+        one at a time, with a cooldown, and an audit line in the data directory."""
         from .exploration.claude_code import ClaudeCodeAgent
-        from .exploration.models import Proposal
+        if not consent.spend_tokens:raise HTTPException(422,'Confirm spend_tokens=true; a probe makes a real model call per configured model')
         try:first,second=configured_endpoints()
         except Exception as error:raise HTTPException(409,str(error)) from None
         if first.provider!='claude-code':raise HTTPException(409,'The claude-code transport is not configured')
-        results=[]
-        for model in dict.fromkeys((first.model,second.model)):
-            seat=ClaudeCodeAgent(claude_code_command(),model,model)
-            started=time.monotonic()
-            try:
-                await seat._call(model,'You are Arc Science\'s readiness probe. Return only the JSON object {"branches":[],"actions":[],"stop":true,"reason":"probe"}.',
-                                 {'probe':True,'tools':{}},Proposal,role='probe')
-                results.append({'model':model,'ok':True,'observed_model':seat.calls[-1]['observed_model'],
-                                'duration_ms':int((time.monotonic()-started)*1000)})
-            except Exception as error:
-                results.append({'model':model,'ok':False,'error':str(error)[:300],'duration_ms':int((time.monotonic()-started)*1000)})
-            finally:seat.close()
-        probes['claude-code']={'at':int(time.time()),'results':results}
-        return probes['claude-code']
+        if probe_lock.locked():raise HTTPException(409,'A probe is already running')
+        if time.monotonic()-probe_last['at']<PROBE_COOLDOWN:raise HTTPException(429,'Probe cooldown: wait before spending again')
+        async with probe_lock:
+            probe_last['at']=time.monotonic()
+            results=[]
+            for model in dict.fromkeys((first.model,second.model)):
+                seat=ClaudeCodeAgent(claude_code_command(),model,model)
+                started=time.monotonic()
+                try:
+                    await seat._call(model,'You are Arc Science\'s readiness probe. Return only the JSON object {"ok": true}.',
+                                     {'probe':True},ProbeReply,role='probe')
+                    results.append({'model':model,'ok':True,'observed_model':seat.calls[-1]['observed_model'],
+                                    'duration_ms':int((time.monotonic()-started)*1000)})
+                except Exception as error:
+                    results.append({'model':model,'ok':False,'error':str(error)[:300],'duration_ms':int((time.monotonic()-started)*1000)})
+                finally:seat.close()
+            probes['claude-code']={'at':int(time.time()),'results':results}
+            audit=root/'providers'/'claude-code-probes.jsonl'
+            audit.parent.mkdir(parents=True,exist_ok=True)
+            with audit.open('a',encoding='utf-8') as log:log.write(json.dumps(probes['claude-code'])+'\n')
+            return probes['claude-code']
 
     @app.get('/api/capabilities',dependencies=[Depends(authorized)])
     async def capabilities():
@@ -305,6 +331,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             # stall mission progress, status polling or cancellation.
             memory_routes.schedule_capture(mid,state)
         def cancelled():return repository.get(mid)['state']['status']=='cancelled'
+        agent=None
         try:
             async with httpx.AsyncClient(trust_env=False) as client:
                 tools=TrustedPublicTools()
@@ -319,7 +346,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                             auth_style=(('oauth' if os.environ.get('ARC_ANTHROPIC_AUTH') in ('oauth','bearer') else 'x-api-key') if cfg.provider=='anthropic' else 'bearer'))
                     if first.provider=='claude-code':
                         from .exploration.claude_code import ClaudeCodeAgent
-                        agent=ClaudeCodeAgent(claude_code_command(),first.model,second.model)
+                        # The visual seat, when configured, stays a native image endpoint.
+                        visual=HTTPAgent(vision,reviewer_config=vision,vision_config=vision,client=client,
+                                         resolver=resolve,project=mid,principal='local-operator') if vision else None
+                        agent=ClaudeCodeAgent(claude_code_command(),first.model,second.model,vision=visual)
                     else:
                         agent=HTTPAgent(first,reviewer_config=second,vision_config=vision,
                                         client=client,resolver=resolve,project=mid,principal='local-operator')
@@ -348,6 +378,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 error=MissionState.model_validate({**fresh['state'],'status':'error','stop_reason':'Service execution failed; inspect configuration. No success inferred.'})
                 with suppress(RevisionConflict):repository.save(mid,error,expected_revision=fresh['revision'])
         finally:
+            if hasattr(agent,'close'):agent.close()
             fresh=repository.get(mid)
             memory_routes.schedule_capture(mid,MissionState.model_validate(fresh['state']))
             running.pop(mid,None)

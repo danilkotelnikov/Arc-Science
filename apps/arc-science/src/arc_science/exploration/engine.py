@@ -64,6 +64,9 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         return state
     def identity(role):
         return agent.model_for(role) if hasattr(agent, "model_for") else agent.model
+    def provenance(role):
+        # Transports that record per-call evidence hand it over exactly once per record.
+        return agent.take_provenance(role) if hasattr(agent, 'take_provenance') else None
     def context():
         return {'goal':request.goal,'round':state.round,'data_origin':state.data_origin,
                 'dataset':{'digest':state.dataset_digest,'n':len(state.points)},
@@ -112,7 +115,8 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         records=state.model_records
         if committed_plan is None:
             records=records+(ModelRecord(role='planner',round=state.round,model=identity('planner'),
-                    context_digest=digest(planning_context),input_context=planning_context,payload=plan.model_dump(mode='json')),)
+                    context_digest=digest(planning_context),input_context=planning_context,payload=plan.model_dump(mode='json'),
+                    transport=provenance('planner')),)
         change(branches=tuple(branches),model_records=records)
         event('plan_committed',plan.reason or 'Bounded exploratory actions proposed.')
         if plan.stop:
@@ -249,7 +253,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             if packet is None:
                 event('review_rejected',role+': missing, malformed or unbound review; no success inferred.')
                 continue
-            records.append(ModelRecord(role=role,round=state.round,model=identity(role),context_digest=digest(frozen),input_context=frozen,payload=packet.model_dump(mode='json')))
+            records.append(ModelRecord(role=role,round=state.round,model=identity(role),context_digest=digest(frozen),input_context=frozen,payload=packet.model_dump(mode='json'),transport=provenance(role)))
             assessments.extend(Assessed(**a.model_dump(),role=role,round=state.round,model=identity(role)) for a in packet.assessments)
         change(assessments=tuple(assessments),model_records=tuple(records))
         fits=[o for o in state.observations if o.status=='ok' and o.tool=='polynomial_fit']

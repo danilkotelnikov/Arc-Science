@@ -55,11 +55,16 @@ def test_capabilities_report_the_transport_truthfully_without_spending_tokens(co
 
 def test_explicit_probe_spends_one_call_per_model_and_is_reported_afterwards(configured, tmp_path):
     with TestClient(create_app(data_dir=tmp_path / 'data', token='t' * 40)) as client:
-        probe = client.post('/api/providers/claude-code/probe', headers=AUTH).json()
+        assert client.post('/api/providers/claude-code/probe', headers=AUTH, json={}).status_code == 422
+        probe = client.post('/api/providers/claude-code/probe', headers=AUTH, json={'spend_tokens': True}).json()
         assert [r['model'] for r in probe['results']] == ['claude-opus-5', 'claude-sonnet-5']
         assert all(r['ok'] and r['observed_model'] == r['model'] for r in probe['results'])
         assert client.get('/api/capabilities', headers=AUTH).json()['live']['transport']['last_probe'] == probe
-        assert client.post('/api/providers/claude-code/probe').status_code == 401
+        # Durable audit line, cooldown, and no unauthenticated access.
+        audit = (tmp_path / 'data' / 'providers' / 'claude-code-probes.jsonl').read_text(encoding='utf-8').splitlines()
+        assert len(audit) == 1 and '"ok": true' in audit[0]
+        assert client.post('/api/providers/claude-code/probe', headers=AUTH, json={'spend_tokens': True}).status_code == 429
+        assert client.post('/api/providers/claude-code/probe', json={'spend_tokens': True}).status_code == 401
 
 
 def test_a_live_mission_runs_both_seats_through_the_cli_and_records_their_identity(configured, tmp_path):
@@ -74,6 +79,13 @@ def test_a_live_mission_runs_both_seats_through_the_cli_and_records_their_identi
         assert ('planner', 'claude-opus-5') in models
         assert ('analyst', 'claude-sonnet-5') in models and ('falsifier', 'claude-sonnet-5') in models
         assert state['data_origin'] != 'synthetic_fixture'
+        # Transport provenance is bound to each persisted record, not left on the agent.
+        for record in state['model_records']:
+            transport = record['transport']
+            assert transport['transport'] == 'claude-code' and transport['outcome'] == 'ok'
+            assert transport['observed_model'] == record['model'] and transport['role'] == record['role']
+            assert transport['identity_source'] == 'claude_code_modelUsage' and transport['network_sandboxed'] is False
+            assert 'prompt' not in transport and transport['usage'] == {'input_tokens': 10, 'output_tokens': 20}
 
 
 def test_egress_consent_and_vision_are_enforced_for_the_cli_transport(configured, tmp_path):

@@ -6,10 +6,12 @@ status: Code + config ready; the credential is operator-supplied (one manual ste
 
 # Running live missions through Claude
 
-Arc Science's live model seats call a provider's HTTPS endpoint directly (no CLI, no
-process exec). This routes the planner, the independent reviewer, and the vision seat
-to Claude. **One step is yours:** the credential. It cannot be created in a
-non-interactive session and is never stored in this repo.
+Arc Science's live model seats reach Claude in one of two ways: directly over HTTPS
+with a credential you supply, or — since 2026-09-19 — through your own Claude Code
+login, where the CLI runs as a tool-less, non-interactive transport subprocess (the
+one deliberate exception to "no model CLI", kept because the model gets no execution
+authority through it). Either way the credential is yours to create; the repository
+never stores one.
 
 ## Model seats
 
@@ -30,17 +32,24 @@ Three routes; pick one.
   Set `ARC_PROVIDER=claude-code` and `ARC_CLAUDE_CODE_EXE` to the absolute path of the
   installed `claude` executable (the launcher does both with `-ClaudeCode claude`). The
   planner and reviewer seats then run each call as `claude -p` with every tool, MCP
-  server, hook, plugin, skill and session persistence disabled, in an empty private
-  directory, under a scrubbed environment, a 75 s deadline and, on Windows, a
-  kill-on-close job object. The CLI performs its own login and refresh; Arc never
-  reads or stores the credential. Log in once with `claude login` in a terminal.
-  The transport is honest about what it is: `GET /api/capabilities` reports the
-  executable, its digest and version, the CLI's own `auth status` (cost-free) and
-  `network_sandboxed: false` (the CLI's own transport reaches Anthropic, which is what
-  mission egress consent authorizes). `POST /api/providers/claude-code/probe` makes one
-  explicit, token-spending minimal call per configured model and reports the observed
-  identity or the CLI's error (`auth_expired`, `credit_exhausted`, …). Visual review is
-  not available through this transport; give the vision seat an API key.
+  server, hook, plugin, skill and session persistence disabled (an admin-managed
+  policy can still force settings on), in an empty private directory, under an
+  allowlisted environment, a 75 s deadline, bounded output and, on Windows, a
+  kill-on-close job object. The CLI owns the credential and attempts its own
+  refresh; Arc never reads or stores it. Log in once with `claude login` in a
+  terminal and configure full model ids (`claude-opus-5`, not `opus`); a dated
+  release of the same id is accepted, anything else is refused. The transport is
+  honest about what it is: `GET /api/capabilities` reports the executable, its digest
+  and version, the CLI's own `auth status` (cost-free; it says a login exists, not that
+  inference will succeed) and `network_sandboxed: false` (the CLI's own transport
+  reaches Anthropic, which is what mission egress consent authorizes).
+  `POST /api/providers/claude-code/probe` with `{"spend_tokens": true}` makes one
+  explicit, token-spending minimal call per configured model (single-flight, 30 s
+  cooldown, appended to `data/providers/claude-code-probes.jsonl`) and reports the
+  observed identity or the CLI's error (`auth_expired`, `credit_exhausted`, …). Every
+  persisted model record carries the call's transport provenance. Visual review
+  needs a native image endpoint: set `ARC_VISION_PROVIDER=anthropic` (or `openai`)
+  with its own credential file and the vision seat uses it alongside the CLI seats.
 - **API key (direct HTTPS).** Leave `ARC_ANTHROPIC_AUTH` unset (default `x-api-key`).
   Put an Anthropic **API key** in the seat's token file.
 - **Bearer token (direct HTTPS).** Set `ARC_ANTHROPIC_AUTH=bearer` (`oauth` is accepted

@@ -97,9 +97,9 @@ def test_visual_review_is_refused_and_egress_is_declared():
 
 
 def test_auth_status_is_cost_free_and_truthful():
-    assert run(auth_status([sys.executable, str(FAKE), 'success'])) == {'logged_in': True, 'auth_method': 'claude.ai'}
-    assert run(auth_status([sys.executable, str(FAKE), 'logged-out'])) == {'logged_in': False, 'auth_method': 'none'}
-    assert run(auth_status(['definitely-not-a-program'])) == {'logged_in': False, 'auth_method': 'unknown'}
+    assert run(auth_status([sys.executable, str(FAKE), 'success'])) == {'logged_in': True, 'auth_method': 'claude.ai', 'api_provider': 'unknown'}
+    assert run(auth_status([sys.executable, str(FAKE), 'logged-out'])) == {'logged_in': False, 'auth_method': 'none', 'api_provider': 'unknown'}
+    assert run(auth_status(['definitely-not-a-program'])) == {'logged_in': False, 'auth_method': 'unknown', 'api_provider': 'unknown'}
 
 
 def test_failure_categories_only_map_recognised_texts():
@@ -109,3 +109,39 @@ def test_failure_categories_only_map_recognised_texts():
     assert claude_code.scrubbed_environment({'PATH': 'p', 'ANTHROPIC_API_KEY': 'k'}) == {'PATH': 'p'}
     # Windows spells inherited names in upper case; the CLI crashes without SystemRoot.
     assert claude_code.scrubbed_environment({'SYSTEMROOT': 'C:/Windows', 'Comspec': 'cmd', 'SECRET': 'x'}) == {'SYSTEMROOT': 'C:/Windows', 'Comspec': 'cmd'}
+
+
+def test_dated_release_ids_match_the_configured_selector_but_aliases_do_not():
+    from arc_science.exploration.claude_code import identity_matches
+    assert identity_matches('claude-opus-5', 'claude-opus-5')
+    assert identity_matches('claude-opus-5-20260901', 'claude-opus-5')
+    assert not identity_matches('claude-opus-5', 'opus')
+    assert not identity_matches('claude-sonnet-5-20260901', 'claude-opus-5')
+    assert not identity_matches('claude-opus-5-1', 'claude-opus-5')
+
+
+def test_visual_review_delegates_to_a_native_seat_when_one_is_configured():
+    class Vision:
+        async def review_visual(self, context, artifacts):
+            return {'delegated': len(artifacts)}
+    seat = ClaudeCodeAgent([sys.executable, str(FAKE), 'success'], 'claude-opus-5', vision=Vision())
+    try:
+        assert run(seat.review_visual(context(), ('a', 'b'))) == {'delegated': 2}
+    finally:
+        seat.close()
+
+
+def test_provenance_is_handed_over_once_per_role():
+    seat = agent('success')
+    try:
+        run(seat.propose(context()))
+        run(seat.assess('analyst', context()))
+        run(seat.assess('falsifier', context()))
+        analyst = seat.take_provenance('analyst')
+        assert analyst['role'] == 'analyst' and analyst['observed_model'] == 'claude-sonnet-5'
+        assert seat.take_provenance('analyst') is None
+        assert seat.take_provenance('falsifier')['role'] == 'falsifier'
+        assert seat.take_provenance('planner')['requested_model'] == 'claude-opus-5'
+        assert seat.calls == []
+    finally:
+        seat.close()

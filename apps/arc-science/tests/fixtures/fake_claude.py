@@ -62,7 +62,8 @@ if violations:
 
 def envelope(**overrides):
     body = {'type': 'result', 'subtype': 'success', 'is_error': False,
-            'result': json.dumps(PROPOSAL if schema_title == 'Proposal' else {'assessments': [], 'summary': 'Nothing observed yet.'}),
+            'result': json.dumps({'ok': True} if schema_title == 'ProbeReply' else PROPOSAL if schema_title == 'Proposal'
+                                 else {'assessments': [], 'summary': 'Nothing observed yet.'}),
             'modelUsage': {model: {'inputTokens': 10, 'outputTokens': 20}},
             'usage': {'input_tokens': 10, 'output_tokens': 20}, 'total_cost_usd': 0.001, 'permission_denials': []}
     body.update(overrides)
@@ -89,7 +90,12 @@ elif mode == 'tool':
 elif mode == 'hang':
     time.sleep(30)
 elif mode == 'huge':
-    sys.stdout.write('{"type":"result","subtype":"success","is_error":false,"result":"' + 'x' * (1024 * 1024 + 10) + '"}')
+    # Streams far past the cap; the transport must stop reading and kill, not buffer it all.
+    sys.stdout.write('{"type":"result","subtype":"success","is_error":false,"result":"')
+    for _ in range(64):
+        sys.stdout.write('x' * (1024 * 1024))
+        sys.stdout.flush()
+    sys.stdout.write('"}')
 elif mode == 'garbage':
     print('not json at all')
 elif mode == 'prose':

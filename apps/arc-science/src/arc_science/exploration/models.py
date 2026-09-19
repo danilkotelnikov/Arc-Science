@@ -105,6 +105,9 @@ class ModelRecord(Record):
     round: int
     model: str
     payload: dict
+    # Per-call transport provenance (observed identity, usage, contract) when the
+    # agent reports it; absent for scripted fixtures and older records.
+    transport: dict | None = None
 
 
 class Artifact(Record):
