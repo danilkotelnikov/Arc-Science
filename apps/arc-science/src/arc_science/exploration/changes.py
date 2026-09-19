@@ -60,7 +60,9 @@ MEMORY_DISABLE = {'kind': 'memory_disable', 'derived': (),
 # obligation's state is the worst state of those checks, so it is derived on read and
 # never stored or authored.
 OBLIGATION_SOURCES = {
-    're_execution': ('operational_status',),
+    # Re-execution is evidenced by the replay recomputing every analysis, not by the
+    # mission merely having stopped again.
+    're_execution': ('operational_status', 'replay_integrity', 'numerical_reproduction'),
     'dependent_claim_invalidation': ('claim_scope',),
     'evidence_review': ('evidence_graph', 'reconciliation'),
     'scope_review': ('claim_scope',),

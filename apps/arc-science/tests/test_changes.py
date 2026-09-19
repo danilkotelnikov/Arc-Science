@@ -80,6 +80,10 @@ def test_resuming_records_a_change_and_stales_every_release_check_until_verified
         before = c.get(f'/api/missions/{mid}', headers=AUTH).json()['change_obligations'][change['id']]
         assert {o['check']: o['state'] for o in before} == {'re_execution': 'stale', 'dependent_claim_invalidation': 'stale',
                                                             'evidence_review': 'stale', 'scope_review': 'stale'}
+        assert next(o for o in before if o['check'] == 're_execution')['sources'] == ['operational_status', 'replay_integrity', 'numerical_reproduction']
+        # Re-execution is evidenced by the replay, so it cannot read satisfied from a stop alone.
+        assert changes.obligation_states(MissionState.model_validate(row['state']).changes[0],
+                                         release.evaluate_release(MissionRequest(goal='Change effects', max_rounds=1), MissionState.model_validate(row['state']), None, event_chain_ok=True))[0]['state'] == 'unknown'
         # The old ledger was marked stale by the declared change; the mission has to be verified again.
         ledger = c.get(f'/api/missions/{mid}/release', headers=AUTH).json()
         states = {check['name']: check['state'] for check in ledger['checks']}
