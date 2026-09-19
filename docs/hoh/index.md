@@ -74,8 +74,10 @@ production readiness is a set of evidence-backed gates, not a styling label.
   probe reached the API and was refused for credits — gate blocked, not passed.
   Loop A (release ledger): eight named checks in six explicit states with per-check
   bases; the only positive decision is "eligible for human review"; capsule export
-  and PNG download consult it. Sol: accept-with-findings / changes-required on each
-  loop, all addressed.
+  and PNG download consult it. Loop B (repair cycles): presentation-only findings
+  are answered by at most two re-render-and-review cycles per round, each bound to
+  its trigger, renders, policy and fresh verdict in the evidence graph. Sol:
+  accept-with-findings / changes-required on each loop, all addressed.
 
 ## External limits retained
 

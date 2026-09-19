@@ -168,3 +168,44 @@ Python suite 687 passed / 65 skipped with the native workers configured.
 
 Sol's design notes for loops B–D (repair cycles, claim scope, change effects) are
 carried forward in the program file.
+
+## Loop B — consecutive figure-repair cycles (`de6b666`, `9c4dd1a`, `410fc0b`)
+
+Design (Sol's loop-B notes followed): a visual review whose findings are all
+presentation categories (legibility, layout, labels, overlap, contrast, legend, ticks,
+size) is answered by re-rendering the whole reviewed batch under the next
+presentation preset (`spacious`, then `large_text`) as new artifacts that name the
+image they supersede, and reviewing the new batch as a new candidate with fresh eyes
+(earlier rounds plus exactly that batch in the vision context; no same-round report).
+At most two cycles per round. Substance findings, blocking findings, `uncertain`, a
+reviewer error, a spent budget and a render that repeats an existing image end the
+cycle with a recorded reason; the mission then waits for a human as before. A
+`RepairCycle` records the trigger report, the categories addressed, the superseded and
+rendered digests, the policy digest and the outcome — which is the fresh review's own
+verdict, the rejected call, `pending`, or `blocked` with its reason. Superseded images
+stay in the state as provenance and reproduce in the capsule under their own preset;
+the release ledger reads only current images and names every cycle in its reason. The
+default preset is pinned to its recorded digests so earlier missions still reproduce.
+The scripted demo agent gains a scripted vision seat (`scripted-vision-fixture-v1`,
+finding text says the verdict is scripted) so the mechanism runs offline end to end.
+
+Checks: `test_repair.py` 12 (one repair then adequate completes; two cycles then
+block; substance/blocking/uncertain never repaired; reviewer error on the repaired
+candidate stays blocking and is not retried on resume; repeated render blocks; resume
+after a render reviews once and never re-renders; demo seat; policy purity; evidence
+forgeries; golden default digests); full Python suite 700 passed / 65 skipped with the
+native workers; frontend 45; Playwright 16 (a repair spec through the real service with
+the demo seat: two cycles across two rounds, verification passes, ledger satisfied
+with the repair history, four gated downloads).
+
+## Evaluation of loop B (Sol): changes required → addressed → accept
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| A `RepairCycle` outcome was not bound to the review that produced it: a pending checkpoint promoted to `adequate` passed the evidence graph | architectural | The trigger must be the `issues` report over exactly the superseded batch with only non-blocking presentation findings that the cycle names; the preset must follow the sequence; renders are owned by the cycle; the outcome must equal the verdict of the accepted review over the rendered batch (or the rejected call, or still pending); orphan repairs are rejected. Forgery test from a real state |
+| Repair policy (budget, presets, categories) was unversioned; a review made under the earlier prompt could acquire an automatic repair on resume | major | `RepairCycle.policy_digest`; `repair_plan` refuses a review under another prompt or a mission holding cycles from another policy |
+| Second pass: the new required field would refuse to load cycles persisted by the first commit; the evidence graph did not authenticate the digest | major / moderate | Policy registry keyed by digest (unknown digest fails closed); cycles without a digest load under a registered "unrecorded" policy with the same rules and get no further automation; evidence validates presets, budget, categories and prompt against the cited policy |
+| No golden test protected the byte identity of the default render | minor | Pinned digests for the synthetic fixture (degrees 1 and 2) |
+
+Sol's own limit: the read-only sandbox could not execute Python or Vitest, so the
+suite counts above are the author's runs.
