@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from ..contracts import canonical, digest
 from .catalog import validate_arguments, validate_catalog
 from .models import Assessed, Branch, MissionState, Proposal, Reconciliation
-from .repair import PRESENTATION, PRESET_SEQUENCE
+from .repair import POLICIES
 from .vision import current_artifacts, validate_report, visual_context
 
 
@@ -179,8 +179,13 @@ def validate_evidence(state: MissionState) -> None:
     reports_by_digest = {report.digest: report for report in state.visual_reports}
     rendered_by_cycles = set()
     for index, cycle in enumerate(state.repairs):
+        # The cycle is judged by the policy it recorded, which must be a known one.
+        policy = POLICIES.get(cycle.policy_digest)
+        if policy is None:
+            raise ValueError("Repair cycle ran under an unknown policy")
         earlier = [c for c in state.repairs[:index] if c.round == cycle.round]
-        if cycle.cycle != len(earlier) + 1 or cycle.preset != PRESET_SEQUENCE[cycle.cycle - 1]:
+        if (cycle.cycle != len(earlier) + 1 or cycle.cycle > policy["max_repairs"]
+                or cycle.preset != policy["presets"][cycle.cycle - 1]):
             raise ValueError("Repair cycles are not consecutive")
         if any(c.policy_digest != cycle.policy_digest for c in earlier):
             raise ValueError("Repair cycles of one round ran under different policies")
@@ -188,11 +193,11 @@ def validate_evidence(state: MissionState) -> None:
         # only non-blocking presentation findings, and the cycle names those categories.
         trigger = reports_by_digest.get(cycle.trigger_report_digest)
         if (trigger is None or trigger.round != cycle.round or trigger.reviewed_digests != cycle.superseded_digests
-                or trigger.verdict != "issues"):
+                or trigger.verdict != "issues" or trigger.prompt_version != policy["prompt_version"]):
             raise ValueError("Repair cycle does not bind to an issues report over the superseded batch")
         categories = tuple(sorted({finding.category for finding in trigger.findings}))
         if (any(finding.severity == "blocking" for finding in trigger.findings)
-                or any(category not in PRESENTATION for category in categories) or cycle.addressed != categories):
+                or any(category not in policy["presentation"] for category in categories) or cycle.addressed != categories):
             raise ValueError("Repair cycle was triggered by findings it may not repair")
         if cycle.superseded_digests not in batches.get(cycle.round, set()):
             raise ValueError("Repair cycle does not supersede a reviewed batch")

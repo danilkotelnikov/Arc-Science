@@ -255,6 +255,12 @@ def test_the_evidence_graph_rejects_a_repair_history_the_reviews_do_not_support(
     # A repaired artifact without a cycle is an orphan, and a pending checkpoint cannot be promoted.
     with pytest.raises(ValueError, match='not owned by a repair cycle'):
         validate_evidence(state.model_copy(update={'repairs': ()}))
+    # A cycle citing a policy nobody recorded is rejected; one persisted before digests
+    # existed (None) is judged under the same rules but ends automation.
+    rejects('unknown policy', policy_digest='f' * 64)
+    unrecorded = state.model_copy(update={'repairs': (cycle.model_copy(update={'policy_digest': None}),)})
+    assert validate_evidence(unrecorded) is None
+    assert 'policy changed' in repair.repair_plan(state.visual_reports[0], unrecorded.repairs, 0)[1]
     checkpoint = pending_repair_checkpoint()
     assert checkpoint.repairs[0].outcome == 'pending' and validate_evidence(checkpoint) is None
     promoted = checkpoint.model_copy(update={'repairs': (checkpoint.repairs[0].model_copy(update={'outcome': 'adequate'}),)})

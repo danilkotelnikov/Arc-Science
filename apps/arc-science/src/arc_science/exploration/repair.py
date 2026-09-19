@@ -24,6 +24,9 @@ PRESENTATION = frozenset({'legibility', 'layout', 'labels', 'overlap', 'contrast
 POLICY = {'version': 'arc-figure-repair-1', 'max_repairs': MAX_REPAIRS, 'presets': list(PRESET_SEQUENCE),
           'presentation': sorted(PRESENTATION), 'prompt_version': VISUAL_PROMPT_VERSION}
 POLICY_DIGEST = digest(POLICY)
+# Every policy a persisted cycle may cite, keyed by the digest it recorded. Cycles
+# written before the digest existed (key None) ran under the same rules as version 1.
+POLICIES = {POLICY_DIGEST: POLICY, None: {**POLICY, 'version': 'arc-figure-repair-0-unrecorded'}}
 
 
 def repair_plan(report: VisualReport, repairs: tuple[RepairCycle, ...], round: int) -> tuple[str | None, str]:
