@@ -25,12 +25,13 @@ export async function openWorkspace(page, name, landmark) {
 }
 
 /** Create and start an offline (demo) mission; returns when the run reaches a final status. */
-export async function runDemoMission(page, {goal, rounds = 5} = {}) {
+export async function runDemoMission(page, {goal, rounds = 5, vision = false} = {}) {
   await openWorkspace(page, 'Research', 'Research results');
   await page.getByLabel('Local operator token').fill(E2E_TOKEN);
   await page.getByLabel('Research goal').fill(goal ?? 'E2E: explore the response curve of the offline fixture.');
   await page.getByLabel('Execution').selectOption('demo');
   await page.getByLabel('Round limit').fill(String(rounds));
+  if (vision) await page.getByLabel(/Require configured visual review/).check();
   await page.getByRole('button', {name: 'Create and start'}).click();
   const status = page.locator('.status-label');
   await expect(status).toHaveText(/completed|budget_exhausted|needs_input|cancelled|error/, {timeout: 120_000});

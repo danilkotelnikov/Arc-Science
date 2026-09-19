@@ -4,7 +4,7 @@ from __future__ import annotations
 from ..contracts import digest
 from .models import Artifact, VisualReport, VisionRecord
 
-VISUAL_PROMPT_VERSION = 'arc-visual-review-1'
+VISUAL_PROMPT_VERSION = 'arc-visual-review-2'
 MAX_IMAGES_PER_REVIEW = 8
 
 
@@ -31,19 +31,31 @@ def validate_report(report: VisualReport, context: dict, artifacts: tuple[Artifa
         raise ValueError('Visual report context binding mismatch')
 
 
+def current_artifacts(artifacts: tuple[Artifact, ...]) -> tuple[Artifact, ...]:
+    """Artifacts not superseded by a repair; the superseded ones stay as provenance."""
+    superseded = {artifact.repair_of for artifact in artifacts if artifact.repair_of}
+    return tuple(artifact for artifact in artifacts if artifact.digest not in superseded)
+
+
 def required_visual_reason(artifacts: tuple[Artifact, ...], reports: tuple[VisualReport, ...],
                            records: tuple[VisionRecord, ...]) -> str | None:
-    """Return why required visual review is incomplete, or None when fully adequate."""
-    if not artifacts:
+    """Return why required visual review is incomplete, or None when fully adequate.
+    Only current artifacts must be adequate: a superseded image keeps its `issues`
+    report as the reason its repair exists. Reviewer failures stay blocking."""
+    current = current_artifacts(artifacts)
+    if not current:
         return 'Required visual review has no generated fit artifacts to inspect.'
+    current_digests = {artifact.digest for artifact in current}
     covered = set()
     for report in reports:
+        if not set(report.reviewed_digests) & current_digests:
+            continue
         if any(finding.severity == 'blocking' for finding in report.findings):
             return 'Required visual review contains blocking findings; human input is required.'
         if report.verdict != 'adequate':
             return 'Required visual review reported issues or uncertainty; human input is required.'
         covered.update(report.reviewed_digests)
-    if covered != {artifact.digest for artifact in artifacts}:
+    if covered != current_digests:
         return 'Required visual review is missing exact coverage for one or more generated artifacts.'
     if any(record.status != 'accepted' for record in records):
         return 'Required visual review did not return an accepted artifact-bound report.'

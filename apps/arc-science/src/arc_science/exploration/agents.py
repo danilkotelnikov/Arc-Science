@@ -44,3 +44,26 @@ class DemoAgent:
                             'finding':'The shuffled-response control has substantial error; this is descriptive, not a p-value.',
                             'next_test':'Independent replication.'})
         return {'assessments':out,'summary':'Cross-branch findings retained; no consensus vote authorizes scientific truth.'}
+
+
+class DemoVisionAgent(DemoAgent):
+    """The scripted fixture with a scripted vision seat (not an LLM simulation): the
+    first, default-preset render of a round is flagged for legibility so one repair
+    cycle runs offline; any repaired render is reported adequate. The verdicts are
+    fixed by this script, never by the image."""
+    vision_model = 'scripted-vision-fixture-v1'
+
+    async def review_visual(self, context, artifacts):
+        from ..contracts import digest
+        from .models import VisualFinding, VisualReport
+        from .vision import VISUAL_PROMPT_VERSION
+        repaired = all(artifact.preset != 'default' for artifact in artifacts)
+        findings = () if repaired else tuple(
+            VisualFinding(artifact_digest=artifact.digest, severity='minor', category='legibility',
+                          detail='Scripted fixture verdict: the default preset is flagged so that one presentation repair cycle runs.')
+            for artifact in artifacts)
+        return VisualReport(candidate_digest=context['candidate_digest'],
+                            reviewed_digests=tuple(artifact.digest for artifact in artifacts),
+                            verdict='adequate' if repaired else 'issues', findings=findings,
+                            model=self.vision_model, round=context['round'], prompt_version=VISUAL_PROMPT_VERSION,
+                            context_digest=digest(context), input_context=context)

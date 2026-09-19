@@ -12,6 +12,14 @@ from .models import Artifact, Observation, Point
 
 MAX_ARTIFACT_BYTES = 1024 * 1024
 RENDERER_VERSION = 'arc-plot-1'
+# Presentation-only presets for repair cycles: canvas, margins and type size change;
+# the data, the fitted series and the residuals are computed identically.
+PRESETS = {'default': {'size': (960, 720), 'font': None, 'left': 82, 'row': 17, 'legend': 185,
+                       'bands': (78, 434, 515, 650)},
+           'spacious': {'size': (1280, 960), 'font': None, 'left': 110, 'row': 20, 'legend': 185,
+                        'bands': (90, 579, 687, 867)},
+           'large_text': {'size': (1280, 960), 'font': 16, 'left': 130, 'row': 26, 'legend': 250,
+                          'bands': (108, 579, 687, 867)}}
 
 
 def plot_series(points: tuple[Point, ...], fit: dict) -> tuple[tuple[float, ...], tuple[float, ...]]:
@@ -54,35 +62,38 @@ def _number(value):
     return format(value, '.7g')
 
 
-def render_polynomial_plot(points: tuple[Point, ...], fit: dict) -> bytes:
+def render_polynomial_plot(points: tuple[Point, ...], fit: dict, preset: str = 'default') -> bytes:
     """Render measurements, fitted values and residuals as a deterministic PNG."""
     if not points:
         raise ValueError('A plot requires frozen measurements')
+    if preset not in PRESETS:
+        raise ValueError('Unknown render preset')
     predicted, residuals = plot_series(points, fit)
-    width, height = 960, 720
+    layout = PRESETS[preset]
+    width, height = layout['size']
     image = Image.new('RGB', (width, height), '#ffffff')
     draw = ImageDraw.Draw(image)
-    font = ImageFont.load_default()
+    font = ImageFont.load_default(layout['font']) if layout['font'] else ImageFont.load_default()
+    row = layout['row']
     dark, muted, measured, fitted, residual = '#17212d', '#5b6875', '#16697a', '#bb3e03', '#6a4c93'
     x_bounds = _bounds(tuple(point.x for point in points))
     y_bounds = _bounds(tuple(point.y for point in points) + predicted)
     residual_bounds = _bounds(residuals, include_zero=True)
-    left, right = 82, width - 34
-    top, main_bottom = 78, 434
-    residual_top, residual_bottom = 515, 650
+    left, right = layout['left'], width - 34
+    top, main_bottom, residual_top, residual_bottom = layout['bands']
 
     draw.text((left, 20), f"Exploratory polynomial fit (degree {fit['degree']})", fill=dark, font=font)
-    draw.text((left, 39), 'Measurements, fitted response and residuals; exploratory scope only', fill=muted, font=font)
+    draw.text((left, 20 + row + 2), 'Measurements, fitted response and residuals; exploratory scope only', fill=muted, font=font)
     for y in (top, main_bottom, residual_top, residual_bottom):
         draw.line((left, y, right, y), fill='#d8dee4', width=1)
     draw.line((left, top, left, main_bottom), fill=dark, width=1)
     draw.line((left, residual_top, left, residual_bottom), fill=dark, width=1)
-    draw.text((left, top - 17), 'Response (y)', fill=dark, font=font)
-    draw.text((left, residual_top - 17), 'Residual (observed - fitted)', fill=dark, font=font)
-    draw.text((right - 4, residual_bottom + 24), 'x', fill=dark, font=font)
+    draw.text((left, top - row), 'Response (y)', fill=dark, font=font)
+    draw.text((left, residual_top - row), 'Residual (observed - fitted)', fill=dark, font=font)
+    draw.text((right - 4, residual_bottom + row + 7), 'x', fill=dark, font=font)
     x_offset = math.floor(x_bounds[0]) if abs(x_bounds[0]) >= 10000 and (x_bounds[1] - x_bounds[0]) < 1 else 0
     if x_offset:
-        draw.text((left, residual_bottom + 42), f'x offset {x_offset:+d}', fill=muted, font=font)
+        draw.text((left, residual_bottom + 2 * row + 8), f'x offset {x_offset:+d}', fill=muted, font=font)
     for value in _ticks(x_bounds):
         x = _project(value, x_bounds, left, right)
         draw.line((x, residual_bottom, x, residual_bottom + 4), fill=dark, width=1)
@@ -110,8 +121,8 @@ def render_polynomial_plot(points: tuple[Point, ...], fit: dict) -> bytes:
         draw.ellipse((x - 2, ry - 2, x + 2, ry + 2), fill=residual)
     zero = _project(0.0, residual_bounds, residual_bottom, residual_top)
     draw.line((left, zero, right, zero), fill=muted, width=1)
-    draw.text((right - 185, top + 8), 'observed points', fill=measured, font=font)
-    draw.text((right - 185, top + 25), 'fitted response', fill=fitted, font=font)
+    draw.text((right - layout['legend'], top + 8), 'observed points', fill=measured, font=font)
+    draw.text((right - layout['legend'], top + 8 + row), 'fitted response', fill=fitted, font=font)
 
     out = BytesIO()
     image.save(out, format='PNG', optimize=False, compress_level=9)
@@ -121,11 +132,14 @@ def render_polynomial_plot(points: tuple[Point, ...], fit: dict) -> bytes:
     return content
 
 
-def artifact_for_observation(points: tuple[Point, ...], observation: Observation) -> Artifact:
+def artifact_for_observation(points: tuple[Point, ...], observation: Observation, *,
+                             preset: str = 'default', repair_of: str | None = None,
+                             round: int | None = None) -> Artifact:
     if observation.status != 'ok' or observation.tool != 'polynomial_fit':
         raise ValueError('Only successful polynomial fits can produce plot artifacts')
-    content = render_polynomial_plot(points, observation.data)
+    content = render_polynomial_plot(points, observation.data, preset)
     return Artifact(digest=hashlib.sha256(content).hexdigest(), size=len(content),
                     data_base64=base64.b64encode(content).decode('ascii'),
                     source_observation_id=observation.id, source_observation_digest=observation.digest,
-                    renderer_version=RENDERER_VERSION, round=observation.round)
+                    renderer_version=RENDERER_VERSION, round=observation.round if round is None else round,
+                    preset=preset, repair_of=repair_of)

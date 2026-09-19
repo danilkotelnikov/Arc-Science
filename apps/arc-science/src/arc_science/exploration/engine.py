@@ -7,10 +7,11 @@ call, so external metered or mutating services must not be inserted unmediated.
 from __future__ import annotations
 import asyncio
 from .models import (MissionRequest, MissionState, Branch, Proposal, Reconciliation,
-                     Observation, Assessed, Event, ModelRecord, VisionRecord, VisualReport)
+                     Observation, Assessed, Event, ModelRecord, VisionRecord, RepairCycle, VisualReport)
 from .tools import synthetic_data, execute_numeric, CATALOG, TOOL_VERSION
 from .artifacts import artifact_for_observation
-from .vision import VISUAL_PROMPT_VERSION, required_visual_reason, visual_context, validate_report
+from .repair import repair_plan, with_outcome
+from .vision import VISUAL_PROMPT_VERSION, current_artifacts, required_visual_reason, visual_context, validate_report
 from .catalog import (BIORENDER_CATALOG, BUILTIN_CATALOG, PUBLIC_CATALOG, TrustedPublicTools,
                       trusted_replay, trusted_version, validate_arguments, validate_catalog)
 from .evidence import validate_evidence
@@ -67,14 +68,18 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
     def provenance(role):
         # Transports that record per-call evidence hand it over exactly once per record.
         return agent.take_provenance(role) if hasattr(agent, 'take_provenance') else None
-    def context():
+    def context(reviewing=None):
+        # A vision seat sees earlier rounds plus exactly the batch it reviews, and no
+        # same-round report: a repair is reviewed with fresh eyes as a new candidate.
+        artifacts=state.artifacts if reviewing is None else tuple(a for a in state.artifacts if a.round<state.round)+reviewing
+        reports=state.visual_reports if reviewing is None else tuple(r for r in state.visual_reports if r.round<state.round)
         return {'goal':request.goal,'round':state.round,'data_origin':state.data_origin,
                 'dataset':{'digest':state.dataset_digest,'n':len(state.points)},
                 'branches':[b.model_dump(mode='json') for b in state.branches],
                 'observations':[o.model_dump(mode='json') for o in state.observations],
                 'assessments':[a.model_dump(mode='json') for a in state.assessments],
-                'artifacts':[a.manifest() for a in state.artifacts],
-                'visual_reports':[r.manifest() for r in state.visual_reports],
+                'artifacts':[a.manifest() for a in artifacts],
+                'visual_reports':[r.manifest() for r in reports],
                 'tools':runtime_catalog,
                 'remaining':{'rounds':request.max_rounds-state.round,'actions':request.max_actions-state.actions_used},
                 'rule':'All results remain exploratory. Never fabricate evidence. Preserve contradictory assessments.'}
@@ -192,8 +197,14 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             commit()
 
         if request.vision_review:
-            batch=tuple(artifact for artifact in state.artifacts if artifact.round==state.round)
-            if batch:
+            # Review the current (unsuperseded) images of this round; a review that finds
+            # only presentation problems is answered by a repair cycle: the same data is
+            # re-rendered under the next preset and reviewed again as a new candidate.
+            # Resume is safe: a batch with an accepted record is not reviewed twice, and
+            # a repair already rendered is found as the current batch, not rendered again.
+            while True:
+                batch=tuple(artifact for artifact in current_artifacts(state.artifacts) if artifact.round==state.round)
+                if not batch:break
                 if len(batch)>8:
                     return stop('needs_input','Required visual review exceeds the eight-image review limit.')
                 batch_digests=tuple(artifact.digest for artifact in batch)
@@ -202,8 +213,9 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                 if prior is not None:
                     if prior.status!='accepted':
                         return stop('needs_input','A reserved or rejected visual call cannot be repeated automatically; operator input is required.')
+                    report=next(r for r in state.visual_reports if r.digest==prior.report_digest)
                 else:
-                    vcontext=visual_context(context(),batch)
+                    vcontext=visual_context(context(reviewing=batch),batch)
                     candidate=vcontext['candidate_digest']
                     vision_model=getattr(agent,'vision_model',None)
                     if not vision_model or not callable(getattr(agent,'review_visual',None)):
@@ -223,14 +235,43 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                         validate_report(report,vcontext,batch,vision_model)
                     except Exception:
                         rejected=reservation.model_copy(update={'status':'rejected'})
-                        change(vision_records=state.vision_records[:-1]+(rejected,))
+                        change(vision_records=state.vision_records[:-1]+(rejected,),
+                               repairs=with_outcome(state.repairs,batch_digests,'rejected','The fresh review failed or was unbound; no success inferred.'))
                         event('visual_review_rejected','Missing, failed, malformed or unbound visual review; no success inferred.')
                         return stop('needs_input','Required visual review failed or lacked exact artifact coverage.')
                     accepted=reservation.model_copy(update={'status':'accepted','report_digest':report.digest})
                     change(vision_records=state.vision_records[:-1]+(accepted,),
-                           visual_reports=state.visual_reports+(report,))
+                           visual_reports=state.visual_reports+(report,),
+                           repairs=with_outcome(state.repairs,batch_digests,report.verdict))
                     event('visual_review_accepted',report.verdict+': '+candidate)
                     commit()
+                preset,why=repair_plan(report,state.repairs,state.round)
+                if preset is None:
+                    if report.verdict!='adequate':event('visual_repair_blocked',why)
+                    break
+                # Re-render the whole reviewed batch under the preset: a new candidate with
+                # new digests. A render that repeats an existing image proves the preset
+                # changed nothing, so the cycle is recorded as blocked instead.
+                sources={o.id:o for o in state.observations}
+                cycle=dict(cycle=len([c for c in state.repairs if c.round==state.round])+1,round=state.round,
+                    preset=preset,trigger_report_digest=report.digest,
+                    addressed=tuple(sorted({f.category for f in report.findings}))[:32],superseded_digests=batch_digests)
+                try:
+                    repaired=tuple(artifact_for_observation(state.points,sources[a.source_observation_id],
+                                   preset=preset,repair_of=a.digest,round=state.round) for a in batch)
+                    if len(state.artifacts)+len(repaired)>64:raise ValueError('Artifact count exceeds the mission limit')
+                except Exception:
+                    return stop('error','Trusted plot rendering failed validation during repair; no visual success was inferred.')
+                known={a.digest for a in state.artifacts}
+                if any(a.digest in known for a in repaired):
+                    change(repairs=state.repairs+(RepairCycle(**cycle,outcome='blocked',
+                        reason='The '+preset+' preset rendered an image that already exists; the repair changed nothing.'),))
+                    event('visual_repair_blocked','Repeated candidate under preset '+preset)
+                    commit();break
+                change(artifacts=state.artifacts+repaired,
+                       repairs=state.repairs+(RepairCycle(**cycle,artifact_digests=tuple(a.digest for a in repaired)),))
+                event('artifact_repaired',f"cycle {cycle['cycle']} ({preset}): "+', '.join(a.digest[:12] for a in repaired))
+                commit()
         if not reserve_calls(2): return stop('budget_exhausted','Insufficient remaining calls for the independent reconciliation roles.')
         frozen=context()
         async def review(role):

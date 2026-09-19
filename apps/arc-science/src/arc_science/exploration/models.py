@@ -120,6 +120,10 @@ class Artifact(Record):
     kind: Literal['polynomial_fit_plot'] = 'polynomial_fit_plot'
     renderer_version: Literal['arc-plot-1'] = 'arc-plot-1'
     round: int = Field(ge=0)
+    # Presentation-only render settings and the artifact this render supersedes
+    # (loop B): both are part of the manifest, so a repaired image is a new candidate.
+    preset: RenderPreset = 'default'
+    repair_of: Digest | None = None
 
     @model_validator(mode='after')
     def content_binding(self):
@@ -141,6 +145,10 @@ class Artifact(Record):
 
     def manifest(self) -> dict:
         return self.model_dump(mode='json', exclude={'data_base64'})
+
+
+RenderPreset = Literal['default', 'spacious', 'large_text']
+VisualPromptVersion = Literal['arc-visual-review-1', 'arc-visual-review-2']
 
 
 class VisualFinding(Record):
@@ -173,7 +181,7 @@ class VisualReply(Record):
 class VisualReport(VisualReply):
     model: Identifier
     round: int = Field(ge=0)
-    prompt_version: Literal['arc-visual-review-1'] = 'arc-visual-review-1'
+    prompt_version: VisualPromptVersion = 'arc-visual-review-2'
     context_digest: Digest
     input_context: dict
 
@@ -198,7 +206,7 @@ class VisionRecord(Record):
     reviewed_digests: tuple[Digest, ...] = Field(min_length=1, max_length=8)
     context_digest: Digest
     input_context: dict
-    prompt_version: Literal['arc-visual-review-1'] = 'arc-visual-review-1'
+    prompt_version: VisualPromptVersion = 'arc-visual-review-2'
     round: int = Field(ge=0)
     model: Identifier
     status: Literal['reserved', 'accepted', 'rejected']
@@ -212,6 +220,30 @@ class VisionRecord(Record):
             raise ValueError('Vision reservation repeats an image digest')
         if (self.status == 'accepted') != (self.report_digest is not None):
             raise ValueError('Accepted vision reservations require exactly one report')
+        return self
+
+
+class RepairCycle(Record):
+    """One consecutive figure-repair cycle (loop B): a reviewed candidate with
+    presentation-only findings is re-rendered under the next preset and reviewed
+    again as a new candidate. The outcome is the raw result of that fresh review, or
+    `blocked` with the reason the cycle could not proceed; nothing is inferred."""
+    cycle: int = Field(ge=1, le=2)
+    round: int = Field(ge=0)
+    preset: RenderPreset
+    trigger_report_digest: Digest
+    addressed: tuple[str, ...] = Field(max_length=32)
+    superseded_digests: tuple[Digest, ...] = Field(min_length=1, max_length=8)
+    artifact_digests: tuple[Digest, ...] = Field(default=(), max_length=8)
+    outcome: Literal['pending', 'adequate', 'issues', 'uncertain', 'rejected', 'blocked'] = 'pending'
+    reason: str = Field(default='', max_length=700)
+
+    @model_validator(mode='after')
+    def coherent(self):
+        if self.outcome == 'blocked' and not self.reason:
+            raise ValueError('A blocked repair cycle must say why')
+        if self.outcome != 'blocked' and len(self.artifact_digests) != len(self.superseded_digests):
+            raise ValueError('A repair renders exactly one replacement per superseded artifact')
         return self
 
 
@@ -282,6 +314,7 @@ class MissionState(Record):
     artifacts: tuple[Artifact, ...] = Field(default=(), max_length=64)
     visual_reports: tuple[VisualReport, ...] = Field(default=(), max_length=64)
     vision_records: tuple[VisionRecord, ...] = Field(default=(), max_length=64)
+    repairs: tuple[RepairCycle, ...] = Field(default=(), max_length=64)
     events: tuple[Event, ...] = ()
     actions_used: int = 0
     model_calls_used: int = 0
@@ -297,4 +330,5 @@ class MissionState(Record):
                        'observations': [o.model_dump(mode='json') for o in self.observations],
                        'branches': [b.model_dump(mode='json') for b in self.branches],
                        'artifacts': [a.manifest() for a in self.artifacts],
-                       'visual_reports': [r.model_dump(mode='json') for r in self.visual_reports]})
+                       'visual_reports': [r.model_dump(mode='json') for r in self.visual_reports],
+                       'repairs': [r.model_dump(mode='json') for r in self.repairs]})

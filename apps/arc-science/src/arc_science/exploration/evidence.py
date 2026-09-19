@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from ..contracts import canonical, digest
 from .catalog import validate_arguments, validate_catalog
 from .models import Assessed, Branch, MissionState, Proposal, Reconciliation
-from .vision import validate_report, visual_context
+from .vision import current_artifacts, validate_report, visual_context
 
 
 def _unique(values, message):
@@ -105,7 +105,13 @@ def _context_index(record, state):
     expected_branches = Counter(canonical(item) for item in state.branches if item.created_round <= limit)
     expected_observations = Counter(canonical(item) for item in state.observations if item.round <= limit)
     expected_assessments = Counter(canonical(item) for item in state.assessments if item.round < record.round)
-    expected_artifacts = Counter(canonical(item.manifest()) for item in state.artifacts if item.round <= limit)
+    if record.role == "vision":
+        # The reviewed batch is the only same-round image set the seat was shown.
+        reviewed = set(getattr(record, "reviewed_digests", ()))
+        expected_artifacts = Counter(canonical(item.manifest()) for item in state.artifacts
+                                     if item.round < record.round or item.digest in reviewed)
+    else:
+        expected_artifacts = Counter(canonical(item.manifest()) for item in state.artifacts if item.round <= limit)
     expected_reports = Counter(canonical(item.manifest()) for item in state.visual_reports if item.round <= report_limit)
     if Counter(canonical(item) for item in branches) != expected_branches:
         raise ValueError("Recorded context does not contain the available branches")
@@ -144,7 +150,7 @@ def validate_evidence(state: MissionState) -> None:
 
     artifact_digests = [artifact.digest for artifact in state.artifacts]
     _unique(artifact_digests, "Duplicate artifact digest")
-    artifact_sources = [artifact.source_observation_id for artifact in state.artifacts]
+    artifact_sources = [artifact.source_observation_id for artifact in current_artifacts(state.artifacts)]
     _unique(artifact_sources, "Duplicate artifact source observation")
     artifacts = {artifact.digest: artifact for artifact in state.artifacts}
     for artifact in state.artifacts:
@@ -152,6 +158,33 @@ def validate_evidence(state: MissionState) -> None:
         if (source is None or source.status != "ok" or source.tool != "polynomial_fit" or
                 source.digest != artifact.source_observation_digest or source.round != artifact.round):
             raise ValueError("Invalid artifact source observation binding")
+    # A repair supersedes one earlier image of the same source under a different preset.
+    _unique([artifact.repair_of for artifact in state.artifacts if artifact.repair_of], "Duplicate artifact repair")
+    for artifact in state.artifacts:
+        if artifact.repair_of is None:
+            continue
+        superseded = artifacts.get(artifact.repair_of)
+        if (superseded is None or superseded.source_observation_id != artifact.source_observation_id or
+                superseded.round != artifact.round or superseded.preset == artifact.preset or
+                artifact_digests.index(superseded.digest) > artifact_digests.index(artifact.digest)):
+            raise ValueError("Invalid artifact repair binding")
+    # Each reviewable batch of a round is one generation: the originals, or one cycle's renders.
+    batches = {}
+    for round_number in {artifact.round for artifact in state.artifacts}:
+        originals = tuple(a.digest for a in state.artifacts if a.round == round_number and a.repair_of is None)
+        batches[round_number] = {originals} | {cycle.artifact_digests for cycle in state.repairs
+                                               if cycle.round == round_number and cycle.outcome != "blocked"}
+    for index, cycle in enumerate(state.repairs):
+        if cycle.cycle != len([c for c in state.repairs[:index] if c.round == cycle.round]) + 1:
+            raise ValueError("Repair cycles are not consecutive")
+        if cycle.trigger_report_digest not in {report.digest for report in state.visual_reports}:
+            raise ValueError("Repair cycle does not bind to a recorded visual report")
+        if cycle.superseded_digests not in batches.get(cycle.round, set()):
+            raise ValueError("Repair cycle does not supersede a reviewed batch")
+        if cycle.outcome != "blocked" and any(
+                artifacts.get(d) is None or artifacts[d].repair_of != s or artifacts[d].preset != cycle.preset
+                for d, s in zip(cycle.artifact_digests, cycle.superseded_digests)):
+            raise ValueError("Repair cycle does not bind to its rendered artifacts")
 
     report_keys = [(report.candidate_digest, report.round) for report in state.visual_reports]
     _unique(report_keys, "Duplicate visual report identity")
@@ -161,15 +194,16 @@ def validate_evidence(state: MissionState) -> None:
     for record in state.vision_records:
         if record.input_context.get("candidate_digest") != record.candidate_digest:
             raise ValueError("Invalid vision reservation candidate binding")
-        selected = tuple(artifact for artifact in state.artifacts if artifact.round == record.round)
-        if record.reviewed_digests != tuple(artifact.digest for artifact in selected):
+        if record.reviewed_digests not in batches.get(record.round, set()):
             raise ValueError("Visual report does not cover the exact supplied image batch")
+        selected = tuple(artifacts[d] for d in record.reviewed_digests)
         mission_context = record.input_context.get("mission")
         if not isinstance(mission_context, dict):
             raise ValueError("Invalid vision reservation context")
         if record.input_context.get("round") != record.round or mission_context.get("round") != record.round:
             raise ValueError("Visual report model or round binding mismatch")
-        _context_index(SimpleNamespace(input_context=mission_context, role="vision", round=record.round), state)
+        _context_index(SimpleNamespace(input_context=mission_context, role="vision", round=record.round,
+                                       reviewed_digests=record.reviewed_digests), state)
         if visual_context(mission_context, selected) != record.input_context:
             raise ValueError("Invalid vision reservation context binding")
         if record.report_digest is not None:

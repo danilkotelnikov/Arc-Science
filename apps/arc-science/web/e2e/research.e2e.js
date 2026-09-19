@@ -126,3 +126,32 @@ test('saved missions reload with their outcome and an empty list is actionable',
   await saved.first().click();
   await expect(page.locator('.status-label')).toHaveText(/completed|budget_exhausted/);
 });
+
+test('a presentation finding is repaired, reviewed again as a new candidate, and the ledger reads the repair', async ({page}) => {
+  const check = watchForTokenLeaks(page);
+  await page.goto('/');
+  const status = await runDemoMission(page, {goal: 'E2E: figure repair cycle.', rounds: 2, vision: true});
+  await expect(status).toHaveText('budget_exhausted');
+  const results = page.getByRole('region', {name: 'Research results'});
+  // Round 0: one fit, flagged by the scripted seat, re-rendered once, then found adequate.
+  const repairs = page.getByRole('region', {name: 'Figure repair cycles'});
+  const cycles = repairs.getByRole('listitem');
+  await expect(cycles.first()).toHaveText(/Cycle 1 · round 0 · preset spacious · addressed legibility → adequate/);
+  await expect(cycles.first()).toHaveAttribute('data-outcome', 'adequate');
+  await expect(cycles).toHaveCount(2); // round 1 renders the quadratic fit; it is repaired in its own cycle
+  await expect(results.locator('.artifact figcaption').filter({hasText: 'superseded by a repair'})).toHaveCount(2);
+  await expect(results.locator('.artifact figcaption').filter({hasText: /repair of [0-9a-f]{12}…/})).toHaveCount(2);
+  // Every review is the scripted seat's own verdict: issues on the default renders, adequate on the repairs.
+  const reviews = results.locator('.record h3').filter({hasText: 'scripted-vision-fixture-v1'});
+  await expect(reviews.filter({hasText: /· issues$/})).toHaveCount(2);
+  await expect(reviews.filter({hasText: /· adequate$/})).toHaveCount(2);
+  await expect(results.getByText(/Scripted fixture verdict/).first()).toBeVisible();
+  // Verification reproduces every render, superseded ones included, and the ledger names the cycles.
+  await results.getByRole('button', {name: 'Verify and recompute'}).click();
+  await expect(page.getByRole('region', {name: 'Verification report'}).getByRole('heading', {name: 'Replay verification: passed'})).toBeVisible();
+  const ledger = page.getByRole('region', {name: 'Release decision'});
+  await expect(ledger.getByRole('heading', {name: 'Release decision: Eligible for human review'})).toBeVisible();
+  await expect(ledger.locator('li[data-state="satisfied"]').filter({hasText: 'visual review'})).toHaveText(/Repair cycles: 1 \(spacious\) -> adequate/);
+  await expect(results.getByRole('link', {name: 'Download authenticated PNG'})).toHaveCount(4);
+  check();
+});

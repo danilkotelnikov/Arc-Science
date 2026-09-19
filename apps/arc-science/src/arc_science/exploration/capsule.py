@@ -129,7 +129,7 @@ def verify_capsule(blob:bytes)->dict:
         if source is None:
             failures.append(artifact.digest+': artifact source observation missing');continue
         try:
-            computed=artifact_for_observation(state.points,source)
+            computed=artifact_for_observation(state.points,source,preset=artifact.preset,repair_of=artifact.repair_of,round=artifact.round)
             if computed != artifact:
                 failures.append(artifact.digest+': artifact rendering mismatch')
             else:

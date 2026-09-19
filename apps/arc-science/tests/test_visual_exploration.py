@@ -47,7 +47,7 @@ def accepted_two_image_checkpoint():
         async def review_visual(self, context, artifacts):
             return VisualReport(candidate_digest=context["candidate_digest"],
                 reviewed_digests=tuple(item.digest for item in artifacts), verdict="adequate", findings=(),
-                model=self.vision_model, round=context["round"], prompt_version="arc-visual-review-1",
+                model=self.vision_model, round=context["round"], prompt_version="arc-visual-review-2",
                 context_digest=digest(context), input_context=context)
 
     request = MissionRequest(goal="Inspect two fits", vision_review=True, max_rounds=1)
@@ -393,7 +393,7 @@ def test_accepted_visual_call_is_not_repeated_when_reconciliation_is_interrupted
             self.calls += 1
             return VisualReport(candidate_digest=context["candidate_digest"],
                 reviewed_digests=tuple(item.digest for item in artifacts), verdict="adequate", findings=(),
-                model=self.vision_model, round=context["round"], prompt_version="arc-visual-review-1",
+                model=self.vision_model, round=context["round"], prompt_version="arc-visual-review-2",
                 context_digest=digest(context), input_context=context)
 
     request = MissionRequest(goal="Inspect the fixture", vision_review=True)
@@ -430,7 +430,7 @@ def test_visual_findings_reach_the_next_planner_without_image_bytes():
                 reviewed_digests=tuple(item.digest for item in artifacts), verdict="adequate",
                 findings=(VisualFinding(artifact_digest=artifacts[0].digest, severity="minor",
                                         category="residuals", detail="Inspect the residual pattern."),),
-                model=self.vision_model, round=context["round"], prompt_version="arc-visual-review-1",
+                model=self.vision_model, round=context["round"], prompt_version="arc-visual-review-2",
                 context_digest=digest(context), input_context=context)
 
         async def propose(self, context):
@@ -460,7 +460,7 @@ def test_issues_or_uncertain_visual_coverage_prevents_planner_completion():
                 reviewed_digests=tuple(item.digest for item in artifacts), verdict="issues",
                 findings=(VisualFinding(artifact_digest=artifacts[0].digest, severity="major",
                                         category="fit", detail="The plot needs human review."),),
-                model=self.vision_model, round=context["round"], prompt_version="arc-visual-review-1",
+                model=self.vision_model, round=context["round"], prompt_version="arc-visual-review-2",
                 context_digest=digest(context), input_context=context)
 
     state = asyncio.run(explore(MissionRequest(goal="Inspect the fixture", vision_review=True), Issues()))

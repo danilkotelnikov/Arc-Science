@@ -27,7 +27,7 @@ function VerificationReport({report}) {
   </section>;
 }
 
-function Artifact({missionId,artifact,request,release}) {
+function Artifact({missionId,artifact,request,release,superseded}) {
   const [url,setUrl]=useState('');
   const [error,setError]=useState(''),[attempt,setAttempt]=useState(0);
   useEffect(()=>{
@@ -38,7 +38,14 @@ function Artifact({missionId,artifact,request,release}) {
       .catch(e=>{if(!controller.signal.aborted&&e.name!=='AbortError')setError(e.message);});
     return ()=>{controller.abort();if(ownedUrl)URL.revokeObjectURL(ownedUrl);};
   },[missionId,artifact.digest,request,attempt]);
-  return <figure className="artifact">{url?<><img src={url} alt={'Artifact from '+artifact.source_observation_id}/>{release?.eligible_for_human_review?<a href={url} download={artifact.digest+'.png'}>Download authenticated PNG</a>:<span className="muted">Download withheld until the release decision is eligible; inline inspection stays available.</span>}</>:error?<><p role="alert">Artifact unavailable: {error}</p><Button variant="secondary" onPress={()=>setAttempt(n=>n+1)}>Retry artifact</Button><p>Check your token, then retry or select the mission again.</p></>:<p>Loading authenticated artifact…</p>}<figcaption>{artifact.source_observation_id} · {artifact.digest.slice(0,12)}…</figcaption></figure>;
+  return <figure className="artifact">{url?<><img src={url} alt={'Artifact from '+artifact.source_observation_id}/>{release?.eligible_for_human_review?<a href={url} download={artifact.digest+'.png'}>Download authenticated PNG</a>:<span className="muted">Download withheld until the release decision is eligible; inline inspection stays available.</span>}</>:error?<><p role="alert">Artifact unavailable: {error}</p><Button variant="secondary" onPress={()=>setAttempt(n=>n+1)}>Retry artifact</Button><p>Check your token, then retry or select the mission again.</p></>:<p>Loading authenticated artifact…</p>}<figcaption>{artifact.source_observation_id} · {artifact.digest.slice(0,12)}… · preset {artifact.preset||'default'}{artifact.repair_of?' · repair of '+artifact.repair_of.slice(0,12)+'…':''}{superseded?' · superseded by a repair':''}</figcaption></figure>;
+}
+
+function RepairCycles({repairs}) {
+  // Each cycle re-rendered the reviewed images under a presentation preset and had
+  // them reviewed again as a new candidate; the outcome is that fresh review's own
+  // verdict, or the reason the cycle could not run. Nothing here is inferred.
+  return <section aria-label="Figure repair cycles"><h2>Figure repair cycles</h2>{repairs.length?<ol className="repairs">{repairs.map((cycle,i)=><li key={i} data-outcome={cycle.outcome}>Cycle {cycle.cycle} · round {cycle.round} · preset {cycle.preset} · addressed {cycle.addressed.join(', ')||'—'} → <strong>{cycle.outcome}</strong>{cycle.reason?<span className="muted"> — {cycle.reason}</span>:null}</li>)}</ol>:<p className="muted">No repair cycle ran. A repair only answers presentation findings; substance, uncertainty and reviewer errors wait for a human.</p>}</section>;
 }
 
 export default function ResearchWorkspace({token,setToken}) {
@@ -116,8 +123,9 @@ export default function ResearchWorkspace({token,setToken}) {
         <div className="actions"><Button isDisabled={busy} onPress={()=>task(async signal=>{setVerification(await (await request('/missions/'+mission.id+'/verify','POST',undefined,signal)).json());await refresh(mission.id,signal);})}>Verify and recompute</Button><Button variant="secondary" isDisabled={busy||!mission.release?.eligible_for_human_review} onPress={()=>task(exportCapsule)}>Export replay capsule</Button><Button variant="ghost" isDisabled={busy||!['ready','paused'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/start','POST',undefined,signal);await refresh(mission.id,signal);})}>Resume</Button><Button variant="danger" isDisabled={busy||['cancelled','completed','budget_exhausted','error','needs_input'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/cancel','POST',undefined,signal);await refresh(mission.id,signal);})}>Cancel</Button></div>
         <p role="status">{state.stop_reason}</p><ReleaseLedger release={mission.release}/>{verification&&<VerificationReport report={verification}/>}
         <div className="branches">{state.branches.map(branch=><article key={branch.id} className={'branch'+(state.focus===branch.id?' focus':'')}><h3>{branch.title}</h3><p>{branch.hypothesis}</p><p>Falsifier: {branch.falsifier}</p><p className="muted">Opened round {branch.created_round} · parents: {branch.parents.join(', ')||'root'}</p></article>)}</div>
-        <h2>Visual artifacts</h2><div className="artifacts">{state.artifacts.length?state.artifacts.map(artifact=><Artifact key={mission.id+artifact.digest} missionId={mission.id} artifact={artifact} request={request} release={mission.release}/>):<p className="muted">No visual artifacts in this mission.</p>}</div>
+        <h2>Visual artifacts</h2><div className="artifacts">{state.artifacts.length?state.artifacts.map(artifact=><Artifact key={mission.id+artifact.digest} missionId={mission.id} artifact={artifact} request={request} release={mission.release} superseded={state.artifacts.some(a=>a.repair_of===artifact.digest)}/>):<p className="muted">No visual artifacts in this mission.</p>}</div>
         <h2>Visual review</h2>{state.visual_reports.length?state.visual_reports.map((report,i)=><div className="record" key={i}><h3>{report.model} · round {report.round} · {report.verdict}</h3>{report.findings.map((finding,j)=><p key={j}>{finding.category}: {finding.detail}</p>)}</div>):<p className="muted">No visual review report. No passing qualification is implied.</p>}
+        <RepairCycles repairs={state.repairs||[]}/>
         <h2>Reconciliation</h2>{state.assessments.slice(-12).map((assessment,i)=><div className="record" key={i}><h3>{assessment.role} · {assessment.branch_id} · {assessment.position}</h3><p>{assessment.finding}</p><p className="muted">Evidence: {assessment.evidence_ids.join(', ')} · Model: {assessment.model}</p></div>)}
         <h2>Execution evidence</h2>{state.observations.map(observation=><details className="record" key={observation.id}><summary>{observation.id} · {observation.tool} · {observation.status}</summary><pre>{JSON.stringify(observation.data,null,2)}</pre></details>)}
         <h2>Event history</h2>{state.events.slice(-15).reverse().map((event,i)=><p className="muted" key={i}>[{event.round}] {event.kind}: {event.detail}</p>)}

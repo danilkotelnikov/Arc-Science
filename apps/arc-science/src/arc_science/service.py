@@ -18,7 +18,7 @@ from .contracts import digest
 from .transport import AccessGrant
 from .exploration.models import MissionRequest, MissionState
 from .exploration.engine import initialize, explore, MissionCancelled
-from .exploration.agents import DemoAgent
+from .exploration.agents import DemoAgent, DemoVisionAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
 from .exploration.repository import MissionRepository, MissionFinished, RevisionConflict
 from .exploration.capsule import export_capsule, verify_capsule
@@ -346,7 +346,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         try:
             async with httpx.AsyncClient(trust_env=False) as client:
                 tools=TrustedPublicTools()
-                if request.mode=='demo':agent=DemoAgent()
+                if request.mode=='demo':agent=DemoVisionAgent() if request.vision_review else DemoAgent()
                 else:
                     first,second=configured_endpoints()
                     vision=configured_vision_endpoint() if request.vision_review else None

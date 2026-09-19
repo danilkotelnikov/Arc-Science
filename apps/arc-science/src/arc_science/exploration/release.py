@@ -15,6 +15,7 @@ import time
 from ..contracts import digest
 from .models import (CheckState, MissionCheck, MissionRequest, MissionState, ReleaseCheck,
                      ReleaseDecision, VerificationReceipt)
+from .vision import current_artifacts
 
 POLICY = {'version': 'arc-mission-release-1',
           'checks': ['operational_status', 'event_chain_integrity', 'replay_integrity',
@@ -50,7 +51,8 @@ def check_basis(name: MissionCheck, request: MissionRequest, state: MissionState
         return digest({'requested': request.vision_review,
                        'artifacts': [a.digest for a in state.artifacts],
                        'reports': [r.model_dump(mode='json') for r in state.visual_reports],
-                       'records': [r.model_dump(mode='json') for r in state.vision_records]})
+                       'records': [r.model_dump(mode='json') for r in state.vision_records],
+                       'repairs': [r.model_dump(mode='json') for r in state.repairs]})
     return subject_digest(state)
 
 
@@ -93,16 +95,24 @@ def _visual(request, state):
         return 'unknown', 'Visual review was requested but the mission produced nothing reviewable; the gate never ran.', ()
     if any(r.status == 'rejected' for r in state.vision_records):
         return 'error', 'A visual review call was rejected or malformed; no verdict can be inferred from it.', ()
+    # Only current images count; a superseded image keeps its report as the reason for
+    # its repair. The repair history is part of the reason either way.
+    current = current_artifacts(state.artifacts)
+    history = ''
+    if state.repairs:
+        history = ' Repair cycles: ' + '; '.join(
+            f'{c.cycle} ({c.preset}) -> {c.outcome}' + (f': {c.reason}' if c.outcome == 'blocked' else '')
+            for c in state.repairs)[:400] + '.'
     reviewed = {}
     for report in state.visual_reports:
         for d in report.reviewed_digests:
             reviewed[d] = report.verdict
-    verdicts = [reviewed.get(a.digest) for a in state.artifacts]
+    verdicts = [reviewed.get(a.digest) for a in current]
     if any(v is None for v in verdicts):
-        return 'unknown', 'Not every artifact has a bound visual review.', ()
+        return 'unknown', 'Not every current artifact has a bound visual review.' + history, ()
     if any(v in ('issues', 'uncertain') for v in verdicts):
-        return 'failed', 'A visual review returned issues or could not assess the artifact.', tuple(a.digest for a in state.artifacts)
-    return 'satisfied', 'Every artifact has a bound review that found it adequate.', tuple(a.digest for a in state.artifacts)
+        return 'failed', 'A visual review returned issues or could not assess a current artifact.' + history, tuple(a.digest for a in current)
+    return 'satisfied', 'Every current artifact has a bound review that found it adequate.' + history, tuple(a.digest for a in current)
 
 
 def _replay(name, receipt: VerificationReceipt | None, current_subject, state):

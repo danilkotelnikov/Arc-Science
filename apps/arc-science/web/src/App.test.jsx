@@ -1,6 +1,6 @@
 import React from 'react';
 import {beforeEach, afterEach, expect, test, vi} from 'vitest';
-import {act, render, screen, waitFor} from '@testing-library/react';
+import {act, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {App} from './main.jsx';
 
@@ -116,6 +116,26 @@ test('a blocked release ledger explains itself and withholds the capsule until v
   expect(screen.getByRole('button',{name:'Export replay capsule'})).toBeEnabled();
   expect(requests.find(r=>r.path?.endsWith('/verify')).options.method).toBe('POST');
   expect(await screen.findByRole('link',{name:'Download authenticated PNG'})).toBeInTheDocument();
+});
+
+test('repair cycles are listed with their own outcomes and superseded artifacts say so',async()=>{
+  const first='a'.repeat(64),second='b'.repeat(64);
+  selectedRow.state.artifacts=[{digest:first,source_observation_id:'obs-1',media_type:'image/png',preset:'default',repair_of:null},{digest:second,source_observation_id:'obs-1',media_type:'image/png',preset:'spacious',repair_of:first}];
+  selectedRow.state.repairs=[{cycle:1,round:0,preset:'spacious',trigger_report_digest:'c'.repeat(64),addressed:['legibility'],superseded_digests:[first],artifact_digests:[second],outcome:'adequate',reason:''},
+    {cycle:2,round:0,preset:'large_text',trigger_report_digest:'d'.repeat(64),addressed:['labels'],superseded_digests:[second],artifact_digests:[],outcome:'blocked',reason:'The large_text preset rendered an image that already exists; the repair changed nothing.'}];
+  const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
+  await user.type(screen.getByLabelText('Local operator token'),'private');
+  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
+  const repairs=await screen.findByRole('region',{name:'Figure repair cycles'});
+  const items=within(repairs).getAllByRole('listitem');
+  expect(items).toHaveLength(2);
+  expect(items[0]).toHaveTextContent('Cycle 1 · round 0 · preset spacious · addressed legibility → adequate');
+  expect(items[1]).toHaveAttribute('data-outcome','blocked');
+  expect(items[1]).toHaveTextContent('the repair changed nothing');
+  const captions=screen.getAllByText(/preset (default|spacious)/);
+  expect(captions[0]).toHaveTextContent('superseded by a repair');
+  expect(captions[1]).toHaveTextContent('repair of aaaaaaaaaaaa…');
+  expect(captions[1]).not.toHaveTextContent('superseded');
 });
 
 test('a finished mission keeps its outcome: Cancel is disabled, Verify and export stay available',async()=>{
