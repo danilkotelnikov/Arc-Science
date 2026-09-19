@@ -8,6 +8,10 @@ from pathlib import Path
 from ..contracts import canonical, digest
 from .models import MissionRequest, MissionState
 
+# Statuses whose recorded outcome cancellation must not rewrite (needs_input has no
+# resume transition in this API, so it is finished as far as the operator can act).
+FINISHED=('completed','budget_exhausted','error','needs_input')
+
 class MissionFinished(ValueError):pass
 
 class RevisionConflict(RuntimeError): pass
@@ -83,7 +87,7 @@ class MissionRepository:
         old=self.get(mid)
         if old['state']['status']=='cancelled':return old
         # A finished mission keeps its recorded outcome; only unfinished work is fenced.
-        if old['state']['status'] in ('completed','budget_exhausted','error'):
+        if old['state']['status'] in FINISHED:
             raise MissionFinished('Mission already finished; its outcome is retained')
         state=MissionState.model_validate({**old['state'],'status':'cancelled','stop_reason':'Cancelled by operator; late results fenced.'})
         return self.save(mid,state,expected_revision=old['revision'])

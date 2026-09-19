@@ -131,3 +131,20 @@ def test_repository_operations_close_database_handles_on_success_and_error(tmp_p
     for connection in opened:
         with pytest.raises(sqlite3.ProgrammingError, match='closed'):
             connection.execute('SELECT 1')
+
+
+@pytest.mark.parametrize('status,cancellable',[('ready',True),('running',True),('paused',True),
+    ('completed',False),('budget_exhausted',False),('error',False),('needs_input',False)])
+def test_cancellation_matrix_protects_every_finished_outcome(tmp_path,status,cancellable):
+    from arc_science.exploration.repository import MissionRepository, MissionFinished
+    from arc_science.exploration.engine import initialize
+    from arc_science.exploration.models import MissionState
+    request,_=results();repo=MissionRepository(tmp_path/'state.db')
+    row=repo.create(request,initialize(request),key='matrix')
+    state=MissionState.model_validate({**row['state'],'status':status,'stop_reason':'recorded outcome'})
+    repo.save(row['id'],state,expected_revision=row['revision'])
+    if cancellable:
+        assert repo.cancel(row['id'])['state']['status']=='cancelled'
+    else:
+        with pytest.raises(MissionFinished):repo.cancel(row['id'])
+        assert (repo.get(row['id'])['state']['status'],repo.get(row['id'])['state']['stop_reason'])==(status,'recorded outcome')

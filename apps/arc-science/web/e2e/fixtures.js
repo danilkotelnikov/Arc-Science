@@ -6,10 +6,14 @@ export const E2E_TOKEN = 'e2e-operator-token-0123456789abcdef0123456789abcdef';
 export const BASE = `http://127.0.0.1:${E2E_PORT}`;
 
 /** Tokens travel in memory and request headers only, never in a URL or a query string. */
-export function watchForTokenLeaks(page) {
+export function watchForTokenLeaks(page, ...tokens) {
+  const secrets = tokens.length ? tokens : [E2E_TOKEN];
   const leaks = [];
   page.on('request', (request) => {
-    if (request.url().includes(E2E_TOKEN)) leaks.push(request.url());
+    if (secrets.some((secret) => request.url().includes(secret))) leaks.push(request.url());
+  });
+  page.on('framenavigated', (frame) => {
+    if (secrets.some((secret) => frame.url().includes(secret))) leaks.push(frame.url());
   });
   return () => expect(leaks, 'the operator token must never appear in a URL').toEqual([]);
 }

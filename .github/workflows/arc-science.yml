@@ -1,9 +1,9 @@
 name: Arc Science development
 on:
   push:
-    paths: ['apps/arc-science/**', '.github/workflows/arc-science.yml']
+    paths: ['apps/arc-science/**', 'native/arc-memory/**', '.github/workflows/arc-science.yml']
   pull_request:
-    paths: ['apps/arc-science/**', '.github/workflows/arc-science.yml']
+    paths: ['apps/arc-science/**', 'native/arc-memory/**', '.github/workflows/arc-science.yml']
 permissions:
   contents: read
 jobs:
@@ -31,7 +31,10 @@ jobs:
         working-directory: apps/arc-science/web
       - run: python -m pytest -q -rs
       # End-to-end: the real service on an isolated data directory driven by Playwright.
-      # No Rust worker is built here, so the memory recall spec reports itself skipped.
+      # The memory worker is built with the runner's preinstalled Rust so the recall
+      # spec runs for real instead of skipping.
+      - run: cargo build --release --locked --manifest-path native/arc-memory/Cargo.toml
+        working-directory: ${{ github.workspace }}
       - run: npx playwright install --with-deps chromium
         working-directory: apps/arc-science/web
       - run: npm run e2e:only

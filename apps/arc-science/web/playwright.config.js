@@ -10,7 +10,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  timeout: 90_000,
+  timeout: 150_000,
   reporter: [['list'], ['html', {open: 'never', outputFolder: 'e2e-report'}]],
   outputDir: 'e2e-results',
   use: {

@@ -27,7 +27,7 @@ renderArtifacts(row.id,s.artifacts).catch(message);
 $('reviews').replaceChildren(...s.assessments.slice(-12).map(a=>{const el=text('div','','record');el.append(text('strong',`${a.role} · ${a.branch_id} · ${a.position}`),text('p',a.finding),text('p','Evidence: '+a.evidence_ids.join(', '),'muted'));return el;}));
 $('observations').replaceChildren(...s.observations.map(o=>{const el=text('details','','record');el.append(text('summary',`${o.id} · ${o.tool} · ${o.status}`),text('pre',JSON.stringify(o.data,null,2)));return el;}));
 $('events').replaceChildren(...s.events.slice(-15).reverse().map(e=>text('p',`[${e.round}] ${e.kind}: ${e.detail}`,'muted')));
-$('resume').disabled=!['ready','paused'].includes(s.status);$('cancel').disabled=s.status==='cancelled';
+$('resume').disabled=!['ready','paused'].includes(s.status);$('cancel').disabled=['cancelled','completed','budget_exhausted','error','needs_input'].includes(s.status);
 if(!['ready','running'].includes(s.status)){clearInterval(timer);timer=null;message(s.stop_reason);}}
 async function load(mid){render(await(await api('/missions/'+mid)).json());}
 function poll(mid){clearInterval(timer);timer=setInterval(()=>load(mid).catch(message),700);}

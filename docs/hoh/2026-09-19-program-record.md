@@ -47,3 +47,46 @@ wheel built and checked: 0 public assets, compiled JS 309,307 bytes.
 Evaluator's own limits: it ran the icon unit test in isolation and inspected the
 built executable and bundle; it could not run Vitest or Python in its sandbox, so the
 suite counts above are the author's runs.
+
+## Loop 3 — Playwright end-to-end suite (`05a1e1a`, follow-ups below)
+
+Changes: `apps/arc-science/web/e2e/` — 14 specs against the real service on an
+isolated temp data directory with a known token (`e2e/serve.mjs`, Playwright
+`webServer`); `npm run e2e`; CI builds the memory worker with the runner's Rust and
+runs the suite after the unit tests. `@playwright/test` is the one new dev
+dependency, requested by the user. Writing the cancellation spec exposed a defect:
+Cancel rewrote the outcome of finished missions; the repository now refuses
+(`MissionFinished` → 409) for completed, budget-exhausted, errored and
+needs-input missions (needs_input has no resume transition in this API), the
+workbench and the diagnostics console disable the control, and a matrix test covers
+every status.
+
+Coverage of the browser-QA checklist: Research create/start, decision routes and
+reconciliation, verify/recompute, round budget, cancellation (ready-state through
+the UI; running-state at the service level), saved missions, capsule export as a
+real browser download, memory capture/recall/ranges (next and previous)/lexical
+search with metadata/scope/retention (removed record absent after reload)/credential
+clearing/invalid token, BioArt offline miss with consent and the NIH fallback link,
+entry-ID validation, empty Molecules workbench with an absent renderer, the native
+download notice, token-never-in-URL for requests and navigations. Not covered by
+design: NIH live inspection/source/import (public network), molecular render and
+active cancel (Blender), memory restart/recovery (covered by service tests
+`test_startup_reconciles…` and `test_cancel_snapshot_drains…`; the suite runs one
+service process).
+
+Checks: 14 e2e passed (three runs, ~25 s each), vitest 43, Python storage/service
+28, full Python suite unchanged otherwise.
+
+## Evaluation of loop 3 (Sol): accept-with-findings
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| Memory restart/recovery not in e2e; CI skipped memory | medium | CI now builds the worker (runner's Rust) so the recall spec runs; restart recovery stays at the service-test level and is listed as not covered above |
+| Helper discovery Windows-only in `serve.mjs` | medium | Platform-aware executable names |
+| Token watch used the wrong token in the shared-token spec; history-only URLs unwatched | medium | `watchForTokenLeaks(page, ...tokens)`; frame navigations watched; page URL asserted |
+| `needs_input` could still be rewritten to cancelled | medium | Protected (no resume transition exists); matrix test over all seven statuses |
+| Diagnostics console still enabled Cancel for finished missions | low | Gated the same way |
+| Timeouts (90 s test vs 120 s mission wait), temp dirs not removed, weakly asserted retention/metadata | low | Test timeout 150 s; data directory removed on service exit; retention spec reloads the session and asserts the record is gone; hit metadata asserted; previous-page round trip added |
+
+Sol's own limits: it corroborated one retained Playwright report (14/14, 25.2 s); the
+other runs are the author's.

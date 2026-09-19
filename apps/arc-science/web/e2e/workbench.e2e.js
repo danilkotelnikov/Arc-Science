@@ -24,16 +24,19 @@ test('the workbench opens with its mark, four workspaces and no packaged example
 });
 
 test('workspaces switch without losing the shared in-memory token, and the token never enters a URL', async ({page}) => {
-  const check = watchForTokenLeaks(page);
+  const shared = 'shared-token-in-memory-only-0123456789';
+  const check = watchForTokenLeaks(page, shared);
   await page.goto('/');
   await openWorkspace(page, 'Research', 'Research results');
-  await page.getByLabel('Local operator token').fill('shared-token-in-memory-only-0123456789');
+  await page.getByLabel('Local operator token').fill(shared);
   await openWorkspace(page, 'Memory', 'Memory');
-  await expect(page.getByLabel('Operator token for Memory')).toHaveValue('shared-token-in-memory-only-0123456789');
+  await expect(page.getByLabel('Operator token for Memory')).toHaveValue(shared);
   await openWorkspace(page, 'BioArt', 'BioArt evidence workspace');
-  await expect(page.getByLabel('Operator token for BioArt')).toHaveValue('shared-token-in-memory-only-0123456789');
+  await expect(page.getByLabel('Operator token for BioArt')).toHaveValue(shared);
   await openWorkspace(page, 'Molecules', 'Molecular figure');
-  await expect(page.getByLabel('Operator token for Molecules')).toHaveValue('shared-token-in-memory-only-0123456789');
+  await expect(page.getByLabel('Operator token for Molecules')).toHaveValue(shared);
+  // The token also stays out of the page URL and history.
+  expect(page.url()).not.toContain(shared);
   check();
 });
 

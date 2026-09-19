@@ -53,6 +53,8 @@ test('a completed mission is recalled from memory, searched, paged and retained 
   await expect(memory.getByText(/Sequence 1–1 \(inclusive\)/)).toBeVisible();
   await memory.getByRole('button', {name: 'Next records'}).click();
   await expect(memory.getByText(/Sequence 2–2 \(inclusive\)/)).toBeVisible();
+  await memory.getByRole('button', {name: 'Previous records'}).click();
+  await expect(memory.getByText(/Sequence 1–1 \(inclusive\)/)).toBeVisible();
 
   // Lexical search over all sessions, then scoped to the selected one.
   await aside.getByLabel('Search memory').fill('quadratic');
@@ -60,6 +62,7 @@ test('a completed mission is recalled from memory, searched, paged and retained 
   await expect(memory.getByRole('heading', {name: 'Retrieved passages'})).toBeVisible();
   await expect(memory.locator('.status-label')).toHaveText(/[1-9]\d* hits/);
   await expect(memory.locator('article.record').first()).toContainText(/quadratic/i);
+  await expect(memory.locator('article.record').first()).toContainText(/epoch \d+ · (model_output|operator)/);
   await aside.getByLabel('Search scope').selectOption('selected');
   await aside.getByRole('button', {name: 'Search'}).click();
   await expect(memory.locator('.eyebrow').filter({hasText: `Search · lexical · ${missionId}`})).toBeVisible();
@@ -68,8 +71,14 @@ test('a completed mission is recalled from memory, searched, paged and retained 
   await session.click();
   await expect(memory.getByRole('heading', {name: 'Captured trajectory'})).toBeVisible();
   const before = Number((await memory.getByText(/total active records/).textContent()).match(/(\d+) total active/)[1]);
-  await memory.getByRole('button', {name: 'Remove from retrieval'}).first().click();
+  const first = memory.locator('article.record').first();
+  const removedHeading = await first.locator('h3').textContent(); // "role · epoch N · #seq"
+  await first.getByRole('button', {name: 'Remove from retrieval'}).click();
   await expect(memory.getByText(new RegExp(`${before - 1} total active records`))).toBeVisible();
+  // The hidden record no longer appears in session recall, but the history is not erased.
+  await session.click();
+  await expect(memory.getByRole('heading', {name: 'Captured trajectory'})).toBeVisible();
+  await expect(memory.locator('article.record h3').filter({hasText: removedHeading})).toHaveCount(0);
   await expect(memory.getByText('Remove from retrieval hides a record from search and session recall; it does not erase the stored history.')).toBeVisible();
 
   // A credential change clears every loaded identity and result.
