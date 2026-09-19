@@ -4,8 +4,6 @@ import {act, render, screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {App} from './main.jsx';
 
-const assets = Object.fromEntries(['collage.png','collage.svg','overview.svg','interface.svg','rotated.svg','overview.png','interface.png','rotated.png','contacts.csv','source.cif','scene.json','molecular_worker.py','integrity.json','caption.md','visual-review.md'].map(name=>[name,{url:'/api/examples/1dqj/assets/'+name,sha256:'a'.repeat(64),bytes:12,media_type:name.endsWith('.svg')?'image/svg+xml':'image/png'}]));
-const example = {id:'1dqj',title:'HyHEL-63 Fab · Lysozyme',source:{id:'1DQJ',model:1,assembly:'1',url:'https://www.rcsb.org/structure/1DQJ'},partners:{antibody:['A','B'],antigen:['C']},contact_pairs:49,cutoff_angstrom:4,review:{status:'Accepted illustrative figure, candidate 03',scope:'Historical direct image review',live_provider_qualified:false,browser_layout_verified:false},limitations:['Gaussian atomic envelope, not a solvent-excluded surface.'],assets};
 const bioartEntry = {entry_id:18,title:'Antibody',license:'Public Domain',credit:'Courtesy of NIAID',creator:'Ryan Kissinger',collection:'NIAID Visual & Medical Arts',citation:'NIAID BioArt, BIOART-000018',source_url:'https://bioart.niaid.nih.gov/bioart/18',preferred_representation_id:64,representations:[{group_id:63,caption:'Antibody - Colored',files:{PNG:626857,SVG:626858}},{group_id:64,caption:'Antibody - Grey',files:{PNG:626859,SVG:626860,AI:626861,EPS:626862}}]};
 const bioartReceipt = {receipt_id:'b'.repeat(64),entry_id:18,title:'Antibody',license:'Public Domain',credit:'Courtesy of NIAID',creator:'Ryan Kissinger',collection:'NIAID Visual & Medical Arts',citation:'NIAID BioArt, BIOART-000018',representation_id:64,caption:'Antibody - Grey',format:'SVG',file_id:626860,source_page_sha256:'c'.repeat(64),sha256:'d'.repeat(64),size:120,preview_eligible:true,import_eligible:true,limitation:null,rights_verified:false,scientific_validity_established:false,preview_url:'/api/bioart/receipts/'+'b'.repeat(64)+'/preview',download_url:'/api/bioart/receipts/'+'b'.repeat(64)+'/source'};
 const bioartDownloadReceipt = {...bioartReceipt,receipt_id:'e'.repeat(64),format:'EPS',file_id:626862,preview_eligible:false,import_eligible:false,limitation:'AI/EPS originals are download-only; never executed',preview_url:'/api/bioart/receipts/'+'e'.repeat(64)+'/preview',download_url:'/api/bioart/receipts/'+'e'.repeat(64)+'/source'};
@@ -17,8 +15,6 @@ beforeEach(()=>{
   requests=[]; selectedRow=structuredClone(row);
   vi.stubGlobal('fetch',vi.fn(async(path,options={})=>{
     requests.push({path,options});
-    if(path==='/api/examples/1dqj')return json(example);
-    if(path.startsWith('/api/examples/1dqj/assets/'))return new Response('real selected artifact');
     if(path==='/api/bioart/search')return json({hits:[{entry_id:18,title:'Antibody'}]});
     if(path==='/api/bioart/inspect')return json(bioartEntry);
     if(path==='/api/bioart/fetch')return json(JSON.parse(options.body).format==='EPS'?bioartDownloadReceipt:bioartReceipt);
@@ -42,36 +38,8 @@ beforeEach(()=>{
 });
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();});
 
-test('selected annotated view and zoom change the actual scientific stage',async()=>{
-  const user=userEvent.setup();render(<App/>);
-  const figure=await screen.findByRole('img',{name:'Annotated collage'});
-  expect(figure).toHaveAttribute('src',assets['collage.svg'].url);
-  await user.click(await screen.findByRole('tab',{name:'Interface'}));
-  expect(screen.getByRole('img',{name:'Annotated interface'})).toHaveAttribute('src',assets['interface.svg'].url);
-  const before=screen.getByRole('img',{name:'Annotated interface'}).style.width;
-  await user.click(screen.getByRole('button',{name:'Zoom in'}));
-  expect(screen.getByRole('img',{name:'Annotated interface'}).style.width).not.toBe(before);
-  await user.click(await screen.findByRole('tab',{name:'Rotated detail'}));
-  expect(screen.getByRole('img',{name:'Annotated rotated'})).toHaveAttribute('src',assets['rotated.svg'].url);
-});
 
-test('export fetches and downloads the selected actual SVG, and labels native PNGs honestly',async()=>{
-  const user=userEvent.setup();render(<App/>);await screen.findByRole('img',{name:'Annotated collage'});
-  await user.click(await screen.findByRole('tab',{name:'Full complex'}));
-  await user.click(screen.getByRole('button',{name:'Export SVG'}));
-  await waitFor(()=>expect(requests).toContainEqual(expect.objectContaining({download:'1dqj-overview.svg',href:'blob:artifact'})));
-  expect(requests.some(r=>r.path===assets['overview.svg'].url)).toBe(true);
-  await user.click(screen.getByText('Source & downloads'));
-  expect(screen.getByRole('button',{name:'Native full complex PNG (unlabeled)'})).toBeInTheDocument();
-});
 
-test('failed export shows an error instead of a success or broken download',async()=>{
-  const user=userEvent.setup();render(<App/>);await screen.findByRole('img',{name:'Annotated collage'});
-  fetch.mockImplementationOnce(async()=>new Response('unavailable',{status:503}));
-  await user.click(screen.getByRole('button',{name:'Export SVG'}));
-  expect(await screen.findByRole('alert')).toHaveTextContent('503');
-  expect(downloadClick).not.toHaveBeenCalled();
-});
 
 test('workspace switches retain in-memory token, goal and selected mission',async()=>{
   const user=userEvent.setup();render(<App/>);
@@ -119,10 +87,18 @@ test('selected mission exposes authenticated artifacts, visual reports, verify, 
   expect(screen.getByRole('button',{name:'Resume'})).toBeDisabled();
 });
 
-test('empty saved missions and public example failures have actionable states',async()=>{
-  fetch.mockImplementation(async(path)=>path==='/api/examples/1dqj'?new Response('',{status:503}):json([]));
+test('molecules opens on the local render form with an empty stage and no packaged example',async()=>{
+  render(<App/>);
+  expect(await screen.findByRole('heading',{name:'Render your structure locally'})).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('No render selected');
+  expect(screen.queryByText(/EXAMPLE/)).toBeNull();
+  expect(screen.queryByRole('button',{name:'Export SVG'})).toBeNull();
+  expect(requests.some(r=>String(r.path).includes('/api/examples'))).toBe(false);
+});
+
+test('empty saved missions have an actionable state',async()=>{
+  fetch.mockImplementation(async()=>json([]));
   const user=userEvent.setup();render(<App/>);
-  expect(await screen.findByRole('alert')).toHaveTextContent('503');
   await user.click(screen.getByRole('button',{name:'Research'}));await user.click(screen.getByRole('button',{name:'Load missions'}));
   expect(await screen.findByText('No saved missions. Create a mission to begin.')).toBeInTheDocument();
 });
@@ -155,14 +131,6 @@ test('failed authenticated artifact stops loading and retries without losing Res
   expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
 });
 
-test('view selection and export work from the keyboard',async()=>{
-  const user=userEvent.setup();render(<App/>);
-  const tab=await screen.findByRole('tab',{name:'Collage'});
-  tab.focus();await user.keyboard('{ArrowRight}');
-  expect(await screen.findByRole('img',{name:'Annotated overview'})).toHaveAttribute('src',assets['overview.svg'].url);
-  screen.getByRole('button',{name:'Export SVG'}).focus();await user.keyboard('{Enter}');
-  await waitFor(()=>expect(requests.some(r=>r.download==='1dqj-overview.svg')).toBe(true));
-});
 
 test('BioArt search is authenticated, cache-first, and shares the in-memory operator token',async()=>{
   const user=userEvent.setup();render(<App/>);
@@ -284,7 +252,7 @@ test('memory workspace loads a captured session and searches its reasoning',asyn
 });
 
 test('native shell download outcomes are announced in the header and replace each other',async()=>{
-  render(<App/>);await screen.findByRole('img',{name:'Annotated collage'});
+  render(<App/>);await screen.findByRole('heading',{name:'Render your structure locally'});
   expect(document.querySelector('.download-notice')).toBeNull();
   act(()=>{window.dispatchEvent(new CustomEvent('arc-download',{detail:{file:'1dqj-collage.svg',folder:'C:\Users\a b\Downloads',success:true}}));});
   expect(screen.getByText('Saved 1dqj-collage.svg in C:\Users\a b\Downloads')).toHaveAttribute('role','status');

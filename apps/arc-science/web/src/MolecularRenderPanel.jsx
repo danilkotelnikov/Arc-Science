@@ -118,11 +118,11 @@ function RenderControls({token,onJobChange,onShowJob}) {
 }
 
 export default function MolecularRenderPanel({token,setToken,onJobChange,onShowJob}) {
-  return <details className="inspector-section molecular-render-panel"><summary>Render your structure locally</summary>
+  return <section className="inspector-section molecular-render-panel" aria-labelledby="molecular-render-heading"><h2 id="molecular-render-heading">Render your structure locally</h2>
     <label htmlFor="molecular-token">Operator token for Molecules</label><input id="molecular-token" type="password" value={token} autoComplete="off" onChange={event=>setToken(event.target.value)}/>
     <p className="field-note">Shared across workspaces, in memory only. Read with <code>arc-science token --data ./data</code>.</p>
     <RenderControls key={token} token={token} onJobChange={onJobChange} onShowJob={onShowJob}/>
-  </details>;
+  </section>;
 }
 
 export function MolecularRenderResult({job,token,onReturn}) {
@@ -160,7 +160,7 @@ export function MolecularRenderResult({job,token,onReturn}) {
     finally{if(!controller.signal.aborted)setDownloading(false);}
   }
   return <section className="figure-workspace" aria-label="Generated molecular figure">
-    <div className="figure-toolbar"><div><p className="eyebrow">LOCAL RENDER</p><h2>{job.filename}</h2></div><Button variant="secondary" size="sm" onPress={onReturn}>Return to frozen example</Button></div>
+    <div className="figure-toolbar"><div><p className="eyebrow">LOCAL RENDER</p><h2>{job.filename}</h2></div><Button variant="secondary" size="sm" onPress={onReturn}>Close render</Button></div>
     <div className="molecular-render-summary"><p role="status">Render status: {job.status}</p><p className="muted">Job {job.id}{job.contact_pairs!==null&&job.contact_pairs!==undefined?' · '+job.contact_pairs+' residue pairs':''}</p>
       <p className="muted">Rendering does not establish scientific validity, visual acceptance, or publication approval. The surface is a Gaussian atomic envelope; dashed distances indicate proximity, not hydrogen bonds or affinity.</p>
       {job.error&&<p role="alert">{job.error}</p>}
@@ -173,6 +173,6 @@ export function MolecularRenderResult({job,token,onReturn}) {
         {downloadError&&<p role="alert">{downloadError}</p>}
         <div className="actions">{Object.keys(job.assets).map(name=><Button key={name} size="sm" variant="secondary" isDisabled={downloading} onPress={()=>download(name)}>Download {name}</Button>)}</div>
         <details><summary>Artifact hashes</summary><dl className="receipt-metadata">{job.source_sha256&&<><dt>Uploaded source SHA-256</dt><dd><code>{job.source_sha256}</code></dd></>}{Object.entries(job.assets).map(([name,info])=><React.Fragment key={name}><dt>{name} · {info.bytes.toLocaleString()} bytes</dt><dd><code>{info.sha256}</code></dd></React.Fragment>)}</dl></details>
-      </div></>:pending(job.status)&&<div className="workspace-message"><p>The local renderer is working. Status updates automatically; you can return to the example while it runs.</p></div>}
+      </div></>:pending(job.status)&&<div className="workspace-message"><p>The local renderer is working. Status updates automatically; you can close this view while it runs.</p></div>}
   </section>;
 }

@@ -1,2 +1,1 @@
 # Frozen evidence is byte-bound. Preserve original CRLF and coordinate padding.
-src/arc_science/example_assets/1dqj/* -text -whitespace

@@ -29,18 +29,13 @@ def main():
             assert sorted(path.name for path in (root / 'installed/arc_science/static/web/assets').glob('*.js')) == [Path(scripts[0]).name], 'Wheel contains stale compiled JavaScript'
             js = client.get(scripts[0])
             assert (js.status_code == 200 and 'vision_review' in js.text and
-                    'Molecules' in js.text and 'BioArt' in js.text and
+                    'Molecules' in js.text and 'BioArt' in js.text and 'Render your structure locally' in js.text and
                     '/api/bioart' in js.text and 'Receipt verified' in js.text)
             assert client.get('/THIRD_PARTY_NOTICES.md').status_code == 200
-            example = client.get('/api/examples/1dqj').json()
-            for asset in example['assets'].values():
-                response = client.get(asset['url'])
-                assert response.status_code == 200
-                assert len(response.content) == asset['bytes']
-                assert hashlib.sha256(response.content).hexdigest() == asset['sha256']
-            png = client.get(example['assets']['collage.png']['url']).content
-            assert hashlib.sha256(png).hexdigest() == '7394f162dca9bba20ca985a2cd43473da2c9df7d88be5e39acaec81f30f598d9'
-            assert client.get('/api/examples/1dqj/assets/overview.blend').status_code == 404
+            assert client.get('/snoggo-mark.svg').status_code == 200
+            # No packaged example collage: the workbench ships empty.
+            assert client.get('/api/examples/1dqj').status_code == 404
+            assert not any('example_assets' in name for name in ZipFile(wheel).namelist())
             assert client.get('/api/missions').status_code == 401
             assert client.get('/api/missions',headers={'Authorization':'Bearer '+'t'*40}).json() == []
             assert client.post('/api/bioart/search',json={'query':'antibody'}).status_code == 401
@@ -48,7 +43,7 @@ def main():
                 headers={'Authorization':'Bearer '+'t'*40},
                 json={'query':'antibody','allow_egress':False})
             assert cache_miss.status_code == 409 and 'egress' in cache_miss.json()['detail'].lower()
-            print(json.dumps({'wheel':wheel.name,'wheel_sha256':hashlib.sha256(wheel.read_bytes()).hexdigest(),'public_assets':len(example['assets']),'compiled_js_bytes':len(js.content),'installed_package_http_checks':'passed'}))
+            print(json.dumps({'wheel':wheel.name,'wheel_sha256':hashlib.sha256(wheel.read_bytes()).hexdigest(),'public_assets':0,'compiled_js_bytes':len(js.content),'installed_package_http_checks':'passed'}))
 
 
 if __name__ == '__main__':

@@ -25,4 +25,4 @@ testpaths = ["tests"]
 arc-science = "arc_science.cli:main"
 
 [tool.setuptools.package-data]
-arc_science = ["static/*", "static/web/*", "static/web/assets/*", "example_assets/1dqj/*"]
+arc_science = ["static/*", "static/web/*", "static/web/assets/*"]

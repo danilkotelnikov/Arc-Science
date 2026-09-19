@@ -125,8 +125,6 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         await asyncio.to_thread(memory_routes.close)
 
     app=FastAPI(title='Arc Science',version=VERSION,lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
-    from .molecular_web import router as molecular_router
-    app.include_router(molecular_router)
     app.state.repository=repository
     app.state.running=running
 

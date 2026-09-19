@@ -44,7 +44,10 @@ as historical, not asserted to validate the derivative. `manifest.json` records
 the original complete run, including `.blend` hashes; `integrity.json` records
 what is actually in this public subset. No public `.blend` download is advertised.
 
-`scripts/package-molecular-example.mjs CHECKPOINT_ROOT` documents the one-time
+> Removed on 2026-09-19: the packaged example and its routes no longer exist; the
+> workbench opens on the operator's own renders. The paragraphs below are history.
+
+`scripts/package-molecular-example.mjs CHECKPOINT_ROOT` documented the one-time
 filtered asset import and verifies the independently frozen collage hashes. It
 does not alter or rerender the source candidate. The regular build does not need
 the private checkpoint.
