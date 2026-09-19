@@ -242,3 +242,35 @@ qualifier and the next tests visible; ledger 8 satisfied + 1 not applicable).
 | Two roles run as one model identity counted as independent support | moderate | `shared_identity` uncertainty; provisional support requires two distinct identities; the scripted fixture therefore never reaches it, and the UI says why |
 | The ledger reason asserted a next test for every hypothesis although none may exist | moderate | The reason counts "proposed for k of n"; `without_next_test` is in the scope counts |
 | Missions that stopped before scopes existed were blocked with no path to eligibility | major | `POST /verify` derives and persists the scope for such a mission before evaluating the ledger; service test |
+
+## Loop D — change-effect declarations (`585ffac`, `ba5ab93`, `0ef4293`)
+
+Design (from the design review's table; Sol's invalidation notes): every operator
+change declares its effect (`presentation`, `scientific_depiction`, `analysis`,
+`claim`, `permission`); the server derives the actual effect and refuses a
+declaration narrower than it (wider is allowed, both are recorded); each effect names
+the checks it obliges. Two changes exist: resuming a stopped mission (derived
+analysis + claim; recorded as a `Change` bound to a `change_declared` event and to the
+digest of the history before it; every release check goes stale until the mission is
+verified again; obligations are read from the ledger on every read, with re-execution
+evidenced by the replay checks) and re-rendering a molecular structure with the same
+coordinates as a declared change of a completed base render (derived from the changed
+settings; the base render is never touched; obligations recorded `unknown` because no
+checker exists). Claim, permission, presentation, scientific-depiction and analysis
+declarations on a mission are refused with the table's reason; disabling a memory
+record answers with a zero-effect declaration. The evidence graph rejects a mission
+that continued after a stop or an interruption without a declaration.
+
+Checks: `test_changes.py` 5, molecular change test through the stand-in runtime,
+memory disable test; full Python suite 721 passed / 65 skipped with the native
+workers; frontend 48; Playwright 16.
+
+## Evaluation of loop D (Sol): changes required → addressed → accept
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| Change records were persisted but not evidence-bound: a forged or missing change passed the evidence graph and the capsule | architectural | `change_declared` event per change; base digest = digest of the event prefix; derivation and obliged checks validated against the table; a stop or interruption followed by activity without a declaration is rejected; forgery tests |
+| Obliged checks had no state and no consumer | major | Mission obligations are derived on read from the release ledger (worst state of the mapped checks); molecular obligations are recorded `unknown` with the reason |
+| An incomplete render could be the base of a change | moderate | Base must be `completed` (409) |
+| Memory disable was an undeclared change and the schema could not express a zero-effect change | moderate | The disable route answers with a zero-effect declaration and refuses unknown effects |
+| `re_execution` read satisfied from a stop alone | major | Mapped to operational status, replay integrity and numerical reproduction |
