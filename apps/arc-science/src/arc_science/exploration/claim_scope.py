@@ -21,14 +21,21 @@ ROLES = ('analyst', 'falsifier')
 SCOPE_QUALIFIER = 'on the exploratory validation split of the frozen dataset; not independent data'
 
 
+CAUTION = ('challenge', 'uncertain', 'support')
+
+
 def latest_assessments(state: MissionState) -> dict[tuple[str, str], object]:
-    """The last recorded assessment per (role, branch); later rounds replace earlier ones."""
-    latest = {}
+    """The assessment that stands per (role, branch): the latest round wins, and when
+    one role recorded several positions in that round the most cautious one stands,
+    so provider-controlled ordering can never hide a challenge."""
+    rounds = {}
     for assessment in state.assessments:
         key = (assessment.role, assessment.branch_id)
-        if key not in latest or assessment.round >= latest[key].round:
-            latest[key] = assessment
-    return latest
+        if key not in rounds or assessment.round > rounds[key][0].round:
+            rounds[key] = [assessment]
+        elif assessment.round == rounds[key][0].round:
+            rounds[key].append(assessment)
+    return {key: min(group, key=lambda a: CAUTION.index(a.position)) for key, group in rounds.items()}
 
 
 def scope_branch(branch, state: MissionState, latest) -> ScopedBranch:
@@ -61,9 +68,15 @@ def scope_branch(branch, state: MissionState, latest) -> ScopedBranch:
             uncertainties.append(ClaimUncertainty(reason='uncertain', role=role, detail=assessment.finding,
                                                   evidence_ids=assessment.evidence_ids))
     stances = {positions[role].position for role in present}
+    identities = {positions[role].model for role in present}
+    if len(present) == 2 and len(identities) == 1 and stances == {'support'}:
+        # Two invocations of one model are not two independent reviewers.
+        uncertainties.append(ClaimUncertainty(reason='shared_identity', role=None,
+                                              detail='Both roles ran as the same model identity (' + next(iter(identities))[:120]
+                                                     + '); separate invocations are not independent reviewers.'))
     if not successful or not present:
         status = 'unassessed'
-    elif len(present) == 2 and stances == {'support'}:
+    elif len(present) == 2 and stances == {'support'} and len(identities) == 2:
         status = 'provisionally_supported'
     elif len(present) == 2 and stances == {'challenge'}:
         status = 'contradicted'
@@ -82,7 +95,9 @@ def derive_claim_scope(state: MissionState) -> ClaimScope:
     branches = tuple(scope_branch(branch, state, latest) for branch in state.branches)
     counts = {status: sum(1 for b in branches if b.status == status)
               for status in ('provisionally_supported', 'contradicted', 'unresolved', 'unassessed')}
+    counts['without_next_test'] = sum(1 for b in branches if not b.next_tests)
     return ClaimScope(derivation_version=DERIVATION_VERSION, branches=branches, counts=counts,
                       basis_round=state.round,
                       rule='A narrower conclusion is a valid research output. Nothing above is scientific validation; '
-                           'provisional support is bounded to the exploratory split and needs independent data.')
+                           'provisional support is bounded to the exploratory split, needs two independent '
+                           'reviewer identities and still needs independent data.')

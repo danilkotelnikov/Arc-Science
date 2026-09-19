@@ -125,17 +125,20 @@ def _claim_scope(state):
     if state.status not in ('completed', 'budget_exhausted', 'needs_input'):
         return 'not_applicable', 'The claim scope is derived when the mission stops; it has not stopped.', ()
     if state.claim_scope is None:
-        return 'unknown', 'The mission stopped without a derived claim scope.', ()
+        return 'unknown', 'The mission stopped without a derived claim scope; verification derives and records it.', ()
     try:
         expected = derive_claim_scope(state)
     except Exception:
         return 'error', 'The claim scope could not be derived from the recorded reconciliation.', ()
     if state.claim_scope != expected:
         return 'failed', 'The recorded claim scope does not follow from the recorded reconciliation.', ()
-    counts = state.claim_scope.counts
+    counts = dict(state.claim_scope.counts)
+    missing = counts.pop('without_next_test', 0)
     summary = ', '.join(f'{k} {v}' for k, v in sorted(counts.items()) if v)
-    return ('satisfied', 'Every hypothesis carries its evidence-supported scope, remaining uncertainty and next test ('
-            + (summary or 'no hypotheses') + '); provisional support is exploratory, never validation.', ())
+    total = len(state.claim_scope.branches)
+    return ('satisfied', 'Every hypothesis carries its evidence-supported scope and remaining uncertainty ('
+            + (summary or 'no hypotheses') + f'); a next discriminating test is proposed for {total - missing} of {total}; '
+            'provisional support is exploratory, never validation.', ())
 
 
 def _replay(name, receipt: VerificationReceipt | None, current_subject, state):

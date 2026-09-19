@@ -253,7 +253,7 @@ class RepairCycle(Record):
 # Claim-strength adjustment (loop C): requested claim -> evidence-supported scope ->
 # remaining uncertainty -> next discriminating test, derived from the reconciliation.
 ClaimStatus = Literal['unassessed', 'provisionally_supported', 'contradicted', 'unresolved']
-UncertaintyReason = Literal['challenged', 'uncertain', 'missing_independent_role', 'untested']
+UncertaintyReason = Literal['challenged', 'uncertain', 'missing_independent_role', 'untested', 'shared_identity']
 
 
 class ClaimUncertainty(Record):
@@ -276,7 +276,7 @@ class ScopedBranch(Record):
     status: ClaimStatus
     supported_scope: tuple[str, ...] = Field(default=(), max_length=2)
     scope_qualifier: str = Field(default='', max_length=200)
-    uncertainties: tuple[ClaimUncertainty, ...] = Field(default=(), max_length=4)
+    uncertainties: tuple[ClaimUncertainty, ...] = Field(default=(), max_length=5)
     next_tests: tuple[ProposedNextTest, ...] = Field(default=(), max_length=2)
     evidence_ids: tuple[Id, ...] = Field(default=(), max_length=64)
 

@@ -20,6 +20,7 @@ from .exploration.models import MissionRequest, MissionState
 from .exploration.engine import initialize, explore, MissionCancelled
 from .exploration.agents import DemoAgent, DemoVisionAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
+from .exploration.claim_scope import derive_claim_scope
 from .exploration.repository import MissionRepository, MissionFinished, RevisionConflict
 from .exploration.capsule import export_capsule, verify_capsule
 from .exploration import release as release_ledger
@@ -443,6 +444,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         chain=repository.verify(mid)
         if not chain:raise HTTPException(409,'Mission integrity check failed')
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
+        if state.status in ('completed','budget_exhausted','needs_input') and state.claim_scope is None:
+            # A mission that stopped before claim scopes existed gets its derived scope here,
+            # the only bounded write verification makes besides the ledger itself.
+            state=state.model_copy(update={'claim_scope':derive_claim_scope(state)})
         report=await asyncio.to_thread(verify_capsule,export_capsule(request,state))
         # Persist what was observed and the decision it yields; a later change stales it.
         receipt=release_ledger.receipt_from_report(report,state)

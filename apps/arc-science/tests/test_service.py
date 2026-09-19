@@ -176,6 +176,20 @@ def test_a_mission_that_changes_after_verification_is_stale_until_verified_again
         assert c.get(f'/api/missions/{mid}/capsule',headers=auth()).status_code==409
 
 
+def test_verification_derives_the_claim_scope_for_a_mission_that_stopped_before_scopes_existed(tmp_path):
+    from arc_science.exploration.models import MissionState
+    with TestClient(app(tmp_path)) as c:
+        mid=c.post('/api/missions',headers=auth(),json={'goal':'Older mission'}).json()['id']
+        c.post(f'/api/missions/{mid}/start',headers=auth());row=_finished(c,mid)
+        repo=c.app.state.repository;row=repo.get(mid)
+        repo.save(mid,MissionState.model_validate({**row['state'],'claim_scope':None}),expected_revision=row['revision'])
+        states={ch['name']:ch['state'] for ch in c.get(f'/api/missions/{mid}/release',headers=auth()).json()['checks']}
+        assert states['claim_scope']=='unknown'
+        verified=c.post(f'/api/missions/{mid}/verify',headers=auth()).json()
+        assert verified['release']['status']=='eligible_for_human_review'
+        assert c.get(f'/api/missions/{mid}',headers=auth()).json()['state']['claim_scope']['derivation_version']=='arc-claim-scope-1'
+
+
 def test_verification_refuses_to_run_beside_an_active_worker(tmp_path):
     from arc_science.exploration.models import MissionState
     with TestClient(app(tmp_path)) as c:

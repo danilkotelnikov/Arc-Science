@@ -39,12 +39,16 @@ test('an offline mission explores competing branches, reconciles them and verifi
   const linear = scope.locator('article[data-status="contradicted"]').filter({hasText: 'linear ·'});
   await expect(linear).toHaveText(/No supported scope/);
   await expect(linear).toHaveText(/challenged \(falsifier\)/);
-  const quadratic = scope.locator('article[data-status="provisionally_supported"]');
+  // Both roles support the quadratic route, but the scripted fixture runs them as one identity:
+  // the scope is shown and qualified, the status stays unresolved and says why.
+  const quadratic = scope.locator('article[data-status="unresolved"]');
   await expect(quadratic).toHaveCount(1);
   await expect(quadratic).toHaveText(/Scope: on the exploratory validation split of the frozen dataset; not independent data\./);
+  await expect(quadratic).toHaveText(/shared identity: Both roles ran as the same model identity \(scripted-fixture-v1\)/);
   await expect(quadratic).toHaveText(/Next discriminating test/);
+  await expect(scope.locator('article[data-status="provisionally_supported"]')).toHaveCount(0);
   await expect(scope.getByText(/Nothing above is scientific validation/)).toBeVisible();
-  await expect(ledger.locator('li[data-state="satisfied"]').filter({hasText: 'claim scope'})).toHaveText(/contradicted 2, provisionally_supported 1/);
+  await expect(ledger.locator('li[data-state="satisfied"]').filter({hasText: 'claim scope'})).toHaveText(/contradicted 2, unresolved 1\); a next discriminating test is proposed for 3 of 3/);
   await expect(ledger).toContainText('never scientific validation');
   await expect(results.locator('footer')).toContainText('Publication is not authorized');
   check();

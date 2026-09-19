@@ -31,10 +31,11 @@ def hand_built(assessments, status='completed'):
                    'status': 'ok', 'data': {'validation_mse': 0.01}, 'dataset_digest': state.dataset_digest,
                    'request_digest': state.request_digest,
                    'action': {'id': 'fit-linear', 'branch_id': 'linear', 'tool': 'polynomial_fit', 'arguments': {'degree': 1}}}
-    base = {'branch_id': 'linear', 'evidence_ids': ['obs-1'], 'finding': 'f', 'next_test': 'independent data', 'round': 0, 'model': 'm'}
+    base = {'branch_id': 'linear', 'evidence_ids': ['obs-1'], 'finding': 'f', 'next_test': 'independent data', 'round': 0}
+    # Two distinct reviewer identities unless a case says otherwise.
     return request, MissionState.model_validate({**state.model_dump(), 'status': status, 'branches': [branch],
                                                  'observations': [observation],
-                                                 'assessments': [{**base, **a} for a in assessments]})
+                                                 'assessments': [{**base, 'model': 'model-' + a['role'], **a} for a in assessments]})
 
 
 def test_the_demo_mission_stops_with_a_scope_per_hypothesis_that_the_reconciliation_supports():
@@ -49,12 +50,14 @@ def test_the_demo_mission_stops_with_a_scope_per_hypothesis_that_the_reconciliat
     assert {u.reason for u in linear.uncertainties} == {'challenged'} and {u.role for u in linear.uncertainties} == {'analyst', 'falsifier'}
     assert all(u.evidence_ids == ('fit-linear',) for u in linear.uncertainties)
     assert {t.role for t in linear.next_tests} == {'analyst', 'falsifier'}
-    # The quadratic fit is supported by both roles: provisional, qualified, with a next test.
+    # The quadratic fit is supported by both roles, but the scripted fixture runs both roles as one
+    # identity: the scope is recorded and qualified, the status stays unresolved and says why.
     quadratic = scoped(state, 'quadratic')
-    assert quadratic.status == 'provisionally_supported' and len(quadratic.supported_scope) == 2
-    assert 'exploratory validation split' in quadratic.scope_qualifier and quadratic.uncertainties == ()
+    assert quadratic.status == 'unresolved' and len(quadratic.supported_scope) == 2
+    assert 'exploratory validation split' in quadratic.scope_qualifier
+    assert [u.reason for u in quadratic.uncertainties] == ['shared_identity'] and 'scripted-fixture-v1' in quadratic.uncertainties[0].detail
     assert any('independently acquired data' in t.test for t in quadratic.next_tests)
-    assert scope.counts == {'provisionally_supported': 1, 'contradicted': 2, 'unresolved': 0, 'unassessed': 0}
+    assert scope.counts == {'provisionally_supported': 0, 'contradicted': 2, 'unresolved': 1, 'unassessed': 0, 'without_next_test': 0}
     assert 'nothing above is scientific validation' in scope.rule.lower()
     assert any(e.kind == 'claim_scope_derived' for e in state.events)
     # It is derived, so the evidence graph and the capsule check it, and the ledger reads it.
@@ -62,7 +65,7 @@ def test_the_demo_mission_stops_with_a_scope_per_hypothesis_that_the_reconciliat
     report = verify_capsule(export_capsule(request, state))
     decision = release.evaluate_release(request, state, release.receipt_from_report(report, state), event_chain_ok=True)
     check = next(c for c in decision.checks if c.name == 'claim_scope')
-    assert check.state == 'satisfied' and 'provisionally_supported 1' in check.reason
+    assert check.state == 'satisfied' and 'unresolved 1' in check.reason and 'proposed for 3 of 3' in check.reason
 
 
 def test_derivation_is_deterministic_and_a_tampered_scope_is_rejected_everywhere():
@@ -95,6 +98,32 @@ def test_one_dissent_or_one_missing_role_keeps_a_claim_from_provisional_support(
     assert branch.status == status
     assert {u.reason for u in branch.uncertainties} == reasons
     assert bool(branch.supported_scope) == any(a['position'] == 'support' for a in assessments)
+
+
+def test_one_role_recording_two_positions_in_a_round_stands_by_the_most_cautious_one():
+    forward = [{'role': 'analyst', 'position': 'challenge', 'finding': 'residual structure'},
+               {'role': 'analyst', 'position': 'support', 'finding': 'low error'},
+               {'role': 'falsifier', 'position': 'support'}]
+    for order in (forward, [forward[1], forward[0], forward[2]]):
+        request, state = hand_built(order)
+        branch = claim_scope.derive_claim_scope(state).branches[0]
+        assert branch.status == 'unresolved'
+        assert [(u.reason, u.detail) for u in branch.uncertainties] == [('challenged', 'residual structure')]
+        assert branch.supported_scope == ('falsifier: f',)
+
+
+def test_two_roles_on_one_model_identity_never_reach_provisional_support():
+    request, state = hand_built([{'role': 'analyst', 'position': 'support', 'model': 'same'},
+                                 {'role': 'falsifier', 'position': 'support', 'model': 'same'}])
+    branch = claim_scope.derive_claim_scope(state).branches[0]
+    assert branch.status == 'unresolved' and [u.reason for u in branch.uncertainties] == ['shared_identity']
+    assert 'same' in branch.uncertainties[0].detail and len(branch.supported_scope) == 2
+    without_tests = hand_built([{'role': 'analyst', 'position': 'support', 'next_test': ''},
+                                {'role': 'falsifier', 'position': 'support', 'next_test': ''}])[1]
+    scope = claim_scope.derive_claim_scope(without_tests)
+    assert scope.branches[0].status == 'provisionally_supported' and scope.counts['without_next_test'] == 1
+    ledger = release.evaluate_release(request, without_tests.model_copy(update={'claim_scope': scope}), None, event_chain_ok=True)
+    assert 'proposed for 0 of 1' in next(c.reason for c in ledger.checks if c.name == 'claim_scope')
 
 
 def test_later_rounds_replace_earlier_assessments_and_an_untested_hypothesis_says_so():
