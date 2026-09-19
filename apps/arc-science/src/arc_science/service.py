@@ -18,7 +18,7 @@ from .exploration.models import MissionRequest, MissionState
 from .exploration.engine import initialize, explore, MissionCancelled
 from .exploration.agents import DemoAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
-from .exploration.repository import MissionRepository, RevisionConflict
+from .exploration.repository import MissionRepository, MissionFinished, RevisionConflict
 from .exploration.capsule import export_capsule, verify_capsule
 from .exploration.evidence import evidence_graph
 from .exploration.catalog import TrustedPublicTools
@@ -290,6 +290,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     async def cancel(mid:str):
         get(mid)
         try:row=repository.cancel(mid)
+        except MissionFinished as finished:raise HTTPException(409,str(finished)) from None
         except RevisionConflict:raise HTTPException(409,'Mission changed; retry cancellation') from None
         if mid in running:running[mid].cancel()
         memory_routes.schedule_capture(mid,MissionState.model_validate(row['state']))

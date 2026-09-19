@@ -30,6 +30,17 @@ jobs:
       - run: npm run build
         working-directory: apps/arc-science/web
       - run: python -m pytest -q -rs
+      # End-to-end: the real service on an isolated data directory driven by Playwright.
+      # No Rust worker is built here, so the memory recall spec reports itself skipped.
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/arc-science/web
+      - run: npm run e2e:only
+        working-directory: apps/arc-science/web
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: apps/arc-science/web/e2e-report
       - run: python -m pip wheel --no-deps . --wheel-dir dist
       - run: python scripts/check-wheel.py dist/arc_science-0.6.0-py3-none-any.whl
       # Native Blender tests explicitly skip without an operator-supplied runtime.

@@ -48,6 +48,22 @@ def test_cancellation_is_persisted_and_cannot_restart(tmp_path):
         assert c.post(f'/api/missions/{mid}/start',headers=auth()).status_code==409
 
 
+def test_finished_missions_keep_their_outcome_when_cancel_is_pressed(tmp_path):
+    with TestClient(app(tmp_path)) as c:
+        mid=c.post('/api/missions',headers=auth(),json={'goal':'Explore fixture','max_rounds':1}).json()['id']
+        assert c.post(f'/api/missions/{mid}/start',headers=auth()).status_code==202
+        for _ in range(200):
+            row=c.get(f'/api/missions/{mid}',headers=auth()).json()
+            if row['state']['status'] in ('completed','budget_exhausted','error','needs_input'):break
+            time.sleep(0.05)
+        final=row['state']['status'];reason=row['state']['stop_reason']
+        assert final in ('completed','budget_exhausted')
+        denied=c.post(f'/api/missions/{mid}/cancel',headers=auth())
+        assert denied.status_code==409 and 'finished' in denied.json()['detail'].lower()
+        after=c.get(f'/api/missions/{mid}',headers=auth()).json()['state']
+        assert (after['status'],after['stop_reason'])==(final,reason)
+
+
 def test_input_validation_and_missing_live_credentials(tmp_path,monkeypatch):
     monkeypatch.delenv('ARC_MODEL',raising=False)
     with TestClient(app(tmp_path)) as c:

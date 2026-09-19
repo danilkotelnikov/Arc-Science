@@ -85,6 +85,20 @@ test('selected mission exposes authenticated artifacts, visual reports, verify, 
   await user.click(screen.getByRole('button',{name:'Resume'}));await user.click(screen.getByRole('button',{name:'Cancel'}));
   await waitFor(()=>expect(requests.some(r=>r.path==='/api/missions/mission-1/cancel')).toBe(true));
   expect(screen.getByRole('button',{name:'Resume'})).toBeDisabled();
+  expect(screen.getByRole('button',{name:'Cancel'})).toBeDisabled();
+});
+
+test('a finished mission keeps its outcome: Cancel is disabled, Verify and export stay available',async()=>{
+  selectedRow.state.status='completed';selectedRow.state.stop_reason='Exploration completed within budget.';
+  const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
+  await user.type(screen.getByLabelText('Local operator token'),'private');
+  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
+  expect(await screen.findByText('completed')).toBeInTheDocument();
+  expect(screen.getByRole('button',{name:'Cancel'})).toBeDisabled();
+  expect(screen.getByRole('button',{name:'Resume'})).toBeDisabled();
+  expect(screen.getByRole('button',{name:'Verify and recompute'})).toBeEnabled();
+  expect(screen.getByRole('button',{name:'Export replay capsule'})).toBeEnabled();
+  expect(requests.some(r=>r.path==='/api/missions/mission-1/cancel')).toBe(false);
 });
 
 test('molecules opens on the local render form with an empty stage and no packaged example',async()=>{

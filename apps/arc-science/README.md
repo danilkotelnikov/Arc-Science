@@ -41,6 +41,23 @@ Build before packaging a wheel after frontend changes; npm copies the compiled
 output into the package. Native Blender tests need a separately configured
 runtime and are not invoked in normal CI.
 
+End-to-end tests drive the compiled workbench in a real browser against the real
+service on an isolated data directory (`web/e2e/`, Playwright):
+
+```bash
+cd web
+npx playwright install chromium   # once
+npm run e2e                       # builds the bundle, starts the service, runs the specs
+```
+
+They cover the browser-QA checklist: shell and navigation, Research missions
+(decision tree, reconciliation, verification, capsule download, round budget,
+cancellation), Memory recall/search/ranges/retention, BioArt consent and offline
+behaviour, the empty Molecules workbench with an absent renderer, the native
+download notice, and that the operator token never enters a URL. Memory recall
+skips itself when `arc-memory-worker` is not built; nothing in the suite needs
+Blender, a model provider or the public network.
+
 The [original 0.4 guide](docs/source-readme-0.4.md), historical locks and Docker
 files are preserved references, not a claim that those deployments were newly
 qualified. Provider settings and runtime tools remain compatible; use current
