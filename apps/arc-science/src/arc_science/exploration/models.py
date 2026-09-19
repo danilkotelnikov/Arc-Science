@@ -250,6 +250,55 @@ class RepairCycle(Record):
         return self
 
 
+# Claim-strength adjustment (loop C): requested claim -> evidence-supported scope ->
+# remaining uncertainty -> next discriminating test, derived from the reconciliation.
+ClaimStatus = Literal['unassessed', 'provisionally_supported', 'contradicted', 'unresolved']
+UncertaintyReason = Literal['challenged', 'uncertain', 'missing_independent_role', 'untested']
+
+
+class ClaimUncertainty(Record):
+    reason: UncertaintyReason
+    role: str | None = None
+    detail: str = Field(min_length=1, max_length=900)
+    evidence_ids: tuple[Id, ...] = Field(default=(), max_length=12)
+
+
+class ProposedNextTest(Record):
+    role: str
+    round: int = Field(ge=0)
+    test: str = Field(min_length=1, max_length=600)
+    evidence_ids: tuple[Id, ...] = Field(default=(), max_length=12)
+
+
+class ScopedBranch(Record):
+    branch_id: Id
+    requested: str = Field(min_length=1, max_length=1000)
+    status: ClaimStatus
+    supported_scope: tuple[str, ...] = Field(default=(), max_length=2)
+    scope_qualifier: str = Field(default='', max_length=200)
+    uncertainties: tuple[ClaimUncertainty, ...] = Field(default=(), max_length=4)
+    next_tests: tuple[ProposedNextTest, ...] = Field(default=(), max_length=2)
+    evidence_ids: tuple[Id, ...] = Field(default=(), max_length=64)
+
+    @model_validator(mode='after')
+    def never_upgraded(self):
+        if self.status == 'provisionally_supported' and (len(self.supported_scope) != 2 or self.uncertainties):
+            raise ValueError('Provisional support needs both roles and no open uncertainty')
+        if self.status != 'provisionally_supported' and not self.uncertainties:
+            raise ValueError('An unsupported claim must say what remains uncertain')
+        if self.supported_scope and not self.scope_qualifier:
+            raise ValueError('A supported scope carries its qualifier')
+        return self
+
+
+class ClaimScope(Record):
+    derivation_version: Literal['arc-claim-scope-1'] = 'arc-claim-scope-1'
+    basis_round: int = Field(ge=0)
+    branches: tuple[ScopedBranch, ...] = Field(default=(), max_length=64)
+    counts: dict[str, int]
+    rule: str = Field(min_length=1, max_length=400)
+
+
 # Release ledger (loop A of the 2026-09-19 program). A check is one named question
 # about the mission with one of six states; unknown and error never count as
 # satisfied, not_applicable must say why, and every check remembers the digest of
@@ -257,7 +306,7 @@ class RepairCycle(Record):
 CheckState = Literal['satisfied', 'failed', 'unknown', 'error', 'stale', 'not_applicable']
 MissionCheck = Literal['operational_status', 'event_chain_integrity', 'replay_integrity',
                        'numerical_reproduction', 'artifact_reproduction', 'evidence_graph',
-                       'reconciliation', 'visual_review']
+                       'reconciliation', 'visual_review', 'claim_scope']
 
 class ReleaseCheck(Record):
     name: MissionCheck
@@ -318,6 +367,8 @@ class MissionState(Record):
     visual_reports: tuple[VisualReport, ...] = Field(default=(), max_length=64)
     vision_records: tuple[VisionRecord, ...] = Field(default=(), max_length=64)
     repairs: tuple[RepairCycle, ...] = Field(default=(), max_length=64)
+    # Derived at every stop from the reconciliation; cleared when the mission resumes.
+    claim_scope: ClaimScope | None = None
     events: tuple[Event, ...] = ()
     actions_used: int = 0
     model_calls_used: int = 0

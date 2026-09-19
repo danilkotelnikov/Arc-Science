@@ -10,6 +10,7 @@ from .models import (MissionRequest, MissionState, Branch, Proposal, Reconciliat
                      Observation, Assessed, Event, ModelRecord, VisionRecord, RepairCycle, VisualReport)
 from .tools import synthetic_data, execute_numeric, CATALOG, TOOL_VERSION
 from .artifacts import artifact_for_observation
+from .claim_scope import derive_claim_scope
 from .repair import POLICY_DIGEST as REPAIR_POLICY_DIGEST, repair_plan, with_outcome
 from .vision import VISUAL_PROMPT_VERSION, current_artifacts, required_visual_reason, visual_context, validate_report
 from .catalog import (BIORENDER_CATALOG, BUILTIN_CATALOG, PUBLIC_CATALOG, TrustedPublicTools,
@@ -50,6 +51,9 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         raise ValueError('Frozen dataset changed')
     validate_evidence(state)
     if state.status in {'completed','budget_exhausted','needs_input','cancelled'}: return state
+    if state.claim_scope is not None:
+        # A resumed mission may change its evidence; the old scope no longer applies.
+        state=MissionState.model_validate({**state.model_dump(),'claim_scope':None})
     def check_cancel():
         if cancelled and cancelled(): raise MissionCancelled('Cancelled; late results discarded')
     def change(**updates):
@@ -61,6 +65,12 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         check_cancel()
         if emit: emit(state)
     def stop(status,reason):
+        # Every stop states what the evidence supports so far; the scope is derived,
+        # never authored, and a resumed mission derives it again at its next stop.
+        if status in ('completed','budget_exhausted','needs_input'):
+            scope=derive_claim_scope(state)
+            change(claim_scope=scope)
+            event('claim_scope_derived',', '.join(f'{k}: {v}' for k,v in scope.counts.items()))
         change(status=status,stop_reason=reason);event('mission_stopped',reason);commit()
         return state
     def identity(role):

@@ -41,6 +41,25 @@ function Artifact({missionId,artifact,request,release,superseded}) {
   return <figure className="artifact">{url?<><img src={url} alt={'Artifact from '+artifact.source_observation_id}/>{release?.eligible_for_human_review?<a href={url} download={artifact.digest+'.png'}>Download authenticated PNG</a>:<span className="muted">Download withheld until the release decision is eligible; inline inspection stays available.</span>}</>:error?<><p role="alert">Artifact unavailable: {error}</p><Button variant="secondary" onPress={()=>setAttempt(n=>n+1)}>Retry artifact</Button><p>Check your token, then retry or select the mission again.</p></>:<p>Loading authenticated artifact…</p>}<figcaption>{artifact.source_observation_id} · {artifact.digest.slice(0,12)}… · preset {artifact.preset||'default'}{artifact.repair_of?' · repair of '+artifact.repair_of.slice(0,12)+'…':''}{superseded?' · superseded by a repair':''}</figcaption></figure>;
 }
 
+const CLAIM_LABEL={unassessed:'Unassessed',provisionally_supported:'Provisionally supported',contradicted:'Contradicted',unresolved:'Unresolved'};
+function ClaimScopeView({scope}) {
+  // Requested claim -> evidence-supported scope -> remaining uncertainty -> next
+  // discriminating test, derived from the reconciliation at the stop; a narrower
+  // conclusion is a valid research output and nothing here is validation.
+  return <section aria-label="Claim scope"><h2>Claim scope</h2>{scope?<>
+    <p className="muted">{scope.rule} Derived at round {scope.basis_round} ({scope.derivation_version}).</p>
+    {scope.branches.map(branch=><article className="record claim" key={branch.branch_id} data-status={branch.status}>
+      <h3>{branch.branch_id} · {CLAIM_LABEL[branch.status]||branch.status}</h3>
+      <dl>
+        <dt>Requested claim</dt><dd>{branch.requested}</dd>
+        <dt>Evidence-supported scope</dt><dd>{branch.supported_scope.length?<>{branch.supported_scope.map((line,i)=><p key={i}>{line}</p>)}<p className="muted">Scope: {branch.scope_qualifier}.</p></>:<span className="muted">No supported scope; the requested claim stands only as a hypothesis.</span>}</dd>
+        <dt>Remaining uncertainty</dt><dd>{branch.uncertainties.length?<ul>{branch.uncertainties.map((u,i)=><li key={i} data-reason={u.reason}>{u.reason.replace(/_/g,' ')}{u.role?' ('+u.role+')':''}: {u.detail}</li>)}</ul>:<span className="muted">None recorded by either role; provisional support still needs independent data.</span>}</dd>
+        <dt>Next discriminating test</dt><dd>{branch.next_tests.length?<ul>{branch.next_tests.map((t,i)=><li key={i}>{t.role}: {t.test}</li>)}</ul>:<span className="muted">No next test proposed.</span>}</dd>
+      </dl>
+    </article>)}
+  </>:<p className="muted">The claim scope is derived when the mission stops; none yet.</p>}</section>;
+}
+
 function RepairCycles({repairs}) {
   // Each cycle re-rendered the reviewed images under a presentation preset and had
   // them reviewed again as a new candidate; the outcome is that fresh review's own
@@ -122,6 +141,7 @@ export default function ResearchWorkspace({token,setToken}) {
         <p className="muted">Round {state.round} · {state.actions_used} actions · {state.model_calls_used} model-role calls · data: {state.data_origin}</p>
         <div className="actions"><Button isDisabled={busy} onPress={()=>task(async signal=>{setVerification(await (await request('/missions/'+mission.id+'/verify','POST',undefined,signal)).json());await refresh(mission.id,signal);})}>Verify and recompute</Button><Button variant="secondary" isDisabled={busy||!mission.release?.eligible_for_human_review} onPress={()=>task(exportCapsule)}>Export replay capsule</Button><Button variant="ghost" isDisabled={busy||!['ready','paused'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/start','POST',undefined,signal);await refresh(mission.id,signal);})}>Resume</Button><Button variant="danger" isDisabled={busy||['cancelled','completed','budget_exhausted','error','needs_input'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/cancel','POST',undefined,signal);await refresh(mission.id,signal);})}>Cancel</Button></div>
         <p role="status">{state.stop_reason}</p><ReleaseLedger release={mission.release}/>{verification&&<VerificationReport report={verification}/>}
+        <ClaimScopeView scope={state.claim_scope}/>
         <div className="branches">{state.branches.map(branch=><article key={branch.id} className={'branch'+(state.focus===branch.id?' focus':'')}><h3>{branch.title}</h3><p>{branch.hypothesis}</p><p>Falsifier: {branch.falsifier}</p><p className="muted">Opened round {branch.created_round} · parents: {branch.parents.join(', ')||'root'}</p></article>)}</div>
         <h2>Visual artifacts</h2><div className="artifacts">{state.artifacts.length?state.artifacts.map(artifact=><Artifact key={mission.id+artifact.digest} missionId={mission.id} artifact={artifact} request={request} release={mission.release} superseded={state.artifacts.some(a=>a.repair_of===artifact.digest)}/>):<p className="muted">No visual artifacts in this mission.</p>}</div>
         <h2>Visual review</h2>{state.visual_reports.length?state.visual_reports.map((report,i)=><div className="record" key={i}><h3>{report.model} · round {report.round} · {report.verdict}</h3>{report.findings.map((finding,j)=><p key={j}>{finding.category}: {finding.detail}</p>)}</div>):<p className="muted">No visual review report. No passing qualification is implied.</p>}

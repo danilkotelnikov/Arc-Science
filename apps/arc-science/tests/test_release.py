@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from arc_science.contracts import digest
 from arc_science.exploration import release
+from arc_science.exploration.claim_scope import derive_claim_scope
 from arc_science.exploration.engine import initialize
 from arc_science.exploration.models import (MissionRequest, MissionState, ReleaseCheck, ReleaseDecision,
                                             VerificationReceipt)
@@ -13,8 +14,10 @@ from arc_science.exploration.models import (MissionRequest, MissionState, Releas
 
 def mission(**updates):
     request = MissionRequest(goal='Explore the fixture', mode='demo', max_rounds=2)
-    state = initialize(request)
-    return request, MissionState.model_validate({**state.model_dump(), **updates})
+    state = MissionState.model_validate({**initialize(request).model_dump(), **updates})
+    if state.status in ('completed', 'budget_exhausted', 'needs_input') and state.claim_scope is None:
+        state = state.model_copy(update={'claim_scope': derive_claim_scope(state)})  # what the engine does at a stop
+    return request, state
 
 
 def receipt(state, **updates):
@@ -115,7 +118,7 @@ def test_reconciliation_needs_both_roles_on_every_evidence_bearing_branch():
     assert 'analyst:linear' in next(c.reason for c in decision.checks if c.name == 'reconciliation')
     assessment = {'branch_id': 'linear', 'position': 'challenge', 'evidence_ids': ['obs-1'], 'finding': 'residual',
                   'next_test': 'quadratic', 'role': 'analyst', 'round': 0, 'model': 'm'}
-    both = MissionState.model_validate({**with_obs.model_dump(), 'assessments': [assessment, {**assessment, 'role': 'falsifier'}]})
+    both = MissionState.model_validate({**with_obs.model_dump(), 'assessments': [assessment, {**assessment, 'role': 'falsifier'}], 'claim_scope': None})
     assert states(release.evaluate_release(request, both, None, event_chain_ok=True))['reconciliation'] == 'satisfied'
     assert release.check_basis('reconciliation', request, both) != release.check_basis('reconciliation', request, with_obs)
 

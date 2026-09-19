@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from ..contracts import canonical, digest
 from .catalog import validate_arguments, validate_catalog
+from .claim_scope import derive_claim_scope
 from .models import Assessed, Branch, MissionState, Proposal, Reconciliation
 from .repair import POLICIES
 from .vision import current_artifacts, validate_report, visual_context
@@ -257,6 +258,8 @@ def validate_evidence(state: MissionState) -> None:
         if any(finding.artifact_digest not in artifacts for finding in report.findings):
             raise ValueError("Invalid visual finding artifact reference")
 
+    if state.claim_scope is not None and state.claim_scope != derive_claim_scope(state):
+        raise ValueError("Recorded claim scope does not follow from the recorded reconciliation")
     for assessment in state.assessments:
         if assessment.branch_id not in branches:
             raise ValueError("Invalid assessment branch reference")

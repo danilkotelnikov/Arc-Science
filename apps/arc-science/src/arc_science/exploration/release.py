@@ -15,12 +15,13 @@ import time
 from ..contracts import digest
 from .models import (CheckState, MissionCheck, MissionRequest, MissionState, ReleaseCheck,
                      ReleaseDecision, VerificationReceipt)
+from .claim_scope import derive_claim_scope
 from .vision import current_artifacts
 
 POLICY = {'version': 'arc-mission-release-1',
           'checks': ['operational_status', 'event_chain_integrity', 'replay_integrity',
                      'numerical_reproduction', 'artifact_reproduction', 'evidence_graph',
-                     'reconciliation', 'visual_review'],
+                     'reconciliation', 'visual_review', 'claim_scope'],
           'verifier': 'arc-mission-verifier-1'}
 POLICY_DIGEST = digest(POLICY)
 BLOCKING = ('failed', 'unknown', 'error', 'stale')
@@ -47,6 +48,11 @@ def check_basis(name: MissionCheck, request: MissionRequest, state: MissionState
         return digest({'branches': [b.id for b in state.branches],
                        'observations': [o.model_dump(mode='json') for o in state.observations],
                        'assessments': [a.model_dump(mode='json') for a in state.assessments]})
+    if name == 'claim_scope':
+        return digest({'status': state.status, 'branches': [b.id for b in state.branches],
+                       'observations': [(o.id, o.status) for o in state.observations],
+                       'assessments': [a.model_dump(mode='json') for a in state.assessments],
+                       'scope': state.claim_scope.model_dump(mode='json') if state.claim_scope else None})
     if name == 'visual_review':
         return digest({'requested': request.vision_review,
                        'artifacts': [a.digest for a in state.artifacts],
@@ -115,6 +121,23 @@ def _visual(request, state):
     return 'satisfied', 'Every current artifact has a bound review that found it adequate.' + history, tuple(a.digest for a in current)
 
 
+def _claim_scope(state):
+    if state.status not in ('completed', 'budget_exhausted', 'needs_input'):
+        return 'not_applicable', 'The claim scope is derived when the mission stops; it has not stopped.', ()
+    if state.claim_scope is None:
+        return 'unknown', 'The mission stopped without a derived claim scope.', ()
+    try:
+        expected = derive_claim_scope(state)
+    except Exception:
+        return 'error', 'The claim scope could not be derived from the recorded reconciliation.', ()
+    if state.claim_scope != expected:
+        return 'failed', 'The recorded claim scope does not follow from the recorded reconciliation.', ()
+    counts = state.claim_scope.counts
+    summary = ', '.join(f'{k} {v}' for k, v in sorted(counts.items()) if v)
+    return ('satisfied', 'Every hypothesis carries its evidence-supported scope, remaining uncertainty and next test ('
+            + (summary or 'no hypotheses') + '); provisional support is exploratory, never validation.', ())
+
+
 def _replay(name, receipt: VerificationReceipt | None, current_subject, state):
     if receipt is None:
         return 'unknown', 'Replay verification has not been run for this mission.', ()
@@ -165,6 +188,7 @@ def evaluate_release(request: MissionRequest, state: MissionState, verification:
         add(name, _replay(name, verification, subject, state))
     add('reconciliation', _reconciliation(state))
     add('visual_review', _visual(request, state))
+    add('claim_scope', _claim_scope(state))
     blocking = tuple(f'{c.name}:{c.state}' for c in checks if c.state in BLOCKING)
     return ReleaseDecision(policy_digest=POLICY_DIGEST, subject_digest=subject,
                            status='blocked' if blocking else 'eligible_for_human_review',

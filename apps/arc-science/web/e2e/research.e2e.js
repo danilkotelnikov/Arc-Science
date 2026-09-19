@@ -32,8 +32,19 @@ test('an offline mission explores competing branches, reconciles them and verifi
   // The release ledger: blocked by unknown replay checks before verification, then eligible — never "validated".
   const ledger = page.getByRole('region', {name: 'Release decision'});
   await expect(ledger).toContainText('Release decision: Eligible for human review');
-  await expect(ledger.locator('li[data-state="satisfied"]')).toHaveCount(7);
+  await expect(ledger.locator('li[data-state="satisfied"]')).toHaveCount(8);
   await expect(ledger.locator('li[data-state="not_applicable"]')).toHaveCount(1);
+  // Claim scope: the linear baseline is contradicted, the quadratic route provisionally supported and qualified.
+  const scope = page.getByRole('region', {name: 'Claim scope'});
+  const linear = scope.locator('article[data-status="contradicted"]').filter({hasText: 'linear ·'});
+  await expect(linear).toHaveText(/No supported scope/);
+  await expect(linear).toHaveText(/challenged \(falsifier\)/);
+  const quadratic = scope.locator('article[data-status="provisionally_supported"]');
+  await expect(quadratic).toHaveCount(1);
+  await expect(quadratic).toHaveText(/Scope: on the exploratory validation split of the frozen dataset; not independent data\./);
+  await expect(quadratic).toHaveText(/Next discriminating test/);
+  await expect(scope.getByText(/Nothing above is scientific validation/)).toBeVisible();
+  await expect(ledger.locator('li[data-state="satisfied"]').filter({hasText: 'claim scope'})).toHaveText(/contradicted 2, provisionally_supported 1/);
   await expect(ledger).toContainText('never scientific validation');
   await expect(results.locator('footer')).toContainText('Publication is not authorized');
   check();

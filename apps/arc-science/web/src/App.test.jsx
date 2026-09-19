@@ -138,6 +138,31 @@ test('repair cycles are listed with their own outcomes and superseded artifacts 
   expect(captions[1]).not.toHaveTextContent('superseded');
 });
 
+test('the claim scope shows each hypothesis narrowed to its evidence, its uncertainty and its next test',async()=>{
+  selectedRow.state.status='completed';
+  selectedRow.state.claim_scope={derivation_version:'arc-claim-scope-1',basis_round:2,counts:{provisionally_supported:1,contradicted:1,unresolved:0,unassessed:0},
+    rule:'A narrower conclusion is a valid research output. Nothing above is scientific validation.',
+    branches:[{branch_id:'linear',requested:'A linear curve adequately describes the fixture.',status:'contradicted',supported_scope:[],scope_qualifier:'',
+      uncertainties:[{reason:'challenged',role:'falsifier',detail:'The linear fit leaves substantial residual error.',evidence_ids:['fit-linear']}],next_tests:[{role:'falsifier',round:0,test:'Compare a nonlinear alternative.',evidence_ids:['fit-linear']}],evidence_ids:['fit-linear']},
+     {branch_id:'quadratic',requested:'The response requires a quadratic term.',status:'provisionally_supported',supported_scope:['analyst: Low error on the exploratory split.','falsifier: Low error on the exploratory split. Adaptive reuse prevents confirmatory interpretation.'],scope_qualifier:'on the exploratory validation split of the frozen dataset; not independent data',
+      uncertainties:[],next_tests:[{role:'analyst',round:1,test:'Use independently acquired data before a scientific conclusion.',evidence_ids:['fit-quadratic']}],evidence_ids:['fit-quadratic']}]};
+  const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
+  await user.type(screen.getByLabelText('Local operator token'),'private');
+  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
+  const scope=await screen.findByRole('region',{name:'Claim scope'});
+  expect(scope).toHaveTextContent('Nothing above is scientific validation');
+  const claims=within(scope).getAllByRole('article');
+  expect(claims).toHaveLength(2);
+  expect(claims[0]).toHaveAttribute('data-status','contradicted');
+  expect(claims[0]).toHaveTextContent(/Requested claim\s*A linear curve adequately describes the fixture\./);
+  expect(claims[0]).toHaveTextContent('No supported scope; the requested claim stands only as a hypothesis.');
+  expect(claims[0]).toHaveTextContent('challenged (falsifier): The linear fit leaves substantial residual error.');
+  expect(claims[0]).toHaveTextContent(/Next discriminating test\s*falsifier: Compare a nonlinear alternative\./);
+  expect(claims[1]).toHaveTextContent('quadratic · Provisionally supported');
+  expect(claims[1]).toHaveTextContent('Scope: on the exploratory validation split of the frozen dataset; not independent data.');
+  expect(claims[1]).toHaveTextContent('None recorded by either role; provisional support still needs independent data.');
+});
+
 test('a finished mission keeps its outcome: Cancel is disabled, Verify and export stay available',async()=>{
   selectedRow.state.status='completed';selectedRow.state.stop_reason='Exploration completed within budget.';
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
