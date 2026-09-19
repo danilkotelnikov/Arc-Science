@@ -22,6 +22,7 @@ from .exploration.agents import DemoAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
 from .exploration.repository import MissionRepository, MissionFinished, RevisionConflict
 from .exploration.capsule import export_capsule, verify_capsule
+from .exploration import release as release_ledger
 from .exploration.evidence import evidence_graph
 from .exploration.catalog import TrustedPublicTools
 
@@ -314,8 +315,18 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         except RevisionConflict:raise HTTPException(409,'Idempotency key conflicts with an earlier request') from None
         except ValueError:raise HTTPException(422,'Invalid creation key or mission state') from None
 
+    def with_release(row):
+        # The current decision is derived on read from the persisted ledger; it is
+        # never a claim of validity, only of eligibility for human review.
+        request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
+        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(row['id']))
+        return {**row,'release':decision.model_dump(mode='json')}
+
     @app.get('/api/missions/{mid}',dependencies=[Depends(authorized)])
-    async def read_mission(mid:str):return get(mid)
+    async def read_mission(mid:str):return with_release(get(mid))
+
+    @app.get('/api/missions/{mid}/release',dependencies=[Depends(authorized)])
+    async def read_release(mid:str):return with_release(get(mid))['release']
 
     @app.get('/api/missions/{mid}/evidence',dependencies=[Depends(authorized)])
     async def read_evidence(mid:str):
@@ -412,16 +423,29 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     @app.get('/api/missions/{mid}/capsule',dependencies=[Depends(authorized)])
     async def capsule(mid:str):
         row=get(mid)
-        if not repository.verify(mid):raise HTTPException(409,'Mission integrity check failed')
-        data=export_capsule(MissionRequest.model_validate(row['request']),MissionState.model_validate(row['state']))
+        chain=repository.verify(mid)
+        if not chain:raise HTTPException(409,'Mission integrity check failed')
+        request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
+        # Every release export consults the ledger: a blocked mission is not exported.
+        try:release_ledger.assert_exportable(request,state,event_chain_ok=chain)
+        except release_ledger.ReleaseBlocked as blocked:
+            raise HTTPException(409,'Release blocked; verify the mission and resolve: '+', '.join(blocked.reasons)) from None
+        data=export_capsule(request,state)
         return Response(data,media_type='application/zip',headers={'Content-Disposition':f'attachment; filename="arc-{mid}.zip"'})
 
     @app.get('/api/missions/{mid}/verify',dependencies=[Depends(authorized)])
     async def verify(mid:str):
         row=get(mid)
-        if not repository.verify(mid):raise HTTPException(409,'Mission integrity check failed')
-        report=await asyncio.to_thread(verify_capsule,export_capsule(MissionRequest.model_validate(row['request']),MissionState.model_validate(row['state'])))
-        return {**report,'event_chain':True}
+        chain=repository.verify(mid)
+        if not chain:raise HTTPException(409,'Mission integrity check failed')
+        request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
+        report=await asyncio.to_thread(verify_capsule,export_capsule(request,state))
+        # Persist what was observed and the decision it yields; a later change stales it.
+        receipt=release_ledger.receipt_from_report(report,state)
+        decision=release_ledger.evaluate_release(request,state,receipt,event_chain_ok=chain)
+        try:repository.save(mid,state.model_copy(update={'release':decision}),expected_revision=row['revision'])
+        except RevisionConflict:raise HTTPException(409,'Mission changed during verification; retry') from None
+        return {**report,'event_chain':True,'release':decision.model_dump(mode='json')}
 
     static=Path(__file__).parent/'static'
     @app.get('/diagnostics')

@@ -215,6 +215,59 @@ class VisionRecord(Record):
         return self
 
 
+# Release ledger (loop A of the 2026-09-19 program). A check is one named question
+# about the mission with one of six states; unknown and error never count as
+# satisfied, not_applicable must say why, and every check remembers the digest of
+# what it looked at so a later change can mark it stale rather than silently reuse it.
+CheckState = Literal['satisfied', 'failed', 'unknown', 'error', 'stale', 'not_applicable']
+MissionCheck = Literal['operational_status', 'event_chain_integrity', 'replay_integrity',
+                       'numerical_reproduction', 'artifact_reproduction', 'evidence_graph',
+                       'reconciliation', 'visual_review']
+
+class ReleaseCheck(Record):
+    name: MissionCheck
+    state: CheckState
+    checked_basis_digest: Digest
+    evidence_digests: tuple[Digest, ...] = ()
+    reason: str = Field(min_length=1, max_length=700)
+
+    @model_validator(mode='after')
+    def _applicability_needs_a_reason(self):
+        if self.state == 'not_applicable' and len(self.reason.strip()) < 8:
+            raise ValueError('A not_applicable check must state why it does not apply')
+        return self
+
+class VerificationReceipt(Record):
+    """What an actual replay verification observed, bound to the state it read."""
+    subject_digest: Digest
+    report_digest: Digest
+    integrity: bool
+    reproduction_passed: bool
+    evidence_graph_valid: bool
+    reproduced: int
+    artifacts_reproduced: int
+    failures: tuple[str, ...] = ()
+    verifier_version: Literal['arc-mission-verifier-1'] = 'arc-mission-verifier-1'
+    verified_at: int
+
+class ReleaseDecision(Record):
+    policy_digest: Digest
+    subject_digest: Digest
+    status: Literal['eligible_for_human_review', 'blocked']
+    eligible_for_human_review: bool
+    checks: tuple[ReleaseCheck, ...]
+    blocking_reasons: tuple[str, ...]
+    verification: VerificationReceipt | None = None
+    decided_at: int
+
+    @model_validator(mode='after')
+    def _fail_closed(self):
+        blocked = [c for c in self.checks if c.state not in ('satisfied', 'not_applicable')]
+        if self.eligible_for_human_review != (not blocked) or self.status != ('blocked' if blocked else 'eligible_for_human_review'):
+            raise ValueError('A release decision must follow from its checks')
+        return self
+
+
 class MissionState(Record):
     request_digest: Digest
     status: Literal['ready','running','completed','budget_exhausted','needs_input','error','paused','cancelled'] = 'ready'
@@ -235,6 +288,8 @@ class MissionState(Record):
     focus: str | None = None
     publication_eligible: Literal[False] = False
     stop_reason: str = ''
+    # The persisted release ledger; None until verification or a terminal transition.
+    release: ReleaseDecision | None = None
 
     @property
     def scientific_digest(self):

@@ -29,14 +29,39 @@ test('an offline mission explores competing branches, reconciles them and verifi
   await expect(report.getByText('Integrity: passed · Evidence graph: passed')).toBeVisible();
   await expect(report.getByText('Scientific validity is not established by replay verification.')).toBeVisible();
   await expect(report.getByRole('alert')).toHaveCount(0);
+  // The release ledger: blocked by unknown replay checks before verification, then eligible — never "validated".
+  const ledger = page.getByRole('region', {name: 'Release decision'});
+  await expect(ledger).toContainText('Release decision: Eligible for human review');
+  await expect(ledger.locator('li[data-state="satisfied"]')).toHaveCount(7);
+  await expect(ledger.locator('li[data-state="not_applicable"]')).toHaveCount(1);
+  await expect(ledger).toContainText('never scientific validation');
   await expect(results.locator('footer')).toContainText('Publication is not authorized');
   check();
 });
 
-test('the replay capsule is delivered as a real browser download', async ({page}) => {
+test('the release ledger withholds the capsule until the mission is verified', async ({page, request}) => {
+  await page.goto('/');
+  await runDemoMission(page, {goal: 'E2E: ledger before verification.'});
+  const results = page.getByRole('region', {name: 'Research results'});
+  const ledger = page.getByRole('region', {name: 'Release decision'});
+  await expect(ledger).toContainText('Release decision: Blocked');
+  await expect(ledger).toContainText('replay integrity · unknown');
+  await expect(results.getByRole('button', {name: 'Export replay capsule'})).toBeDisabled();
+  const missionId = (await page.locator('.eyebrow').filter({hasText: 'Selected mission:'}).textContent()).split(': ')[1].trim();
+  const refused = await request.get(`/api/missions/${missionId}/capsule`, {headers: {Authorization: `Bearer ${E2E_TOKEN}`}});
+  expect(refused.status()).toBe(409);
+  expect((await refused.json()).detail).toContain('replay_integrity:unknown');
+  await results.getByRole('button', {name: 'Verify and recompute'}).click();
+  await expect(ledger).toContainText('Release decision: Eligible for human review');
+  await expect(results.getByRole('button', {name: 'Export replay capsule'})).toBeEnabled();
+});
+
+test('the replay capsule is delivered as a real browser download once the release is eligible', async ({page}) => {
   await page.goto('/');
   await runDemoMission(page, {goal: 'E2E: capsule export.'});
   const results = page.getByRole('region', {name: 'Research results'});
+  await results.getByRole('button', {name: 'Verify and recompute'}).click();
+  await expect(results.getByRole('button', {name: 'Export replay capsule'})).toBeEnabled();
   const download = page.waitForEvent('download');
   await results.getByRole('button', {name: 'Export replay capsule'}).click();
   const capsule = await download;
@@ -51,7 +76,7 @@ test('a one-round budget stops the mission as budget_exhausted with alternatives
   const status = await runDemoMission(page, {goal: 'E2E: round budget.', rounds: 1});
   await expect(status).toHaveText('budget_exhausted');
   const results = page.getByRole('region', {name: 'Research results'});
-  await expect(results.getByRole('status')).toContainText(/unresolved|limit/i);
+  await expect(results.getByRole('status').first()).toContainText(/unresolved|limit/i);
   await expect(results.getByRole('button', {name: 'Resume'})).toBeDisabled();
 });
 
@@ -75,7 +100,7 @@ test('cancelling an unfinished mission fences late results; a finished one keeps
   await expect(results.getByRole('button', {name: 'Resume'})).toBeEnabled();
   await results.getByRole('button', {name: 'Cancel'}).click();
   await expect(status).toHaveText('cancelled');
-  await expect(results.getByRole('status')).toContainText('late results fenced');
+  await expect(results.getByRole('status').first()).toContainText('late results fenced');
   await expect(results.getByRole('button', {name: 'Cancel'})).toBeDisabled();
   await expect(results.getByRole('button', {name: 'Resume'})).toBeDisabled();
 

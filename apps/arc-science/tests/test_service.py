@@ -1,3 +1,4 @@
+import json
 import time
 from pathlib import Path
 import pytest
@@ -114,3 +115,57 @@ def test_blank_compose_reviewer_values_inherit_planner(monkeypatch):
     assert second.model==first.model=='exact-model-id'
     assert second.provider=='anthropic'
     assert first.endpoint==second.endpoint=='https://api.anthropic.com/v1/messages'
+
+
+def _finished(c,mid):
+    for _ in range(200):
+        row=c.get(f'/api/missions/{mid}',headers=auth()).json()
+        if row['state']['status'] not in ('ready','running'):return row
+        time.sleep(.01)
+    raise AssertionError('mission did not finish')
+
+
+def test_release_ledger_gates_the_capsule_and_survives_restart(tmp_path):
+    with TestClient(app(tmp_path)) as c:
+        mid=c.post('/api/missions',headers=auth(),json={'goal':'Release ledger'}).json()['id']
+        c.post(f'/api/missions/{mid}/start',headers=auth())
+        row=_finished(c,mid)
+        # Before verification the decision is blocked by unknown replay checks and the export is refused.
+        release=row['release']
+        states={check['name']:check['state'] for check in release['checks']}
+        assert release['status']=='blocked' and states['replay_integrity']=='unknown' and states['operational_status']=='satisfied'
+        assert states['reconciliation']=='satisfied' and states['visual_review']=='not_applicable'
+        blocked=c.get(f'/api/missions/{mid}/capsule',headers=auth())
+        assert blocked.status_code==409 and 'replay_integrity:unknown' in blocked.json()['detail']
+        # Verification persists a receipt and the decision; the export is then allowed.
+        verified=c.get(f'/api/missions/{mid}/verify',headers=auth()).json()
+        assert verified['release']['status']=='eligible_for_human_review'
+        assert verified['release']['verification']['reproduction_passed'] is True
+        assert c.get(f'/api/missions/{mid}/release',headers=auth()).json()['eligible_for_human_review'] is True
+        assert c.get(f'/api/missions/{mid}/capsule',headers=auth()).status_code==200
+        assert all(check['state']!='unknown' for check in verified['release']['checks'])
+        assert 'validated' not in json.dumps(verified['release']).lower()
+    # A restart keeps the ledger: the decision is derived from the persisted receipt.
+    with TestClient(app(tmp_path)) as c:
+        release=c.get(f'/api/missions/{mid}/release',headers=auth()).json()
+        assert release['status']=='eligible_for_human_review'
+        assert release['verification']['verifier_version']=='arc-mission-verifier-1'
+
+
+def test_a_mission_that_changes_after_verification_is_stale_until_verified_again(tmp_path):
+    with TestClient(app(tmp_path)) as c:
+        mid=c.post('/api/missions',headers=auth(),json={'goal':'Stale ledger','max_rounds':1}).json()['id']
+        c.post(f'/api/missions/{mid}/start',headers=auth())
+        row=_finished(c,mid)
+        assert row['state']['status']=='budget_exhausted'
+        assert c.get(f'/api/missions/{mid}/verify',headers=auth()).json()['release']['status']=='eligible_for_human_review'
+        # Interrupt-and-resume changes the subject: the persisted receipt no longer applies.
+        from arc_science.exploration.models import MissionState
+        repo=c.app.state.repository
+        current=repo.get(mid)
+        paused=MissionState.model_validate({**current['state'],'status':'paused'})
+        repo.save(mid,paused,expected_revision=current['revision'])
+        release=c.get(f'/api/missions/{mid}/release',headers=auth()).json()
+        states={check['name']:check['state'] for check in release['checks']}
+        assert states['replay_integrity']=='stale' and states['operational_status']=='unknown'
+        assert c.get(f'/api/missions/{mid}/capsule',headers=auth()).status_code==409

@@ -4,6 +4,17 @@ import {checkedFetch, downloadResponse} from './http';
 
 const DEFAULT_GOAL='Compare competing explanations of the nonlinear response and challenge the preferred fit.';
 
+const RELEASE_LABEL={eligible_for_human_review:'Eligible for human review',blocked:'Blocked'};
+function ReleaseLedger({release}) {
+  if(!release)return null;
+  return <section className="record release-ledger" aria-label="Release decision">
+    <h3>Release decision: {RELEASE_LABEL[release.status]||release.status}</h3>
+    <p className="muted">Eligibility means ready for a human reviewer. It is never scientific validation and never publication authorization.</p>
+    <ul className="release-checks">{release.checks.map(check=><li key={check.name} data-state={check.state}><strong>{check.name.replace(/_/g,' ')}</strong> · <span className={'check-state check-'+check.state}>{check.state.replace('_',' ')}</span> — {check.reason}</li>)}</ul>
+    {release.blocking_reasons.length>0&&<p role="status">Blocked by: {release.blocking_reasons.join(', ')}.</p>}
+  </section>;
+}
+
 function VerificationReport({report}) {
   const outcome=value=>value===true?'passed':value===false?'failed':'not reported';
   return <section className="record" aria-label="Verification report">
@@ -102,8 +113,8 @@ export default function ResearchWorkspace({token,setToken}) {
       {!state?<div className="empty-state"><h2>Evidence begins with a mission.</h2><p>Create one or load a saved run to inspect its decision frontier.</p></div>:<>
         <div className="results-heading"><div><p className="eyebrow">Selected mission: {mission.id}</p><h2>Decision frontier</h2></div><span className="status-label">{state.status}</span></div>
         <p className="muted">Round {state.round} · {state.actions_used} actions · {state.model_calls_used} model-role calls · data: {state.data_origin}</p>
-        <div className="actions"><Button isDisabled={busy} onPress={()=>task(async signal=>setVerification(await read('/missions/'+mission.id+'/verify',signal)))}>Verify and recompute</Button><Button variant="secondary" isDisabled={busy} onPress={()=>task(exportCapsule)}>Export replay capsule</Button><Button variant="ghost" isDisabled={busy||!['ready','paused'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/start','POST',undefined,signal);await refresh(mission.id,signal);})}>Resume</Button><Button variant="danger" isDisabled={busy||['cancelled','completed','budget_exhausted','error','needs_input'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/cancel','POST',undefined,signal);await refresh(mission.id,signal);})}>Cancel</Button></div>
-        <p role="status">{state.stop_reason}</p>{verification&&<VerificationReport report={verification}/>}
+        <div className="actions"><Button isDisabled={busy} onPress={()=>task(async signal=>{setVerification(await read('/missions/'+mission.id+'/verify',signal));await refresh(mission.id,signal);})}>Verify and recompute</Button><Button variant="secondary" isDisabled={busy||!mission.release?.eligible_for_human_review} onPress={()=>task(exportCapsule)}>Export replay capsule</Button><Button variant="ghost" isDisabled={busy||!['ready','paused'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/start','POST',undefined,signal);await refresh(mission.id,signal);})}>Resume</Button><Button variant="danger" isDisabled={busy||['cancelled','completed','budget_exhausted','error','needs_input'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/cancel','POST',undefined,signal);await refresh(mission.id,signal);})}>Cancel</Button></div>
+        <p role="status">{state.stop_reason}</p><ReleaseLedger release={mission.release}/>{verification&&<VerificationReport report={verification}/>}
         <div className="branches">{state.branches.map(branch=><article key={branch.id} className={'branch'+(state.focus===branch.id?' focus':'')}><h3>{branch.title}</h3><p>{branch.hypothesis}</p><p>Falsifier: {branch.falsifier}</p><p className="muted">Opened round {branch.created_round} · parents: {branch.parents.join(', ')||'root'}</p></article>)}</div>
         <h2>Visual artifacts</h2><div className="artifacts">{state.artifacts.length?state.artifacts.map(artifact=><Artifact key={mission.id+artifact.digest} missionId={mission.id} artifact={artifact} request={request}/>):<p className="muted">No visual artifacts in this mission.</p>}</div>
         <h2>Visual review</h2>{state.visual_reports.length?state.visual_reports.map((report,i)=><div className="record" key={i}><h3>{report.model} · round {report.round} · {report.verdict}</h3>{report.findings.map((finding,j)=><p key={j}>{finding.category}: {finding.detail}</p>)}</div>):<p className="muted">No visual review report. No passing qualification is implied.</p>}

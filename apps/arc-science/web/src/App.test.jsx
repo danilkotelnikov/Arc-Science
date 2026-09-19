@@ -7,7 +7,12 @@ import {App} from './main.jsx';
 const bioartEntry = {entry_id:18,title:'Antibody',license:'Public Domain',credit:'Courtesy of NIAID',creator:'Ryan Kissinger',collection:'NIAID Visual & Medical Arts',citation:'NIAID BioArt, BIOART-000018',source_url:'https://bioart.niaid.nih.gov/bioart/18',preferred_representation_id:64,representations:[{group_id:63,caption:'Antibody - Colored',files:{PNG:626857,SVG:626858}},{group_id:64,caption:'Antibody - Grey',files:{PNG:626859,SVG:626860,AI:626861,EPS:626862}}]};
 const bioartReceipt = {receipt_id:'b'.repeat(64),entry_id:18,title:'Antibody',license:'Public Domain',credit:'Courtesy of NIAID',creator:'Ryan Kissinger',collection:'NIAID Visual & Medical Arts',citation:'NIAID BioArt, BIOART-000018',representation_id:64,caption:'Antibody - Grey',format:'SVG',file_id:626860,source_page_sha256:'c'.repeat(64),sha256:'d'.repeat(64),size:120,preview_eligible:true,import_eligible:true,limitation:null,rights_verified:false,scientific_validity_established:false,preview_url:'/api/bioart/receipts/'+'b'.repeat(64)+'/preview',download_url:'/api/bioart/receipts/'+'b'.repeat(64)+'/source'};
 const bioartDownloadReceipt = {...bioartReceipt,receipt_id:'e'.repeat(64),format:'EPS',file_id:626862,preview_eligible:false,import_eligible:false,limitation:'AI/EPS originals are download-only; never executed',preview_url:'/api/bioart/receipts/'+'e'.repeat(64)+'/preview',download_url:'/api/bioart/receipts/'+'e'.repeat(64)+'/source'};
-const row = {id:'mission-1',state:{status:'paused',round:1,actions_used:3,model_calls_used:2,data_origin:'fixture',branches:[],assessments:[],observations:[],events:[],visual_reports:[],artifacts:[],stop_reason:'Review needed'}};
+const check=(name,state,reason)=>({name,state,checked_basis_digest:'e'.repeat(64),evidence_digests:[],reason});
+const eligibleRelease={policy_digest:'p'.repeat(64),subject_digest:'s'.repeat(64),status:'eligible_for_human_review',eligible_for_human_review:true,blocking_reasons:[],decided_at:1,verification:null,
+  checks:[check('operational_status','satisfied','Mission finished as completed.'),check('replay_integrity','satisfied','Capsule verified.'),check('visual_review','not_applicable','Visual review was not requested for this mission.')]};
+const blockedRelease={...eligibleRelease,status:'blocked',eligible_for_human_review:false,blocking_reasons:['replay_integrity:unknown'],
+  checks:[check('operational_status','satisfied','Mission finished as completed.'),check('replay_integrity','unknown','Replay verification has not been run for this mission.'),check('visual_review','not_applicable','Visual review was not requested for this mission.')]};
+const row = {id:'mission-1',release:eligibleRelease,state:{status:'paused',round:1,actions_used:3,model_calls_used:2,data_origin:'fixture',branches:[],assessments:[],observations:[],events:[],visual_reports:[],artifacts:[],stop_reason:'Review needed'}};
 let requests, downloadClick, selectedRow;
 const json = (data,init={}) => new Response(JSON.stringify(data),{...init,headers:{'Content-Type':'application/json',...(init.headers||{})}});
 
@@ -86,6 +91,24 @@ test('selected mission exposes authenticated artifacts, visual reports, verify, 
   await waitFor(()=>expect(requests.some(r=>r.path==='/api/missions/mission-1/cancel')).toBe(true));
   expect(screen.getByRole('button',{name:'Resume'})).toBeDisabled();
   expect(screen.getByRole('button',{name:'Cancel'})).toBeDisabled();
+});
+
+test('a blocked release ledger explains itself and withholds the capsule until verification',async()=>{
+  selectedRow.release=blockedRelease;
+  const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
+  await user.type(screen.getByLabelText('Local operator token'),'private');
+  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
+  const ledger=await screen.findByRole('region',{name:'Release decision'});
+  expect(ledger).toHaveTextContent('Release decision: Blocked');
+  expect(ledger).toHaveTextContent('replay integrity · unknown — Replay verification has not been run for this mission.');
+  expect(ledger).toHaveTextContent('Blocked by: replay_integrity:unknown.');
+  expect(ledger).toHaveTextContent('never scientific validation');
+  expect(screen.getByRole('button',{name:'Export replay capsule'})).toBeDisabled();
+  // Verification refreshes the mission; the service's new decision opens the export.
+  fetch.mockImplementation(async(path,options={})=>{requests.push({path,options});if(path.endsWith('/verify'))return json({reproduction_passed:true,release:eligibleRelease});return json({...selectedRow,release:eligibleRelease});});
+  await user.click(screen.getByRole('button',{name:'Verify and recompute'}));
+  await waitFor(()=>expect(screen.getByRole('region',{name:'Release decision'})).toHaveTextContent('Eligible for human review'));
+  expect(screen.getByRole('button',{name:'Export replay capsule'})).toBeEnabled();
 });
 
 test('a finished mission keeps its outcome: Cancel is disabled, Verify and export stay available',async()=>{

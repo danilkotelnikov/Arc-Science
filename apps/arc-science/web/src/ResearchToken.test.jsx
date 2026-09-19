@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import ResearchWorkspace from './ResearchWorkspace';
 
 const json = data => new Response(JSON.stringify(data), {headers: {'Content-Type': 'application/json'}});
-const mission = {id: 'private-mission', state: {status: 'paused', round: 1, actions_used: 3, model_calls_used: 2, data_origin: 'fixture', branches: [], assessments: [], observations: [], events: [], visual_reports: [], artifacts: [], stop_reason: 'Private stop reason'}};
+const mission = {id: 'private-mission', release: {policy_digest: 'p'.repeat(64), subject_digest: 's'.repeat(64), status: 'eligible_for_human_review', eligible_for_human_review: true, blocking_reasons: [], decided_at: 1, verification: null, checks: []}, state: {status: 'paused', round: 1, actions_used: 3, model_calls_used: 2, data_origin: 'fixture', branches: [], assessments: [], observations: [], events: [], visual_reports: [], artifacts: [], stop_reason: 'Private stop reason'}};
 const report = {integrity: true, reproduction_passed: true, reproduced: 3, artifacts_reproduced: 2, evidence_graph_valid: true, scientific_validity_established: false, failures: []};
 
 beforeEach(() => {
