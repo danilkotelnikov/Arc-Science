@@ -57,7 +57,7 @@ function Log([string]$m) { $line = ('{0:HH:mm:ss.fff} {1}' -f (Get-Date), $m); $
 # ---- 1. locate the native window ---------------------------------------------------
 $deadline = (Get-Date).AddSeconds(90); $proc = $null
 while ((Get-Date) -lt $deadline) {
-    $proc = Get-Process -Name 'arc-science-desktop' -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -eq 'Arc Science' } | Select-Object -First 1
+    $proc = Get-Process -Name 'Arc Science', 'arc-science-desktop' -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -eq 'Arc Science' } | Select-Object -First 1
     if ($proc) { break }
     Start-Sleep -Milliseconds 250
 }

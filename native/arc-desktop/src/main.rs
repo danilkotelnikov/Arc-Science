@@ -229,5 +229,18 @@ mod tests {
             (row_has(0) && row_has(size - 1)) || (col_has(0) && col_has(size - 1)),
             "mark must reach opposite icon edges (no margin)"
         );
+        // The puddles inside the mark are white and opaque, not see-through.
+        let pixel = |x: u32, y: u32| {
+            let i = ((y * size + x) * 4) as usize;
+            (rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3])
+        };
+        for (x, y) in [(40, 35), (32, 32), (70, 95)] {
+            assert_eq!(
+                pixel(x, y),
+                (255, 255, 255, 255),
+                "puddle at ({x},{y}) must be white"
+            );
+        }
+        assert_eq!(pixel(64, 64).3, 255, "the mark itself is opaque");
     }
 }

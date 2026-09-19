@@ -7,9 +7,17 @@ It supports `-ProjectPath`, `-Python`, optional `-BlenderPython` and headless `-
 It does not install Python dependencies or overwrite an existing project configuration.
 
 A Rust desktop host for the existing local Python service and compiled React
-workbench, using a native WebView2 window on Windows and the transparent Snöggo
-icon. The scientific worker is deliberately retained; this is not a Rust rewrite
-of the scientific algorithms.
+workbench, using a native WebView2 window on Windows and the Snöggo mark (the
+black mark with its inner puddles filled white, transparent outside) as window
+icon, executable icon and workbench header mark. The scientific worker is
+deliberately retained; this is not a Rust rewrite of the scientific algorithms.
+
+The shipped executable is `Arc Science.exe`. Cargo cannot name a target with a
+space, so the build produces `arc-science-desktop.exe` and the launcher copies it
+under the product name; `build.rs` embeds `assets/arc-science.ico` and the version
+block with the Windows SDK's `rc.exe` (found on `PATH`, via `ARC_RC_EXE`, or under
+`Windows Kitsin`), so no build crate is needed. Regenerate the icon after
+changing the mark with `python scripts/make-icon.py`.
 
 ## Build and launch
 
@@ -30,7 +38,7 @@ $env:ARC_DESKTOP_ARG_1='C:\Users\you\Arc Science Project'
 $env:ARC_DESKTOP_ARG_2='serve'
 $env:ARC_DESKTOP_ARG_3='--parent-stdin'
 $env:ARC_DESKTOP_URL='http://127.0.0.1:8080/'
-& native/arc-desktop/target/release/arc-science-desktop.exe
+& "native/arc-desktop/target/release/Arc Science.exe"
 ```
 
 The selected project must contain the supervisor's `arc-science.toml`, with a
@@ -105,13 +113,13 @@ window was driven separately through UI Automation (see the HoH ledger).
 cargo fmt --check --manifest-path native/arc-desktop/Cargo.toml
 cargo test --locked --manifest-path native/arc-desktop/Cargo.toml
 cargo clippy --locked --manifest-path native/arc-desktop/Cargo.toml --all-targets -- -D warnings
-& native/arc-desktop/target/release/arc-science-desktop.exe --check-startup
+& "native/arc-desktop/target/release/Arc Science.exe" --check-startup
 ```
 
 Tests cover loopback/authority validation, root health paths, status/identity checks,
 redirect/proxy settings, remaining-deadline behavior, literal argv, reuse, spawn errors,
 early exits, timeout cleanup, local navigation, external-target filtering, the
-download-report script literal and icon transparency. One ignored test
+download-report script literal, icon transparency and white puddles. One ignored test
 is an intentional subprocess fixture executed by its owning timeout regression.
 
 Developer verification on Windows, 2026-09-18: 12 desktop tests passed, 24 supervisor

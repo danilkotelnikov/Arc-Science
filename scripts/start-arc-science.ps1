@@ -16,7 +16,7 @@ $arcRepository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $arcPython = (Get-Command $Python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $arcProject = [IO.Path]::GetFullPath($ProjectPath)
 $arcExecutables = @{
-    Desktop = Join-Path $arcRepository 'native\arc-desktop\target\release\arc-science-desktop.exe'
+    Desktop = Join-Path $arcRepository 'native\arc-desktop\target\release\Arc Science.exe'
     Supervisor = Join-Path $arcRepository 'native\arc-science\target\release\arc-science-native.exe'
     Memory = Join-Path $arcRepository 'native\arc-memory\target\release\arc-memory-worker.exe'
     Svg = Join-Path $arcRepository 'native\arc-svg\target\release\arc-svg2png.exe'
@@ -26,6 +26,14 @@ if ($Build) {
         & cargo build --release --locked --manifest-path (Join-Path $arcRepository "native\$arcCrate\Cargo.toml")
         if ($LASTEXITCODE -ne 0) { throw "Build failed for $arcCrate" }
     }
+}
+# Cargo cannot name a target with a space; the shipped executable is a copy of the
+# built one under the product name (icon and version block are already embedded).
+$arcBuiltDesktop = Join-Path $arcRepository 'native\arc-desktop\target\release\arc-science-desktop.exe'
+if ((Test-Path -LiteralPath $arcBuiltDesktop -PathType Leaf) -and
+    (-not (Test-Path -LiteralPath $arcExecutables.Desktop -PathType Leaf) -or
+     (Get-Item -LiteralPath $arcBuiltDesktop).LastWriteTimeUtc -gt (Get-Item -LiteralPath $arcExecutables.Desktop).LastWriteTimeUtc)) {
+    Copy-Item -LiteralPath $arcBuiltDesktop -Destination $arcExecutables.Desktop -Force
 }
 foreach ($arcExecutable in $arcExecutables.Values) {
     if (-not (Test-Path -LiteralPath $arcExecutable -PathType Leaf)) {
