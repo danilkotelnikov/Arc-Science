@@ -306,5 +306,3 @@ def normalise(payload) -> list[dict]:
     if not out:
         raise ValueError('no detection items')
     return out
-
-

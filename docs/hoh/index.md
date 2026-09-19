@@ -82,7 +82,10 @@ production readiness is a set of evidence-backed gates, not a styling label.
   distinct reviewer identities; the derivation is checked by the evidence graph, the
   capsule and the ledger. Loop D (change effects): a resume and a molecular re-render
   declare their effects, the server derives them, obligations are read from the ledger
-  or recorded unknown, and an undeclared continuation fails the evidence graph. Sol:
+  or recorded unknown, and an undeclared continuation fails the evidence graph. Loop 9
+  (prose): a rule-based local rewrite outside protected scientific spans, refused
+  atomically when one would change, and consented, bounded, audited third-party
+  detection that claims nothing; the live endpoint contract is an unverified gate. Sol:
   accept-with-findings / changes-required on each loop, all addressed.
 
 ## External limits retained

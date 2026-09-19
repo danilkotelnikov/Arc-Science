@@ -274,3 +274,50 @@ workers; frontend 48; Playwright 16.
 | An incomplete render could be the base of a change | moderate | Base must be `completed` (409) |
 | Memory disable was an undeclared change and the schema could not express a zero-effect change | moderate | The disable route answers with a zero-effect declaration and refuses unknown effects |
 | `re_execution` read satisfied from a stop alone | major | Mapped to operational status, replay integrity and numerical reproduction |
+
+## Loop 9 — prose control (`1300fd0`, `9c2d92e`)
+
+Design (Sol consulted before implementation; amendments adopted): two controlled
+operations behind a fifth workspace. The local rewrite applies a fixed, visible rule
+table of mechanical substitutions (formulaic openers at sentence start, `in order to`,
+`due to the fact that`, `prior to`, `utilize`…; nothing that changes strength, extent
+or domain meaning) only outside protected spans — code, math, tables, links, URLs,
+DOIs, paths, flags, quotations, citations, dates, statistics, versions, accessions,
+sequences, mixed-case identifiers, symbols, chemistry, residues, numbers with units —
+and refuses the whole edit when the ordered protected spans of the output differ from
+the input's; it is idempotent, reports `no_change` with a reason, and its result says
+it is a rule-based edit that claims no authorship and establishes neither semantic
+equivalence nor scientific validity. Detection reproduces the request of the text2go
+`ai-humanizer-mcp-server` reference client (`detect`: Copyleaks and Hemingway) to
+`api.edgeshop.ai`; the text leaves the machine, so every request needs
+`allow_egress: true`, the service can be switched off (`ARC_PROSE_DETECTION=off`,
+refused before hashing or auditing), text is bounded, one request runs at a time,
+redirects are refused, the response is streamed under a cap, and the audit records
+the attempt before egress and the outcome after, with a keyed hash of the text and
+never the text. The receipt says which detectors answered and that a score
+establishes neither AI nor human authorship and has no bearing on any release
+decision. The workspace names the recipient before asking for consent and spends the
+consent on every attempt.
+
+Checks: `test_prose.py` 20 (rule and protection behaviour, idempotence, atomic
+refusal, network cases through `httpx.MockTransport`, consent/bounds/switch/single
+flight before any egress, audit key); full Python suite 740 passed / 65 skipped with
+the native workers; frontend 51; Playwright 18 (rewrite through the real service keeps
+every protected literal; consent refusal with the recipient named; no text leaves the
+machine in the suite).
+
+**Unverified gate.** The live `api.edgeshop.ai` contract could not be exercised from
+this workstation (the sandbox proxy fails TLS to that host; without the proxy DNS
+fails). The response shape is normalised from the reference client's TypeScript types
+(object, array, or a wrapper) and the receipt exposes `returned_types`,
+`missing_types` and `complete`, so a partial answer is never presented as both
+detectors. Capabilities and the README say so.
+
+## Evaluation of loop 9 (Sol): changes required → addressed → accept
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| A failed detection left the consent box ticked, so a retry could send the text again without a fresh consent | major | Consent is cleared before the request is sent; a 502 leaves the box unticked and the button disabled (test) |
+| A credential change kept the private text on screen | major | The credential reset clears the text (test) |
+| Opener removal could recase a mixed-case identifier (`c-Myc` → `C-Myc`) | major | Mixed-case identifiers are a protected class; capitalisation applies only to a plain lowercase word; regressions for c-Myc, qPCR, scRNA-seq, mRNA, eLife, p53 |
+| The audit key was created non-exclusively and read without link checks; no Windows owner-only ACL | moderate | Exclusive, reparse-safe creation and no-follow read through the repository's `anchored` helpers; the key must be exactly 32 bytes or detection is refused before any audit line. The missing Windows DACL is a recorded platform limit shared with `access.token`; Sol accepted it as such |
