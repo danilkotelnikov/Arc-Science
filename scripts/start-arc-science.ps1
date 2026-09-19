@@ -8,6 +8,7 @@ param(
     [string]$ProjectPath = (Join-Path $env:LOCALAPPDATA 'ArcScience\workspace'),
     [string]$Python = 'python',
     [string]$BlenderPython,
+    [string]$ClaudeCode,
     [switch]$Build,
     [switch]$CheckStartup
 )
@@ -75,6 +76,14 @@ $arcEnvironment = @{
 }
 if ($BlenderPython) {
     $arcEnvironment.ARC_MOLECULAR_BLENDER_PYTHON = (Get-Command $BlenderPython -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+}
+if ($ClaudeCode) {
+    # Live seats through the operator's own Claude Code login (subscription route):
+    # the CLI runs tool-less and non-interactively; Arc never holds the credential.
+    $arcEnvironment.ARC_CLAUDE_CODE_EXE = (Get-Command $ClaudeCode -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    $arcEnvironment.ARC_PROVIDER = 'claude-code'
+    if (-not $env:ARC_MODEL) { $arcEnvironment.ARC_MODEL = 'claude-opus-5' }
+    if (-not $env:ARC_REVIEWER_MODEL) { $arcEnvironment.ARC_REVIEWER_MODEL = 'claude-sonnet-5' }
 }
 $arcPrevious = @{}
 try {

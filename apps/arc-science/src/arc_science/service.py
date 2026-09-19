@@ -28,23 +28,54 @@ ENDPOINTS={'openai':'https://api.openai.com/v1/responses',
            'anthropic':'https://api.anthropic.com/v1/messages'}
 
 
+def claude_code_command():
+    """The qualified Claude Code executable for the subscription transport, or None."""
+    path=os.environ.get('ARC_CLAUDE_CODE_EXE')
+    if not path:return None
+    executable=Path(path)
+    if not executable.is_absolute() or not executable.is_file():
+        raise ValueError('ARC_CLAUDE_CODE_EXE must be the absolute path of the installed Claude Code executable')
+    return [str(executable)]
+
+
 def configured_endpoints():
     provider=(os.environ.get('ARC_PROVIDER') or 'openai')
     model=os.environ.get('ARC_MODEL','')
+    if provider=='claude-code':
+        # The subscription route: the operator's own Claude Code login, no token file.
+        command=claude_code_command()
+        if not model or not command:raise ValueError('Configure ARC_MODEL and ARC_CLAUDE_CODE_EXE first')
+        if (os.environ.get('ARC_REVIEWER_PROVIDER') or provider)!='claude-code':
+            raise ValueError('Mixed transports are not supported: the reviewer seat must also use claude-code')
+        first=ModelEndpoint(provider=provider,endpoint=command[0],model=model,credential_ref='planner')
+        second=ModelEndpoint(provider=provider,endpoint=command[0],model=(os.environ.get('ARC_REVIEWER_MODEL') or model),credential_ref='reviewer')
+        return first,second
     endpoint=(os.environ.get('ARC_PROVIDER_URL') or ENDPOINTS.get(provider,''))
     if not model or not endpoint:raise ValueError('Configure ARC_MODEL and the provider endpoint first')
     first=ModelEndpoint(provider=provider,endpoint=endpoint,model=model,credential_ref='planner',
         agent_id=os.environ.get('ARC_OPENCLAW_AGENT'),openclaw_isolated=os.environ.get('ARC_OPENCLAW_ISOLATED')=='1')
     rp=(os.environ.get('ARC_REVIEWER_PROVIDER') or provider)
+    if rp=='claude-code':raise ValueError('Mixed transports are not supported: set ARC_PROVIDER=claude-code for both seats')
     second=ModelEndpoint(provider=rp,endpoint=(os.environ.get('ARC_REVIEWER_URL') or ENDPOINTS.get(rp,endpoint)),
         model=(os.environ.get('ARC_REVIEWER_MODEL') or model),credential_ref='reviewer',
         agent_id=os.environ.get('ARC_REVIEWER_AGENT',first.agent_id),openclaw_isolated=first.openclaw_isolated)
     return first,second
 
 
+def live_seats_ready():
+    """Both model seats configured with whatever they need: token files, or the CLI."""
+    first,second=configured_endpoints()
+    if first.provider!='claude-code':
+        _secret('planner');_secret('reviewer')
+    return first,second
+
+
 def configured_vision_endpoint():
     first,second=configured_endpoints()
     provider=(os.environ.get('ARC_VISION_PROVIDER') or second.provider)
+    if provider=='claude-code':
+        raise ValueError('Visual review is not available through the Claude Code transport; '
+                         'set ARC_VISION_PROVIDER to anthropic or openai with its own credential file')
     model=os.environ.get('ARC_VISION_MODEL','')
     endpoint=(os.environ.get('ARC_VISION_URL') or ENDPOINTS.get(provider,''))
     if not model or not endpoint:
@@ -180,11 +211,50 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     @app.get('/api/missions',dependencies=[Depends(authorized)])
     async def list_missions():return repository.list()
 
+    probes={'claude-code':None}
+    transport_cache={'at':0.0,'value':None}
+
+    async def claude_code_transport():
+        # Cost-free readiness: executable identity and the CLI's own login state, cached briefly.
+        from .exploration import claude_code
+        command=claude_code_command()
+        if time.monotonic()-transport_cache['at']>30 or transport_cache['value'] is None:
+            transport_cache['value']={'transport':'claude-code','executable':Path(command[0]).name,
+                'executable_sha256':claude_code.executable_digest(command[0]),
+                'version':await claude_code.version(command),**await claude_code.auth_status(command),
+                'tools':'disabled','network_sandboxed':False,'contract':claude_code.CONTRACT_VERSION}
+            transport_cache['at']=time.monotonic()
+        return {**transport_cache['value'],'last_probe':probes['claude-code']}
+
+    @app.post('/api/providers/claude-code/probe',dependencies=[Depends(authorized)])
+    async def probe_claude_code():
+        """An explicit, token-spending minimal call through the production adapter, per model."""
+        from .exploration.claude_code import ClaudeCodeAgent
+        from .exploration.models import Proposal
+        try:first,second=configured_endpoints()
+        except Exception as error:raise HTTPException(409,str(error)) from None
+        if first.provider!='claude-code':raise HTTPException(409,'The claude-code transport is not configured')
+        results=[]
+        for model in dict.fromkeys((first.model,second.model)):
+            seat=ClaudeCodeAgent(claude_code_command(),model,model)
+            started=time.monotonic()
+            try:
+                await seat._call(model,'You are Arc Science\'s readiness probe. Return only the JSON object {"branches":[],"actions":[],"stop":true,"reason":"probe"}.',
+                                 {'probe':True,'tools':{}},Proposal,role='probe')
+                results.append({'model':model,'ok':True,'observed_model':seat.calls[-1]['observed_model'],
+                                'duration_ms':int((time.monotonic()-started)*1000)})
+            except Exception as error:
+                results.append({'model':model,'ok':False,'error':str(error)[:300],'duration_ms':int((time.monotonic()-started)*1000)})
+            finally:seat.close()
+        probes['claude-code']={'at':int(time.time()),'results':results}
+        return probes['claude-code']
+
     @app.get('/api/capabilities',dependencies=[Depends(authorized)])
     async def capabilities():
         try:
-            first,second=configured_endpoints();_secret('planner');_secret('reviewer')
+            first,second=live_seats_ready()
             live={'configured':True,'planner':first.model,'reviewer':second.model,'provider':first.provider}
+            if first.provider=='claude-code':live['transport']=await claude_code_transport()
         except Exception:live={'configured':False}
         try:
             vision=configured_vision_endpoint();_secret('vision')
@@ -203,7 +273,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     @app.post('/api/missions',status_code=201,dependencies=[Depends(authorized)])
     async def new_mission(request:MissionRequest,idempotency_key:str|None=Header(default=None)):
         if request.mode=='live':
-            try:configured_endpoints();_secret('planner');_secret('reviewer')
+            try:live_seats_ready()
             except Exception:raise HTTPException(409,'Configure model endpoints and server-side credential files before live use') from None
             if request.vision_review:
                 try:configured_vision_endpoint();_secret('vision')
@@ -246,9 +316,13 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                         cfg=first if ref=='planner' else (vision if ref=='vision' else second)
                         return AccessGrant(token=_secret(ref),principal=principal,project_id=project,resource=cfg.endpoint,
                             credential_ref=ref,expires_at=int(time.time())+60,
-                            auth_style=(('oauth' if os.environ.get('ARC_ANTHROPIC_AUTH')=='oauth' else 'x-api-key') if cfg.provider=='anthropic' else 'bearer'))
-                    agent=HTTPAgent(first,reviewer_config=second,vision_config=vision,
-                                    client=client,resolver=resolve,project=mid,principal='local-operator')
+                            auth_style=(('oauth' if os.environ.get('ARC_ANTHROPIC_AUTH') in ('oauth','bearer') else 'x-api-key') if cfg.provider=='anthropic' else 'bearer'))
+                    if first.provider=='claude-code':
+                        from .exploration.claude_code import ClaudeCodeAgent
+                        agent=ClaudeCodeAgent(claude_code_command(),first.model,second.model)
+                    else:
+                        agent=HTTPAgent(first,reviewer_config=second,vision_config=vision,
+                                        client=client,resolver=resolve,project=mid,principal='local-operator')
                     if os.environ.get('ARC_PUBLIC_READS')=='1':
                         from .exploration.public_reads import public_tools
                         tools=combine_trusted_tools(tools,public_tools(client))

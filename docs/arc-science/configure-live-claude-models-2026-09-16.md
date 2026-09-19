@@ -24,17 +24,29 @@ Endpoint defaults to `https://api.anthropic.com/v1/messages`
 
 ## Authentication
 
-Two styles are supported; pick one and provide the matching credential.
+Three routes; pick one.
 
-- **API key (recommended, reliable).** Leave `ARC_ANTHROPIC_AUTH` unset (default
-  `x-api-key`). Put an Anthropic **API key** in the seat's token file. This is the
-  supported path for a third-party service.
-- **OAuth bearer.** Set `ARC_ANTHROPIC_AUTH=oauth`; the adapter then sends
-  `Authorization: Bearer <token>`. Caveat, stated plainly: Anthropic **subscription**
-  OAuth access tokens are generally scoped to first-party clients (e.g. Claude Code)
-  and may be **rejected by the Messages API** for a separately deployed service, and
-  OAuth may additionally require an `anthropic-beta` header this adapter does not add.
-  Use this only with a token you know the API accepts; otherwise use an API key.
+- **Claude subscription through Claude Code (the OAuth route, added 2026-09-19).**
+  Set `ARC_PROVIDER=claude-code` and `ARC_CLAUDE_CODE_EXE` to the absolute path of the
+  installed `claude` executable (the launcher does both with `-ClaudeCode claude`). The
+  planner and reviewer seats then run each call as `claude -p` with every tool, MCP
+  server, hook, plugin, skill and session persistence disabled, in an empty private
+  directory, under a scrubbed environment, a 75 s deadline and, on Windows, a
+  kill-on-close job object. The CLI performs its own login and refresh; Arc never
+  reads or stores the credential. Log in once with `claude login` in a terminal.
+  The transport is honest about what it is: `GET /api/capabilities` reports the
+  executable, its digest and version, the CLI's own `auth status` (cost-free) and
+  `network_sandboxed: false` (the CLI's own transport reaches Anthropic, which is what
+  mission egress consent authorizes). `POST /api/providers/claude-code/probe` makes one
+  explicit, token-spending minimal call per configured model and reports the observed
+  identity or the CLI's error (`auth_expired`, `credit_exhausted`, …). Visual review is
+  not available through this transport; give the vision seat an API key.
+- **API key (direct HTTPS).** Leave `ARC_ANTHROPIC_AUTH` unset (default `x-api-key`).
+  Put an Anthropic **API key** in the seat's token file.
+- **Bearer token (direct HTTPS).** Set `ARC_ANTHROPIC_AUTH=bearer` (`oauth` is accepted
+  as the older spelling) and the adapter sends `Authorization: Bearer <token>`. Use
+  this only with a token Anthropic issued for a third-party service; subscription
+  OAuth tokens belong to Claude Code and are not impersonated here.
 
 ## The one manual step — supply the credential
 
@@ -51,6 +63,18 @@ or point the env token files at existing files: `ARC_MODEL_TOKEN_FILE`,
 `ARC_MODEL_TOKEN_FILE`). Credentials for the planner, reviewer and vision seats stay
 separate; reusing one model in multiple roles is recorded accurately and is **not**
 independent scientific corroboration.
+
+## Example (subscription through Claude Code)
+
+```powershell
+claude login                                   # once, interactive
+.\scripts\start-arc-science.ps1 -ClaudeCode claude   # planner claude-opus-5, reviewer claude-sonnet-5
+```
+
+or for a plain service: `ARC_PROVIDER=claude-code`, `ARC_CLAUDE_CODE_EXE=C:\…\claude.exe`,
+`ARC_MODEL=claude-opus-5`, `ARC_REVIEWER_MODEL=claude-sonnet-5`, then
+`arc-science serve --data ./data`. Check `GET /api/capabilities` (`live.transport.logged_in`)
+and, when you are ready to spend a few tokens, `POST /api/providers/claude-code/probe`.
 
 ## Example (API key)
 

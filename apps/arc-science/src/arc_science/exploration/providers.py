@@ -14,7 +14,7 @@ from .catalog import BUILTIN_CATALOG, proposal_schema
 from .vision import VISUAL_PROMPT_VERSION, validate_report
 
 class ModelEndpoint(Record):
-    provider: Literal['openai','anthropic','openclaw']
+    provider: Literal['openai','anthropic','openclaw','claude-code']
     endpoint: str
     model: str = Field(min_length=1,max_length=160)
     credential_ref: str = Field(min_length=1,max_length=160)
