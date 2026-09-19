@@ -153,9 +153,11 @@ def test_the_scope_is_cleared_on_resume_and_derived_again_at_the_next_stop():
     assert state.status == 'budget_exhausted' and state.claim_scope is not None
     assert scoped(state, 'linear').status == 'contradicted'
     resumed_request = MissionRequest(goal='Explore the fixture', max_rounds=1)
-    paused = state.model_copy(update={'status': 'paused'})
+    from arc_science.exploration.changes import declare_resume
+    paused = declare_resume(state.model_copy(update={'status': 'paused'}), ['analysis', 'claim'], 'again')[0]
     captured = []
     resumed = asyncio.run(explore(resumed_request, DemoAgent(), initial=paused, emit=captured.append))
+    validate_evidence(resumed)
     assert captured[0].claim_scope is None or captured[0].status != 'paused'
     assert resumed.claim_scope is not None and resumed.claim_scope.basis_round == resumed.round
     ledger = release.evaluate_release(resumed_request, paused, None, event_chain_ok=True)

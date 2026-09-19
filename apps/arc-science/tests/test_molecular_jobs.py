@@ -515,10 +515,20 @@ def test_a_rerender_of_the_same_coordinates_declares_its_effects_and_keeps_the_b
         assert accepted.status_code == 202, accepted.text
         row = terminal(client, accepted.json()['id'])
         assert row['status'] == 'completed'
-        assert row['change'] == {'base_job': base['id'], 'declared_effects': ['presentation', 'scientific_depiction', 'analysis'],
-                                 'derived_effects': ['presentation', 'scientific_depiction'],
-                                 'changed_fields': ['width', 'antigen_chains'],
-                                 'required_checks': ['geometry', 'readability', 'structural_identity', 'visibility', 'interpretation']}
+        assert {k: v for k, v in row['change'].items() if k != 'obligations'} == {
+            'base_job': base['id'], 'declared_effects': ['presentation', 'scientific_depiction', 'analysis'],
+            'derived_effects': ['presentation', 'scientific_depiction'], 'changed_fields': ['width', 'antigen_chains'],
+            'required_checks': ['geometry', 'readability', 'structural_identity', 'visibility', 'interpretation']}
+        # No checker exists for these obligations, so every one is recorded unknown, never done.
+        assert [o['name'] for o in row['change']['obligations']] == row['change']['required_checks']
+        assert all(o['state'] == 'unknown' and 'human must inspect' in o['reason'] for o in row['change']['obligations'])
+        # A render that never completed cannot be the base of a change.
+        runtime['value'] = 'fail'
+        failed = terminal(client, client.post(PREFIX + '/renders', headers=AUTH, json=REQUEST).json()['id'])
+        assert failed['status'] == 'failed'
+        refused = client.post(PREFIX + '/renders', headers=AUTH, json={**REQUEST, 'width': 1800, 'base_job': failed['id'], 'declared_effects': ['presentation']})
+        assert refused.status_code == 409 and 'completed render' in refused.json()['detail']
+        runtime['value'] = 'success'
         # The base render is a separate candidate and is never touched.
         again = client.get(f'{PREFIX}/renders/{base["id"]}', headers=AUTH).json()
         assert again == base

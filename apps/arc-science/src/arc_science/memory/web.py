@@ -22,6 +22,10 @@ from .capture import SessionCapture
 from .client import MemoryClient, MemoryError, MemoryUnavailable
 
 
+class DisableDeclaration(BaseModel):
+    declared_effects: list[str] = Field(default_factory=list, max_length=5)
+
+
 class SearchRequest(BaseModel):
     project: str
     query: str
@@ -237,9 +241,19 @@ class MemoryRoutes:
             return self._operation("inspect", record_id)
 
         @router.post("/records/{record_id}/disable")
-        def disable(record_id: str) -> Any:
+        def disable(record_id: str, declaration: Optional[DisableDeclaration] = None) -> Any:
+            # A declared change with no effect: the server derives none and refuses nothing
+            # wider, so the reply states what the operator declared and what is true.
+            from ..exploration.changes import ChangeRefused, MEMORY_DISABLE, check_declaration
+            declared = list(declaration.declared_effects) if declaration else []
+            try:
+                check_declaration(declared, MEMORY_DISABLE["derived"])
+            except ChangeRefused as refused:
+                raise HTTPException(409, str(refused)) from None
             self._operation("disable", record_id)
-            return {"disabled": True}
+            return {"disabled": True, "change": {"kind": MEMORY_DISABLE["kind"], "declared_effects": declared,
+                                                 "derived_effects": [], "required_checks": [],
+                                                 "reason": MEMORY_DISABLE["reason"]}}
 
         @router.get("/sessions")
         def sessions(project: str) -> Any:

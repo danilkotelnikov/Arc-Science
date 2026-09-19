@@ -6,8 +6,14 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from arc_science.exploration import changes
-from arc_science.exploration.models import Change, MissionState
+import asyncio
+
+from arc_science.exploration import changes, release
+from arc_science.exploration.agents import DemoAgent
+from arc_science.exploration.capsule import export_capsule, verify_capsule
+from arc_science.exploration.engine import explore
+from arc_science.exploration.evidence import validate_evidence
+from arc_science.exploration.models import Change, MissionRequest, MissionState
 
 TOKEN = 'c' * 40
 AUTH = {'Authorization': 'Bearer ' + TOKEN}
@@ -69,6 +75,11 @@ def test_resuming_records_a_change_and_stales_every_release_check_until_verified
         assert change['required_checks'] == ['re_execution', 'dependent_claim_invalidation', 'evidence_review', 'scope_review']
         row = finished(c, mid)
         assert row['state']['changes'][0]['id'] == change['id']
+        assert any(e['kind'] == 'change_declared' and e['detail'].startswith(change['id']) for e in row['state']['events'])
+        # Obligations are read from the ledger, never stored: stale now, satisfied after verification.
+        before = c.get(f'/api/missions/{mid}', headers=AUTH).json()['change_obligations'][change['id']]
+        assert {o['check']: o['state'] for o in before} == {'re_execution': 'stale', 'dependent_claim_invalidation': 'stale',
+                                                            'evidence_review': 'stale', 'scope_review': 'stale'}
         # The old ledger was marked stale by the declared change; the mission has to be verified again.
         ledger = c.get(f'/api/missions/{mid}/release', headers=AUTH).json()
         states = {check['name']: check['state'] for check in ledger['checks']}
@@ -83,7 +94,33 @@ def test_resuming_records_a_change_and_stales_every_release_check_until_verified
         assert c.get(f'/api/missions/{mid}/capsule', headers=AUTH).status_code == 409
         verified = c.post(f'/api/missions/{mid}/verify', headers=AUTH).json()
         assert verified['release']['status'] == 'eligible_for_human_review'
-        assert c.get(f'/api/missions/{mid}', headers=AUTH).json()['state']['claim_scope'] is not None
+        after = c.get(f'/api/missions/{mid}', headers=AUTH).json()
+        assert after['state']['claim_scope'] is not None
+        assert all(o['state'] == 'satisfied' for o in after['change_obligations'][change['id']])
+
+
+def test_a_resume_without_its_declaration_fails_the_evidence_graph_and_the_capsule():
+    request = MissionRequest(goal='Explore the fixture', max_rounds=1)
+    stopped = asyncio.run(explore(request, DemoAgent()))
+    assert stopped.status == 'budget_exhausted'
+    undeclared = asyncio.run(explore(request, DemoAgent(), initial=stopped.model_copy(update={'status': 'paused'})))
+    assert len(undeclared.events) > len(stopped.events)
+    with pytest.raises(ValueError, match='without a declared change'):
+        validate_evidence(undeclared)
+    # The same resume, declared: the change binds to its event and the history before it.
+    declared_state, change = changes.declare_resume(stopped.model_copy(update={'status': 'paused'}), ['analysis', 'claim'], 'Second round.')
+    resumed = asyncio.run(explore(request, DemoAgent(), initial=declared_state))
+    validate_evidence(resumed)
+    request2 = request
+    assert verify_capsule(export_capsule(request2, resumed))['evidence_graph_valid'] is True
+    for forged in (resumed.model_copy(update={'changes': ()}),
+                   resumed.model_copy(update={'changes': (change.model_copy(update={'base_digest': 'f' * 64}),)}),
+                   resumed.model_copy(update={'changes': (change.model_copy(update={'required_checks': ('re_execution',)}),)}),
+                   resumed.model_copy(update={'changes': (change, change.model_copy(update={'id': 'x' * 32}))})):
+        with pytest.raises(ValueError):
+            validate_evidence(forged)
+        with pytest.raises(ValueError):  # the capsule verifier refuses a forged history outright
+            verify_capsule(export_capsule(request2, forged))
 
 
 def test_start_on_a_paused_mission_is_the_same_declared_change(tmp_path):

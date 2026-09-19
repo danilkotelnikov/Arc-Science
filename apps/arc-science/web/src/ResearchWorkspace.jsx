@@ -60,10 +60,10 @@ function ClaimScopeView({scope}) {
   </>:<p className="muted">The claim scope is derived when the mission stops; none yet.</p>}</section>;
 }
 
-function Changes({changes}) {
+function Changes({changes,obligations}) {
   // Every operator change on the mission: what was declared, what the server derived,
-  // and the checks that obliges. A resume stales the release ledger until re-verified.
-  return <section aria-label="Declared changes"><h2>Declared changes</h2>{changes.length?<ol className="changes">{changes.map(change=><li key={change.id} data-kind={change.kind}>{change.kind} at round {change.round} · declared {change.declared_effects.join(', ')} · derived {change.derived_effects.join(', ')} · checks obliged: {change.required_checks.join(', ')}{change.note?<span className="muted"> — {change.note}</span>:null}</li>)}</ol>:<p className="muted">No change declared. Resuming declares an analysis change; claims cannot be edited and permissions are granted at creation.</p>}</section>;
+  // and the state of each obligation as the release ledger reads it now.
+  return <section aria-label="Declared changes"><h2>Declared changes</h2>{changes.length?<ol className="changes">{changes.map(change=><li key={change.id} data-kind={change.kind}>{change.kind} at round {change.round} · declared {change.declared_effects.join(', ')} · derived {change.derived_effects.join(', ')} · obligations: {(obligations?.[change.id]||change.required_checks.map(check=>({check,state:'unknown'}))).map(o=><span key={o.check} className={'check-state check-'+o.state}>{o.check.replace(/_/g,' ')} {o.state.replace('_',' ')}</span>).reduce((acc,el,i)=>i?[...acc,' · ',el]:[el],[])}{change.note?<span className="muted"> — {change.note}</span>:null}</li>)}</ol>:<p className="muted">No change declared. Resuming declares an analysis change; claims cannot be edited and permissions are granted at creation.</p>}</section>;
 }
 
 function RepairCycles({repairs}) {
@@ -152,7 +152,7 @@ export default function ResearchWorkspace({token,setToken}) {
         <h2>Visual artifacts</h2><div className="artifacts">{state.artifacts.length?state.artifacts.map(artifact=><Artifact key={mission.id+artifact.digest} missionId={mission.id} artifact={artifact} request={request} release={mission.release} superseded={state.artifacts.some(a=>a.repair_of===artifact.digest)}/>):<p className="muted">No visual artifacts in this mission.</p>}</div>
         <h2>Visual review</h2>{state.visual_reports.length?state.visual_reports.map((report,i)=><div className="record" key={i}><h3>{report.model} · round {report.round} · {report.verdict}</h3>{report.findings.map((finding,j)=><p key={j}>{finding.category}: {finding.detail}</p>)}</div>):<p className="muted">No visual review report. No passing qualification is implied.</p>}
         <RepairCycles repairs={state.repairs||[]}/>
-        <Changes changes={state.changes||[]}/>
+        <Changes changes={state.changes||[]} obligations={mission.change_obligations}/>
         <h2>Reconciliation</h2>{state.assessments.slice(-12).map((assessment,i)=><div className="record" key={i}><h3>{assessment.role} · {assessment.branch_id} · {assessment.position}</h3><p>{assessment.finding}</p><p className="muted">Evidence: {assessment.evidence_ids.join(', ')} · Model: {assessment.model}</p></div>)}
         <h2>Execution evidence</h2>{state.observations.map(observation=><details className="record" key={observation.id}><summary>{observation.id} · {observation.tool} · {observation.status}</summary><pre>{JSON.stringify(observation.data,null,2)}</pre></details>)}
         <h2>Event history</h2>{state.events.slice(-15).reverse().map((event,i)=><p className="muted" key={i}>[{event.round}] {event.kind}: {event.detail}</p>)}

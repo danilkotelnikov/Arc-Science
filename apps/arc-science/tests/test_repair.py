@@ -133,8 +133,10 @@ def test_a_reviewer_error_on_the_repaired_candidate_stays_blocking():
     decision = release.evaluate_release(request, state, None, event_chain_ok=True)
     assert next(c.state for c in decision.checks if c.name == 'visual_review') == 'error'
     # Resuming does not silently retry the rejected call.
-    resumed = asyncio.run(explore(request, agent, initial=state.model_copy(update={'status': 'paused'})))
+    from arc_science.exploration.changes import declare_resume
+    resumed = asyncio.run(explore(request, agent, initial=declare_resume(state.model_copy(update={'status': 'paused'}), ['analysis', 'claim'], 'retry')[0]))
     assert resumed.status == 'needs_input' and len(resumed.vision_records) == 2
+    validate_evidence(resumed)
 
 
 def test_a_render_that_repeats_an_existing_image_blocks_the_cycle(monkeypatch):

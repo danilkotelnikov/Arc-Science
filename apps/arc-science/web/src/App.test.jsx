@@ -163,6 +163,18 @@ test('the claim scope shows each hypothesis narrowed to its evidence, its uncert
   expect(claims[1]).toHaveTextContent('None recorded by either role; provisional support still needs independent data.');
 });
 
+test('declared changes list what was declared, what was derived and each obligation as the ledger reads it',async()=>{
+  selectedRow.state.changes=[{id:'c'.repeat(32),kind:'resume',declared_effects:['analysis','claim'],derived_effects:['analysis','claim'],required_checks:['re_execution','dependent_claim_invalidation','evidence_review','scope_review'],base_digest:'e'.repeat(64),note:'Second round.',round:1,at:1}];
+  selectedRow.change_obligations={['c'.repeat(32)]:[{check:'re_execution',state:'satisfied',sources:['operational_status']},{check:'dependent_claim_invalidation',state:'stale',sources:['claim_scope']},{check:'evidence_review',state:'stale',sources:['evidence_graph','reconciliation']},{check:'scope_review',state:'stale',sources:['claim_scope']}]};
+  const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
+  await user.type(screen.getByLabelText('Local operator token'),'private');
+  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
+  const changes=await screen.findByRole('region',{name:'Declared changes'});
+  const item=within(changes).getByRole('listitem');
+  expect(item).toHaveTextContent('resume at round 1 · declared analysis, claim · derived analysis, claim · obligations: re execution satisfied · dependent claim invalidation stale · evidence review stale · scope review stale — Second round.');
+  expect(item.querySelectorAll('.check-stale')).toHaveLength(3);
+});
+
 test('a finished mission keeps its outcome: Cancel is disabled, Verify and export stay available',async()=>{
   selectedRow.state.status='completed';selectedRow.state.stop_reason='Exploration completed within budget.';
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));

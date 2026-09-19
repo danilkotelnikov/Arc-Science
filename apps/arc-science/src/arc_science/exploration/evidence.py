@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from ..contracts import canonical, digest
 from .catalog import validate_arguments, validate_catalog
+from .changes import MISSION_CHANGES, required_checks
 from .claim_scope import derive_claim_scope
 from .models import Assessed, Branch, MissionState, Proposal, Reconciliation
 from .repair import POLICIES
@@ -260,6 +261,28 @@ def validate_evidence(state: MissionState) -> None:
 
     if state.claim_scope is not None and state.claim_scope != derive_claim_scope(state):
         raise ValueError("Recorded claim scope does not follow from the recorded reconciliation")
+    # Declared changes: each binds to exactly one change_declared event at the point of
+    # the history it names, derives what the table says, and every resume has one.
+    _unique([change.id for change in state.changes], "Duplicate change identity")
+    declared_events = {}
+    for index, event in enumerate(state.events):
+        if event.kind == "change_declared":
+            declared_events.setdefault(event.detail.split(":", 1)[0], []).append(index)
+    for change in state.changes:
+        indexes = declared_events.pop(change.id, [])
+        if len(indexes) != 1:
+            raise ValueError("Change is not bound to exactly one declaration event")
+        index = indexes[0]
+        expected = MISSION_CHANGES[change.kind]["derived"]
+        if (change.derived_effects != expected or change.required_checks != required_checks(expected)
+                or state.events[index].round != change.round
+                or change.base_digest != digest([e.model_dump(mode="json") for e in state.events[:index]])):
+            raise ValueError("Change record does not bind to its declaration")
+    if declared_events:
+        raise ValueError("Declaration event without its change record")
+    for index, event in enumerate(state.events[:-1]):
+        if event.kind in ("mission_stopped", "mission_interrupted") and state.events[index + 1].kind != "change_declared":
+            raise ValueError("Mission continued after a stop without a declared change")
     for assessment in state.assessments:
         if assessment.branch_id not in branches:
             raise ValueError("Invalid assessment branch reference")

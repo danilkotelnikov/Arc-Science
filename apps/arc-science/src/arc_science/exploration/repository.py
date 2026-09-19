@@ -100,7 +100,10 @@ class MissionRepository:
         for mid in ids:
             row=self.get(mid)
             if row['state']['status']=='running':
-                state=MissionState.model_validate({**row['state'],'status':'paused','stop_reason':'Service restarted; evidence retained. Resume explicitly.'})
+                from .models import Event
+                interrupted=Event(kind='mission_interrupted',round=row['state']['round'],detail='Service restarted; evidence retained. Resume explicitly.')
+                state=MissionState.model_validate({**row['state'],'status':'paused','stop_reason':interrupted.detail,
+                                                   'events':list(row['state']['events'])+[interrupted.model_dump(mode='json')]})
                 self.save(mid,state,expected_revision=row['revision']);count+=1
         return count
 

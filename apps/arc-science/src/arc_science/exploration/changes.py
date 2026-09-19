@@ -20,7 +20,11 @@ they cannot be edited; permission is granted at mission creation, never by an ed
 """
 from __future__ import annotations
 
+import time
 from typing import Literal
+import uuid
+
+from ..contracts import digest
 
 Effect = Literal['presentation', 'scientific_depiction', 'analysis', 'claim', 'permission']
 EFFECTS: tuple[str, ...] = ('presentation', 'scientific_depiction', 'analysis', 'claim', 'permission')
@@ -47,6 +51,24 @@ MISSION_CHANGES = {
     'permission': {'applies': False, 'derived': ('permission',),
                    'reason': 'Egress and connector permissions are granted when a mission is created; a permission change is a separate authorization, not an edit.'},
 }
+# Disabling a memory record excludes it from retrieval and changes no mission evidence:
+# a declared change with no effect and nothing to check. It is answered, not stored on
+# a mission, because memory records are not mission evidence.
+MEMORY_DISABLE = {'kind': 'memory_disable', 'derived': (),
+                  'reason': 'Disabling a memory record excludes it from retrieval; it is not deleted and no mission evidence changes.'}
+# What closes each obligation of a resume: the release ledger checks it maps to. The
+# obligation's state is the worst state of those checks, so it is derived on read and
+# never stored or authored.
+OBLIGATION_SOURCES = {
+    're_execution': ('operational_status',),
+    'dependent_claim_invalidation': ('claim_scope',),
+    'evidence_review': ('evidence_graph', 'reconciliation'),
+    'scope_review': ('claim_scope',),
+}
+WORST = ('error', 'failed', 'stale', 'unknown', 'not_applicable', 'satisfied')
+# Obligations of a molecular change have no automated checker in this release; they
+# are recorded as unknown so nothing reads them as done.
+NO_CHECKER = 'No automated checker exists for this obligation; a human must inspect the render.'
 # A resumed mission's release ledger: every check that can be stale is stale.
 RESUME_STALE = ('operational_status', 'event_chain_integrity', 'replay_integrity', 'numerical_reproduction',
                 'artifact_reproduction', 'evidence_graph', 'reconciliation', 'visual_review', 'claim_scope')
@@ -89,6 +111,35 @@ def molecular_effects(base_settings: dict, new_settings: dict) -> tuple[tuple[st
                     if base_settings.get(field) != new_settings.get(field))
     derived = tuple(effect for effect, fields in MOLECULAR_FIELDS.items() if any(f in changed for f in fields))
     return derived, changed
+
+
+def declare_resume(state, declared, note: str, at: int | None = None):
+    """Record a resume on the state: the change, and the event that binds it to this
+    point of the history (base_digest is the digest of every event before it)."""
+    from .models import Change, Event
+    derived, checks = mission_change('resume', declared)
+    base = digest([e.model_dump(mode='json') for e in state.events])
+    change = Change(id=uuid.uuid4().hex, kind='resume', declared_effects=tuple(declared), derived_effects=derived,
+                    required_checks=checks, base_digest=base, note=note[:400], round=state.round,
+                    at=int(time.time()) if at is None else at)
+    event = Event(kind='change_declared', round=state.round,
+                  detail=change.id + ': resume; declared ' + ', '.join(declared) + '; derived ' + ', '.join(derived))
+    return state.model_copy(update={'changes': state.changes + (change,), 'events': state.events + (event,)}), change
+
+
+def obligation_states(change, decision) -> tuple[dict, ...]:
+    """The state of each obligation a change carries, read from the release ledger."""
+    states = {check.name: check.state for check in decision.checks} if decision is not None else {}
+    out = []
+    for obligation in change.required_checks:
+        sources = OBLIGATION_SOURCES.get(obligation, ())
+        found = [states.get(source, 'unknown') for source in sources] or ['unknown']
+        out.append({'check': obligation, 'state': min(found, key=WORST.index), 'sources': list(sources)})
+    return tuple(out)
+
+
+def unknown_obligations(effects) -> list[dict]:
+    return [{'name': check, 'state': 'unknown', 'reason': NO_CHECKER} for check in required_checks(effects)]
 
 
 def mission_change(kind: str, declared) -> tuple[tuple[str, ...], tuple[str, ...]]:

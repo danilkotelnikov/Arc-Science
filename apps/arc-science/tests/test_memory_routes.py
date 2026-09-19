@@ -72,6 +72,17 @@ def test_routes_search_inspect_sessions(tmp_path):
 
             missing = client.get("/api/memory/records/nope")
             assert missing.status_code == 404
+
+            # Disabling a record is a declared change with no effect: a wider declaration
+            # is allowed and echoed, an unknown effect is refused, the record leaves retrieval.
+            refused = client.post(f"/api/memory/records/{record_id}/disable", json={"declared_effects": ["magic"]})
+            assert refused.status_code == 409
+            disabled = client.post(f"/api/memory/records/{record_id}/disable", json={"declared_effects": ["analysis"]})
+            assert disabled.status_code == 200
+            assert disabled.json()["change"] == {"kind": "memory_disable", "declared_effects": ["analysis"],
+                                                 "derived_effects": [], "required_checks": [],
+                                                 "reason": "Disabling a memory record excludes it from retrieval; it is not deleted and no mission evidence changes."}
+            assert client.post("/api/memory/search", json={"project": "p", "query": "hydrogen", "mode": "lexical"}).json() == []
     finally:
         routes.close()
 

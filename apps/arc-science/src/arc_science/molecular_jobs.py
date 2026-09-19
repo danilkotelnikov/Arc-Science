@@ -98,6 +98,8 @@ class ChangeRecord(BaseModel):
     derived_effects: list[str] = Field(min_length=1, max_length=5)
     changed_fields: list[str] = Field(min_length=1, max_length=len(SETTINGS))
     required_checks: list[str] = Field(min_length=1, max_length=12)
+    # Each obligation with its state; unknown until a checker exists, so nothing reads it as done.
+    obligations: list[dict] = Field(min_length=1, max_length=12)
 
 
 class AssetRecord(BaseModel):
@@ -220,12 +222,14 @@ class MolecularJobs:
     def _change_of(self, parameters, settings):
         """Derive the effects of re-rendering an earlier job's coordinates with new settings.
         The earlier job is never touched: the new render is a new candidate."""
-        from .exploration.changes import ChangeRefused, check_declaration, molecular_effects, required_checks
+        from .exploration.changes import ChangeRefused, check_declaration, molecular_effects, required_checks, unknown_obligations
         if parameters.base_job is None:
             raise HTTPException(409, 'Declared effects need a base render to be a change of')
         base = self.jobs.get(parameters.base_job)
         if base is None:
             raise HTTPException(404, 'Base render not found')
+        if base['status'] != 'completed':
+            raise HTTPException(409, 'Only a completed render can be the base of a change')
         if base['source_sha256'] != hashlib.sha256(parameters.source_text.encode('utf-8')).hexdigest() \
                 or base['filename'] != parameters.filename:
             raise HTTPException(409, 'Different coordinates are a new subject, not a change of the base render')
@@ -240,7 +244,8 @@ class MolecularJobs:
             raise HTTPException(409, str(refused)) from None
         return ChangeRecord(base_job=parameters.base_job, declared_effects=list(parameters.declared_effects),
                             derived_effects=list(derived), changed_fields=list(changed),
-                            required_checks=list(required_checks(derived))).model_dump()
+                            required_checks=list(required_checks(derived)),
+                            obligations=unknown_obligations(derived)).model_dump()
 
     @staticmethod
     def _resolve_executable(value):

@@ -20,9 +20,8 @@ from .exploration.models import MissionRequest, MissionState
 from .exploration.engine import initialize, explore, MissionCancelled
 from .exploration.agents import DemoAgent, DemoVisionAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
-from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, mission_change
+from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, declare_resume, mission_change, obligation_states
 from .exploration.claim_scope import derive_claim_scope
-from .exploration.models import Change
 from .exploration.repository import MissionRepository, MissionFinished, RevisionConflict
 from .exploration.capsule import export_capsule, verify_capsule
 from .exploration import release as release_ledger
@@ -328,7 +327,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         # never a claim of validity, only of eligibility for human review.
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
         decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(row['id']))
-        return {**row,'release':decision.model_dump(mode='json')}
+        obligations={change.id:list(obligation_states(change,decision)) for change in state.changes}
+        return {**row,'release':decision.model_dump(mode='json'),'change_obligations':obligations}
 
     @app.get('/api/missions/{mid}',dependencies=[Depends(authorized)])
     async def read_mission(mid:str):return with_release(get(mid))
@@ -403,18 +403,13 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             running.pop(mid,None)
 
     def record_resume(row,declared,note):
-        # Resuming is a declared change: it is recorded on the mission with the effects
-        # the server derives, and every release check goes stale until re-verified.
-        derived,checks=mission_change('resume',declared)
-        state=MissionState.model_validate(row['state'])
-        change=Change(id=uuid.uuid4().hex,kind='resume',declared_effects=tuple(declared),derived_effects=derived,
-                      required_checks=checks,base_digest=release_ledger.subject_digest(state),note=note[:400],
-                      round=state.round,at=int(time.time()))
-        updates={'changes':state.changes+(change,)}
+        # Resuming is a declared change: it is recorded on the mission, bound to the
+        # event history, and every release check goes stale until re-verified.
+        state,change=declare_resume(MissionState.model_validate(row['state']),declared,note)
         if state.release is not None:
-            updates['release']=release_ledger.invalidate_release(state.release,RESUME_STALE,
-                'Declared change '+change.id[:8]+' (resume): '+', '.join(derived)+'; verify again after the mission stops.')
-        try:repository.save(row['id'],state.model_copy(update=updates),expected_revision=row['revision'])
+            state=state.model_copy(update={'release':release_ledger.invalidate_release(state.release,RESUME_STALE,
+                'Declared change '+change.id[:8]+' (resume): '+', '.join(change.derived_effects)+'; verify again after the mission stops.')})
+        try:repository.save(row['id'],state,expected_revision=row['revision'])
         except RevisionConflict:raise HTTPException(409,'Mission changed; retry') from None
         return change
 
