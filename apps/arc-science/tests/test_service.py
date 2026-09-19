@@ -128,8 +128,6 @@ def _finished(c,mid):
 def test_release_ledger_gates_the_capsule_and_survives_restart(tmp_path):
     with TestClient(app(tmp_path)) as c:
         mid=c.post('/api/missions',headers=auth(),json={'goal':'Release ledger'}).json()['id']
-        # Verification writes the ledger, so it refuses to run against an unfinished mission.
-        assert c.post(f'/api/missions/{mid}/verify',headers=auth()).status_code==409
         c.post(f'/api/missions/{mid}/start',headers=auth())
         row=_finished(c,mid)
         # Before verification the decision is blocked by unknown replay checks and the export is refused.
@@ -176,3 +174,14 @@ def test_a_mission_that_changes_after_verification_is_stale_until_verified_again
         states={check['name']:check['state'] for check in release['checks']}
         assert states['replay_integrity']=='stale' and states['operational_status']=='unknown'
         assert c.get(f'/api/missions/{mid}/capsule',headers=auth()).status_code==409
+
+
+def test_verification_refuses_to_run_beside_an_active_worker(tmp_path):
+    from arc_science.exploration.models import MissionState
+    with TestClient(app(tmp_path)) as c:
+        mid=c.post('/api/missions',headers=auth(),json={'goal':'Busy mission'}).json()['id']
+        repo=c.app.state.repository;row=repo.get(mid)
+        repo.save(mid,MissionState.model_validate({**row['state'],'status':'running'}),expected_revision=row['revision'])
+        refused=c.post(f'/api/missions/{mid}/verify',headers=auth())
+        assert refused.status_code==409 and 'still running' in refused.json()['detail']
+        assert c.get(f'/api/missions/{mid}/release',headers=auth()).json()['status']=='blocked'

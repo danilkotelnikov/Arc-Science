@@ -436,8 +436,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     @app.post('/api/missions/{mid}/verify',dependencies=[Depends(authorized)])
     async def verify(mid:str):
         row=get(mid)
-        # Verification writes the ledger; it never competes with an active worker.
-        if mid in running or row['state']['status'] in ('ready','running'):
+        # Verification writes the ledger; it never competes with an active worker
+        # (the revision lock below catches a start that slips in meanwhile).
+        if mid in running or row['state']['status']=='running':
             raise HTTPException(409,'Mission is still running; verify after it finishes')
         chain=repository.verify(mid)
         if not chain:raise HTTPException(409,'Mission integrity check failed')
