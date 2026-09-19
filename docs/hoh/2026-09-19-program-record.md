@@ -321,3 +321,19 @@ detectors. Capabilities and the README say so.
 | A credential change kept the private text on screen | major | The credential reset clears the text (test) |
 | Opener removal could recase a mixed-case identifier (`c-Myc` → `C-Myc`) | major | Mixed-case identifiers are a protected class; capitalisation applies only to a plain lowercase word; regressions for c-Myc, qPCR, scRNA-seq, mRNA, eLife, p53 |
 | The audit key was created non-exclusively and read without link checks; no Windows owner-only ACL | moderate | Exclusive, reparse-safe creation and no-follow read through the repository's `anchored` helpers; the key must be exactly 32 bytes or detection is refused before any audit line. The missing Windows DACL is a recorded platform limit shared with `access.token`; Sol accepted it as such |
+
+## Program close — gates on the accepted candidate (`9c2d92e` + this record)
+
+| Gate | State | Evidence |
+| --- | --- | --- |
+| Python suite | passed | 740 passed / 65 skipped with the native workers configured (`ARC_SVG2PNG`, `ARC_MEMORY_WORKER`); the 65 skips are opt-in scale tests and absent optional runtimes |
+| Frontend unit suite | passed | vitest 51 |
+| Playwright | passed | 18 specs against the real service on a temporary data directory |
+| Wheel | passed (loop B) | `check-wheel.py`: no example assets, `/snoggo-mark.svg` served, `repair.py` packaged |
+| Native window | eligible for human review | run `gui-final`: `Arc Science.exe` with the mark, supervisor and service as descendants, five workspace buttons exposed and enabled, empty Molecules stage, PrintWindow capture 2586×1630, close → all processes exited, port 8080 free |
+| Claude subscription seats | **blocked** | live probe refused with HTTP 400 "Credit balance is too low"; the operator must fund the plan or log in to a funded one, then run the probe with `spend_tokens: true` |
+| Live detection contract (`api.edgeshop.ai`) | **unverified** | unreachable from this workstation through the proxy; the response shape is normalised from the reference client's types and reported per detector |
+| Windows owner-only ACL on secret files | recorded limit | `access.token` and `prose/audit.key` rely on mode 0600 only; harden both together for multi-user hosts |
+
+Nothing above is a novelty, validity or production claim. Acceptance means the
+candidate is eligible for a human to review.
