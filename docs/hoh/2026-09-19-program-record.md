@@ -90,3 +90,50 @@ Checks: 14 e2e passed (three runs, ~25 s each), vitest 43, Python storage/servic
 
 Sol's own limits: it corroborated one retained Playwright report (14/14, 25.2 s); the
 other runs are the author's.
+
+## Loop 4 — Claude subscription route for the model seats (`e044e04`, `2c3eff6`)
+
+Design (Sol consulted before implementation; option C chosen): the direct HTTPS
+adapter keeps API keys and bearer tokens and does not impersonate Claude Code; the
+subscription route is a new `claude-code` transport that runs each planner/reviewer
+call as the installed CLI in print mode with every tool, MCP server, hook, plugin,
+skill and session persistence disabled, in an empty private directory, under an
+allowlisted environment (case-insensitive: Windows upper-cases inherited names and
+the CLI dies without `SystemRoot`), a 75 s deadline, streaming output caps with an
+immediate kill, and a kill-on-close job object. The CLI owns the credential and its
+refresh; Arc never reads it. A call succeeds only with a zero exit, one envelope, no
+error flag, no permission denial, exactly one CLI-reported model identity equal to
+the configured id (or its dated release) and a schema-valid payload; every other
+outcome is a categorised provider error with no fallback. Provenance per call is
+persisted on the `ModelRecord`. `GET /api/capabilities` reports executable digest,
+version and the CLI's own cost-free `auth status`; `POST …/probe` spends tokens only
+with explicit consent, single-flight, with a cooldown and an audit file. A configured
+native vision seat is used alongside; without one, visual review is refused.
+
+Checks: transport tests (stand-in CLI that verifies the invocation contract and
+plays each failure) 18; service tests 5; full Python suite 675 passed / 65 skipped.
+
+**Live result on this workstation — the gate stays blocked, not passed.** Under the
+scrubbed environment the real CLI (2.1.231) reports `logged_in: true`,
+`auth_method: oauth_token`; the production-equivalent probe call reached the API and
+was refused with HTTP 400 "Credit balance is too low" (`credit_exhausted`). No model
+output and no live observed identity were obtained; token refresh was not observed.
+"OAuth works fine" is therefore **not** claimed: the transport is implemented and
+fake-tested, and end-to-end Opus/Sonnet execution is blocked by the account's
+billing state until the operator resolves it (a `claude login` against a funded
+plan, or credits on the Console organisation the login belongs to).
+
+## Evaluation of loop 4 (Sol): changes required → addressed
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| A configured native vision seat was ignored: the worker built only the CLI agent | major | The CLI agent takes a native `HTTPAgent` for the vision seat and delegates `review_visual` to it; unit test |
+| stdout/stderr limits applied after buffering whole streams; stderr uncapped | major | Concurrent capped readers kill the process the moment a cap is crossed; the stand-in streams 64 MiB to prove it |
+| Paid probe had no spend or concurrency guard and used the full Proposal schema | major | `spend_tokens: true` required (422 otherwise), single-flight (409), 30 s cooldown (429), minimal `{"ok": true}` schema, audit line in `data/providers/claude-code-probes.jsonl` |
+| Capabilities hashed the 307 MB executable synchronously on the event loop on every cache miss | major | Hashed once per (path, size, mtime) in a worker thread; `checked_at` and an honesty note added; helper processes killed on timeout |
+| Exact identity equality could reject dated ids; `--prompt-suggestions`/`--permission-mode` omitted | moderate | Dated release of the configured id accepted, aliases refused (documented); both flags passed |
+| Provenance not durable; agent directory never closed | moderate | `ModelRecord.transport` persisted per call; worker closes the agent |
+| Guide overstated (no process exec; every hook disabled; login and refresh) | moderate | Guide rewritten: the CLI is the one deliberate exception; admin policy caveat; "owns credentials and attempts refresh"; `logged_in` ≠ inference success |
+
+Sol's own limit: its `claude auth status` in the review sandbox reported logged out,
+so the author's authenticated state was not independently reproduced there.

@@ -69,8 +69,10 @@ production readiness is a set of evidence-backed gates, not a styling label.
   executable and header icon. Loop 2 (empty workbench): packaged 1DQJ example removed;
   Molecules opens on the operator's own renders. Loop 3 (Playwright): 14 end-to-end
   specs against the real service encode the browser-QA checklist and run in CI; a
-  cancel-after-finish defect found by the suite is fixed. Sol: accept-with-findings
-  on each loop, all addressed.
+  cancel-after-finish defect found by the suite is fixed. Loop 4 (Claude OAuth seats):
+  a tool-less `claude-code` transport uses the operator's own Claude Code login; live
+  probe reached the API and was refused for credits — gate blocked, not passed.
+  Sol: accept-with-findings / changes-required on each loop, all addressed.
 
 ## External limits retained
 

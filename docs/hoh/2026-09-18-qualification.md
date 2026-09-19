@@ -136,7 +136,10 @@ independent findings as passing without the reviewer retest.
   mechanism labels, real model scores and confirmatory experiments are absent.
 - **Providers and release:** model/vision credentials, signed installers, macOS/Linux
   runtime qualification, inherited Vedix root-suite qualification and independent
-  scientific/publication review are not established. The retained bpy environment
+  scientific/publication review are not established. 2026-09-19: the Claude
+  subscription route exists (`claude-code` transport) and reached the API from this
+  workstation, which refused for credits; live execution stays blocked on the account
+  ([program record](2026-09-19-program-record.md), loop 4). The retained bpy environment
   still emits its NumPy ABI warning; a separate pinned runtime is preferable.
 
 The accepted outcome is a tested local development candidate with specific corrected
