@@ -3,9 +3,11 @@
 Native GUI acceptance for the running Arc Science desktop (start it first with
 scripts/start-arc-science.ps1). Drives the real WebView2 window through UI Automation:
 verifies the workbench controls are exposed, captures the window with PrintWindow (only
-this window's pixels, never the screen), performs a real Export SVG download into the
-user's Downloads folder and hashes it, optionally activates the external RCSB link
-(opens the system browser), then closes the window and checks that the supervisor,
+this window's pixels, never the screen), checks the empty Molecules stage, performs a
+real download into the user's Downloads folder when a download control is present
+(a render of the operator's own must exist; otherwise the step is reported as skipped),
+optionally activates the BioArt workspace's external NIH search link (opens the system
+browser), then closes the window and checks that the supervisor,
 service and port are released. Evidence is written to -Out.
 #>
 [CmdletBinding()]
@@ -89,19 +91,30 @@ function Find-Named([string]$name, $type, [int]$seconds = 15) {
     return $null
 }
 $CT = [System.Windows.Automation.ControlType]
-function Selected-Tabs { ($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition ($AE::ControlTypeProperty, $CT::TabItem))) | ForEach-Object { $sel = $_.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected; '{0}={1}' -f $_.Current.Name, $sel }) -join ', ' }
-Log ('tab selection after first UIA walk: ' + (Selected-Tabs))
-$nav = Find-Named 'Workspaces' $CT::Navigation 20
-if (-not $nav) { $nav = Find-Named 'Workspaces' $CT::Group 5 }
+function Invoke-Element($el, [string]$what) {
+    # Chromium exposes Invoke on most controls; fall back to the accessible default
+    # action, then to keyboard activation, and say which path was taken.
+    try { $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Log "$what activated (InvokePattern)"; return }
+    catch { }
+    try { $el.GetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern).DoDefaultAction(); Log "$what activated (LegacyIAccessible default action)"; return }
+    catch { }
+    $el.SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); Log "$what activated (focus + Enter)"
+}
+$nav = Find-Named 'Workspaces' $CT::Group 20
+if (-not $nav) { $nav = Find-Named 'Workspaces' $CT::Navigation 5 }
 Log ("workspace navigation exposed: " + [bool]$nav)
 $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
 $named = @($all | ForEach-Object { $c = $_.Current; if ($c.Name) { '{0}:{1}' -f $c.ControlType.ProgrammaticName.Replace('ControlType.',''), $c.Name } } | Select-Object -Unique)
 Log ("UIA elements total=$($all.Count) named=$($named.Count)")
 $named | Set-Content -Path (Join-Path $Out 'uia-named.txt') -Encoding UTF8
-foreach ($n in 'Molecules','BioArt','Research','Memory','Export SVG') {
+foreach ($n in 'Molecules','BioArt','Research','Memory','Load renders') {
     $el = Find-Named $n $CT::Button 3
     Log ("button '{0}': {1}" -f $n, $(if ($el) { 'found, enabled=' + $el.Current.IsEnabled } else { 'MISSING' }))
 }
+$stage = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition ($AE::ControlTypeProperty, $CT::Text))) |
+    Where-Object { $_.Current.Name -like 'No render selected*' } | Select-Object -First 1
+Log ("empty Molecules stage exposed: " + [bool]$stage + " (no packaged example)")
+if (Find-Named 'Export SVG' $CT::Button 1) { throw 'The removed example collage is still present' }
 
 # ---- 3. visual capture: PrintWindow and physical screen pixels ----------------------
 function Capture-Window($path) {
@@ -117,13 +130,17 @@ function Capture-Window($path) {
 Capture-Window (Join-Path $Out 'printwindow.png')
 
 # ---- 4. real download through the WebView (blob: <a download>) ----------------------
+$export = $null
 if (-not $SkipDownload) {
-$export = Find-Named 'Export SVG' $CT::Button 10
-if (-not $export) { throw 'Export SVG button not exposed through UIA' }
+    # Any "Download <asset>" button of a shown render; none exists on the empty workbench.
+    $export = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition ($AE::ControlTypeProperty, $CT::Button))) |
+        Where-Object { $_.Current.Name -like 'Download *' } | Select-Object -First 1
+    if (-not $export) { Log 'download step skipped: no render is shown, so there is nothing to download (expected on the empty workbench)' }
+}
+if ($export) {
 $before = @(Get-ChildItem -LiteralPath $Downloads -File | ForEach-Object { $_.FullName })
 $t0 = Get-Date
-$export.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-Log 'Export SVG invoked through UIA InvokePattern'
+Invoke-Element $export ('download control ' + $export.Current.Name)
 $new = $null; $until = (Get-Date).AddSeconds(30)
 while ((Get-Date) -lt $until) {
     $candidates = @(Get-ChildItem -LiteralPath $Downloads -File | Where-Object { $before -notcontains $_.FullName -and $_.Extension -notin '.crdownload','.tmp' -and $_.LastWriteTime -ge $t0.AddSeconds(-2) })
@@ -144,11 +161,13 @@ Log ("top-level windows of desktop pid after download: " + ([Win]::TopLevel([uin
 
 # ---- 5. external link (target=_blank) through the native shell ----------------------
 if (-not $SkipExternal) {
+    $bioart = Find-Named 'BioArt' $CT::Button 5
+    if ($bioart) { Invoke-Element $bioart 'BioArt workspace button'; Start-Sleep -Milliseconds 800 }
     $link = $null; $until = (Get-Date).AddSeconds(10)
     while (-not $link -and (Get-Date) -lt $until) {
         $link = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
             (New-Object System.Windows.Automation.PropertyCondition ($AE::ControlTypeProperty, $CT::Hyperlink))) |
-            Where-Object { $_.Current.Name -like '*RCSB PDB*' } | Select-Object -First 1
+            Where-Object { $_.Current.Name -like 'Open NIH search*' } | Select-Object -First 1
         if (-not $link) { Start-Sleep -Milliseconds 300 }
     }
     if ($link) {
@@ -157,15 +176,14 @@ if (-not $SkipExternal) {
         $t1 = Get-Date
         $childrenBefore = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($proc.Id)" | ForEach-Object { $_.ProcessId })
         $windowsBefore = @([Win]::TopLevel([uint32]$proc.Id))
-        try { $link.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Log 'hyperlink invoked (InvokePattern)' }
-        catch { $link.SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); Log "hyperlink activated with Enter after focus ($($_.Exception.Message))" }
+        Invoke-Element $link 'hyperlink' 
         Start-Sleep -Seconds 4
         $childrenAfter = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($proc.Id)" | Where-Object { $childrenBefore -notcontains $_.ProcessId })
         $windowsAfter = @([Win]::TopLevel([uint32]$proc.Id) | Where-Object { $windowsBefore -notcontains $_ })
         $browsers = @(Get-CimInstance Win32_Process | Where-Object { $_.CreationDate -and $_.CreationDate -gt $t1 -and $_.Name -match 'msedge|chrome|firefox|brave|opera|vivaldi' })
         Log ("after link: new desktop child processes=" + (($childrenAfter | ForEach-Object { $_.Name + ':' + $_.ProcessId }) -join ',') +
              " new desktop windows=" + ($windowsAfter -join ',') + " new browser processes=" + $browsers.Count)
-    } else { Log 'RCSB hyperlink not exposed through UIA' }
+    } else { Log 'NIH search hyperlink not exposed through UIA' }
 }
 
 # ---- 6. close through the window and verify the tree exits --------------------------

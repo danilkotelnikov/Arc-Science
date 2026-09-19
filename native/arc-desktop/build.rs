@@ -8,6 +8,7 @@ fn main() {
     println!("cargo:rerun-if-changed=assets/arc-science.rc");
     println!("cargo:rerun-if-changed=assets/arc-science.ico");
     println!("cargo:rerun-if-env-changed=ARC_RC_EXE");
+    println!("cargo:rerun-if-env-changed=PATH");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
@@ -47,9 +48,10 @@ fn resource_compiler() -> Option<PathBuf> {
     if Command::new("rc.exe").arg("/?").output().is_ok() {
         return Some(PathBuf::from("rc.exe"));
     }
-    let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
-        Ok("aarch64") => "arm64",
-        Ok("x86") => "x86",
+    // The compiler must run on the build host, whatever the target is.
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86" => "x86",
         _ => "x64",
     };
     let kits = std::env::var_os("ProgramFiles(x86)")

@@ -64,7 +64,10 @@ production readiness is a set of evidence-backed gates, not a styling label.
 
 - Decisions and loop order: [program](2026-09-19-program.md). The original GPT
   conversations were read this time (built-in browser); links and the start prompt
-  are cited there.
+  are cited there. Per-loop record and evaluations: [program record](2026-09-19-program-record.md).
+- Loop 1 (identity): `Arc Science.exe` with the Snöggo mark (white puddles) as window,
+  executable and header icon. Loop 2 (empty workbench): packaged 1DQJ example removed;
+  Molecules opens on the operator's own renders. Sol: accept-with-findings, all addressed.
 
 ## External limits retained
 

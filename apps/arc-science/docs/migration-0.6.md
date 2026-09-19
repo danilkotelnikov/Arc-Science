@@ -1,8 +1,9 @@
 # Arc Science 0.6.0 development
 
 Version 0.6.0 adds the NIH BioArt workflow to the HeroUI application. It does not
-change the frozen 1DQJ example, the scientific calculation code, or the Rust
-launcher protocol.
+change the scientific calculation code or the Rust launcher protocol. (The frozen
+1DQJ example that 0.6.0 originally kept was removed on 2026-09-19; the Molecules
+workspace now opens on the operator's own renders.)
 
 ## BioArt workspace
 

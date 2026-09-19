@@ -125,13 +125,13 @@ See [provider behavior](apps/arc-science/docs/bioart.md) and the separate
 
 ## Molecular workspace
 
-![1DQJ antibody–antigen illustrative collage](apps/arc-science/src/arc_science/example_assets/1dqj/collage.png)
-
-The default is frozen candidate 03: HyHEL-63 Fab author chains A+B with lysozyme C, RCSB 1DQJ, model 1, identity biological assembly 1. The original collage and annotated full-complex/interface/rotated SVG views support real zoom and export. Native transparent PNG views are separate **unlabeled** downloads.
-
-The complete CSV contains 49 residue pairs at minimum heavy-atom distance ≤4 Å. This geometric criterion does not establish hydrogen bonds, affinity or energetic hotspots. The surface is an approximate Gaussian atomic envelope, not a solvent-excluded surface; the rotated detail shows only the three nearest pairs.
-
-Public downloads include coordinates, scene specification, captured worker and integrity/review metadata. Large editable `.blend` scenes remain in the separately delivered bundle. The authenticated **Render your structure locally** panel accepts coordinate files, tracks a bounded render job, and provides its white collage and provenance downloads. Set the server's Blender runtime as described in [local rendering setup](docs/arc-science/molecular-workbench-2026-09-18.md).
+The workspace opens empty, on the operator's own renders; no example collage is
+packaged (the frozen 1DQJ / HyHEL-63 example was removed on 2026-09-19). The
+authenticated **Render your structure locally** form accepts coordinate files and
+author chains, tracks a bounded render job, and shows its white collage with
+provenance downloads (contacts CSV at minimum heavy-atom distance ≤4 Å — a geometric
+criterion that establishes neither hydrogen bonds nor affinity; a Gaussian atomic
+envelope, not a solvent-excluded surface). Set the server's Blender runtime as described in [local rendering setup](docs/arc-science/molecular-workbench-2026-09-18.md).
 
 To render your own authorized coordinates, install `'.[structure]'` in the app environment and prepare a **separate** Blender Python runtime using [the rendering setup](apps/arc-science/docs/vector-rendering.md) and [the historical Blender lock](apps/arc-science/requirements-blender.lock). Then:
 

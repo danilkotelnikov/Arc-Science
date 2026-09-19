@@ -141,7 +141,9 @@ def test_completion_exposes_only_authenticated_digest_bound_assets(tmp_path, run
             assert len(download.content) == asset['bytes']
             if name.endswith('.svg'):
                 assert 'attachment' in download.headers['content-disposition']
-                assert 'sandbox' in download.headers['content-security-policy']
+                policy = download.headers['content-security-policy']
+                # Hybrid SVGs may embed their own rasters but never run scripts or load remotely.
+                assert "default-src 'none'" in policy and 'img-src data:' in policy and 'sandbox' in policy
         assert client.get(f'{PREFIX}/renders/{row["id"]}/assets/worker.log', headers=AUTH).status_code == 404
         assert client.get(f'{PREFIX}/renders/{row["id"]}/assets/../job.json', headers=AUTH).status_code == 404
         assert client.get(PREFIX + '/renders', headers=AUTH).json()[0]['id'] == row['id']

@@ -15,8 +15,8 @@ arc-science token --data ./data
 ```
 
 Open http://127.0.0.1:8080/ for the compiled HeroUI workbench. The unchanged
-diagnostic operations remain available at /diagnostics. The 1DQJ example is
-public; BioArt, Research missions, and artifacts require the local operator token.
+diagnostic operations remain available at /diagnostics. No example collage is
+served; BioArt, Research missions, renders and artifacts require the local operator token.
 The BioArt workspace searches the verified cache by default. Its network checkbox
 authorizes only the current search, inspection, or fetch request.
 
