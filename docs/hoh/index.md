@@ -60,6 +60,12 @@ production readiness is a set of evidence-backed gates, not a styling label.
   documented. Memory crate 35, Python memory 21 + 2 opt-in scale tests.
   Still open: real embedder and semantic quality.
 
+## Program — 2026-09-19, Claude (identity, empty workbench, Playwright, OAuth, HoH a–d, humanizer)
+
+- Decisions and loop order: [program](2026-09-19-program.md). The original GPT
+  conversations were read this time (built-in browser); links and the start prompt
+  are cited there.
+
 ## External limits retained
 
 Claude pairing previously failed with `Credit balance is too low` before inference.
