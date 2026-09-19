@@ -376,6 +376,6 @@ def test_authorized_evidence_route_and_verification_graph_check(tmp_path):
         graph = client.get(f"/api/missions/{mid}/evidence", headers=headers)
         assert graph.status_code == 200
         assert set(graph.json()) == {"nodes", "edges", "conflicts"}
-        verification = client.get(f"/api/missions/{mid}/verify", headers=headers).json()
+        verification = client.post(f"/api/missions/{mid}/verify", headers=headers).json()
         assert verification["evidence_graph_valid"] is True
         assert set(verification["evidence_graph"]) == {"nodes", "edges", "conflicts"}
