@@ -31,6 +31,12 @@ from .exploration.catalog import TrustedPublicTools
 VERSION=__version__
 
 
+class ProseText(BaseModel):
+    text:str=Field(min_length=1,max_length=20000)
+
+class ProseDetect(ProseText):
+    allow_egress:bool=False
+
 class ChangeDeclaration(BaseModel):
     kind:str=Field(min_length=1,max_length=40)
     declared_effects:list[str]=Field(default_factory=list,max_length=5)
@@ -193,6 +199,34 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     app.state.molecular_jobs=molecular_jobs
     app.include_router(molecular_jobs.router)
 
+    from . import prose as prose_module
+    detector=prose_module.Detector(root)
+    app.state.detector=detector
+
+    # Prose control: a rule-based local rewrite that never touches scientific content,
+    # and third-party detection that needs consent on every request because the text
+    # leaves this machine. Neither result is an authorship or validity claim.
+    @app.get('/api/prose/rules',dependencies=[Depends(authorized)])
+    async def prose_rules():
+        return {'rules':list(prose_module.RULE_TABLE),'rules_version':prose_module.RULES_VERSION,
+                'protected_classes':[name for name,_ in prose_module.PROTECTED],'protection_version':prose_module.PROTECTION_VERSION,
+                **detector.capabilities()}
+
+    def prose_error(refused):
+        status={'consent_required':422,'bounds':422,'empty':422,'too_long':422,'disabled':409,'busy':409,
+                'preservation_failed':409}.get(refused.code,502)
+        raise HTTPException(status,{'code':refused.code,'detail':str(refused),'spans':list(refused.spans)})
+
+    @app.post('/api/prose/rewrite',dependencies=[Depends(authorized)])
+    async def prose_rewrite(body:ProseText):
+        try:return prose_module.rewrite(body.text)
+        except prose_module.ProseRefused as refused:prose_error(refused)
+
+    @app.post('/api/prose/detect',dependencies=[Depends(authorized)])
+    async def prose_detect(body:ProseDetect):
+        try:return await detector.detect(body.text,allow_egress=body.allow_egress)
+        except prose_module.ProseRefused as refused:prose_error(refused)
+
     from .memory.web import MemoryRoutes
     worker_path=os.environ.get('ARC_MEMORY_WORKER')
     memory_routes=MemoryRoutes(root,Path(worker_path) if worker_path else None,authorized)
@@ -302,6 +336,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 'public_network_tools_enabled':os.environ.get('ARC_PUBLIC_READS')=='1',
                 'biorender':biorender,
                 'blender':'batch adapter retained; renderer availability must be checked separately',
+                'prose':detector.capabilities(),
                 'publication_authorization':False}
 
     @app.post('/api/missions',status_code=201,dependencies=[Depends(authorized)])

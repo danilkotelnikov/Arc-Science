@@ -2,7 +2,7 @@
 import {test, expect} from '@playwright/test';
 import {openWorkspace, watchForTokenLeaks} from './fixtures.js';
 
-test('the workbench opens with its mark, four workspaces and no packaged example', async ({page}) => {
+test('the workbench opens with its mark, five workspaces and no packaged example', async ({page}) => {
   const requested = [];
   page.on('request', (request) => requested.push(request.url()));
   await page.goto('/');
@@ -12,7 +12,7 @@ test('the workbench opens with its mark, four workspaces and no packaged example
   await expect(mark).toBeVisible();
   expect(await mark.evaluate((img) => img.complete && img.naturalWidth > 0)).toBe(true);
   const nav = page.getByRole('navigation', {name: 'Workspaces'});
-  for (const name of ['Molecules', 'BioArt', 'Research', 'Memory']) {
+  for (const name of ['Molecules', 'BioArt', 'Research', 'Memory', 'Prose']) {
     await expect(nav.getByRole('button', {name})).toBeEnabled();
   }
   // Molecules is the landing workspace and it is empty: the operator's renders only.
