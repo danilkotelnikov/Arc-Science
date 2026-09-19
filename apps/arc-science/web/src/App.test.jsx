@@ -121,8 +121,8 @@ test('a blocked release ledger explains itself and withholds the capsule until v
 test('repair cycles are listed with their own outcomes and superseded artifacts say so',async()=>{
   const first='a'.repeat(64),second='b'.repeat(64);
   selectedRow.state.artifacts=[{digest:first,source_observation_id:'obs-1',media_type:'image/png',preset:'default',repair_of:null},{digest:second,source_observation_id:'obs-1',media_type:'image/png',preset:'spacious',repair_of:first}];
-  selectedRow.state.repairs=[{cycle:1,round:0,preset:'spacious',trigger_report_digest:'c'.repeat(64),addressed:['legibility'],superseded_digests:[first],artifact_digests:[second],outcome:'adequate',reason:''},
-    {cycle:2,round:0,preset:'large_text',trigger_report_digest:'d'.repeat(64),addressed:['labels'],superseded_digests:[second],artifact_digests:[],outcome:'blocked',reason:'The large_text preset rendered an image that already exists; the repair changed nothing.'}];
+  selectedRow.state.repairs=[{cycle:1,round:0,policy_digest:'e'.repeat(64),preset:'spacious',trigger_report_digest:'c'.repeat(64),addressed:['legibility'],superseded_digests:[first],artifact_digests:[second],outcome:'adequate',reason:''},
+    {cycle:2,round:0,policy_digest:'e'.repeat(64),preset:'large_text',trigger_report_digest:'d'.repeat(64),addressed:['labels'],superseded_digests:[second],artifact_digests:[],outcome:'blocked',reason:'The large_text preset rendered an image that already exists; the repair changed nothing.'}];
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
   await user.type(screen.getByLabelText('Local operator token'),'private');
   await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));

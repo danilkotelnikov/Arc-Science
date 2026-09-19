@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from ..contracts import canonical, digest
 from .catalog import validate_arguments, validate_catalog
 from .models import Assessed, Branch, MissionState, Proposal, Reconciliation
+from .repair import PRESENTATION, PRESET_SEQUENCE
 from .vision import current_artifacts, validate_report, visual_context
 
 
@@ -174,17 +175,50 @@ def validate_evidence(state: MissionState) -> None:
         originals = tuple(a.digest for a in state.artifacts if a.round == round_number and a.repair_of is None)
         batches[round_number] = {originals} | {cycle.artifact_digests for cycle in state.repairs
                                                if cycle.round == round_number and cycle.outcome != "blocked"}
+    _unique([cycle.superseded_digests for cycle in state.repairs], "Duplicate repair of one batch")
+    reports_by_digest = {report.digest: report for report in state.visual_reports}
+    rendered_by_cycles = set()
     for index, cycle in enumerate(state.repairs):
-        if cycle.cycle != len([c for c in state.repairs[:index] if c.round == cycle.round]) + 1:
+        earlier = [c for c in state.repairs[:index] if c.round == cycle.round]
+        if cycle.cycle != len(earlier) + 1 or cycle.preset != PRESET_SEQUENCE[cycle.cycle - 1]:
             raise ValueError("Repair cycles are not consecutive")
-        if cycle.trigger_report_digest not in {report.digest for report in state.visual_reports}:
-            raise ValueError("Repair cycle does not bind to a recorded visual report")
+        if any(c.policy_digest != cycle.policy_digest for c in earlier):
+            raise ValueError("Repair cycles of one round ran under different policies")
+        # The trigger is the accepted issues report over exactly the superseded batch, with
+        # only non-blocking presentation findings, and the cycle names those categories.
+        trigger = reports_by_digest.get(cycle.trigger_report_digest)
+        if (trigger is None or trigger.round != cycle.round or trigger.reviewed_digests != cycle.superseded_digests
+                or trigger.verdict != "issues"):
+            raise ValueError("Repair cycle does not bind to an issues report over the superseded batch")
+        categories = tuple(sorted({finding.category for finding in trigger.findings}))
+        if (any(finding.severity == "blocking" for finding in trigger.findings)
+                or any(category not in PRESENTATION for category in categories) or cycle.addressed != categories):
+            raise ValueError("Repair cycle was triggered by findings it may not repair")
         if cycle.superseded_digests not in batches.get(cycle.round, set()):
             raise ValueError("Repair cycle does not supersede a reviewed batch")
-        if cycle.outcome != "blocked" and any(
-                artifacts.get(d) is None or artifacts[d].repair_of != s or artifacts[d].preset != cycle.preset
-                for d, s in zip(cycle.artifact_digests, cycle.superseded_digests)):
+        # The outcome is exactly what the fresh review of the rendered batch recorded.
+        fresh = next((record for record in state.vision_records
+                      if record.round == cycle.round and record.reviewed_digests == cycle.artifact_digests), None)
+        if cycle.outcome == "blocked":
+            if cycle.artifact_digests or any(a.repair_of in cycle.superseded_digests for a in state.artifacts):
+                raise ValueError("A blocked repair cycle cannot own rendered artifacts")
+            continue
+        if any(artifacts.get(d) is None or artifacts[d].repair_of != s or artifacts[d].preset != cycle.preset
+               for d, s in zip(cycle.artifact_digests, cycle.superseded_digests)):
             raise ValueError("Repair cycle does not bind to its rendered artifacts")
+        rendered_by_cycles.update(cycle.artifact_digests)
+        if cycle.outcome == "pending":
+            if fresh is not None and fresh.status != "reserved":
+                raise ValueError("A pending repair cycle already has a finished review")
+        elif cycle.outcome == "rejected":
+            if fresh is None or fresh.status != "rejected":
+                raise ValueError("A rejected repair cycle needs a rejected review of its renders")
+        else:
+            report = reports_by_digest.get(fresh.report_digest) if fresh is not None and fresh.status == "accepted" else None
+            if report is None or report.verdict != cycle.outcome:
+                raise ValueError("Repair cycle outcome does not match the accepted review of its renders")
+    if any(a.repair_of and a.digest not in rendered_by_cycles for a in state.artifacts):
+        raise ValueError("A repaired artifact is not owned by a repair cycle")
 
     report_keys = [(report.candidate_digest, report.round) for report in state.visual_reports]
     _unique(report_keys, "Duplicate visual report identity")

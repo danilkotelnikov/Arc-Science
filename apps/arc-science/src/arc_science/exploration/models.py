@@ -230,6 +230,7 @@ class RepairCycle(Record):
     `blocked` with the reason the cycle could not proceed; nothing is inferred."""
     cycle: int = Field(ge=1, le=2)
     round: int = Field(ge=0)
+    policy_digest: Digest
     preset: RenderPreset
     trigger_report_digest: Digest
     addressed: tuple[str, ...] = Field(max_length=32)

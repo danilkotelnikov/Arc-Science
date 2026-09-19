@@ -157,7 +157,8 @@ def test_a_render_that_repeats_an_existing_image_blocks_the_cycle(monkeypatch):
     validate_evidence(state)
 
 
-def test_resume_after_a_repair_render_reviews_it_once_and_never_renders_it_again():
+def pending_repair_checkpoint(agent=None):
+    """The state committed right after a repair render, before its review."""
     class Interrupted(RuntimeError):
         pass
 
@@ -168,11 +169,16 @@ def test_resume_after_a_repair_render_reviews_it_once_and_never_renders_it_again
         if any(e.kind == 'artifact_repaired' for e in state.events) and len(state.vision_records) == 1:
             raise Interrupted()
 
-    agent = Scripted(('issues', 'legibility'), ('adequate', None))
     request = MissionRequest(goal='Inspect the fixture', vision_review=True)
     with pytest.raises(Interrupted):
-        asyncio.run(explore(request, agent, emit=emit))
-    checkpoint = captured[-1]
+        asyncio.run(explore(request, agent or Scripted(('issues', 'legibility'), ('adequate', None)), emit=emit))
+    return captured[-1]
+
+
+def test_resume_after_a_repair_render_reviews_it_once_and_never_renders_it_again():
+    agent = Scripted(('issues', 'legibility'), ('adequate', None))
+    request = MissionRequest(goal='Inspect the fixture', vision_review=True)
+    checkpoint = pending_repair_checkpoint(agent)
     assert len(checkpoint.artifacts) == 2 and checkpoint.repairs[0].outcome == 'pending'
     validate_evidence(checkpoint)
     resumed = asyncio.run(explore(request, agent, initial=checkpoint.model_copy(update={'status': 'paused'})))
@@ -192,8 +198,10 @@ def test_the_demo_vision_seat_is_scripted_and_runs_exactly_one_repair_cycle():
     assert verify_capsule(export_capsule(request, state))['reproduction_passed']
 
 
-def test_repair_plan_is_pure_and_ordered():
+def test_repair_plan_is_pure_ordered_and_bound_to_its_policy():
     class R:
+        prompt_version = VISUAL_PROMPT_VERSION
+
         def __init__(self, verdict, findings):
             self.verdict, self.findings = verdict, findings
 
@@ -205,9 +213,65 @@ def test_repair_plan_is_pure_and_ordered():
     assert repair.repair_plan(R('issues', [F('legibility'), F('coherence')]), (), 0)[0] is None
     assert repair.repair_plan(R('adequate', []), (), 0)[0] is None
     from arc_science.exploration.models import RepairCycle
-    one = RepairCycle(cycle=1, round=0, preset='spacious', trigger_report_digest='a' * 64, addressed=('legibility',),
-                      superseded_digests=('b' * 64,), artifact_digests=('c' * 64,), outcome='issues')
+    one = RepairCycle(cycle=1, round=0, policy_digest=repair.POLICY_DIGEST, preset='spacious', trigger_report_digest='a' * 64,
+                      addressed=('legibility',), superseded_digests=('b' * 64,), artifact_digests=('c' * 64,), outcome='issues')
     assert repair.repair_plan(R('issues', [F('legibility')]), (one,), 0) == ('large_text', '')
     two = one.model_copy(update={'cycle': 2, 'preset': 'large_text', 'superseded_digests': ('c' * 64,), 'artifact_digests': ('d' * 64,)})
     assert 'budget' in repair.repair_plan(R('issues', [F('legibility')]), (one, two), 0)[1]
     assert repair.repair_plan(R('issues', [F('legibility')]), (one, two), 1) == ('spacious', '')
+    # A review made under an earlier prompt, or a cycle that ran under another policy, ends automation.
+    old_prompt = R('issues', [F('legibility')])
+    old_prompt.prompt_version = 'arc-visual-review-1'
+    assert 'prompt' in repair.repair_plan(old_prompt, (), 0)[1]
+    foreign = one.model_copy(update={'policy_digest': 'f' * 64})
+    assert 'policy changed' in repair.repair_plan(R('issues', [F('legibility')]), (foreign,), 1)[1]
+    assert repair.POLICY['version'] == 'arc-figure-repair-1' and repair.POLICY['prompt_version'] == VISUAL_PROMPT_VERSION
+
+
+def test_the_evidence_graph_rejects_a_repair_history_the_reviews_do_not_support():
+    agent = Scripted(('issues', 'legibility'), ('adequate', None))
+    request, state = run(agent)
+    validate_evidence(state)
+    cycle = state.repairs[0]
+
+    def rejects(message, **cycle_updates):
+        forged = state.model_copy(update={'repairs': (cycle.model_copy(update=cycle_updates),)})
+        with pytest.raises(ValueError, match=message):
+            validate_evidence(forged)
+
+    # The outcome must be the fresh review's own verdict over exactly the rendered batch.
+    rejects('outcome does not match', outcome='issues')
+    rejects('outcome does not match', outcome='uncertain')
+    rejects('rejected review', outcome='rejected')
+    rejects('already has a finished review', outcome='pending')
+    # The trigger must be the issues report over the superseded batch with only presentation findings.
+    rejects('issues report over the superseded batch', trigger_report_digest=state.visual_reports[1].digest)
+    rejects('findings it may not repair', addressed=('layout',))
+    rejects('not consecutive', preset='large_text')
+    rejects('not consecutive', cycle=2)
+    # A cycle claiming to be blocked cannot own the renders that exist.
+    with pytest.raises(ValueError, match='cannot own rendered artifacts'):
+        validate_evidence(state.model_copy(update={'repairs': (cycle.model_copy(update={'outcome': 'blocked', 'reason': 'x', 'artifact_digests': ()}),)}))
+    # A repaired artifact without a cycle is an orphan, and a pending checkpoint cannot be promoted.
+    with pytest.raises(ValueError, match='not owned by a repair cycle'):
+        validate_evidence(state.model_copy(update={'repairs': ()}))
+    checkpoint = pending_repair_checkpoint()
+    assert checkpoint.repairs[0].outcome == 'pending' and validate_evidence(checkpoint) is None
+    promoted = checkpoint.model_copy(update={'repairs': (checkpoint.repairs[0].model_copy(update={'outcome': 'adequate'}),)})
+    with pytest.raises(ValueError, match='outcome does not match'):
+        validate_evidence(promoted)
+
+
+def test_the_default_preset_still_renders_the_pinned_bytes():
+    """Compatibility pin: artifacts persisted before repair cycles must reproduce byte
+    for byte, so the default preset is frozen to the digests recorded on 19 Sep 2026."""
+    import hashlib
+    from arc_science.exploration.artifacts import render_polynomial_plot
+    from arc_science.exploration.tools import execute_numeric, synthetic_data
+    points = synthetic_data(MissionRequest(goal='Inspect the fixture').seed)
+    pinned = {1: 'd6aef18c95db9a887c05e59989bf02e35b0f5e9a706962d200d71a74bc0405c7',
+              2: 'ec8d50a7da71ae384929c8648195288fc5be202e71234efaf09aac054b32ee8a'}
+    for degree, expected in pinned.items():
+        fit = execute_numeric('polynomial_fit', {'degree': degree}, points)
+        assert hashlib.sha256(render_polynomial_plot(points, fit)).hexdigest() == expected
+        assert render_polynomial_plot(points, fit, 'default') == render_polynomial_plot(points, fit)

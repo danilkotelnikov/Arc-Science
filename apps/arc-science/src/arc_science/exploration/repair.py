@@ -11,15 +11,27 @@ a human has to look.
 """
 from __future__ import annotations
 
+from ..contracts import digest
 from .models import RepairCycle, VisualReport
+from .vision import VISUAL_PROMPT_VERSION
 
 MAX_REPAIRS = 2
 PRESET_SEQUENCE = ('spacious', 'large_text')
 PRESENTATION = frozenset({'legibility', 'layout', 'labels', 'overlap', 'contrast', 'legend', 'ticks', 'size'})
+# The policy a cycle ran under is recorded on the cycle; a mission that already holds
+# cycles from another policy, or a review made under another prompt, gets no automatic
+# repair — a human decides whether the old evidence still applies.
+POLICY = {'version': 'arc-figure-repair-1', 'max_repairs': MAX_REPAIRS, 'presets': list(PRESET_SEQUENCE),
+          'presentation': sorted(PRESENTATION), 'prompt_version': VISUAL_PROMPT_VERSION}
+POLICY_DIGEST = digest(POLICY)
 
 
 def repair_plan(report: VisualReport, repairs: tuple[RepairCycle, ...], round: int) -> tuple[str | None, str]:
     """The preset for the next cycle, or None with the reason no cycle may run."""
+    if report.prompt_version != VISUAL_PROMPT_VERSION:
+        return None, 'The review was made under prompt ' + report.prompt_version + ', not the current one; no automatic repair.'
+    if any(cycle.policy_digest != POLICY_DIGEST for cycle in repairs):
+        return None, 'The repair policy changed after an earlier cycle; no automatic repair.'
     if report.verdict != 'issues':
         return None, 'Only an issues verdict is repairable; ' + report.verdict + ' needs human input.'
     if any(finding.severity == 'blocking' for finding in report.findings):

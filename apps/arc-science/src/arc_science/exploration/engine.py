@@ -10,7 +10,7 @@ from .models import (MissionRequest, MissionState, Branch, Proposal, Reconciliat
                      Observation, Assessed, Event, ModelRecord, VisionRecord, RepairCycle, VisualReport)
 from .tools import synthetic_data, execute_numeric, CATALOG, TOOL_VERSION
 from .artifacts import artifact_for_observation
-from .repair import repair_plan, with_outcome
+from .repair import POLICY_DIGEST as REPAIR_POLICY_DIGEST, repair_plan, with_outcome
 from .vision import VISUAL_PROMPT_VERSION, current_artifacts, required_visual_reason, visual_context, validate_report
 from .catalog import (BIORENDER_CATALOG, BUILTIN_CATALOG, PUBLIC_CATALOG, TrustedPublicTools,
                       trusted_replay, trusted_version, validate_arguments, validate_catalog)
@@ -254,7 +254,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                 # changed nothing, so the cycle is recorded as blocked instead.
                 sources={o.id:o for o in state.observations}
                 cycle=dict(cycle=len([c for c in state.repairs if c.round==state.round])+1,round=state.round,
-                    preset=preset,trigger_report_digest=report.digest,
+                    policy_digest=REPAIR_POLICY_DIGEST,preset=preset,trigger_report_digest=report.digest,
                     addressed=tuple(sorted({f.category for f in report.findings}))[:32],superseded_digests=batch_digests)
                 try:
                     repaired=tuple(artifact_for_observation(state.points,sources[a.source_observation_id],
