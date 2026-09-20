@@ -361,6 +361,7 @@ def probe_bench():
 # What a positive probe actually observed; an environment's existence is not the
 # package's, and a daemon's status is not a skill's.
 EVIDENCE = {'python': 'import', 'exe': 'executable', 'wsl_env': 'environment', 'wsl_exe': 'executable', 'bench': 'daemon'}
+INDIRECT = ('environment_seen', 'daemon_reachable', 'daemon_installed')
 
 
 def probe(entry):
@@ -411,9 +412,11 @@ class Catalogue:
                         result = {'present': False, 'detail': 'probe did not complete'}
                     return {**entry, **{k: v for k, v in result.items()}}
             entries = await asyncio.gather(*(one(entry) for entry in CATALOGUE))
+            # Indirect evidence is something seen (an environment, a daemon installed or
+            # reachable); an unavailable daemon observed nothing and counts as unprobed.
             counts = {'present': sum(1 for e in entries if e['present'] is True), 'absent': sum(1 for e in entries if e['present'] is False),
-                      'indirect': sum(1 for e in entries if e['present'] is None and e.get('observed')),
-                      'unprobed': sum(1 for e in entries if e['present'] is None and not e.get('observed')), 'total': len(entries)}
+                      'indirect': sum(1 for e in entries if e['present'] is None and e.get('observed') in INDIRECT),
+                      'unprobed': sum(1 for e in entries if e['present'] is None and e.get('observed') not in INDIRECT), 'total': len(entries)}
             self.cached = {'checked_at': int(time.time()), 'categories': CATEGORIES, 'counts': counts, 'entries': entries,
                            'scope': 'presence observed by probes (an import or an executable); an environment or a daemon seen is indirect evidence, '
                                     'not the package; never qualification, correctness or currency; nothing is installed',

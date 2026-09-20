@@ -328,6 +328,11 @@ def test_environment_and_daemon_probes_are_indirect_evidence_never_presence(monk
     stopped = c.probe({'id': 'boltz', 'probe': {'kind': 'bench'}})
     assert stopped['present'] is None and stopped['observed'] == 'daemon_installed'
     assert c.probe({'id': 'claude_science', 'probe': {'kind': 'bench'}})['present'] is False
+    # An unavailable daemon observed nothing: unprobed in the counts, not indirect evidence.
+    c._BENCH.update(at=0.0, value=None)
+    monkeypatch.setattr(c, '_run', lambda argv, timeout: subprocess.CompletedProcess(argv, 1, '', 'no daemon'))
+    unavailable = c.probe({'id': 'boltz', 'probe': {'kind': 'bench'}})
+    assert unavailable['present'] is None and unavailable['observed'] == 'daemon_unavailable' and 'daemon_unavailable' not in c.INDIRECT
     # A failed environment listing is cached for the window instead of being retried per entry.
     c._WSL_ENVS.update(at=0.0, value=c.UNSET)
     calls = []
