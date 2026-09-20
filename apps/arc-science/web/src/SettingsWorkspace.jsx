@@ -44,7 +44,7 @@ export default function SettingsWorkspace({token}) {
   async function save(signal) {
     const snap = await read('/settings', signal, 'PUT', {settings: draft, if_revision: snapshot.revision});
     setSnapshot(snap); setDraft(structuredClone(snap.settings));
-    setNotice('Saved. Applied live: ' + snap.applied_live.join(', ') + (snap.restart_required.length ? '; restart required for ' + snap.restart_required.join(', ') : '') + '.');
+    setNotice('Saved. Applied live: ' + snap.applied_live.join(', ') + '. Stored for later loops: ' + (snap.stored_pending || []).join(', ') + '.' + (snap.restart_required.length ? ' Restart required for ' + snap.restart_required.join(', ') + '.' : ''));
   }
   const dirty = snapshot && draft && JSON.stringify(draft) !== JSON.stringify(snapshot.settings);
   const set = (path, value) => setDraft(current => {
@@ -81,7 +81,7 @@ export default function SettingsWorkspace({token}) {
             <td><input aria-label={label + ' credential'} value={seat.credential} disabled={readOnly || seat.auth !== 'api_key'} onChange={e => set(['seats', role, 'credential'], e.target.value)} placeholder={role}/></td>
           </tr>; })}
         </tbody></table>
-        <p className="field-note">A credential is the name of a file stored by <code>arc-science credential</code>; a CLI login uses the provider's own command (claude, codex, gemini) with the account already signed in there.</p>
+        <p className="field-note">A credential names a file written by <code>arc-science credential --name NAME</code> (data/credentials/NAME.credential); a missing name is refused, never substituted. A CLI login uses the provider's own command with the account already signed in there. Effort is stored now and applied by the transports in the next loop.</p>
         <h2>Providers</h2>
         <table className="seats"><thead><tr><th>Provider</th><th>Endpoint</th><th>CLI</th><th>OpenClaw agent</th></tr></thead><tbody>
           {['anthropic', 'openai', 'gemini', 'openclaw'].map(name => { const p = draft.providers[name]; return <tr key={name}>

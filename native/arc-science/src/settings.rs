@@ -229,11 +229,7 @@ fn https_or_loopback(value: &str, what: &str, loopback_http: bool) -> Result<()>
     if value.starts_with("https://") && value.len() > 8 {
         return Ok(());
     }
-    if loopback_http
-        && (value.starts_with("http://127.0.0.1")
-            || value.starts_with("http://[::1]")
-            || value.starts_with("http://localhost"))
-    {
+    if loopback_http && is_loopback_http(value) {
         return Ok(());
     }
     Err(format!(
@@ -245,6 +241,38 @@ fn https_or_loopback(value: &str, what: &str, loopback_http: bool) -> Result<()>
         }
     )
     .into())
+}
+
+/// `http://` with an authority that is exactly a loopback host (with an optional
+/// port): `localhost.evil.example` or `127.0.0.1.evil.example` are not loopback.
+fn is_loopback_http(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = if let Some(bracketed) = authority.strip_prefix('[') {
+        // "[::1]" or "[::1]:port" and nothing else after the bracket.
+        let Some((inside, after)) = bracketed.split_once(']') else {
+            return false;
+        };
+        if !(after.is_empty()
+            || after
+                .strip_prefix(':')
+                .is_some_and(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())))
+        {
+            return false;
+        }
+        inside
+    } else {
+        authority.rsplit_once(':').map_or(authority, |(h, port)| {
+            if port.chars().all(|c| c.is_ascii_digit()) {
+                h
+            } else {
+                authority
+            }
+        })
+    };
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
 impl Settings {
@@ -415,12 +443,15 @@ impl Settings {
     }
 
     /// Validate a whole replacement document and write it if the caller saw the
-    /// current revision. Returns the new snapshot.
+    /// current revision. Returns the new snapshot. The read, the check and the
+    /// write happen under a lock file, so two concurrent replacements cannot both
+    /// pass the check on one revision.
     pub fn replace(
         project: &Path,
         document: &str,
         if_revision: Option<&str>,
     ) -> Result<(Self, Vec<u8>)> {
+        let _lock = Lock::acquire(project)?;
         let (_, current) = Self::load_or_create(project)?;
         if let Some(expected) = if_revision
             && expected != revision(&current)
@@ -436,6 +467,53 @@ impl Settings {
         let content = toml::to_string_pretty(&settings)?;
         write_atomically(project, content.as_bytes())?;
         Ok((settings, content.into_bytes()))
+    }
+}
+
+/// An exclusive-create lock file beside the settings; removed on drop. A lock older
+/// than 30 s belongs to a dead process and is taken over.
+struct Lock(std::path::PathBuf);
+
+impl Lock {
+    fn acquire(project: &Path) -> Result<Self> {
+        let path = project.join(format!("{SETTINGS_FILE}.lock"));
+        let started = std::time::Instant::now();
+        loop {
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    use std::io::Write;
+                    let _ = write!(file, "{}", std::process::id());
+                    return Ok(Self(path));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if let Ok(meta) = fs::metadata(&path)
+                        && meta
+                            .modified()
+                            .ok()
+                            .and_then(|m| m.elapsed().ok())
+                            .is_some_and(|age| age.as_secs() > 30)
+                    {
+                        let _ = fs::remove_file(&path);
+                        continue;
+                    }
+                    if started.elapsed() > std::time::Duration::from_secs(5) {
+                        return Err("settings are locked by another change; try again".into());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(15));
+                }
+                Err(e) => return Err(format!("Cannot lock settings: {e}").into()),
+            }
+        }
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
     }
 }
 
@@ -610,6 +688,27 @@ mod tests {
             enabled: true,
         });
         s.validate().unwrap();
+        for deceptive in [
+            "http://localhost.evil.example/mcp",
+            "http://127.0.0.1.evil.example/",
+            "http://localhost@evil/",
+            "http://[::1]x/",
+        ] {
+            s.mcp_servers[0].url = deceptive.into();
+            assert!(
+                s.validate().is_err(),
+                "{deceptive} must not pass as loopback"
+            );
+        }
+        for genuine in [
+            "http://localhost:9000/mcp",
+            "http://[::1]:9000/",
+            "http://127.0.0.1/",
+        ] {
+            s.mcp_servers[0].url = genuine.into();
+            s.validate().unwrap();
+        }
+        s.mcp_servers[0].url = "http://127.0.0.1:9000/mcp".into();
         s.mcp_servers.push(s.mcp_servers[0].clone());
         assert!(s.validate().unwrap_err().to_string().contains("duplicate"));
         s.mcp_servers.pop();
@@ -620,6 +719,34 @@ mod tests {
                 .to_string()
                 .contains("needs a command")
         );
+    }
+
+    #[test]
+    fn concurrent_replacements_on_one_revision_let_exactly_one_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base, bytes) = Settings::load_or_create(dir.path()).unwrap();
+        let seen = revision(&bytes);
+        let handles: Vec<_> = (0..6)
+            .map(|i| {
+                let (project, seen, mut doc) =
+                    (dir.path().to_path_buf(), seen.clone(), base.clone());
+                std::thread::spawn(move || {
+                    doc.blender.default_preset = format!("preset_{i}");
+                    Settings::replace(&project, &serde_json::to_string(&doc).unwrap(), Some(&seen))
+                        .is_ok()
+                })
+            })
+            .collect();
+        let successes = handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .filter(|ok| *ok)
+            .count();
+        assert_eq!(
+            successes, 1,
+            "one writer wins, the rest see a stale revision"
+        );
+        assert!(!dir.path().join("settings.toml.lock").exists());
     }
 
     #[test]

@@ -75,7 +75,7 @@ def main(argv=None):
     serve=commands.add_parser('serve');serve.add_argument('--host',default='127.0.0.1');serve.add_argument('--port',type=int,default=8080)
     serve.add_argument('--data',type=Path,default=Path(os.environ.get('ARC_DATA_DIR','./data')))
     show=commands.add_parser('token',help='Show the local operator token');show.add_argument('--data',type=Path,default=Path(os.environ.get('ARC_DATA_DIR','./data')))
-    cred=commands.add_parser('credential',help='Store a provider credential locally, outside prompts');cred.add_argument('--data',type=Path,default=Path(os.environ.get('ARC_DATA_DIR','./data')));cred.add_argument('--name',choices=['planner','reviewer','vision','biorender'],default='planner')
+    cred=commands.add_parser('credential',help='Store a provider credential locally, outside prompts');cred.add_argument('--data',type=Path,default=Path(os.environ.get('ARC_DATA_DIR','./data')));cred.add_argument('--name',default='planner',help='planner, reviewer, falsifier, vision, biorender, or any name a seat refers to')
     demo=commands.add_parser('fixture');demo.add_argument('--output',type=Path,default=Path('./fixture-output'));demo.add_argument('--seed',type=int,default=17)
     verify=commands.add_parser('verify');verify.add_argument('capsule',type=Path)
     val=commands.add_parser('validate');val.add_argument('--output',type=Path,default=Path('./reproducibility.json'))
@@ -134,8 +134,10 @@ def main(argv=None):
         if args.command=='credential':
             value=getpass.getpass('Provider credential (input hidden): ').strip()
             if not value or len(value)>8192:raise ValueError('Invalid credential length')
-            args.data.mkdir(parents=True,exist_ok=True,mode=0o700)
-            path=args.data/(args.name+'.token');path.write_text(value+'\n');path.chmod(0o600)
+            from .service import credential_path
+            path=credential_path(args.name,args.data)
+            path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+            path.write_text(value+'\n');path.chmod(0o600)
             print('Stored at '+str(path.resolve()));return 0
         if args.command=='fixture':result=fixture(args.output,args.seed)
         elif args.command=='verify':result=verify_capsule(args.capsule.read_bytes())

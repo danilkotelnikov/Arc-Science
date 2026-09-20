@@ -74,7 +74,9 @@ def test_settings_are_read_from_the_supervisor_and_replaced_with_the_revision_se
         assert c.get('/api/settings').status_code == 401
         snap = c.get('/api/settings', headers=AUTH).json()
         assert snap['settings']['seats']['planner']['provider'] == '' and len(snap['revision']) == 64
-        assert 'seats' in snap['applied_live'] and snap['restart_required'] == []
+        assert 'seats' in snap['applied_live'] and 'seats.effort' in snap['stored_pending'] and snap['restart_required'] == []
+        # Without the revision that was read, a replacement is not accepted at all.
+        assert c.put('/api/settings', headers=AUTH, json={'settings': snap['settings']}).status_code == 422
         edited = snap['settings']
         edited['seats']['planner'].update(provider='openai', model='gpt-5.6', effort='high')
         # A stale revision is refused and changes nothing.
@@ -99,7 +101,7 @@ def test_without_a_supervisor_settings_are_unavailable_or_read_only(tmp_path, mo
     monkeypatch.delenv('ARC_SETTINGS_FILE', raising=False)
     with TestClient(app(tmp_path)) as c:
         assert c.get('/api/settings', headers=AUTH).status_code == 503
-        assert c.put('/api/settings', headers=AUTH, json={'settings': {}, 'if_revision': None}).status_code == 503
+        assert c.put('/api/settings', headers=AUTH, json={'settings': {}, 'if_revision': 'a' * 64}).status_code == 503
     file = tmp_path / 'settings.toml'
     file.write_text('schema_version = 1\n[seats.planner]\nprovider = "openai"\nmodel = "gpt-5.6"\n', encoding='utf-8')
     monkeypatch.setenv('ARC_SETTINGS_FILE', str(file))
@@ -135,6 +137,25 @@ def test_seats_configured_in_settings_drive_the_endpoints_and_the_falsifier_gets
     settings.replace(doc, None)
     with pytest.raises(ValueError, match='Gemini API seat is not available yet'):
         service.configured_endpoints()
+
+
+def test_a_named_credential_is_read_from_the_store_and_a_missing_name_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setenv('ARC_DATA_DIR', str(tmp_path))
+    monkeypatch.setenv('ARC_MODEL_TOKEN_FILE', str(tmp_path / 'legacy.token'))
+    (tmp_path / 'legacy.token').write_text('legacy-planner-secret\n')
+    path = service.credential_path('falsifier-key')
+    assert path == tmp_path / 'credentials' / 'falsifier-key.credential'
+    with pytest.raises(ValueError, match='No credential named falsifier-key'):
+        service._secret('falsifier-key')  # never the planner's legacy token
+    path.parent.mkdir()
+    path.write_text('the-falsifier-secret\n')
+    assert service._secret('falsifier-key') == 'the-falsifier-secret'
+    assert service._secret('planner') == 'legacy-planner-secret'  # legacy names keep their files
+    (tmp_path / 'credentials' / 'planner.credential').write_text('stored-planner-secret\n')
+    assert service._secret('planner') == 'stored-planner-secret'  # the store wins when present
+    for bad in ('../x', 'a b', ''):
+        with pytest.raises(ValueError):
+            service.credential_path(bad)
 
 
 def test_the_falsifier_seat_reaches_the_agents():

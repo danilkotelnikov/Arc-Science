@@ -42,7 +42,8 @@ class ProseDetect(ProseText):
 
 class SettingsReplace(BaseModel):
     settings:dict
-    if_revision:str|None=Field(default=None,max_length=64)
+    # The revision the operator read; without it a concurrent change would be overwritten.
+    if_revision:str=Field(min_length=64,max_length=64,pattern=r'^[0-9a-f]{64}$')
 
 class ChangeDeclaration(BaseModel):
     kind:str=Field(min_length=1,max_length=40)
@@ -157,9 +158,9 @@ def live_seats_ready():
     """Both model seats configured with whatever they need: token files, or the CLI."""
     first,second=configured_endpoints()
     if first.provider!='claude-code':
-        _secret('planner');_secret('reviewer')
         third=configured_falsifier_endpoint(first,second)
-        if third is not second:_secret(third.credential_ref)
+        for endpoint in (first,second,third):
+            _secret(endpoint.credential_ref)
     return first,second
 
 
@@ -184,13 +185,28 @@ def configured_vision_endpoint():
     return ModelEndpoint(provider=provider,endpoint=endpoint,model=model,credential_ref='vision')
 
 
+LEGACY_REFS=('planner','reviewer','vision','biorender')
+
+
+def credential_path(name,data=None):
+    """Where `arc-science credential --name NAME` stores a credential: one directory,
+    one file per name, never a key in the settings."""
+    if not name or len(name)>80 or not all(c.isalnum() or c in '._-' for c in name):
+        raise ValueError('A credential name is 1-80 characters of [A-Za-z0-9._-]')
+    return Path(data or os.environ.get('ARC_DATA_DIR','./data'))/'credentials'/(name+'.credential')
+
+
 def _secret(ref):
-    # A seat may name its own credential file (stored beside the data directory).
-    named=Path(os.environ.get('ARC_DATA_DIR','./data'))/'credentials'/(ref+'.credential')
-    if ref not in ('planner','reviewer','vision','biorender') and named.is_file():
+    # The credential store first; the legacy environment token files only for the
+    # four historical names. A custom name that has no file is an error, never a
+    # fall-through to another account's credential.
+    named=credential_path(ref)
+    if named.is_file():
         value=named.read_text().strip()
         if not value or len(value)>8192:raise ValueError('Provider token file is empty or exceeds limit')
         return value
+    if ref not in LEGACY_REFS:
+        raise ValueError(f'No credential named {ref}: store it with arc-science credential --name {ref}')
     if ref=='biorender':
         path=os.environ.get('ARC_BIORENDER_TOKEN_FILE')
     elif ref=='vision':
@@ -304,27 +320,36 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
 
     @app.post('/api/prose/detect',dependencies=[Depends(authorized)])
     async def prose_detect(body:ProseDetect):
+        # The settings switch is consumed at request time; the environment switch stays.
+        current=operator_settings.current()
+        if current is not None and not (current.get('prose') or {}).get('detection',True):
+            prose_error(prose_module.ProseRefused('disabled','Detection is switched off in the settings'))
         try:return await detector.detect(body.text,allow_egress=body.allow_egress)
         except prose_module.ProseRefused as refused:prose_error(refused)
 
     # Operator settings: the native supervisor owns the file; the service reads the
     # snapshot and forwards a whole replacement with the revision the operator saw.
-    LIVE=['seats','providers','mcp_servers','acp_agents','prose','blender','viewer']
+    # What the service consumes today, and what is stored for a later loop; the UI
+    # shows both so nothing reads as applied when it is not.
+    APPLIED={'applied_live':['seats','providers','prose'],
+             'stored_pending':['seats.effort','mcp_servers','acp_agents','blender','viewer'],'restart_required':[]}
+    settings_writer=asyncio.Semaphore(1)
     @app.get('/api/settings',dependencies=[Depends(authorized)])
     async def settings_snapshot():
         try:snap=await asyncio.to_thread(operator_settings.snapshot)
         except operator_settings.SettingsUnavailable as why:raise HTTPException(503,str(why)) from None
         except (operator_settings.SettingsRejected,ValueError,OSError,subprocess.SubprocessError) as why:raise HTTPException(500,str(why)[:700]) from None
-        return {**snap,'applied_live':LIVE,'restart_required':[]}
+        return {**snap,**APPLIED}
 
     @app.put('/api/settings',dependencies=[Depends(authorized)])
     async def settings_replace(body:SettingsReplace):
-        try:snap=await asyncio.to_thread(operator_settings.replace,body.settings,body.if_revision)
-        except operator_settings.SettingsUnavailable as why:raise HTTPException(503,str(why)) from None
-        except operator_settings.SettingsStale as why:raise HTTPException(409,str(why)) from None
-        except operator_settings.SettingsRejected as why:raise HTTPException(422,str(why)) from None
-        except (ValueError,OSError,subprocess.SubprocessError) as why:raise HTTPException(500,str(why)[:700]) from None
-        return {**snap,'applied_live':LIVE,'restart_required':[]}
+        async with settings_writer:
+            try:snap=await asyncio.to_thread(operator_settings.replace,body.settings,body.if_revision)
+            except operator_settings.SettingsUnavailable as why:raise HTTPException(503,str(why)) from None
+            except operator_settings.SettingsStale as why:raise HTTPException(409,str(why)) from None
+            except operator_settings.SettingsRejected as why:raise HTTPException(422,str(why)) from None
+            except (ValueError,OSError,subprocess.SubprocessError) as why:raise HTTPException(500,str(why)[:700]) from None
+        return {**snap,**APPLIED}
 
     from .memory.web import MemoryRoutes
     worker_path=os.environ.get('ARC_MEMORY_WORKER')

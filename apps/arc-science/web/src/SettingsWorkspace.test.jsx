@@ -25,7 +25,7 @@ beforeEach(() => {
       if (body.if_revision !== revision) return json({detail: 'Settings changed since they were read; reload and try again'}, 409);
       if (body.settings.seats.planner.provider && !body.settings.seats.planner.model) return json({detail: 'seats.planner.model must name one model when a provider is set'}, 422);
       stored = body.settings; revision = 'b'.repeat(64);
-      return json({settings: stored, revision, path: 'C:/ws/settings.toml', applied_live: ['seats', 'providers'], restart_required: []});
+      return json({settings: stored, revision, path: 'C:/ws/settings.toml', applied_live: ['seats', 'providers'], stored_pending: ['seats.effort'], restart_required: []});
     }
     throw new Error('Unexpected ' + path);
   }));
@@ -45,7 +45,7 @@ test('settings load with the token, edit locally, and save with the revision tha
   expect(screen.getByLabelText('Falsifier credential')).toBeDisabled();
   expect(screen.getByRole('button', {name: 'Save'})).toBeEnabled();
   await user.click(screen.getByRole('button', {name: 'Save'}));
-  expect(await screen.findByRole('status')).toHaveTextContent('Saved. Applied live: seats, providers.');
+  expect(await screen.findByRole('status')).toHaveTextContent('Saved. Applied live: seats, providers. Stored for later loops: seats.effort.');
   const put = calls.find(c => c.method === 'PUT');
   expect(put.auth).toBe('Bearer operator');
   expect(put.body.if_revision).toBe('a'.repeat(64));
