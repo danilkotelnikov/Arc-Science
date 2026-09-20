@@ -243,6 +243,18 @@ pub fn serve(
     for (key, value) in config.worker_environment() {
         command.env(key, value);
     }
+    // The settings file exists before the worker starts, and the worker knows which
+    // supervisor to ask when the operator changes it.
+    let _ = crate::settings::Settings::load_or_create(project)?;
+    command
+        .env(
+            "ARC_SETTINGS_FILE",
+            project.join(crate::settings::SETTINGS_FILE),
+        )
+        .env("ARC_PROJECT", project);
+    if let Ok(me) = env::current_exe() {
+        command.env("ARC_SUPERVISOR", me);
+    }
     for (key, value) in BRIDGE_KEYS[1..].iter().zip([
         config.bioart.max_metadata_bytes,
         config.bioart.max_file_bytes,

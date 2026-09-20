@@ -23,6 +23,9 @@ const env = {
   ARC_TOKEN_FILE: tokenFile,
   ARC_MEMORY_WORKER: optional(resolve(root, 'native/arc-memory/target/release', exe('arc-memory-worker'))),
   ARC_SVG2PNG: optional(resolve(root, 'native/arc-svg/target/release', exe('arc-svg2png'))),
+  // Settings are owned by the native supervisor; the suite uses the built one when present.
+  ARC_SUPERVISOR: optional(resolve(root, 'native/arc-science/target/release', exe('arc-science-native'))),
+  ARC_PROJECT: data,
 };
 for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key];
 delete env.ARC_MOLECULAR_BLENDER_PYTHON; // the suite never renders with Blender

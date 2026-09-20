@@ -81,12 +81,13 @@ class ClaudeCodeAgent:
     network_sandboxed = False
 
     def __init__(self, command, planner_model, reviewer_model=None, *, timeout=CALL_TIMEOUT,
-                 environment=None, vision=None):
+                 environment=None, vision=None, falsifier_model=None):
         self.command = [str(part) for part in command]
         if not self.command:
             raise ValueError('The Claude Code transport needs an executable')
         self.model = planner_model
         self.reviewer_model = reviewer_model or planner_model
+        self.falsifier_model = falsifier_model or self.reviewer_model
         self.timeout = timeout
         self.environment = scrubbed_environment(environment)
         self.vision = vision
@@ -100,7 +101,7 @@ class ClaudeCodeAgent:
         shutil.rmtree(self.workdir, ignore_errors=True)
 
     def model_for(self, role):
-        return self.model if role == 'planner' else self.reviewer_model
+        return {'planner': self.model, 'falsifier': self.falsifier_model}.get(role, self.reviewer_model)
 
     def take_provenance(self, role):
         """The most recent call record for a role, removed from the pending list so the
@@ -114,7 +115,7 @@ class ClaudeCodeAgent:
         return await self._call(self.model, PLAN_PROMPT, context, Proposal, role='planner')
 
     async def assess(self, role, context):
-        return await self._call(self.reviewer_model, REVIEW_PROMPT + '\nRole: ' + role, context, Reconciliation, role=role)
+        return await self._call(self.model_for(role), REVIEW_PROMPT + '\nRole: ' + role, context, Reconciliation, role=role)
 
     async def review_visual(self, context, artifacts):
         if self.vision is None:

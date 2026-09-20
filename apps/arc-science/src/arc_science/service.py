@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager, suppress
 import os
 from pathlib import Path
 import secrets
+import shutil
+import subprocess
 import time
 import uuid
 import httpx
@@ -20,6 +22,7 @@ from .exploration.models import MissionRequest, MissionState
 from .exploration.engine import initialize, explore, MissionCancelled
 from .exploration.agents import DemoAgent, DemoVisionAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
+from . import settings as operator_settings
 from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, declare_resume, mission_change, obligation_states
 from .exploration.claim_scope import derive_claim_scope
 from .exploration.repository import MissionRepository, MissionFinished, RevisionConflict
@@ -36,6 +39,10 @@ class ProseText(BaseModel):
 
 class ProseDetect(ProseText):
     allow_egress:bool=False
+
+class SettingsReplace(BaseModel):
+    settings:dict
+    if_revision:str|None=Field(default=None,max_length=64)
 
 class ChangeDeclaration(BaseModel):
     kind:str=Field(min_length=1,max_length=40)
@@ -58,14 +65,66 @@ ENDPOINTS={'openai':'https://api.openai.com/v1/responses',
 def claude_code_command():
     """The qualified Claude Code executable for the subscription transport, or None."""
     path=os.environ.get('ARC_CLAUDE_CODE_EXE')
-    if not path:return None
+    if not path:
+        # The settings name the CLI (a path or an executable name on PATH).
+        settings=operator_settings.current() or {}
+        name=((settings.get('providers') or {}).get('anthropic') or {}).get('cli') or ''
+        if not name:return None
+        path=name if Path(name).is_absolute() else shutil.which(name)
+        if not path:raise ValueError(f'providers.anthropic.cli names {name}, which is not on PATH')
     executable=Path(path)
     if not executable.is_absolute() or not executable.is_file():
-        raise ValueError('ARC_CLAUDE_CODE_EXE must be the absolute path of the installed Claude Code executable')
+        raise ValueError('The Claude Code executable must be an absolute path to an existing file')
     return [str(executable)]
 
 
+def _cli_command(settings, provider):
+    """The operator's CLI for a provider: the settings name it, or the environment does."""
+    if provider=='anthropic':
+        command=claude_code_command()
+        if not command:
+            raise ValueError('The Claude Code executable is not configured: set providers.anthropic.cli to its path')
+        return command
+    raise ValueError(f'The {provider} CLI seat is not available yet; use an API credential for this seat')
+
+
+def _endpoint_from_seat(settings, role, seat):
+    provider=seat['provider'];auth=seat.get('auth','api_key');effort=seat.get('effort','medium')
+    if auth=='cli':
+        command=_cli_command(settings,provider)
+        return ModelEndpoint(provider='claude-code',endpoint=command[0],model=seat['model'],credential_ref=role,effort=effort)
+    if provider=='gemini':
+        raise ValueError('The Gemini API seat is not available yet; choose anthropic, openai or openclaw for now')
+    providers=settings.get('providers') or {}
+    endpoint=(providers.get(provider) or {}).get('endpoint') or ENDPOINTS.get(provider,'')
+    if not endpoint:raise ValueError(f'providers.{provider}.endpoint is not set')
+    agent_id=(providers.get('openclaw') or {}).get('agent_id') or None
+    return ModelEndpoint(provider=provider,endpoint=endpoint,model=seat['model'],credential_ref=seat.get('credential') or role,
+        agent_id=agent_id if provider=='openclaw' else None,
+        openclaw_isolated=bool((providers.get('openclaw') or {}).get('isolated')) if provider=='openclaw' else False,
+        effort=effort)
+
+
+def endpoints_from_settings(settings):
+    """(planner, reviewer, falsifier) endpoints from the settings file, or None when
+    the planner seat is not configured there."""
+    planner=operator_settings.seat(settings,'planner')
+    if planner is None:return None
+    reviewer=operator_settings.seat(settings,'reviewer') or planner
+    falsifier=operator_settings.seat(settings,'falsifier') or reviewer
+    first=_endpoint_from_seat(settings,'planner',planner)
+    second=_endpoint_from_seat(settings,'reviewer',reviewer)
+    third=_endpoint_from_seat(settings,'falsifier',falsifier)
+    transports={e.provider=='claude-code' for e in (first,second,third)}
+    if len(transports)>1:
+        raise ValueError('Mixed transports are not supported: planner, reviewer and falsifier must all use the CLI login or all use API credentials')
+    return first,second,third
+
+
 def configured_endpoints():
+    from_settings=endpoints_from_settings(operator_settings.current())
+    if from_settings is not None:
+        return from_settings[0],from_settings[1]
     provider=(os.environ.get('ARC_PROVIDER') or 'openai')
     model=os.environ.get('ARC_MODEL','')
     if provider=='claude-code':
@@ -89,16 +148,31 @@ def configured_endpoints():
     return first,second
 
 
+def configured_falsifier_endpoint(first,second):
+    from_settings=endpoints_from_settings(operator_settings.current())
+    return from_settings[2] if from_settings is not None else second
+
+
 def live_seats_ready():
     """Both model seats configured with whatever they need: token files, or the CLI."""
     first,second=configured_endpoints()
     if first.provider!='claude-code':
         _secret('planner');_secret('reviewer')
+        third=configured_falsifier_endpoint(first,second)
+        if third is not second:_secret(third.credential_ref)
     return first,second
 
 
 def configured_vision_endpoint():
     first,second=configured_endpoints()
+    vision=operator_settings.seat(operator_settings.current(),'vision')
+    if vision is not None:
+        if vision.get('auth')=='cli':
+            raise ValueError('Visual review is not available through a CLI login; give the vision seat an API credential')
+        endpoint=_endpoint_from_seat(operator_settings.current(),'vision',vision)
+        if endpoint.provider=='openclaw':
+            raise ValueError('Visual review requires an OpenAI or Anthropic native image endpoint')
+        return endpoint
     provider=(os.environ.get('ARC_VISION_PROVIDER') or second.provider)
     if provider=='claude-code':
         raise ValueError('Visual review is not available through the Claude Code transport; '
@@ -111,6 +185,12 @@ def configured_vision_endpoint():
 
 
 def _secret(ref):
+    # A seat may name its own credential file (stored beside the data directory).
+    named=Path(os.environ.get('ARC_DATA_DIR','./data'))/'credentials'/(ref+'.credential')
+    if ref not in ('planner','reviewer','vision','biorender') and named.is_file():
+        value=named.read_text().strip()
+        if not value or len(value)>8192:raise ValueError('Provider token file is empty or exceeds limit')
+        return value
     if ref=='biorender':
         path=os.environ.get('ARC_BIORENDER_TOKEN_FILE')
     elif ref=='vision':
@@ -226,6 +306,25 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     async def prose_detect(body:ProseDetect):
         try:return await detector.detect(body.text,allow_egress=body.allow_egress)
         except prose_module.ProseRefused as refused:prose_error(refused)
+
+    # Operator settings: the native supervisor owns the file; the service reads the
+    # snapshot and forwards a whole replacement with the revision the operator saw.
+    LIVE=['seats','providers','mcp_servers','acp_agents','prose','blender','viewer']
+    @app.get('/api/settings',dependencies=[Depends(authorized)])
+    async def settings_snapshot():
+        try:snap=await asyncio.to_thread(operator_settings.snapshot)
+        except operator_settings.SettingsUnavailable as why:raise HTTPException(503,str(why)) from None
+        except (operator_settings.SettingsRejected,ValueError,OSError,subprocess.SubprocessError) as why:raise HTTPException(500,str(why)[:700]) from None
+        return {**snap,'applied_live':LIVE,'restart_required':[]}
+
+    @app.put('/api/settings',dependencies=[Depends(authorized)])
+    async def settings_replace(body:SettingsReplace):
+        try:snap=await asyncio.to_thread(operator_settings.replace,body.settings,body.if_revision)
+        except operator_settings.SettingsUnavailable as why:raise HTTPException(503,str(why)) from None
+        except operator_settings.SettingsStale as why:raise HTTPException(409,str(why)) from None
+        except operator_settings.SettingsRejected as why:raise HTTPException(422,str(why)) from None
+        except (ValueError,OSError,subprocess.SubprocessError) as why:raise HTTPException(500,str(why)[:700]) from None
+        return {**snap,'applied_live':LIVE,'restart_required':[]}
 
     from .memory.web import MemoryRoutes
     worker_path=os.environ.get('ARC_MEMORY_WORKER')
@@ -392,9 +491,11 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 if request.mode=='demo':agent=DemoVisionAgent() if request.vision_review else DemoAgent()
                 else:
                     first,second=configured_endpoints()
+                    third=configured_falsifier_endpoint(first,second)
                     vision=configured_vision_endpoint() if request.vision_review else None
                     def resolve(ref,principal,project):
-                        cfg=first if ref=='planner' else (vision if ref=='vision' else second)
+                        cfg={'planner':first,'vision':vision,'falsifier':third}.get(ref,second)
+                        if ref not in ('planner','reviewer','vision','falsifier','biorender'):cfg=next((c for c in (first,second,third,vision) if c and c.credential_ref==ref),second)
                         return AccessGrant(token=_secret(ref),principal=principal,project_id=project,resource=cfg.endpoint,
                             credential_ref=ref,expires_at=int(time.time())+60,
                             auth_style=(('oauth' if os.environ.get('ARC_ANTHROPIC_AUTH') in ('oauth','bearer') else 'x-api-key') if cfg.provider=='anthropic' else 'bearer'))
@@ -403,9 +504,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                         # The visual seat, when configured, stays a native image endpoint.
                         visual=HTTPAgent(vision,reviewer_config=vision,vision_config=vision,client=client,
                                          resolver=resolve,project=mid,principal='local-operator') if vision else None
-                        agent=ClaudeCodeAgent(claude_code_command(),first.model,second.model,vision=visual)
+                        agent=ClaudeCodeAgent(claude_code_command(),first.model,second.model,vision=visual,falsifier_model=third.model)
                     else:
-                        agent=HTTPAgent(first,reviewer_config=second,vision_config=vision,
+                        agent=HTTPAgent(first,reviewer_config=second,vision_config=vision,falsifier_config=third,
                                         client=client,resolver=resolve,project=mid,principal='local-operator')
                     if os.environ.get('ARC_PUBLIC_READS')=='1':
                         from .exploration.public_reads import public_tools

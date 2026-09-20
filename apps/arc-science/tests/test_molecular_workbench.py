@@ -39,7 +39,7 @@ def test_home_serves_compiled_ui_with_the_empty_workbench(client):
     assert response.status_code == 200
     assert 'Molecules' in response.text
     assert 'vision_review' in response.text
-    assert 'Render your structure locally' in response.text
+    assert 'Render locally' in response.text and 'Settings' in response.text
     assert 'No render selected' in response.text
     assert '/api/examples/' not in response.text
     assert 'Export SVG' not in response.text

@@ -15,6 +15,8 @@ from .vision import VISUAL_PROMPT_VERSION, validate_report
 
 class ModelEndpoint(Record):
     provider: Literal['openai','anthropic','openclaw','claude-code']
+    # The seat's reasoning effort; each transport maps or refuses it (loop 4 wires it).
+    effort: Literal['minimal','low','medium','high','max']='medium'
     endpoint: str
     model: str = Field(min_length=1,max_length=160)
     credential_ref: str = Field(min_length=1,max_length=160)
@@ -46,10 +48,12 @@ class HTTPAgent:
     requires_egress = True
 
     def __init__(self, config:ModelEndpoint, *, client:httpx.AsyncClient, resolver, project:str,principal:str,
-                 reviewer_config:ModelEndpoint|None=None, vision_config:ModelEndpoint|None=None):
+                 reviewer_config:ModelEndpoint|None=None, vision_config:ModelEndpoint|None=None,
+                 falsifier_config:ModelEndpoint|None=None):
         self.config=config;self.reviewer_config=reviewer_config or config
+        self.falsifier_config=falsifier_config or self.reviewer_config
         self.vision_config=vision_config
-        for cfg in (self.config,self.reviewer_config) + ((self.vision_config,) if self.vision_config else ()):
+        for cfg in (self.config,self.reviewer_config,self.falsifier_config) + ((self.vision_config,) if self.vision_config else ()):
             validate_endpoint(cfg.endpoint)
             if cfg.provider=='openclaw' and (not cfg.openclaw_isolated or not cfg.agent_id):
                 raise ValueError('OpenClaw requires an explicitly isolated, tool-disabled agent')
@@ -59,10 +63,12 @@ class HTTPAgent:
         self.model=config.model
         self.vision_model=vision_config.model if vision_config else None
 
-    def model_for(self,role):return self.config.model if role=='planner' else self.reviewer_config.model
+    def seat_for(self,role):
+        return {'planner':self.config,'falsifier':self.falsifier_config}.get(role,self.reviewer_config)
+    def model_for(self,role):return self.seat_for(role).model
     async def propose(self,context):return await self._call(self.config,PLAN_PROMPT,context,Proposal)
     async def assess(self,role,context):
-        return await self._call(self.reviewer_config,REVIEW_PROMPT+'\nRole: '+role,context,Reconciliation)
+        return await self._call(self.seat_for(role),REVIEW_PROMPT+'\nRole: '+role,context,Reconciliation)
 
     async def review_visual(self, context, artifacts:tuple[Artifact, ...]):
         if self.vision_config is None:

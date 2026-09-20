@@ -41,6 +41,11 @@ enum Action {
         #[arg(long)]
         apply: bool,
     },
+    /// Operator settings (settings.toml): show, check, or replace the whole document.
+    Settings {
+        #[command(subcommand)]
+        command: SettingsCommand,
+    },
     /// Validate and print configuration with resolved project paths.
     Config,
     /// Report local executable availability, not scientific qualification; no network.
@@ -60,6 +65,22 @@ enum Action {
     Bioart {
         #[command(subcommand)]
         command: BioArtCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum SettingsCommand {
+    /// Print the settings snapshot as JSON (creates the default file when missing).
+    Show,
+    /// Validate the file and exit nonzero when it is invalid.
+    Check,
+    /// Replace the document with the JSON or TOML read from stdin, after validating
+    /// it; with --if-revision, refuse (status 3) when the file changed meanwhile.
+    Replace {
+        #[arg(long)]
+        stdin: bool,
+        #[arg(long)]
+        if_revision: Option<String>,
     },
 }
 
@@ -102,6 +123,52 @@ fn run() -> Result<i32> {
                     "applied": filled,
                 }))?
             );
+        }
+        Action::Settings { command } => {
+            use arc_science_native::settings::{self, Settings};
+            match command {
+                SettingsCommand::Show => {
+                    let (current, bytes) = Settings::load_or_create(&project)?;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&settings::snapshot(
+                            &current, &bytes, &project
+                        ))?
+                    );
+                }
+                SettingsCommand::Check => {
+                    let (_, bytes) = Settings::load_or_create(&project)?;
+                    println!(
+                        "settings.toml valid; revision {}",
+                        settings::revision(&bytes)
+                    );
+                }
+                SettingsCommand::Replace { stdin, if_revision } => {
+                    if !stdin {
+                        return Err("settings replace reads the document from --stdin".into());
+                    }
+                    let mut document = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin().lock(), &mut document)?;
+                    if document.len() > 256 * 1024 {
+                        return Err("settings document exceeds 256 KiB".into());
+                    }
+                    match Settings::replace(&project, &document, if_revision.as_deref()) {
+                        Ok((written, bytes)) => {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&settings::snapshot(
+                                    &written, &bytes, &project
+                                ))?
+                            );
+                        }
+                        Err(error) if error.downcast_ref::<settings::StaleRevision>().is_some() => {
+                            eprintln!("arc-science-native: {error}");
+                            return Ok(settings::STALE_REVISION_STATUS);
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
         }
         Action::StartupPlan => {
             let _ = arc_science_native::containment::contain_process_tree();

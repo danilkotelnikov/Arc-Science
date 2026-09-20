@@ -107,7 +107,7 @@ $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System
 $named = @($all | ForEach-Object { $c = $_.Current; if ($c.Name) { '{0}:{1}' -f $c.ControlType.ProgrammaticName.Replace('ControlType.',''), $c.Name } } | Select-Object -Unique)
 Log ("UIA elements total=$($all.Count) named=$($named.Count)")
 $named | Set-Content -Path (Join-Path $Out 'uia-named.txt') -Encoding UTF8
-foreach ($n in 'Molecules','BioArt','Research','Memory','Prose','Load renders') {
+foreach ($n in 'Molecules','BioArt','Research','Memory','Prose','Settings','Load renders') {
     $el = Find-Named $n $CT::Button 3
     Log ("button '{0}': {1}" -f $n, $(if ($el) { 'found, enabled=' + $el.Current.IsEnabled } else { 'MISSING' }))
 }
