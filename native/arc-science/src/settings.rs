@@ -243,6 +243,10 @@ fn https_or_loopback(value: &str, what: &str, loopback_http: bool) -> Result<()>
     .into())
 }
 
+fn valid_port(port: &str) -> bool {
+    port.parse::<u16>().is_ok_and(|p| p != 0)
+}
+
 /// `http://` with an authority that is exactly a loopback host (with an optional
 /// port): `localhost.evil.example` or `127.0.0.1.evil.example` are not loopback.
 fn is_loopback_http(value: &str) -> bool {
@@ -255,22 +259,16 @@ fn is_loopback_http(value: &str) -> bool {
         let Some((inside, after)) = bracketed.split_once(']') else {
             return false;
         };
-        if !(after.is_empty()
-            || after
-                .strip_prefix(':')
-                .is_some_and(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())))
-        {
+        if !(after.is_empty() || after.strip_prefix(':').is_some_and(valid_port)) {
             return false;
         }
         inside
     } else {
-        authority.rsplit_once(':').map_or(authority, |(h, port)| {
-            if port.chars().all(|c| c.is_ascii_digit()) {
-                h
-            } else {
-                authority
-            }
-        })
+        match authority.rsplit_once(':') {
+            Some((h, port)) if valid_port(port) => h,
+            Some(_) => return false,
+            None => authority,
+        }
     };
     matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
@@ -345,7 +343,16 @@ impl Settings {
                 return Err(format!("providers.{name}.agent_id applies to OpenClaw only").into());
             }
         }
-        if self.seats.planner.provider == "openclaw" && !self.providers.openclaw.isolated {
+        let openclaw_seats = [
+            &self.seats.planner,
+            &self.seats.reviewer,
+            &self.seats.falsifier,
+            &self.seats.vision,
+            &self.seats.prose,
+        ]
+        .into_iter()
+        .any(|seat| seat.provider == "openclaw");
+        if openclaw_seats && !self.providers.openclaw.isolated {
             return Err("OpenClaw seats require providers.openclaw.isolated = true".into());
         }
         let mut names = std::collections::BTreeSet::new();
@@ -675,6 +682,12 @@ mod tests {
                 .contains("no CLI login")
         );
         s.seats.vision.auth = "api_key".into();
+        s.providers.openclaw.isolated = false;
+        assert!(
+            s.validate().unwrap_err().to_string().contains("isolated"),
+            "every OpenClaw seat needs isolation, not only the planner"
+        );
+        s.providers.openclaw.isolated = true;
         s.providers.openai.endpoint = "http://example.com".into();
         assert!(s.validate().unwrap_err().to_string().contains("https"));
         s.providers.openai.endpoint = "https://api.openai.com/v1/responses".into();
@@ -699,6 +712,15 @@ mod tests {
                 s.validate().is_err(),
                 "{deceptive} must not pass as loopback"
             );
+        }
+        for bad_port in [
+            "http://127.0.0.1:/",
+            "http://127.0.0.1:0/",
+            "http://127.0.0.1:70000/",
+            "http://localhost:x/",
+        ] {
+            s.mcp_servers[0].url = bad_port.into();
+            assert!(s.validate().is_err(), "{bad_port} must not pass");
         }
         for genuine in [
             "http://localhost:9000/mcp",

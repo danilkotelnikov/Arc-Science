@@ -191,7 +191,7 @@ LEGACY_REFS=('planner','reviewer','vision','biorender')
 def credential_path(name,data=None):
     """Where `arc-science credential --name NAME` stores a credential: one directory,
     one file per name, never a key in the settings."""
-    if not name or len(name)>80 or not all(c.isalnum() or c in '._-' for c in name):
+    if not name or len(name)>80 or not all(c.isascii() and (c.isalnum() or c in '._-') for c in name):
         raise ValueError('A credential name is 1-80 characters of [A-Za-z0-9._-]')
     return Path(data or os.environ.get('ARC_DATA_DIR','./data'))/'credentials'/(name+'.credential')
 
@@ -449,7 +449,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             if first.provider=='claude-code':live['transport']=await claude_code_transport()
         except Exception:live={'configured':False}
         try:
-            vision=configured_vision_endpoint();_secret('vision')
+            vision=configured_vision_endpoint();_secret(vision.credential_ref)
             visual={'configured':True,'provider':vision.provider,'model':vision.model}
         except Exception:visual={'configured':False}
         try:biorender=biorender_configuration()
@@ -469,7 +469,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             try:live_seats_ready()
             except Exception:raise HTTPException(409,'Configure model endpoints and server-side credential files before live use') from None
             if request.vision_review:
-                try:configured_vision_endpoint();_secret('vision')
+                try:_secret(configured_vision_endpoint().credential_ref)
                 except Exception:raise HTTPException(409,'Configure a separate vision model endpoint and server-side credential file before required vision review') from None
             if os.environ.get('ARC_BIORENDER_READS')=='1':
                 try:biorender_configuration()
