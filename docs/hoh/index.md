@@ -131,4 +131,13 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   seat rewrite on either transport that keeps every protected span or returns nothing,
   explicit evasion or impersonation instructions refused before any seat; the
   permission to take commercial internals was not used and detector evasion is not
-  promised. Sol: changes required → accept (accept-with-findings on loops 3, 4, 12).
+  promised. Loop 13 (open items, roadmap, qualification): secret files and their
+  directories restricted to the owner with an exact, verified DACL on Windows and the
+  service refusing otherwise; acceptance downloads recycled; Claude and Gemini seats
+  re-probed and still blocked at the account; a Rust roadmap with the
+  science-protocol prerequisite; a bare launch of the finished candidate accepted
+  through UI Automation. Sol: changes required → accept (accept-with-findings on
+  loops 3, 4, 12, 13). The close-out gates table in the record lists what stays
+  blocked or unverified: Claude credits, Gemini tier, API-key seats live, MCP
+  `tools/call` and ACP `session/prompt` live, Blender, licence rows, `api.edgeshop.ai`,
+  Linux paths, the native download on a rendered workbench.

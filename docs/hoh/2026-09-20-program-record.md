@@ -350,3 +350,87 @@ a real provider (mock transport only).
 | Audit-key failure was a 500; results did not say when the text changed | low | 409 `audit_key`; stale notices and behaviour toggle in the workspace |
 | A product name refuses even an innocent instruction | medium (accepted, non-blocking) | Recorded as a conservative false refusal; the refusal names the phrase |
 | Recorded gates: Claude and Gemini seats unverified live; no real API-key provider exercised | gate | Unverified |
+
+## Loop 13 — open items, Rust roadmap, final qualification (`0317f6b`, `2deb6a9`, `HEAD`)
+
+Secret files. The access token, stored credentials and the prose audit key were created
+with mode 0600, which on Windows only toggles the read-only bit: the live token was
+readable by every account the data directory inherited, including a sandbox group.
+`anchored.owner_only` now restricts an object to the account running the process — the
+mode on POSIX; on Windows one protected access entry for the SID of the process's own
+token, written through the security API and read back, accepted only as a protected
+DACL (`P` or `PAI`) whose entries are exactly that one. The data directory, the
+credentials directory and the prose directory are restricted before a secret is written
+into them, so a new secret inherits nothing else from its first byte, and each file
+gets the same entry afterwards. A failure raises: the service refuses to start, the CLI
+removes the credential it could not protect and exits non-zero, the audit key is
+refused until its directory and file hold. An `ARC_TOKEN_FILE` outside the data
+directory gets the entry on the file alone and needs an operator-owned directory
+(documented; watch item). Live: the workstation's data directory and token read back
+as the operator's single entry after one launch (before: three inherited entries).
+
+Acceptance files. The six `1dqj-*.svg` downloads of 2026-09-18 (765 KB each) were moved
+from Downloads to the Recycle Bin, none hard-deleted. The stale Codex process no longer
+existed. Claude Code and Gemini CLI were re-probed through the production adapters:
+both logged in (`oauth_token`, `google_oauth_file`), both still refused at the account
+(`credit_exhausted`, `account_ineligible`), classified without spend.
+
+Rust roadmap. `docs/hoh/2026-09-20-rust-roadmap.md` records what is in Rust after this
+program (four crates: supervision and containment, discovery, settings, the desktop
+shell, memory, rasterisation), what stays Python and why, a science-protocol
+prerequisite (authenticated, bounded, cancellable, streaming, provenance-carrying IPC
+that does not exist yet), and six ordered steps; the science libraries are not ported.
+
+Final qualification. Rust: rustfmt, clippy `-D warnings`, tests and release builds
+clean on the supervisor (35 tests) and the desktop (18, one ignored); `Arc Science.exe`
+refreshed. A bare `Start-Process 'Arc Science.exe'` on the workstation's own workspace
+(no launcher, no environment): health answered in 2.3–3.5 s, the window `Arc Science`
+exposed through UI Automation with the six workspace buttons enabled, a PrintWindow
+capture of the empty workbench, the download step skipped because the empty workbench
+offers nothing to download, close → desktop, supervisor and service exited, port 8080
+free. Python 798 passed / 65 skipped after the ACL change; vitest 62 and Playwright 20
+from loop 12 (no web change since).
+
+## Evaluation of loop 13 (Sol): changes required → addressed → accept-with-findings
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| `icacls /grant:r` left other principals' explicit entries; callers continued on failure | high | Exact protected DACL through the security API, verified; callers refuse |
+| The read-back accepted any single entry (wrong trustee or rights) | high | The entries must equal the one wanted; a lone Everyone entry is rejected by test |
+| The containing directories kept inherited delete rights; secrets were written before hardening | high | Directories restricted first; files inherit the single entry, then get it explicitly |
+| The audit key cached an unverified attempt | medium | Flag set only after directory and file verified; `audit_key` refusal otherwise |
+| The roadmap crossed a Rust↔Python boundary that does not exist | medium | Science-protocol prerequisite added; steps crossing it marked plans |
+| `ARC_TOKEN_FILE` outside the data directory relies on its parent | medium (accepted) | Documented in the service and README; watch item |
+| The verifier accepted any flags containing `P` | low | Exactly `P` or `PAI` |
+| Index overstated "tool-less" CLIs and "style-only" presets | wording | Corrected |
+
+## Program close-out — gates
+
+Nothing below is a validity, novelty or production claim; acceptance means eligible for
+a human to review.
+
+| Gate | State | Evidence or next action |
+| --- | --- | --- |
+| Launch from a double-click, clean exit, port released | passed | Loop 1 and loop 13 native runs |
+| Settings owned by the supervisor, revisioned writes | passed | Rust and Python suites; Playwright through the real supervisor |
+| Codex seat (ChatGPT login) answers probes and a humane rewrite | passed, identity requested-only | Loops 4 and 12; the CLI does not report the model it ran |
+| Claude Code seat | blocked (account) | `credit_exhausted` on re-probe; fund the plan, then probe from Settings |
+| Gemini CLI seat | blocked (account) | `account_ineligible` on re-probe; a tier that allows `gemini -p`, then probe |
+| API-key seats (OpenAI, Anthropic, Gemini, OpenClaw) | unverified live | Mock-transport route tests only; store a credential, probe from Settings |
+| MCP `tools/call`, ACP `session/prompt` live | unverified live | Live evidence reaches MCP `tools/list` (PubMed, Context7) and ACP `initialize` (`gemini --acp`) |
+| Blender render under a preset; stage stream and provisional scene on a real render | blocked (no Blender here) | Worker argv and `style.json` asserted up to the renderer boundary; install Blender and render once |
+| Mol* viewer draws uploaded coordinates | passed | Playwright and the browser pane |
+| Catalogue probes | passed for presence; licence rows recorded, not verified | Confirm licences at each project home |
+| Humane prose behaviour and diagnostics | passed, editorial transfer from a creative-writing corpus recorded | One live rewrite through Codex |
+| `api.edgeshop.ai` detection contract | unverified | Normalised from the reference client; no live call from this workstation |
+| Secret files owner-only on the default workspace | passed | Live read-back on this workstation |
+| Linux lock, containment and `openat` paths | unverified here | Windows workstation; run the suites on Linux |
+| Native download through the shell | passed on 2026-09-18 (`gui-run9d`), skipped on the final empty-workbench run | Render once, then run the acceptance with a download control present |
+
+Watch items carried forward: revisionless native replacement should be an explicit
+`--force` and the 30 s stale-lock takeover is not ownership-safe (loop 3); the Codex
+contract is version-sensitive (strict config, skills budget, no system channel) and its
+identity is requested-only (loop 4); a product name refuses even an innocent prose
+instruction (loop 12); an external `ARC_TOKEN_FILE` needs an operator-owned directory
+(loop 13). Closed: the loop-4 multi-read route assembly (`live_route()` reads one
+snapshot).

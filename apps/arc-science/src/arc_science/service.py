@@ -319,6 +319,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     # a PermissionError here refuses the start rather than serving with an open token.
     anchored.owner_only(root)
     if token is None:
+        # ARC_TOKEN_FILE may point outside the data directory; then only the file is
+        # restricted, and its directory must already be the operator's own (a principal
+        # with create or delete rights there could replace the file). The default lives
+        # in the restricted data directory.
         token_path=Path(os.environ.get('ARC_TOKEN_FILE',str(root/'access.token')))
         if not token_path.exists():
             token_path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)

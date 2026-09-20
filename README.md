@@ -55,7 +55,7 @@ python -m pip install .
 arc-science serve --data ./data
 ```
 
-Open [the local workbench](http://127.0.0.1:8080/). In another activated terminal, run `arc-science token --data ./data` and enter that operator token in BioArt or Research. Both workspaces share it in page memory; it is not written to browser storage. Use a fresh data directory for 0.6.0. Historical capsules need their matching verifier. [Migration notes](apps/arc-science/docs/migration-0.6.md) describe this increment and its limits.
+Open [the local workbench](http://127.0.0.1:8080/). In another activated terminal, run `arc-science token --data ./data` and enter that operator token in BioArt or Research. The data directory, the token, stored credentials and the prose audit key are restricted to the account that runs the service (mode 0600/0700 on POSIX; on Windows one protected access entry for that account, verified after it is written, the service refusing to start otherwise); an `ARC_TOKEN_FILE` placed outside the data directory gets the same entry on the file alone, so its directory must already be the operator's own. Both workspaces share it in page memory; it is not written to browser storage. Use a fresh data directory for 0.6.0. Historical capsules need their matching verifier. [Migration notes](apps/arc-science/docs/migration-0.6.md) describe this increment and its limits.
 
 ## Native configuration and launch
 

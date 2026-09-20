@@ -380,12 +380,13 @@ def owner_only(path) -> str:
 
 
 def _dacl_matches(actual: str, wanted: str) -> bool:
-    """The read-back DACL is protected (P) and its entries are exactly the wanted ones; the
-    AI flag the API adds to record how the DACL was written carries no permission."""
+    """The read-back DACL is protected — control flags exactly `P` or `PAI`, the AI flag the
+    API adds to record how the DACL was written carrying no permission — and its entries
+    are exactly the wanted ones."""
     if not (actual.startswith('D:') and wanted.startswith('D:')):
         return False
     flags, _, entries = actual[2:].partition('(')
-    return 'P' in flags and entries == wanted[2:].partition('(')[2]
+    return flags in ('P', 'PAI') and entries == wanted[2:].partition('(')[2]
 
 
 def owner_only_holds(path) -> bool:
