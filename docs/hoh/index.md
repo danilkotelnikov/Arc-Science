@@ -110,5 +110,10 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   are shown in the window and a native dialog. Loop 2 (UI audit): one token field,
   no version mark, one boundary sentence per workspace. Loop 3 (settings): a
   supervisor-owned `settings.toml` with seats, providers, MCP/ACP lists and a Settings
-  workspace; writes carry the revision that was read. Sol: changes required → accept
+  workspace; writes carry the revision that was read. Loop 4 (seats and logins):
+  each seat its own transport — Claude Code, Codex and Gemini CLI logins run tool-less
+  in a private directory, a Gemini API adapter, effort mapped per transport, the whole
+  route bound to a mission at its first start, a Codex seat's identity recorded as
+  requested-only and never counted as an independent reviewer; live: Codex answered,
+  Gemini CLI tier ineligible, Claude credits exhausted. Sol: changes required → accept
   on each.

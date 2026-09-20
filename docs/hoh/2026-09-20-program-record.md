@@ -96,3 +96,49 @@ suites green.
 | "Applied live" claimed sections nothing consumed yet | medium | `applied_live` / `stored_pending` reported and shown; prose detection consumed |
 | OpenClaw isolation enforced for the planner only | medium | Any seat on OpenClaw |
 | Recorded hardening (not blocking): revisionless native replacement should be an explicit `--force`; the 30 s stale-lock takeover is not ownership-safe | watch | Recorded for a later loop |
+
+## Loop 4 — seats and logins (`8b3802c`, `9568cac`)
+
+Every seat (planner, reviewer, falsifier, vision) is its own transport. The CLI
+transport generalises the Claude Code seat: Codex runs `codex exec` with the JSON
+event stream, an output schema in the strict form the HTTP adapter sends, a read-only
+sandbox, every acting feature switched off, the skills catalogue budgeted to nothing,
+user config ignored and a private working root; Gemini CLI runs `gemini -p` in plan
+mode behind a generated deny-all policy, extensions off, a system settings file that
+switches hooks, skills, extensions and MCP off, and the seat instructions as the whole
+system prompt. Both share the bounded runner (job object, drained pipes, deadline,
+scrubbed environment, private directory). A Gemini `generateContent` adapter joins the
+HTTP seats. Effort gains `xhigh` and is mapped per transport (Anthropic low–max; OpenAI
+passed through for the model to accept; Gemini API minimal–high; Gemini CLI and
+OpenClaw keep the provider default); a level a seat cannot express is refused when the
+seat is built, and every call records requested effort, applied effort and its source.
+Mixed transports run through a composite agent that dispatches by role; the whole route
+is digested and bound to the mission at its first start, the worker runs on that
+snapshot, and both resume paths refuse a changed route before writing anything. Codex
+reports no model identity, so its seat records `requested_only` and the claim scope
+never counts it as an independent reviewer (`unverified_identity`, derivation version
+2). Capabilities report each CLI's login state; one consented probe per provider runs
+every distinct seat; the Settings workspace shows connections and probe results.
+
+Checks: Python 770 passed / 65 skipped (fake Codex and Gemini CLIs with the invocation
+contracts, a mixed-seat live mission through the stub supervisor, route binding on both
+resume paths); vitest 55; Playwright 19; Rust supervisor tests, clippy `-D warnings`,
+rustfmt clean. Live on this workstation, through the production adapter under the
+scrubbed environment: Codex (ChatGPT login, `gpt-5.5`, effort low) answered the
+schema-valid probe, identity unverified, skills excluded, working directory removed;
+Gemini CLI refused with `account_ineligible` (the individual tier is no longer served
+by this client); Claude Code refused with `credit_exhausted`. None of these is a
+validity claim; the two refusals are operator-side.
+
+## Evaluation of loop 4 (Sol): changes required → addressed → accept-with-findings
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| The bound plan omitted endpoint, executable, OpenClaw agent and auth style, was truncated, and the worker re-read the settings | high | Digest of the full route; `sha256:` prefix compared; the worker runs on the snapshot taken when scheduled |
+| A declared change bypassed the binding; a paused start recorded the resume before the check | high | One `schedule` path for both: check, then record, then bind, then run; a refusal writes nothing |
+| Rust allowed loopback OpenClaw endpoints, Python refused every non-https one | medium | `is_loopback_http` mirrors the native rule; applied to OpenClaw seats only |
+| Missing live provenance failed open | medium | A live review without provenance is rejected, not recorded |
+| Probe audit could store raw provider text | medium | Redaction of bearer values, secret pairs and opaque tokens before display or storage |
+| Gemini id admitted `:` before the method path | low | Removed |
+| Recorded design disagreement: Sol would treat the Codex "skills context budget" error item as a failure; the seat allows exactly that item because every run on a host with many skills emits it and the alternative puts operator skill text into the seat prompt | — | Allowed item is the only one; any other error item fails the call |
+| Watch: `live_seats()` assembles the route from several settings reads; a concurrent replacement could mix revisions, though the assembled route is what is bound and run | low | Recorded for a later loop |
