@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 from .prose import MAX_CHARS, PROTECTION_VERSION, ProseRefused, protected_spans
 
-BEHAVIOUR_VERSION = 'arc-humane-prose-1'
+BEHAVIOUR_VERSION = 'arc-humane-prose-2'
 DIAGNOSTICS_VERSION = 'arc-prose-diagnostics-1'
 BEHAVIOUR_PATH = Path(__file__).with_name('static') / 'humane-prose.md'
 NOTE = ('Observations about the text: counts and ratios of things corpus studies measured. Not an authorship '
@@ -112,7 +112,8 @@ def diagnose(text: str) -> dict:
     observations = {
         'style_words': {'count': sum(style_counts.values()), 'per_1000_words': round(1000 * sum(style_counts.values()) / total, 1),
                         'words': dict(sorted(style_counts.items(), key=lambda kv: (-kv[1], kv[0]))),
-                        'source': 'excess-usage style words in 2024 biomedical abstracts (Kobak et al. 2024) and phrases writers cut (Chakrabarty et al. 2024)'},
+                        'source': 'excess-usage style words in 2024 biomedical abstracts (Kobak et al. 2024) and phrases writers cut (Chakrabarty et al. 2024)',
+                        'reading': 'a frequency observation only; each word is exact in many sentences and indicates no edit by itself'},
         'formulaic_frames': {'count': len(frames), 'instances': frames[:40]},
         'sentence_length': {'sentences': len(lengths), 'mean_words': round(mean, 1), 'spread_words': round(spread, 1),
                             'share_within_20pct_of_mean': round(near_mean, 2),
@@ -123,9 +124,11 @@ def diagnose(text: str) -> dict:
         'bullets': {'count': bullets},
         'words': len(words),
     }
-    # Which of the professional writers' edit categories the observations point at.
+    # Which of the professional writers' edit categories the observations point at. The
+    # style-word density stays an observation: a listed word is exact in many sentences
+    # ("robust standard errors"), so it never indicates an edit on its own.
     categories = []
-    if style_counts or any(f['label'] in ('cliché', 'stock role phrase', 'stock significance phrase', 'time-worn opener') for f in frames):
+    if any(f['label'] in ('cliché', 'stock role phrase', 'stock significance phrase', 'time-worn opener', 'stock domain phrase') for f in frames):
         categories.append('cliché / awkward word choice')
     if any(f['label'] in ('announcing frame', 'closing summary') for f in frames) or closing:
         categories.append('unnecessary or redundant exposition')
@@ -152,6 +155,14 @@ class HumaneRewrite(BaseModel):
     facts_needed: list[str] = Field(default_factory=list, max_length=20)
 
 
+# Instructions the service refuses locally, before any text leaves: the behaviour would
+# decline them too, but a prompt-mediated refusal is not a boundary.
+REFUSED_INSTRUCTIONS = re.compile(
+    r'(?i)(?:\b(?:bypass|evade|fool|beat|trick|defeat|avoid|pass|escape|circumvent|get (?:past|around)|slip (?:past|by))\b.{0,60}?'
+    r'\b(?:detector|detection|gptzero|turnitin|copyleaks|originality\.?ai|winston|zerogpt|classifier)\b'
+    r'|\bundetectable\b|\b(?:look|read|seem|sound|appear)s?\b.{0,20}\b(?:human[- ]written|written by a human|not (?:ai|machine)[- ]generated)\b'
+    r'|\bimpersonat|\b(?:write|sound|read) (?:exactly )?(?:like|as) (?:a |the )?(?:real |specific )?(?:person|author|scientist|professor|dr\.?|prof\.?) \w+)')
+
 INSTRUCTIONS_TAIL = ('\n\nYou receive JSON with the text and any author instructions. Return only the JSON object the schema '
                      'describes: `text` is the whole edited text (or the original unchanged when it is already good), '
                      '`notes` are at most twenty short remarks on what you changed or could not verify, `facts_needed` '
@@ -160,16 +171,28 @@ INSTRUCTIONS_TAIL = ('\n\nYou receive JSON with the text and any author instruct
                      'paths — must appear in the edited text exactly as written and in the same order.')
 
 
+def refused_instruction(instructions: str):
+    """The matched phrase when the instructions ask for detector evasion or impersonation."""
+    match = REFUSED_INSTRUCTIONS.search(instructions or '')
+    return match.group(0)[:80] if match else None
+
+
 async def humanise(seat, text: str, instructions: str = '') -> dict:
     """One call to the prose seat under the behaviour; refused unless every protected span
-    survives, in order, byte for byte. `seat` is a live agent with `_call` (CLI or HTTP)."""
+    survives, in order, byte for byte. `seat` is a live agent with `structured()` (CLI or
+    HTTP). An instruction that asks for detector evasion or impersonation is refused here,
+    before any text leaves, not left to the seat."""
     if not text.strip():
         raise ProseRefused('empty', 'Nothing to rewrite')
     if len(text) > MAX_CHARS:
         raise ProseRefused('too_long', f'Text exceeds {MAX_CHARS} characters')
+    matched = refused_instruction(instructions)
+    if matched:
+        raise ProseRefused('refused_instruction', 'The instruction asks for detector evasion or impersonation, which this behaviour '
+                           'does not do; the reader-facing edit is available without it', [{'change': 'instruction', 'class': 'refused', 'literal': matched}])
     before = protected_spans(text)
     context = {'text': text, 'author_instructions': instructions[:2000], 'protected_spans': [lit for _, _, _, lit in before][:200]}
-    payload = await seat._call(seat.model_for('prose'), behaviour_text() + INSTRUCTIONS_TAIL, context, HumaneRewrite, role='prose')
+    payload = await seat.structured(behaviour_text() + INSTRUCTIONS_TAIL, context, HumaneRewrite, role='prose')
     out = payload['text']
     after = protected_spans(out)
     if [(n, lit) for _, _, n, lit in before] != [(n, lit) for _, _, n, lit in after]:
@@ -179,7 +202,11 @@ async def humanise(seat, text: str, instructions: str = '') -> dict:
         raise ProseRefused('preservation_failed', 'A protected span did not survive the seat\'s edit unchanged; no output was produced',
                            changed[:20] or [{'change': 'reordered', 'class': '', 'literal': ''}])
     record = seat.take_provenance('prose') if hasattr(seat, 'take_provenance') else None
+    if record is None:
+        raise ProseRefused('provenance_missing', 'The seat handed over no provenance for its edit; no output was produced')
+    channel = seat.instruction_channel() if hasattr(seat, 'instruction_channel') else 'system'
     return {'status': 'edited' if out != text else 'no_change', 'text': out, 'notes': payload.get('notes', []),
+            'instruction_channel': channel,
             'facts_needed': payload.get('facts_needed', []),
             'original_sha256': hashlib.sha256(text.encode('utf-8')).hexdigest(),
             'rewritten_sha256': hashlib.sha256(out.encode('utf-8')).hexdigest(),

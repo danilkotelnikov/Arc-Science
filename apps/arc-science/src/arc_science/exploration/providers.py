@@ -97,6 +97,9 @@ class HTTPAgent:
 
     def seat_for(self,role):
         return {'planner':self.config,'falsifier':self.falsifier_config}.get(role,self.reviewer_config)
+    async def structured(self,instructions,context,schema,*,role):
+        """One schema-bound call for a role, the same entry point the CLI seats offer."""
+        return await self._call(self.seat_for(role),instructions,context,schema,role=role)
     def model_for(self,role):return self.seat_for(role).model
     async def propose(self,context):return await self._call(self.config,PLAN_PROMPT,context,Proposal,role='planner')
     async def assess(self,role,context):

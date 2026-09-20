@@ -374,8 +374,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 **detector.capabilities()}
 
     def prose_error(refused):
-        status={'consent_required':422,'bounds':422,'empty':422,'too_long':422,'disabled':409,'busy':409,
-                'preservation_failed':409,'audit_key':409}.get(refused.code,502)
+        status={'consent_required':422,'bounds':422,'empty':422,'too_long':422,'refused_instruction':422,'disabled':409,'busy':409,
+                'preservation_failed':409,'provenance_missing':409,'audit_key':409}.get(refused.code,502)
         raise HTTPException(status,{'code':refused.code,'detail':str(refused),'spans':list(refused.spans)})
 
     @app.post('/api/prose/rewrite',dependencies=[Depends(authorized)])
@@ -411,7 +411,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 +' seat; send allow_egress: true to consent to this one request'))
         if humanise_lock.locked():prose_error(prose_module.ProseRefused('busy','A seat rewrite is already in flight'))
         async with humanise_lock:
-            keyed=hmac.new(detector._key(),body.text.encode('utf-8'),'sha256').hexdigest()
+            try:key=detector._key()
+            except prose_module.ProseRefused as refused:prose_error(refused)
+            keyed=hmac.new(key,body.text.encode('utf-8'),'sha256').hexdigest()
             audit=root/'prose'/'humanise.jsonl'
             def line(record):
                 with audit.open('a',encoding='utf-8') as handle:handle.write(json.dumps({'at':int(time.time()),'text_hmac':keyed,**record},sort_keys=True)+'\n')

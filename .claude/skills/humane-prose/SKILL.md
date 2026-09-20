@@ -2,13 +2,13 @@
 name: humane-prose
 description: Use when writing or editing prose for readers — abstracts, papers, reviews, emails, posts, documentation, translations — so it is specific, plain and in the author's voice. Preserves every fact, number, citation and qualification; makes no authorship claim and no promise about AI-text detectors (the digest explains why none can be honest). Load as a hook fragment or a system prompt; the same text drives the Arc Science prose seat.
 ---
-# Humane prose (skill copy of `apps/arc-science/src/arc_science/static/humane-prose.md`, version arc-humane-prose-1)
+# Humane prose (skill copy of `apps/arc-science/src/arc_science/static/humane-prose.md`, version arc-humane-prose-2)
 
 Research digest: `docs/prose/humane-prose-2026-09-20.md`. When this skill is loaded, follow the
 behaviour below for the text at hand and nothing else; for a hook, inject the section
 "Preserve before you polish" and "The edits, in order of value" as the prompt fragment.
 
-Version: arc-humane-prose-1 (20 September 2026). This text is the system prompt of the
+Version: arc-humane-prose-2 (20 September 2026). This text is the system prompt of the
 Arc Science prose seat, the `humane-prose` skill for Claude Code, and the reference the
 Prose workspace's diagnostics are derived from. It is grounded in the research digest at
 `docs/prose/humane-prose-2026-09-20.md`; the digest cites the sources, this file states
@@ -39,7 +39,13 @@ treat it as a fact.
 ## The edits, in order of value
 
 These are the categories professional writers converged on when they edited model
-prose (the LAMP taxonomy), with what to do about each:
+prose (the LAMP taxonomy), with what to do about each. Those writers edited literary
+fiction, travel, food and personal-essay paragraphs, not scientific text; the order and
+the treatment below carry the taxonomy over to scientific and professional prose as an
+editorial judgement, supported by the style-word and rhythm findings from scientific
+abstracts but not tested on manuscripts. Where a category and a scientific convention
+conflict (a technical term that reads as rare, a passive that keeps the object as the
+topic, a hedge that states an uncertainty), the convention wins.
 
 1. **Lack of specificity and detail.** The most valuable edit and the one a model
    cannot make alone: where the text says "significant improvements", "various

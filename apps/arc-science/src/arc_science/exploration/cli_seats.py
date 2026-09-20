@@ -390,6 +390,16 @@ class CliAgent:
                 return self.calls.pop(index)
         return None
 
+    async def structured(self, instructions, context, schema, *, role):
+        """One schema-bound call for a role, the same entry point the HTTP seats offer."""
+        return await self._call(self.model_for(role), instructions, context, schema, role=role)
+
+    def instruction_channel(self):
+        """Where the seat's instructions travel: Claude Code and Gemini CLI carry a system
+        prompt; Codex has no system channel, so the behaviour leads the prompt with the
+        assurance that gives."""
+        return 'prompt' if self.provider == 'openai' else 'system'
+
     async def propose(self, context):
         return await self._call(self.model, PLAN_PROMPT, context, Proposal, role='planner')
 

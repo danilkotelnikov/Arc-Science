@@ -45,12 +45,14 @@ export default function ProseWorkspace({token, setToken}) {
     const granted = consent; setConsent(false);
     setReceipt(await read('/detect', signal, 'POST', {text, allow_egress: granted}));
   }
-  async function diagnose(signal) { setDiagnosis(await read('/diagnose', signal, 'POST', {text})); }
+  async function diagnose(signal) { setDiagnosis({...await read('/diagnose', signal, 'POST', {text}), source: text}); }
   async function humanise(signal) {
     const granted = seatConsent; setSeatConsent(false);
-    setHumane(await read('/humanise', signal, 'POST', {text, allow_egress: granted, instructions}));
+    setHumane({...await read('/humanise', signal, 'POST', {text, allow_egress: granted, instructions}), source: text, source_instructions: instructions});
   }
-  async function loadBehaviour(signal) { setBehaviour(await read('/behaviour', signal)); }
+  async function loadBehaviour(signal) { setBehaviour(behaviour ? null : await read('/behaviour', signal)); }
+  // A result is shown for the text it came from; once the text changes it is stale and says so.
+  const diagnosisStale = diagnosis && diagnosis.source !== text, humaneStale = humane && (humane.source !== text || humane.source_instructions !== instructions);
   const detection = rules?.detection;
   return <div className="research-workspace">
     <aside className="research-form">
@@ -84,7 +86,8 @@ export default function ProseWorkspace({token, setToken}) {
     </aside>
     <section className="research-results" aria-label="Prose results">
       <h2>Diagnosis</h2>
-      {diagnosis ? <div className="record" aria-label="Prose diagnosis">
+      {diagnosis ? <div className="record" aria-label="Prose diagnosis" data-stale={String(!!diagnosisStale)}>
+        {diagnosisStale && <p role="status">The text changed since this diagnosis; diagnose again for the current text.</p>}
         <h3>{diagnosis.edit_categories.length ? diagnosis.edit_categories.join(' · ') : 'No edit category indicated'} · {diagnosis.protected_count} protected spans</h3>
         <dl className="receipt-metadata">
           <dt>Style words</dt><dd>{diagnosis.observations.style_words.count} ({diagnosis.observations.style_words.per_1000_words} per 1,000 words){Object.keys(diagnosis.observations.style_words.words).length ? ': ' + Object.entries(diagnosis.observations.style_words.words).map(([w, n]) => w + (n > 1 ? ' ×' + n : '')).join(', ') : ''}</dd>
@@ -96,8 +99,9 @@ export default function ProseWorkspace({token, setToken}) {
         <p className="muted">{diagnosis.note}</p>
       </div> : <p className="muted">No diagnosis yet.</p>}
       <h2>Seat rewrite</h2>
-      {humane ? <div className="record" data-status={humane.status}>
-        <h3>{humane.status === 'edited' ? 'Edited by the prose seat' : 'Returned unchanged'} · {humane.protected_count} protected spans preserved{humane.transport ? ' · ' + humane.transport.provider + ' ' + humane.transport.requested_model + (humane.transport.observed_model ? ' (observed ' + humane.transport.observed_model + ')' : ' (identity requested-only)') : ''}</h3>
+      {humane ? <div className="record" data-status={humane.status} data-stale={String(!!humaneStale)}>
+        {humaneStale && <p role="status">The text or instructions changed since this rewrite; it applies to the earlier text.</p>}
+        <h3>{humane.status === 'edited' ? 'Edited by the prose seat' : 'Returned unchanged'} · {humane.protected_count} protected spans preserved{humane.transport ? ' · ' + humane.transport.provider + ' ' + humane.transport.requested_model + (humane.transport.observed_model ? ' (observed ' + humane.transport.observed_model + ')' : ' (identity requested-only)') : ''}{humane.instruction_channel === 'prompt' ? ' · behaviour sent in the prompt (no system channel)' : ''}</h3>
         <pre className="prose-output">{humane.text}</pre>
         {humane.notes.length > 0 && <ul className="edits">{humane.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
         {humane.facts_needed.length > 0 && <p className="muted">Facts needed from the author: {humane.facts_needed.join('; ')}</p>}

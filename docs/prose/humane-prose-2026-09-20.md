@@ -101,7 +101,13 @@ varied and syntactically plain rather than lexically ornate.
   repeat syntactic templates more than humans do. In preference tests, writer-edited
   > model-edited > model-generated. Models edit purple prose well (they simplify),
   handle exposition and structure inconsistently, and are "mostly ineffective" at
-  lack of specificity — the edit that needs the author's facts.
+  lack of specificity — the edit that needs the author's facts. The corpus is not
+  scientific prose: its 1,057 instructions come from paragraphs of literary fiction
+  (about 80%), travel writing, food writing, personal essays and an advice column
+  (section 4.1 of the paper). The behaviour carries the taxonomy over to scientific and
+  professional text as an editorial judgement; the only scientific-domain support is
+  indirect (Kobak et al. 2024 on style words and syntactic variety in abstracts), and
+  no study here tested the seven categories on manuscripts.
 - *Process-Oriented Evaluation of AI-Assisted Scientific Writing* (2026),
   arXiv:2606.15583 (*abstract*): 869 keystroke-level edit logs of people revising
   AI-generated versus human abstracts under an incentive to communicate the science.
@@ -111,7 +117,9 @@ varied and syntactically plain rather than lexically ornate.
 
 What follows: the seven categories are the edit order in the behaviour, with
 specificity first because it is the most valuable and the one a model must ask the
-author for; a marked gap replaces an invented fact.
+author for; a marked gap replaces an invented fact. The behaviour says the transfer
+from creative to scientific prose is editorial and lets a scientific convention win
+over a category when they conflict.
 
 ## 4. What readers prefer and trust
 
@@ -148,4 +156,17 @@ falls with perceived machine involvement and rises with plain, specific statemen
 - The diagnostics report counts and ratios (style-word density, formulaic frames,
   sentence-length spread, repeated openings, triplets, hedges, closing summaries) as
   observations about a text. They are not an authorship estimate, and the workspace
-  says so beside every result.
+  says so beside every result. Style-word density is reported but never turned into
+  an edit category on its own: each listed word is exact in many sentences ("robust
+  standard errors"), so only a formulaic frame indicates the cliché category.
+- An author instruction that asks for detector evasion or impersonation ("make it
+  undetectable", "so it reads as human-written", "write exactly like Professor X") is
+  refused by the service before any text leaves, by a pattern in `prose_humane.py`
+  (`refused_instruction`), not by the behaviour text alone: the behaviour also
+  declines, but a refusal that lives only in a prompt is not a boundary.
+- The behaviour reaches the prose seat as a system prompt on Claude Code
+  (`--system-prompt`) and Gemini CLI (`GEMINI_SYSTEM_MD`) and as the body of an HTTP
+  request's `system` / `instructions` / `system_instruction` field. Codex CLI has no
+  system channel: there the behaviour leads the stdin prompt, and the result reports
+  `instruction_channel: "prompt"` so the lower assurance of precedence is visible in
+  the record and in the workspace.
