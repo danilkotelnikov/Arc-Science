@@ -118,4 +118,7 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   Gemini CLI tier ineligible, Claude credits exhausted. Loops 6–7 (connectors):
   consented MCP servers (official SDK) and ACP agents as bounded mission tools whose
   content is never evidence, bound with the route; live: PubMed and Context7 listed,
-  `gemini --acp` answered initialize. Sol: changes required → accept on each.
+  `gemini --acp` answered initialize. Loops 8–9 (viewer, progress): a headless Mol*
+  viewer as its own chunk, coordinates drawn on upload, pipeline stages streamed as
+  observations with the provisional scene overlaid while Blender runs. Sol: changes
+  required → accept on each.

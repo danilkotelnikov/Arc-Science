@@ -191,3 +191,47 @@ inside its own package (an environment fault, not Arc's); `gemini --acp` answere
 | Connection checks as GET; SDK range not reproducible | low | POST checks; `mcp==1.27.0` |
 | `/verify` did not re-derive a stale scope | medium | Re-derived when absent or of an earlier version; API regression |
 | Recorded gate: Linux process-group containment of ACP agents and the Linux lock files | gate | Unverified from this workstation |
+
+## Loops 8–9 — viewer and live progress (`28cffee`, `d470b0b`, `3f43f1c`)
+
+The Molecules workspace draws the operator's coordinates in Mol* (5.11, MIT), mounted
+headless on one canvas and loaded as its own chunk (2.9 MB, 0.8 MB gzip) the first
+time a structure is shown; the main bundle stays at 340 KB. A chosen file is drawn at
+once from the browser's own copy, before any render exists and without a request; a
+selected render's coordinates come from the authenticated `source` route bound to the
+recorded digest, and an upload already shown is reused only when its SHA-256 equals
+that digest, never by name. Representation, colouring, background, quality, assembly,
+waters, contacts and spin are the viewer's settings, with defaults from the operator's
+settings file (the `viewer` section is applied). Viewing needs no renderer, so the file
+input is open whenever a token exists while rendering stays gated.
+
+The job worker records each pipeline output the moment it appears (scene, render log,
+composed figure, image checks) as typed stage records, named as observations, and
+serves progress as server-sent events with resumable ids, a snapshot, the terminal
+status and `end`; the workbench reads the stream with fetch and the token in a header,
+resumes from the last id when a connection breaks, and polls when the service will not
+stream. The scene is served while the job runs — parsed, bound to the uploaded source's
+digest, marked provisional — and verified against the recorded artifact once complete,
+so the viewer overlays the residue contacts while Blender still runs and says which
+scene they came from. Saving a view downloads a blob: URL, the target the desktop shell
+accepts. What the viewer shows is geometry, never validation.
+
+Checks: Python 785 passed / 65 skipped (a staged fake pipeline: stage order and
+timestamps, resume, bounded ids, provisional and verified scenes, source digest
+binding, refusals); vitest 59 (stream parse, resume after a broken connection, refusal
+→ polling; the workspace with a stubbed viewer); Playwright 20 (a nine-atom file drawn
+under headless WebGL, settings changed, no request for the upload, a real blob:
+download); live in the desktop browser pane: a synthetic two-chain file drawn on
+upload, cartoon and surface, black background. Blender is not installed on this
+workstation, so the live pipeline stream was exercised with the staged stand-in only.
+
+## Evaluation of loops 8–9 (Sol): changes required ×2 → addressed → accept
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| A saved render could be paired with a different upload of the same name | high | Reuse only when the upload's SHA-256 equals the recorded digest; the digest is stamped only on the very upload that was hashed |
+| Provisional scenes were served unbound and after failure | medium | Parsed, bound to the source digest, served only while running or verified when complete, marked in a header |
+| Stage names read as pipeline claims | medium | Observational labels; the viewer names the provisional or verified scene |
+| The PNG download used a data: URI the desktop shell refuses | medium | Blob object URL, revoked after; verified as a real download |
+| Stages were untyped; the stream could miss a wake-up; the resume id was unbounded | low | Typed records; waiter taken before reading state; id bounded to the stages that exist |
+| A scene whose `source` was not an object returned 500 | medium | Checked before reading the digest |
