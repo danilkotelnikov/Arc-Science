@@ -1,0 +1,231 @@
+.settings-workspace .settings-sidebar {
+  background: #fbfcfd;
+}
+
+.settings-workspace .settings-status {
+  margin: 18px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid #dce1e5;
+  border-radius: 5px;
+  background: #fff;
+  color: #3d4b55;
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.settings-workspace .settings-status strong {
+  font-size: 12px;
+  color: #28323b;
+}
+
+.settings-workspace .settings-status span,
+.settings-workspace .settings-status code {
+  overflow-wrap: anywhere;
+}
+
+.settings-workspace .settings-state-card {
+  margin: 14px 0;
+  padding: 12px;
+  border-radius: 5px;
+  border: 1px solid #d9e3e9;
+  background: #f8fbfd;
+  color: #3d4b55;
+}
+
+.settings-workspace .settings-state-card strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #28323b;
+}
+
+.settings-workspace .settings-state-card p {
+  color: #4d5962;
+  font-size: 11px;
+}
+
+.settings-workspace .settings-state-card.locked,
+.settings-workspace .settings-state-card.unconfigured,
+.settings-workspace .settings-state-card.offline {
+  border-color: #e5d8ba;
+  background: #fffaf0;
+}
+
+.settings-workspace .settings-state-card.conflict,
+.settings-workspace .settings-state-card.invalid,
+.settings-workspace .settings-state-card.error {
+  border-color: #efd3d3;
+  background: #fff7f7;
+}
+
+.settings-workspace .settings-validation {
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid #efd3d3;
+  border-radius: 5px;
+  background: #fff7f7;
+  color: #8a2f2f;
+}
+
+.settings-workspace .settings-validation strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #7a2626;
+}
+
+.settings-workspace .settings-validation ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.settings-workspace .empty-state {
+  max-width: 460px;
+}
+
+.settings-section {
+  border-bottom: 1px solid #edf0f2;
+  padding: 0;
+}
+
+.settings-section:first-child {
+  border-top: 1px solid #edf0f2;
+}
+
+.settings-section > summary {
+  list-style: none;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 18px;
+  padding: 16px 0;
+  align-items: baseline;
+}
+
+.settings-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-section > summary::before {
+  content: "+";
+  width: 18px;
+  color: #315d7c;
+  font-weight: 600;
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.settings-section[open] > summary::before {
+  content: "-";
+}
+
+.settings-section > summary span {
+  grid-column: 1;
+  grid-row: 1;
+  padding-left: 24px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #28323b;
+}
+
+.settings-section > summary small {
+  grid-column: 2;
+  font-size: 11px;
+  color: #4d5962;
+  line-height: 1.5;
+}
+
+.settings-section-body {
+  padding: 0 0 20px 204px;
+}
+
+.settings-section-body h3 {
+  margin: 20px 0 10px;
+}
+
+.settings-table {
+  min-width: 940px;
+}
+
+.settings-table .seat-invalid select[aria-invalid="true"] {
+  border-color: #a23d3d;
+}
+
+.seat-guidance {
+  margin-top: 4px;
+  color: #68727a;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.seat-readiness {
+  display: grid;
+  gap: 3px;
+  max-width: 170px;
+}
+
+.seat-readiness strong {
+  width: max-content;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid #dce1e5;
+  color: #4d5962;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.seat-readiness span {
+  color: #68727a;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.seat-readiness.ok strong {
+  color: #2e6b3f;
+  border-color: #cfe3d4;
+  background: #f3faf5;
+}
+
+.seat-readiness.warn strong {
+  color: #8a6d1d;
+  border-color: #e5d8ba;
+  background: #fffaf0;
+}
+
+.settings-workspace .research-results {
+  overflow-x: auto;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.settings-grid label {
+  display: block;
+  font-size: 11px;
+  margin-bottom: 6px;
+  color: #3d4b55;
+}
+
+.settings-grid input,
+.settings-grid select {
+  margin-top: 5px;
+}
+
+@media(max-width: 900px) {
+  .settings-section > summary {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .settings-section > summary small {
+    grid-column: 1;
+    padding-left: 24px;
+  }
+
+  .settings-section-body {
+    padding-left: 0;
+  }
+}

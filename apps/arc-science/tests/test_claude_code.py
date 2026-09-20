@@ -109,6 +109,9 @@ def test_failure_categories_only_map_recognised_texts():
     assert claude_code.scrubbed_environment({'PATH': 'p', 'ANTHROPIC_API_KEY': 'k'}) == {'PATH': 'p'}
     # Windows spells inherited names in upper case; the CLI crashes without SystemRoot.
     assert claude_code.scrubbed_environment({'SYSTEMROOT': 'C:/Windows', 'Comspec': 'cmd', 'SECRET': 'x'}) == {'SYSTEMROOT': 'C:/Windows', 'Comspec': 'cmd'}
+    # A Python helper needs UTF-8 argv decoding for a Unicode checkout; its module
+    # search path and the native desktop credential still must not be inherited.
+    assert claude_code.scrubbed_environment({'PYTHONUTF8': '1', 'PYTHONPATH': 'untrusted', 'ARC_NATIVE_SESSION_SECRET': 'private'}) == {'PYTHONUTF8': '1'}
 
 
 def test_dated_release_ids_match_the_configured_selector_but_aliases_do_not():

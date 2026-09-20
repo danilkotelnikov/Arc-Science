@@ -13,12 +13,24 @@ test('seats are edited in the workspace and persisted by the supervisor', async 
   await openWorkspace(page, 'Settings', 'Settings');
   await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await page.getByRole('button', {name: 'Load settings'}).click();
+  const settings = page.getByRole('region', {name: 'Settings'});
+  await expect(settings.getByText('Research Models', {exact: true})).toBeVisible();
+  await expect(settings.getByText('Connections', {exact: true})).toBeVisible();
+  await expect(settings.getByText('Rendering', {exact: true})).toBeVisible();
+  await expect(settings.getByText('Viewer', {exact: true})).toBeVisible();
+  await expect(settings.getByText('Advanced', {exact: true})).toBeVisible();
   await page.getByLabel('Planner provider').selectOption('openai');
   await page.getByLabel('Planner model').fill('gpt-5.6');
   await page.getByLabel('Planner effort').selectOption('high');
+  await page.getByLabel('Planner credential').fill('planner');
   await page.getByLabel('Reviewer (QA) provider').selectOption('anthropic');
   await page.getByLabel('Reviewer (QA) model').fill('claude-sonnet-5');
   await page.getByLabel('Reviewer (QA) auth').selectOption('cli');
+  await page.getByLabel('Falsifier provider').selectOption('gemini');
+  await page.getByLabel('Falsifier model').fill('gemini-3-pro');
+  await page.getByLabel('Falsifier auth').selectOption('cli');
+  await expect(page.getByLabel('Falsifier effort')).toHaveValue('medium');
+  await expect(page.getByLabel('Falsifier effort')).toBeDisabled();
   await page.getByRole('button', {name: 'Save'}).click();
   await expect(page.getByRole('status')).toHaveText(/Saved\. Applied live: seats/);
   const snap = await (await request.get('/api/settings', {headers})).json();
@@ -33,4 +45,19 @@ test('seats are edited in the workspace and persisted by the supervisor', async 
   expect((await rejected.json()).detail).toContain('seats.vision.model');
   expect((await (await request.get('/api/settings', {headers})).json()).revision).toBe(snap.revision);
   check();
+});
+
+test('settings recovery copy hides the raw missing-supervisor error', async ({page}) => {
+  await page.route('**/api/settings', route => route.fulfill({
+    status: 503,
+    contentType: 'application/json',
+    body: JSON.stringify({detail: 'No settings file is configured for this service'})
+  }));
+  await page.goto('/');
+  await openWorkspace(page, 'Settings', 'Settings');
+  await page.getByLabel('Operator token').fill(E2E_TOKEN);
+  await page.getByRole('button', {name: 'Load settings'}).click();
+  await expect(page.getByRole('alert')).toHaveText('Settings are unavailable because no supervisor settings file is configured.');
+  await expect(page.getByText('Supervisor Settings Unavailable')).toBeVisible();
+  await expect(page.getByRole('alert')).not.toContainText('Request failed (503)');
 });

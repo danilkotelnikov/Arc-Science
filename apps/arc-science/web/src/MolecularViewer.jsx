@@ -48,8 +48,11 @@ function residueExpression(residues) {
 
 export default function MolecularViewer({source, scene, defaults, stage}) {
   const canvasRef = useRef(null), containerRef = useRef(null), plugin = useRef(null), loaded = useRef(null);
+  const structureRef = useRef(null), atomCount = useRef(0), contacts = useRef(null), renderSeq = useRef(0), contactSeq = useRef(0), mutationQueue = useRef(Promise.resolve());
   const [settings, setSettings] = useState({...DEFAULTS, ...(defaults || {})});
   const [status, setStatus] = useState('Starting the viewer…'), [ready, setReady] = useState(false), [error, setError] = useState('');
+  const [structureRevision, setStructureRevision] = useState(0);
+  const sourceText = source?.text || '', sourceFilename = source?.filename || '';
   useEffect(() => { setSettings(current => ({...current, ...(defaults || {})})); }, [defaults]);
 
   useEffect(() => {
@@ -67,43 +70,104 @@ export default function MolecularViewer({source, scene, defaults, stage}) {
     return () => { disposed = true; plugin.current = null; context.dispose(); };
   }, []);
 
+  const enqueueMutation = useCallback(task => {
+    const run = mutationQueue.current.catch(() => {}).then(task);
+    mutationQueue.current = run.catch(() => {});
+    return run;
+  }, []);
+
+  const removeContacts = useCallback(async (context, isCurrent = () => true) => {
+    if (!contacts.current || !isCurrent()) return;
+    const previous = contacts.current;
+    contacts.current = null;
+    for (const ref of [previous.representation?.ref, previous.component?.ref].filter(Boolean)) {
+      if (!isCurrent()) return;
+      await PluginCommands.State.RemoveObject(context, {state: context.state.data, ref, removeParentGhosts: true});
+    }
+  }, []);
+
   const render = useCallback(async () => {
     const context = plugin.current;
-    if (!context || !source?.text) return;
-    try {
+    if (!context || !sourceText) return;
+    const sequence = ++renderSeq.current;
+    return enqueueMutation(async () => { try {
+      const isCurrent = () => sequence === renderSeq.current && plugin.current === context;
+      if (!isCurrent()) return;
       setError('');
+      const sameCoordinates = loaded.current === sourceText;
+      const snapshot = sameCoordinates ? context.canvas3d?.camera?.getSnapshot?.() : null;
+      await removeContacts(context, isCurrent);
+      if (!isCurrent()) return;
       await context.clear();
-      const data = await context.builders.data.rawData({data: source.text, label: source.filename || 'coordinates'});
-      const trajectory = await context.builders.structure.parseTrajectory(data, formatOf(source.filename));
+      if (!isCurrent()) return;
+      const data = await context.builders.data.rawData({data: sourceText, label: sourceFilename || 'coordinates'});
+      if (!isCurrent()) return;
+      const trajectory = await context.builders.structure.parseTrajectory(data, formatOf(sourceFilename));
+      if (!isCurrent()) return;
       const model = await context.builders.structure.createModel(trajectory, {modelIndex: Number(settings.model_index || 0)});
+      if (!isCurrent()) return;
       const assembly = settings.assembly && settings.assembly !== 'asymmetric_unit'
         ? {name: 'assembly', params: {id: String(settings.assembly).replace(/^assembly_/, '')}} : {name: 'model', params: {}};
       const structure = await context.builders.structure.createStructure(model, assembly);
+      if (!isCurrent()) return;
       const type = REPRESENTATIONS[settings.representation] || 'cartoon';
       const color = COLOURINGS[settings.colouring] || 'chain-id';
       const quality = settings.quality === 'auto' ? undefined : settings.quality;
       const polymer = await context.builders.structure.tryCreateComponentStatic(structure, 'polymer');
+      if (!isCurrent()) return;
       if (polymer) await context.builders.structure.representation.addRepresentation(polymer, {type, color, typeParams: quality ? {quality} : undefined, ...(settings.representation === 'sticks' ? {typeParams: {sizeFactor: 0.25, ...(quality ? {quality} : {})}} : {})});
+      if (!isCurrent()) return;
       const ligand = await context.builders.structure.tryCreateComponentStatic(structure, 'ligand');
+      if (!isCurrent()) return;
       if (ligand) await context.builders.structure.representation.addRepresentation(ligand, {type: 'ball-and-stick', color: 'element-symbol'});
       if (settings.waters) {
+        if (!isCurrent()) return;
         const water = await context.builders.structure.tryCreateComponentStatic(structure, 'water');
+        if (!isCurrent()) return;
         if (water) await context.builders.structure.representation.addRepresentation(water, {type: 'ball-and-stick', color: 'element-symbol'});
       }
-      const residues = settings.contacts ? contactResidues(scene) : [];
-      if (residues.length) {
-        const contacts = await context.builders.structure.tryCreateComponentFromExpression(structure, residueExpression(residues), 'contacts', {label: 'Contact residues'});
-        if (contacts) await context.builders.structure.representation.addRepresentation(contacts, {type: 'ball-and-stick', color: 'uniform', colorParams: {value: Color(CONTACT_COLOUR)}});
-      }
+      if (!isCurrent()) return;
       const atoms = structure.data?.elementCount ?? 0;
-      loaded.current = source.text;
+      loaded.current = sourceText; atomCount.current = atoms; structureRef.current = structure; setStructureRevision(value => value + 1);
+      setStatus('Loaded ' + atoms + ' atoms.');
+      if (snapshot) await PluginCommands.Camera.SetSnapshot(context, {snapshot, durationMs: 0});
+      else await PluginCommands.Camera.Reset(context, {});
+    } catch (reason) {
+      if (sequence === renderSeq.current && plugin.current === context) setError('The coordinates could not be shown: ' + (reason?.message || String(reason)));
+    } });
+  }, [sourceText, enqueueMutation, removeContacts, settings.representation, settings.colouring, settings.assembly, settings.model_index, settings.quality, settings.waters]);
+
+  const applyContacts = useCallback(async () => {
+    const context = plugin.current, currentStructure = structureRef.current;
+    if (!context || !currentStructure) return;
+    const sequence = ++contactSeq.current;
+    return enqueueMutation(async () => { try {
+      const isCurrent = () => sequence === contactSeq.current && plugin.current === context && structureRef.current === currentStructure;
+      if (!isCurrent()) return;
+      setError('');
+      await removeContacts(context, isCurrent);
+      if (!isCurrent()) return;
+      const residues = settings.contacts ? contactResidues(scene) : [];
+      let representation = null, component = null;
+      if (residues.length) {
+        component = await context.builders.structure.tryCreateComponentFromExpression(currentStructure, residueExpression(residues), 'contacts', {label: 'Contact residues'});
+        if (!isCurrent()) {
+          if (component?.ref) await PluginCommands.State.RemoveObject(context, {state: context.state.data, ref: component.ref, removeParentGhosts: true});
+          return;
+        }
+        if (component) representation = await context.builders.structure.representation.addRepresentation(component, {type: 'ball-and-stick', color: 'uniform', colorParams: {value: Color(CONTACT_COLOUR)}});
+      }
+      if (!isCurrent()) return;
+      contacts.current = {component, representation};
       const origin = scene?.state === 'verified' ? 'the verified scene' : 'the provisional scene';
-      setStatus('Loaded ' + atoms + ' atoms' + (residues.length ? '; ' + residues.length + ' contact residues from ' + origin + ' highlighted' : scene ? '; no contacts in ' + origin : '') + '.');
-      PluginCommands.Camera.Reset(context, {});
-    } catch (reason) { setError('The coordinates could not be shown: ' + (reason?.message || String(reason))); }
-  }, [source, scene, settings.representation, settings.colouring, settings.assembly, settings.model_index, settings.quality, settings.contacts, settings.waters]);
+      setStatus('Loaded ' + atomCount.current + ' atoms' + (residues.length ? '; ' + residues.length + ' contact residues from ' + origin + ' highlighted; coordinates unchanged' : scene ? '; no contacts in ' + origin + '; coordinates unchanged' : '') + '.');
+    } catch (reason) {
+      if (sequence === contactSeq.current && plugin.current === context) setError('The contact overlay could not be updated: ' + (reason?.message || String(reason)));
+    } });
+  }, [scene, enqueueMutation, removeContacts, settings.contacts]);
 
   useEffect(() => { if (ready) render(); }, [ready, render]);
+  useEffect(() => { if (ready) applyContacts(); }, [ready, applyContacts, structureRevision]);
   useEffect(() => {
     const context = plugin.current;
     if (!context?.canvas3d) return;

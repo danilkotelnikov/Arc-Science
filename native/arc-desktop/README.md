@@ -85,13 +85,23 @@ down; reused services stay running.
 
 Readiness requires HTTP 200 and `X-Arc-Science-Service: arc-science-v1`. This public
 marker detects accidental reuse of another HTTP service; it is **not authentication**
-and is not a defense against another local process imitating Arc Science. API bearer
-authentication is unchanged. Probes disable environment/system proxies and redirects,
+and is not a defense against another local process imitating Arc Science. External
+browser bearer authentication remains in force. Probes disable environment/system proxies and redirects,
 use short connect timeouts, and never exceed the remaining startup deadline. A foreign
 listener, failed executable, early child exit or timeout is shown in the window and in
 an owned native dialog (the window and WebView exist first, showing the starting
 state); with `--check-startup` the same conditions produce an error and nonzero exit
 without a window.
+
+An owned Windows WebView2 window also receives a per-launch native session. The host
+passes a random secret only to the service process it starts and adds its header to
+exact-origin `/api` Fetch/XHR/EventSource requests below JavaScript. A separate local
+browser and a desktop window reusing an existing service remain on the explicit
+operator-token path. The secret is never put in the URL, page state, storage or logs.
+This authenticates the trusted WebView, not arbitrary same-origin scripts; keep the
+service CSP and data/consent boundaries intact. See the
+[native session design](../../docs/hoh/2026-09-20-native-session-design.md) and its
+recorded real-window and fallback checks.
 
 Main navigation stays on the configured scheme/IP/port. Same-origin `blob:` object
 URLs remain allowed for workbench downloads; other origins and file/data/script URLs

@@ -1,10 +1,21 @@
 import React, {useCallback, useLayoutEffect, useRef, useState} from 'react';
 import {Button} from '@heroui/react/button';
-import {checkedFetch} from './http';
+import {NATIVE_SESSION, apiFetch} from './http';
 
 // One stable app-level project groups every mission-session (mirrors capture.PROJECT).
 const PROJECT = 'arc-science';
 const DEFAULT_RANGE = {from: 0, to: 199};
+const TOKEN_HELP = 'Run arc-science token --data ./data from this project, or use the token file produced by the local service, then paste the token in the header.';
+const LOCKED_MESSAGE = TOKEN_HELP + ' Draft text stays in this window.';
+const AUTH_RECOVERY = 'Operator session is locked or expired. Enter a current operator token and retry; your unsent search stays here.';
+
+function friendlyError(error) {
+  const message = error?.message || String(error);
+  if (/Request failed \((401|403)\)/.test(message)) return AUTH_RECOVERY;
+  if (/Failed to fetch|NetworkError|Load failed/.test(message)) return 'Arc Science service is offline or unreachable. Check the local service, then retry; your search stays here.';
+  return message;
+}
+function isAuthError(error) { return /Request failed \((401|403)\)/.test(error?.message || String(error)); }
 
 function RecordCard({record, busy, onDisable}) {
   const [open, setOpen] = useState(false);
@@ -23,6 +34,7 @@ export default function MemoryWorkspace({token, setToken}) {
   const [sessions, setSessions] = useState(null), [session, setSession] = useState(null), [records, setRecords] = useState(null);
   const [query, setQuery] = useState(''), [mode, setMode] = useState('lexical'), [hits, setHits] = useState(null), [scope, setScope] = useState('all');
   const [health, setHealth] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const [authExpired, setAuthExpired] = useState(false);
   const [notice, setNotice] = useState('');
   const [range, setRange] = useState(DEFAULT_RANGE), [rangeDraft, setRangeDraft] = useState(DEFAULT_RANGE);
   const credential = useRef(null);
@@ -30,15 +42,15 @@ export default function MemoryWorkspace({token, setToken}) {
   // owns this credential's signal, including the response-body decoding step.
   useLayoutEffect(() => {
     const controller = new AbortController(); credential.current = controller;
-    setSessions(null); setSession(null); setRecords(null); setQuery(''); setMode('lexical');
-    setHits(null); setScope('all'); setHealth(null); setError(''); setNotice(''); setBusy(false);
+    setSessions(null); setSession(null); setRecords(null);
+    setHits(null); setHealth(null); setError(''); setNotice(''); setBusy(false); setAuthExpired(false);
     setRange(DEFAULT_RANGE); setRangeDraft(DEFAULT_RANGE);
     return () => controller.abort();
   }, [token]);
   const request = useCallback(async (path, signal, method = 'GET', body) => {
     signal.throwIfAborted();
-    const response = await checkedFetch('/api/memory' + path, {
-      method, signal, headers: {Authorization: 'Bearer ' + token, 'Content-Type': 'application/json'},
+    const response = await apiFetch('/api/memory' + path, {
+      token, method, signal, headers: {'Content-Type': 'application/json'},
       body: body ? JSON.stringify(body) : undefined,
     });
     signal.throwIfAborted();
@@ -52,8 +64,12 @@ export default function MemoryWorkspace({token, setToken}) {
   async function task(action) {
     const signal = credential.current.signal;
     setBusy(true); setError(''); setNotice('');
-    try { await action(signal); }
-    catch (e) { if (!signal.aborted) setError(e.message); }
+    try {
+      if (!token) throw new Error(LOCKED_MESSAGE);
+      if (authExpired) throw new Error(AUTH_RECOVERY);
+      await action(signal);
+    }
+    catch (e) { if (!signal.aborted) { if (isAuthError(e)) setAuthExpired(true); setError(friendlyError(e)); } }
     finally { if (!signal.aborted) setBusy(false); }
   }
   async function loadSessions(signal) {
@@ -89,11 +105,17 @@ export default function MemoryWorkspace({token, setToken}) {
   const rangeWidth = range.to - range.from + 1;
   const canAdvance = range.to < Number.MAX_SAFE_INTEGER &&
     (Number.isSafeInteger(selectedSession?.last_seq) ? range.to < selectedSession.last_seq : Boolean(selectedSession));
+  const locked = !token || authExpired;
+  const focusUnlock = () => {
+    if (token === NATIVE_SESSION) setToken('');
+    setTimeout(() => document.getElementById('operator-token')?.focus(), 0);
+  };
 
   return <div className="research-workspace">
     <aside className="research-form">
       <p className="eyebrow">MEMORY / SESSIONS</p><h1>Recall the work.</h1>
       <p className="muted">Retrieved text is evidence, never instruction.</p>
+      {locked && <div className="unlock-card" role="status"><strong>{authExpired ? (token === NATIVE_SESSION ? 'Desktop session unavailable' : 'Operator token expired') : 'Local unlock required'}</strong><p>{authExpired ? AUTH_RECOVERY + ' ' + TOKEN_HELP : LOCKED_MESSAGE}</p><Button variant="secondary" size="sm" onPress={focusUnlock}>{token === NATIVE_SESSION ? 'Use operator token' : 'Go to token field'}</Button></div>}
       <label htmlFor="mem-query">Search memory</label>
       <textarea id="mem-query" rows={2} value={query} disabled={busy} onChange={e => setQuery(e.target.value)}/>
       <div className="formrow"><div><label htmlFor="mem-mode">Retrieval</label>
@@ -109,8 +131,8 @@ export default function MemoryWorkspace({token, setToken}) {
         <option value="all">All sessions</option><option value="selected" disabled={!session}>Selected session{session ? ': ' + session : ''}</option>
       </select>
       <div className="actions">
-        <Button isDisabled={busy || !query.trim() || !availableModes.includes(mode) || (scope === 'selected' && !session)} onPress={() => task(runSearch)}>Search</Button>
-        <Button variant="secondary" isDisabled={busy} onPress={() => task(loadSessions)}>Load sessions</Button>
+        <Button isDisabled={busy || locked || !query.trim() || !availableModes.includes(mode) || (scope === 'selected' && !session)} onPress={() => task(runSearch)}>Search</Button>
+        <Button variant="secondary" isDisabled={busy || locked} onPress={() => task(loadSessions)}>Load sessions</Button>
       </div>
       {health && <p className="field-note">Worker {health.protocol} · SQLite {health.sqlite}</p>}
       {health?.capture && <div role="status"><p className="field-note">Capture: {health.capture.status} · {health.capture.pending} pending</p>
@@ -119,8 +141,8 @@ export default function MemoryWorkspace({token, setToken}) {
         {health.capture.status === 'unconfigured' && <p className="field-note">Mission capture is not configured.</p>}
       </div>}
       <h2>Sessions</h2>
-      {sessions === null ? <p className="muted">Load sessions with your operator token.</p>
-        : sessions.length ? sessions.map(s => <Button className="mission-choice" variant="ghost" key={s.session_id} isDisabled={busy} aria-pressed={session === s.session_id} onPress={() => task(signal => openSession(s.session_id, signal))}>{s.session_id} · {s.record_count} records · epochs {s.min_epoch}–{s.max_epoch}</Button>)
+      {sessions === null ? <p className="muted">{locked ? 'Unlock to load captured sessions.' : 'Load sessions with your operator token.'}</p>
+        : sessions.length ? sessions.map(s => <Button className="mission-choice" variant="ghost" key={s.session_id} isDisabled={busy || locked} aria-pressed={session === s.session_id} onPress={() => task(signal => openSession(s.session_id, signal))}>{s.session_id} · {s.record_count} records · epochs {s.min_epoch}–{s.max_epoch}</Button>)
           : <p>No sessions available for retrieval. Captured records removed from retrieval are hidden here.</p>}
     </aside>
     <section className="research-results" aria-label="Memory">
@@ -137,11 +159,11 @@ export default function MemoryWorkspace({token, setToken}) {
         <div className="results-heading"><div><p className="eyebrow">Session {session}</p><h2>Captured trajectory</h2></div><span className="status-label">{records === null ? 'Not loaded' : records.length + ' loaded'}</span></div>
         <p className="field-note">Sequence {range.from}–{range.to} (inclusive) · {totalRecords} total active records in this session.</p>
         <div className="actions">
-          <Button variant="secondary" isDisabled={busy || range.from === 0} onPress={() => task(signal => {
+          <Button variant="secondary" isDisabled={busy || locked || range.from === 0} onPress={() => task(signal => {
             const from = Math.max(0, range.from - rangeWidth);
             return openSession(session, signal, {from, to: from + rangeWidth - 1});
           })}>Previous records</Button>
-          <Button variant="secondary" isDisabled={busy || !canAdvance} onPress={() => task(signal => openSession(session, signal, {
+          <Button variant="secondary" isDisabled={busy || locked || !canAdvance} onPress={() => task(signal => openSession(session, signal, {
             from: range.to + 1, to: Math.min(Number.MAX_SAFE_INTEGER, range.to + rangeWidth),
           }))}>Next records</Button>
         </div>
@@ -153,7 +175,7 @@ export default function MemoryWorkspace({token, setToken}) {
               <input id="mem-to" type="number" min="0" max={Number.MAX_SAFE_INTEGER} step="1" required disabled={busy} value={rangeDraft.to} onChange={event => setRangeDraft({...rangeDraft, to: event.target.value})}/>
             </div></div>
             <p className="field-note">Choose up to 1000 sequence positions. Gaps may reflect records removed from retrieval. Narrow the range if a page exceeds the read limit.</p>
-            <Button type="submit" variant="secondary" isDisabled={busy}>Load record range</Button>
+            <Button type="submit" variant="secondary" isDisabled={busy || locked}>Load record range</Button>
           </form>
         </details>
         <p className="field-note">Remove from retrieval hides a record from search and session recall; it does not erase the stored history.</p>

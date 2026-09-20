@@ -45,7 +45,8 @@ MAX_PROMPT = 350_000
 ENV_ALLOWLIST = ('PATH', 'PATHEXT', 'SystemRoot', 'SystemDrive', 'windir', 'ComSpec', 'TEMP', 'TMP',
                  'TMPDIR', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'HOME', 'APPDATA', 'LOCALAPPDATA',
                  'USERNAME', 'USER', 'LANG', 'LC_ALL', 'TERM', 'ProgramFiles', 'ProgramData',
-                 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME')
+                 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME',
+                 'PYTHONUTF8')
 # Recognised CLI failure texts; anything else stays 'provider_rejected'.
 FAILURE_CATEGORIES = (
     ('auth_expired', 'oauth session expired'),

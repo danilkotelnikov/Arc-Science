@@ -1,7 +1,8 @@
 import {useEffect, useRef, useState} from 'react';
+import {apiFetch} from './http';
 
-// A render's progress as it happens: the service's event stream, read with fetch and
-// the operator token in a header (never a native EventSource, which cannot carry one),
+// A render's progress as it happens: the service's event stream, read with the
+// shared API transport (never a native EventSource, which cannot carry credentials),
 // resumed from the last id on a broken connection, and given up to polling after a
 // few failures. Nothing here is a claim about the render: the stages are what the
 // pipeline wrote so far, named as observations: an output appeared, not a step succeeded.
@@ -34,9 +35,9 @@ export function useRenderEvents({token, jobId, active, onEvent, fetcher = global
     (async () => {
       for (let attempt = 0; attempt < attempts && !controller.signal.aborted; attempt++) {
         try {
-          const headers = {Authorization: 'Bearer ' + token, Accept: 'text/event-stream'};
+          const headers = {Accept: 'text/event-stream'};
           if (lastId !== null) headers['Last-Event-ID'] = lastId;
-          const response = await fetcher('/api/molecular/renders/' + jobId + '/events', {headers, signal: controller.signal, cache: 'no-store'});
+          const response = await apiFetch('/api/molecular/renders/' + jobId + '/events', {token, headers, fetcher, signal: controller.signal, cache: 'no-store', check: false});
           if ([401, 403, 404, 405].includes(response.status)) break; // the service will not stream this; poll instead
           if (!response.ok || !response.body) throw new Error('HTTP ' + response.status);
           setLive(true);

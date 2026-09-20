@@ -23,6 +23,7 @@ from pathlib import Path
 
 from ..contracts import canonical
 from .catalog import validate_catalog
+from .cli_seats import scrubbed_environment
 
 MAX_TEXT_BLOCK = 64 * 1024
 MAX_RESULT = 256 * 1024
@@ -59,6 +60,17 @@ def sdk_version():
         return version('mcp')
     except Exception:
         return None
+
+
+def stdio_environment(server):
+    """Environment for stdio MCP servers: allowlisted host variables plus the
+    operator-configured values for this server, never the whole service process."""
+    environment = scrubbed_environment()
+    configured = server.get('env') or {}
+    if not isinstance(configured, dict):
+        raise ValueError('stdio server env must be an object')
+    environment.update({str(key): str(value) for key, value in configured.items() if value is not None})
+    return environment
 
 
 def tool_name(server, tool):
@@ -247,7 +259,8 @@ class McpToolset:
             resolved = command if Path(command).is_absolute() else shutil.which(command)
             if not resolved:
                 raise ValueError('command ' + command + ' is not on PATH')
-            params = StdioServerParameters(command=resolved, args=list(server.get('args') or []), cwd=str(self.workdir))
+            params = StdioServerParameters(command=resolved, args=list(server.get('args') or []), env=stdio_environment(server),
+                                           cwd=str(self.workdir))
             read, write = await self.stack.enter_async_context(stdio_client(params))
         session = await self.stack.enter_async_context(ClientSession(read, write, read_timeout_seconds=timedelta(seconds=self.call_timeout)))
         await session.initialize()

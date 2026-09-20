@@ -82,12 +82,14 @@ def test_idempotency_key_returns_same_mission(tmp_path):
         assert c.post('/api/missions',headers=h,json={'goal':'Different fixture'}).status_code==409
 
 
-def test_missing_records_and_diagnostic_console(tmp_path):
+def test_missing_records_and_diagnostics_uses_workbench_shell(tmp_path):
     with TestClient(app(tmp_path)) as c:
         assert c.get('/api/missions/unknown',headers=auth()).status_code==404
         page=c.get('/diagnostics')
         assert page.status_code==200
         assert 'Arc Science' in page.text
+        assert 'id="root"' in page.text
+        assert '0.6.0 development' not in page.text
         assert TOKEN not in page.text
 
 

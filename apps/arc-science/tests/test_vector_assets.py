@@ -716,3 +716,28 @@ def test_figure_import_cli_rejects_ambiguous_provenance_options(tmp_path, capsys
         )
     assert raised.value.code == 2
     assert "not allowed with argument" in capsys.readouterr().err
+
+
+def test_env_selected_svg_rasterizer_gets_scrubbed_environment(tmp_path, monkeypatch):
+    from arc_science import svg_raster
+
+    monkeypatch.setenv("ARC_SVG2PNG", str(tmp_path / "arc-svg2png"))
+    monkeypatch.setenv("ARC_NATIVE_SESSION_SECRET", "native-session-secret-must-not-leak")
+    monkeypatch.setenv("GEMINI_API_KEY", "operator-api-key-must-not-leak")
+    monkeypatch.setenv("PYTHONPATH", "/unsafe/import/path")
+    monkeypatch.setattr(svg_raster, "cairo_available", lambda: False)
+    launched = {}
+
+    def run(argv, **kwargs):
+        launched["argv"] = argv
+        launched["env"] = kwargs["env"]
+        Path(argv[2]).write_bytes(b"png bytes")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(svg_raster.subprocess, "run", run)
+
+    assert svg_raster.render_png_bytes(SVG.encode("utf-8"), width=128) == b"png bytes"
+    assert launched["argv"][0] == str(tmp_path / "arc-svg2png")
+    assert "ARC_NATIVE_SESSION_SECRET" not in launched["env"]
+    assert "GEMINI_API_KEY" not in launched["env"]
+    assert "PYTHONPATH" not in launched["env"]

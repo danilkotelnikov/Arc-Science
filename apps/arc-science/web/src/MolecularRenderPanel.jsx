@@ -217,7 +217,7 @@ export function MolecularRenderResult({job,token,onReturn}) {
     } catch(reason){if(!controller.signal.aborted)setDownloadError(reason.message);}
     finally{if(!controller.signal.aborted)setDownloading(false);}
   }
-  return <section className="figure-workspace" aria-label="Generated molecular figure">
+  return <section className="molecular-render-result" aria-label="Generated molecular figure">
     <div className="figure-toolbar"><div><p className="eyebrow">LOCAL RENDER</p><h2>{job.filename}</h2></div><Button variant="secondary" size="sm" onPress={onReturn}>Close render</Button></div>
     <div className="molecular-render-summary"><p role="status">Render status: {job.status}</p>{job.change&&<p className="molecular-change-record">Declared change of render {job.change.base_job.slice(0,8)}…: declared {job.change.declared_effects.join(', ')||'nothing'}; derived {job.change.derived_effects.join(', ')} ({job.change.changed_fields.join(', ')}); checks obliged: {job.change.required_checks.join(', ')}.</p>}<p className="muted">Job {job.id}{job.contact_pairs!==null&&job.contact_pairs!==undefined?' · '+job.contact_pairs+' residue pairs':''}</p>
       <p className="muted">Rendering does not establish scientific validity, visual acceptance, or publication approval. The surface is a Gaussian atomic envelope; dashed distances indicate proximity, not hydrogen bonds or affinity.</p>

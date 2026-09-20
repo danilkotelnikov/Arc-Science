@@ -3,7 +3,8 @@
 Native GUI acceptance for the running Arc Science desktop (start it first with
 scripts/start-arc-science.ps1). Drives the real WebView2 window through UI Automation:
 verifies the workbench controls are exposed, captures the window with PrintWindow (only
-this window's pixels, never the screen), checks the empty Molecules stage, performs a
+this window's pixels, never the screen), checks the Research landing and native
+session when present, performs a
 real download into the user's Downloads folder when a download control is present
 (a render of the operator's own must exist; otherwise the step is reported as skipped),
 optionally activates the BioArt workspace's external NIH search link (opens the system
@@ -107,13 +108,24 @@ $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System
 $named = @($all | ForEach-Object { $c = $_.Current; if ($c.Name) { '{0}:{1}' -f $c.ControlType.ProgrammaticName.Replace('ControlType.',''), $c.Name } } | Select-Object -Unique)
 Log ("UIA elements total=$($all.Count) named=$($named.Count)")
 $named | Set-Content -Path (Join-Path $Out 'uia-named.txt') -Encoding UTF8
-foreach ($n in 'Molecules','BioArt','Research','Memory','Prose','Settings','Load renders') {
+foreach ($n in 'Research','Memory','Molecules','BioArt','Prose','Settings','Diagnostics') {
     $el = Find-Named $n $CT::Button 3
     Log ("button '{0}': {1}" -f $n, $(if ($el) { 'found, enabled=' + $el.Current.IsEnabled } else { 'MISSING' }))
 }
-$stage = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition ($AE::ControlTypeProperty, $CT::Text))) |
-    Where-Object { $_.Current.Name -like 'No render selected*' } | Select-Object -First 1
-Log ("empty Molecules stage exposed: " + [bool]$stage + " (no packaged example)")
+$goal = Find-Named 'Research goal' $CT::Edit 3
+$empty = Find-Named 'No mission selected.' $CT::Text 3
+Log ("Research first paint: question=" + [bool]$goal + " empty results=" + [bool]$empty)
+if (-not $goal -or -not $empty) { throw 'Research did not open as the native first workspace' }
+$nativeReady = Find-Named 'Desktop session ready' $CT::Text 1
+Log ("native session indicator: " + [bool]$nativeReady)
+if ($nativeReady) {
+    $loadMissions = Find-Named 'Load missions' $CT::Button 3
+    if (-not $loadMissions -or -not $loadMissions.Current.IsEnabled) { throw 'Native session did not enable Load missions' }
+    Invoke-Element $loadMissions 'native Load missions'
+    $emptyMissions = Find-Named 'No saved missions. Create a mission to begin.' $CT::Text 10
+    if (-not $emptyMissions) { throw 'Native API request did not load the empty mission list without a page token' }
+    Log 'native WebView API authorization verified without a page token'
+}
 if (Find-Named 'Export SVG' $CT::Button 1) { throw 'The removed example collage is still present' }
 
 # ---- 3. visual capture: PrintWindow and physical screen pixels ----------------------

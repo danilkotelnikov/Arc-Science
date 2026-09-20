@@ -50,6 +50,43 @@ def test_client_round_trips_append_inspect_search(tmp_path):
         assert hits[0]["record"]["text"] == "hydrogen bond note"
 
 
+def test_memory_worker_launch_gets_scrubbed_environment(tmp_path, monkeypatch):
+    import io
+    import arc_science.memory.client as client
+
+    monkeypatch.setenv("ARC_NATIVE_SESSION_SECRET", "native-session-secret-must-not-leak")
+    monkeypatch.setenv("OPENAI_API_KEY", "operator-api-key-must-not-leak")
+    monkeypatch.setenv("PYTHONPATH", "/unsafe/import/path")
+    launched = {}
+
+    class FakeProc:
+        stdin = io.BytesIO()
+        stdout = io.BytesIO()
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 0
+
+    def popen(_argv, **kwargs):
+        launched["env"] = kwargs["env"]
+        return FakeProc()
+
+    monkeypatch.setattr(client.subprocess, "Popen", popen)
+    mem = MemoryClient(tmp_path / "arc-memory-worker", tmp_path / "memory.db")
+
+    environment = launched["env"]
+    assert "PATH" in {key.upper(): value for key, value in environment.items()}
+    assert "ARC_NATIVE_SESSION_SECRET" not in environment
+    assert "OPENAI_API_KEY" not in environment
+    assert "PYTHONPATH" not in environment
+    assert mem.is_alive()
+
+
 def test_client_surfaces_worker_errors(tmp_path):
     from arc_science.memory import MemoryError as MemErr
 

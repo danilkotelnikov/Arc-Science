@@ -15,6 +15,8 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
+from ..exploration.cli_seats import scrubbed_environment
+
 MAX_FRAME = 16 * 1024 * 1024  # arc-memory/1, symmetric in both directions
 
 
@@ -40,6 +42,7 @@ class MemoryClient:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            env=scrubbed_environment(),
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         self._lock = threading.Lock()

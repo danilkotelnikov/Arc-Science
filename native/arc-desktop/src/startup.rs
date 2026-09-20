@@ -16,6 +16,7 @@ const POLL: Duration = Duration::from_millis(100);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 const SERVICE_HEADER: &str = "x-arc-science-service";
 const SERVICE_ID: &str = "arc-science-v1";
+pub const NATIVE_SESSION_ENV: &str = "ARC_NATIVE_SESSION_SECRET";
 
 #[derive(Clone, Debug)]
 pub struct LocalUrl {
@@ -76,6 +77,52 @@ impl LocalUrl {
             health: format!("http://{host}:{port}/health"),
             origin: (ip, port),
         })
+    }
+
+    #[cfg(test)]
+    pub fn origin(&self) -> String {
+        let host = match self.origin.0 {
+            IpAddr::V4(ip) => ip.to_string(),
+            IpAddr::V6(ip) => format!("[{ip}]"),
+        };
+        format!("http://{host}:{}", self.origin.1)
+    }
+
+    pub fn is_api_resource(&self, value: &str) -> bool {
+        let Ok(uri) = value.parse::<ureq::http::Uri>() else {
+            return false;
+        };
+        if uri.scheme_str() != Some("http") {
+            return false;
+        }
+        let Some(authority) = uri.authority() else {
+            return false;
+        };
+        let Ok(ip) = authority
+            .host()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<IpAddr>()
+        else {
+            return false;
+        };
+        let suffix = match authority.as_str().strip_prefix(authority.host()) {
+            Some(suffix) => suffix,
+            None => return false,
+        };
+        let port = if suffix.is_empty() {
+            80
+        } else {
+            match suffix
+                .strip_prefix(':')
+                .and_then(|port| port.parse::<u16>().ok())
+            {
+                Some(port) => port,
+                None => return false,
+            }
+        };
+        (ip, port) == self.origin
+            && (uri.path() == "/api" || uri.path().strip_prefix("/api/").is_some())
     }
 
     pub fn allows(&self, value: &str) -> bool {
@@ -333,6 +380,13 @@ fn is_healthy(agent: &ureq::Agent, url: &LocalUrl, remaining: Duration) -> Resul
 }
 
 pub fn start_service(config: &Config) -> Result<Option<ServiceGuard>, String> {
+    start_service_with_native_session(config, None)
+}
+
+pub fn start_service_with_native_session(
+    config: &Config,
+    native_session_secret: Option<&str>,
+) -> Result<Option<ServiceGuard>, String> {
     let started = Instant::now();
     let agent = health_agent();
     if is_healthy(&agent, &config.url, config.timeout)? {
@@ -349,6 +403,9 @@ pub fn start_service(config: &Config) -> Result<Option<ServiceGuard>, String> {
         .args(&config.args)
         .stdin(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some(secret) = native_session_secret {
+        command.env(NATIVE_SESSION_ENV, secret);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

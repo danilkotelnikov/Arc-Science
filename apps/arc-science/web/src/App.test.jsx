@@ -20,6 +20,7 @@ beforeEach(()=>{
   requests=[]; selectedRow=structuredClone(row);
   vi.stubGlobal('fetch',vi.fn(async(path,options={})=>{
     requests.push({path,options});
+    if(path==='/api/session/status')return json({detail:'Authentication required'},{status:401});
     if(path==='/api/bioart/search')return json({hits:[{entry_id:18,title:'Antibody'}]});
     if(path==='/api/bioart/inspect')return json(bioartEntry);
     if(path==='/api/bioart/fetch')return json(JSON.parse(options.body).format==='EPS'?bioartDownloadReceipt:bioartReceipt);
@@ -41,14 +42,13 @@ beforeEach(()=>{
   URL.createObjectURL=vi.fn(()=> 'blob:artifact'); URL.revokeObjectURL=vi.fn();
   downloadClick=vi.spyOn(HTMLAnchorElement.prototype,'click').mockImplementation(function(){requests.push({download:this.download,href:this.href});});
 });
-afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();});
+afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();window.history.replaceState(null,'','/');});
 
 
 
 
 test('workspace switches retain in-memory token, goal and selected mission',async()=>{
   const user=userEvent.setup();render(<App/>);
-  await user.click(screen.getByRole('button',{name:'Research'}));
   await user.type(screen.getByLabelText('Operator token'),'secret-token');
   await user.clear(screen.getByLabelText('Research goal'));await user.type(screen.getByLabelText('Research goal'),'Retained research question');
   await user.click(screen.getByRole('button',{name:'Load missions'}));
@@ -63,8 +63,9 @@ test('workspace switches retain in-memory token, goal and selected mission',asyn
 });
 
 test('mission creation sends actual egress and visual-review consent and execution settings',async()=>{
-  const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
+  const user=userEvent.setup();render(<App/>);
   await user.type(screen.getByLabelText('Operator token'),'operator');
+  await user.type(screen.getByLabelText('Research goal'),'Live nonlinear response check');
   await user.selectOptions(screen.getByLabelText('Execution'),'live');
   await user.click(screen.getByLabelText(/Permit sending/));await user.click(screen.getByLabelText(/Require configured visual review/));
   await user.click(screen.getByRole('button',{name:'Create and start'}));
@@ -188,19 +189,59 @@ test('a finished mission keeps its outcome: Cancel is disabled, Verify and expor
   expect(requests.some(r=>r.path==='/api/missions/mission-1/cancel')).toBe(false);
 });
 
-test('molecules opens on the local render form with an empty stage and no packaged example',async()=>{
+test('cold launch opens Research with a blank question and an explicit example opt-in',async()=>{
   render(<App/>);
-  expect(await screen.findByRole('heading',{name:'Render locally'})).toBeInTheDocument();
-  expect(screen.getByRole('status')).toHaveTextContent('Choose a coordinate file or a saved render to view it.');
-  expect(screen.queryByText(/EXAMPLE/)).toBeNull();
-  expect(screen.queryByRole('button',{name:'Export SVG'})).toBeNull();
+  expect(await screen.findByRole('heading',{name:'Start with a question.'})).toBeInTheDocument();
+  expect(screen.getByRole('button',{name:'Research'})).toHaveAttribute('aria-pressed','true');
+  expect(within(screen.getByRole('navigation',{name:'Workspaces'})).getAllByRole('button').map(button=>button.textContent)).toEqual(['Research','Memory','Molecules','BioArt','Prose','Settings','Diagnostics']);
+  expect(screen.getByLabelText('Research goal')).toHaveValue('');
+  expect(screen.getByRole('button',{name:'Create and start'})).toBeDisabled();
+  expect(screen.getByRole('button',{name:'Load missions'})).toBeDisabled();
+  expect(screen.getByRole('status')).toHaveTextContent('Local unlock required');
+  await userEvent.setup().click(screen.getByRole('button',{name:'Use example'}));
+  expect(screen.getByLabelText('Research goal')).toHaveValue('Compare competing explanations of the nonlinear response and challenge the preferred fit.');
+  expect(requests.some(r=>String(r.path).includes('/api/missions'))).toBe(false);
   expect(requests.some(r=>String(r.path).includes('/api/examples'))).toBe(false);
+});
+
+test('Diagnostics stays in the shared shell and browser history restores the workspace',async()=>{
+  window.history.replaceState(null,'','/');
+  const user=userEvent.setup();render(<App/>);
+  await user.type(screen.getByLabelText('Operator token'),'temporary-operator');
+  await user.click(screen.getByRole('button',{name:'Diagnostics'}));
+  expect(window.location.pathname).toBe('/diagnostics');
+  expect(screen.getByRole('region',{name:'Diagnostics'})).toBeVisible();
+  expect(screen.getByLabelText('Operator token')).toHaveValue('temporary-operator');
+  expect(screen.queryByText('0.6.0 development')).not.toBeInTheDocument();
+  await user.click(within(screen.getByRole('navigation',{name:'Workspaces'})).getByRole('button',{name:'Research'}));
+  expect(window.location.pathname).toBe('/');
+  window.history.back();
+  await waitFor(()=>expect(screen.getByRole('region',{name:'Diagnostics'})).toBeVisible());
+  expect(screen.getByLabelText('Operator token')).toHaveValue('temporary-operator');
+  window.history.replaceState(null,'','/');
+});
+
+test('an owned native session unlocks without a page bearer and has a manual fallback',async()=>{
+  const normalFetch=fetch.getMockImplementation();
+  fetch.mockImplementation((path,options)=>path==='/api/session/status'
+    ? Promise.resolve(json({status:'authorized'})) : normalFetch(path,options));
+  const user=userEvent.setup();render(<App/>);
+  expect(await screen.findByText('Desktop session ready')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Operator token')).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText('Research goal'),'A local native-session question');
+  await user.click(screen.getByRole('button',{name:'Create and start'}));
+  await waitFor(()=>expect(requests.some(r=>r.path==='/api/missions'&&r.options.method==='POST')).toBe(true));
+  expect(requests.find(r=>r.path==='/api/missions'&&r.options.method==='POST').options.headers.Authorization).toBeUndefined();
+  await user.click(screen.getByRole('button',{name:'Use operator token'}));
+  expect(screen.getByLabelText('Operator token')).toHaveValue('');
+  expect(screen.getByLabelText('Research goal')).toHaveValue('A local native-session question');
 });
 
 test('empty saved missions have an actionable state',async()=>{
   fetch.mockImplementation(async()=>json([]));
   const user=userEvent.setup();render(<App/>);
-  await user.click(screen.getByRole('button',{name:'Research'}));await user.click(screen.getByRole('button',{name:'Load missions'}));
+  await user.type(screen.getByLabelText('Operator token'),'operator');
+  await user.click(screen.getByRole('button',{name:'Load missions'}));
   expect(await screen.findByText('No saved missions. Create a mission to begin.')).toBeInTheDocument();
 });
 
@@ -354,7 +395,7 @@ test('memory workspace loads a captured session and searches its reasoning',asyn
 });
 
 test('native shell download outcomes are announced in the header and replace each other',async()=>{
-  render(<App/>);await screen.findByRole('heading',{name:'Render locally'});
+  const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Molecules'}));await screen.findByRole('heading',{name:'Render locally'});
   expect(document.querySelector('.download-notice')).toBeNull();
   act(()=>{window.dispatchEvent(new CustomEvent('arc-download',{detail:{file:'1dqj-collage.svg',folder:'C:\Users\a b\Downloads',success:true}}));});
   expect(screen.getByText('Saved 1dqj-collage.svg in C:\Users\a b\Downloads')).toHaveAttribute('role','status');

@@ -93,5 +93,7 @@ test('memory refuses to answer without a valid operator token', async ({page}) =
   await openWorkspace(page, 'Memory', 'Memory');
   await page.getByLabel('Operator token').fill('not-the-operator-token-at-all-0000000000');
   await page.getByRole('button', {name: 'Load sessions'}).click();
-  await expect(page.getByRole('region', {name: 'Memory'}).getByRole('alert')).toContainText('401');
+  await expect(page.getByRole('region', {name: 'Memory'}).getByRole('alert')).toContainText('Operator session is locked or expired');
+  await expect(page.getByRole('button', {name: 'Load sessions'})).toBeDisabled();
+  await expect(page.getByRole('button', {name: 'Go to token field'})).toBeVisible();
 });

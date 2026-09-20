@@ -111,7 +111,7 @@ test('token change clears private state and rejects an old response even during 
   const signal = fetch.mock.calls.at(-1)[1].signal;
   rerender(<MemoryWorkspace token="new-token" setToken={setToken}/>);
   expect(signal.aborted).toBe(true);
-  expect(screen.getByLabelText('Search memory')).toHaveValue('');
+  expect(screen.getByLabelText('Search memory')).toHaveValue('sensitive query');
   expect(screen.queryByText('Private remembered finding')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', {name: /private-session/})).not.toBeInTheDocument();
   await act(async () => finish([{record, reason: 'lexical', score: 1}]));
@@ -119,6 +119,39 @@ test('token change clears private state and rejects an old response even during 
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.getByRole('button', {name: 'Load sessions'})).not.toBeDisabled();
   expect(localStorage.length).toBe(0); expect(sessionStorage.length).toBe(0);
+});
+
+test('locked and expired memory states preserve the draft query without dispatching raw 401 text', async () => {
+  const user = userEvent.setup();
+  const rendered = render(<MemoryWorkspace token="" setToken={vi.fn()}/>);
+  await user.type(screen.getByLabelText('Search memory'), 'kinase memory');
+  expect(screen.getByRole('button', {name: 'Search'})).toBeDisabled();
+  expect(screen.getByRole('button', {name: 'Load sessions'})).toBeDisabled();
+  expect(screen.getByRole('status')).toHaveTextContent('Local unlock required');
+  expect(screen.getByRole('status')).toHaveTextContent('arc-science token --data ./data');
+  expect(screen.getByRole('status')).toHaveTextContent('token file');
+  expect(fetch).not.toHaveBeenCalled();
+
+  fetch.mockImplementationOnce(async () => new Response(JSON.stringify({detail: 'bad token'}), {status: 401, headers: {'Content-Type': 'application/json'}}));
+  rendered.rerender(<MemoryWorkspace token="expired-token" setToken={vi.fn()}/>);
+  expect(screen.getByLabelText('Search memory')).toHaveValue('kinase memory');
+  await user.click(screen.getByRole('button', {name: 'Load sessions'}));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Operator session is locked or expired');
+  expect(screen.getByRole('alert')).not.toHaveTextContent('Request failed (401)');
+  expect(screen.getByLabelText('Search memory')).toHaveValue('kinase memory');
+  expect(screen.getByRole('status')).toHaveTextContent('Operator token expired');
+  expect(screen.getByRole('button', {name: 'Load sessions'})).toBeDisabled();
+  expect(screen.getByRole('button', {name: 'Search'})).toBeDisabled();
+  await user.click(screen.getByRole('button', {name: 'Go to token field'}));
+});
+
+test('offline memory errors keep service recovery copy separate from auth expiry', async () => {
+  fetch.mockImplementationOnce(async () => { throw new TypeError('Failed to fetch'); });
+  const user = userEvent.setup(); render(<MemoryWorkspace token="operator" setToken={vi.fn()}/>);
+  await user.click(screen.getByRole('button', {name: 'Load sessions'}));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Arc Science service is offline or unreachable');
+  expect(screen.getByRole('alert')).not.toHaveTextContent('Operator session is locked or expired');
+  expect(screen.getByRole('button', {name: 'Load sessions'})).not.toBeDisabled();
 });
 
 test('a large session uses bounded inclusive pages and shows loaded and total counts separately', async () => {

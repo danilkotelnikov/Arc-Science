@@ -14,9 +14,12 @@ arc-science serve --data ./data
 arc-science token --data ./data
 ```
 
-Open http://127.0.0.1:8080/ for the compiled HeroUI workbench. The unchanged
-diagnostic operations remain available at /diagnostics. No example collage is
-served; BioArt, Research missions, renders and artifacts require the local operator token.
+Open http://127.0.0.1:8080/ for the compiled HeroUI workbench. Research is the
+landing workspace; `/diagnostics` opens the same shell and session. No example
+collage is served. In an ordinary browser, protected BioArt, Research, Memory,
+render and Settings actions require the local operator token; an owned Windows
+desktop window unlocks through its native session. A reused service retains the
+manual token route.
 The BioArt workspace searches the verified cache by default. Its network checkbox
 authorizes only the current search, inspection, or fetch request.
 

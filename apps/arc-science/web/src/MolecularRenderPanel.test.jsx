@@ -5,7 +5,14 @@ import userEvent from '@testing-library/user-event';
 import MolecularWorkspace from './MolecularWorkspace';
 
 // Mol* needs WebGL and a browser; the unit tests stand in a stub for the lazy chunk.
-vi.mock('./MolecularViewer', () => ({default: ({source, scene, stage}) => <div data-testid="viewer">viewer {source.filename}{source.origin === 'job' ? ' (fetched)' : ' (upload)'}{scene ? ' · ' + scene.contacts.length + ' ' + scene.state + ' contacts' : ''}{stage ? ' · ' + stage : ''}</div>}));
+const viewerProbe = vi.hoisted(() => ({mounts: 0}));
+vi.mock('./MolecularViewer', async () => {
+  const React = await vi.importActual('react');
+  return {default: ({source, scene, stage}) => {
+    const [instance] = React.useState(() => ++viewerProbe.mounts);
+    return <div data-testid="viewer" data-instance={instance}>viewer {source.filename}{source.origin === 'job' ? ' (fetched)' : ' (upload)'}{scene ? ' · ' + scene.contacts.length + ' ' + scene.state + ' contacts' : ''}{stage ? ' · ' + stage : ''}</div>;
+  }};
+});
 const EMPTY = 'Choose a coordinate file or a saved render to view it.';
 
 const assets=Object.fromEntries(['collage.png','collage.svg','contacts.csv','manifest.json'].map(name=>[name,{url:'/api/molecular/renders/job-1/assets/'+name,sha256:'a'.repeat(64),bytes:120,media_type:name.endsWith('.png')?'image/png':'application/octet-stream'}]));
@@ -32,6 +39,7 @@ async function fillSource(user) {
   await user.type(screen.getByLabelText('Antigen chains'),'C');
 }
 beforeEach(()=>{
+  viewerProbe.mounts = 0;
   jobs=[];submitted={...completed,status:'queued',assets:{},contact_pairs:null};capabilities={configured:true,reason:'',limits:{max_source_bytes:750000},
     presets:{default:'publication_dark',default_source:'settings',names:[{name:'publication_white',description:'The reviewed default.'},{name:'grayscale',description:'Two greys, for print without colour.'}]}};calls=[];downloads=[];
   vi.stubGlobal('fetch',vi.fn(async(path,options={})=>{
@@ -64,9 +72,12 @@ test('loads explicitly and submits coordinates, author chains and reproducible d
   await user.click(screen.getByRole('button',{name:'Load renders'}));await screen.findByText('Local renderer ready.');
   await fillSource(user);
   // The chosen coordinates are shown before any render exists, without a request.
-  expect(await screen.findByTestId('viewer')).toHaveTextContent('viewer complex.cif (upload)');
+  const viewer = await screen.findByTestId('viewer');
+  expect(viewer).toHaveTextContent('viewer complex.cif (upload)');
+  const instance = viewer.dataset.instance;
   await user.click(screen.getByRole('button',{name:'Render structure'}));
   await screen.findByText('Render status: queued');
+  expect(screen.getByTestId('viewer').dataset.instance).toBe(instance);
   const sent=calls.find(call=>call.path==='/api/molecular/renders'&&call.options.method==='POST');
   expect(sent.options.headers.Authorization).toBe('Bearer operator');
   expect(JSON.parse(sent.options.body)).toEqual({filename:'complex.cif',source_text:'data_complex\n# coordinates',antibody_chains:['A','B'],antigen_chains:['C'],assembly:'asymmetric_unit',model_index:0,cutoff:4,width:1400,samples:96,seed:23});
@@ -78,10 +89,14 @@ test('loads explicitly and submits coordinates, author chains and reproducible d
   expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
 });
 
-test('completed render uses an authenticated blob preview and downloads, then closes to the empty stage',async()=>{
+test('completed render uses authenticated artifacts while preserving the same viewer',async()=>{
   jobs=[completed];const user=userEvent.setup();const rendered=render(<Harness/>);await loadPanel(user);
   await user.click(screen.getByRole('button',{name:'completed · complex.cif'}));
+  const viewer = await screen.findByTestId('viewer');
+  expect(viewer).toHaveTextContent('viewer complex.cif (fetched) · 1 verified contacts · render complete');
+  const instance = viewer.dataset.instance;
   expect(await screen.findByRole('img',{name:'Rendered molecular collage: complex.cif'})).toHaveAttribute('src','blob:molecular');
+  expect(screen.getByTestId('viewer').dataset.instance).toBe(instance);
   expect(calls.find(call=>call.path===assets['collage.png'].url).options.headers.Authorization).toBe('Bearer operator');
   expect(screen.getByText(/42 residue pairs/)).toBeInTheDocument();
   expect(screen.getByText(/Rendering does not establish scientific validity/)).toBeVisible();
@@ -93,8 +108,10 @@ test('completed render uses an authenticated blob preview and downloads, then cl
   expect(calls.find(call=>call.path===assets['manifest.json'].url).options.headers.Authorization).toBe('Bearer operator');
   expect(calls.every(call=>!call.path.includes('operator'))).toBe(true);
   await user.click(screen.getByRole('button',{name:'Close render'}));
-  // Closing the collage returns to the viewer of the render's own coordinates and contacts.
-  expect(await screen.findByTestId('viewer')).toHaveTextContent('viewer complex.cif (fetched) · 1 verified contacts · render complete');
+  // Closing the render details leaves the already-mounted viewer on the render's coordinates and contacts.
+  expect(screen.queryByRole('img',{name:'Rendered molecular collage: complex.cif'})).not.toBeInTheDocument();
+  expect(screen.getByTestId('viewer')).toHaveTextContent('viewer complex.cif (fetched) · 1 verified contacts · render complete');
+  expect(screen.getByTestId('viewer').dataset.instance).toBe(instance);
   expect(calls.find(call=>call.path==='/api/molecular/renders/job-1/source').options.headers.Authorization).toBe('Bearer operator');
   expect(calls.every(call=>!call.path.includes('/api/examples/'))).toBe(true);
   rendered.unmount();expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:molecular');

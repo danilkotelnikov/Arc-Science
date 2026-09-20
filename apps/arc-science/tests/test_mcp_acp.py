@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -88,6 +89,27 @@ def test_servers_without_consent_or_disabled_are_not_connected_and_failures_are_
         listed = await mcp_tools.inspect_servers([mcp_server(consent=False)], connect_timeout=60)
         assert listed[0]['ok'] and any(t['offered'] for t in listed[0]['tools'])
     run(scenario())
+
+
+def test_stdio_mcp_server_gets_scrubbed_environment_and_configured_env(monkeypatch):
+    monkeypatch.setenv('ARC_NATIVE_SESSION_SECRET', 'native-session-secret-must-not-leak')
+    monkeypatch.setenv('ARC_MODEL_TOKEN_FILE', '/operator/model.token')
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'anthropic-must-not-leak')
+    monkeypatch.setenv('OPENAI_API_KEY', 'openai-must-not-leak')
+    monkeypatch.setenv('GEMINI_API_KEY', 'gemini-must-not-leak')
+    monkeypatch.setenv('ARC_TEST_SECRET', 'arc-secret-must-not-leak')
+
+    async def scenario():
+        server = mcp_server(args=['--env-report'], env={'MCP_TOOL_TOKEN': 'configured-tool-token'})
+        async with mcp_tools.McpToolset([server], connect_timeout=60) as toolset:
+            report = toolset.report[0]
+            assert report['ok']
+            assert 'mcp_fake_env_report' in toolset.tools
+            result = await toolset.tools['mcp_fake_env_report'][1]({})
+            return json.loads(result['content'][0]['text'])
+
+    environment = run(scenario())
+    assert environment == {'MCP_TOOL_TOKEN': 'configured-tool-token'}
 
 
 def test_connector_results_are_bounded_in_every_part():

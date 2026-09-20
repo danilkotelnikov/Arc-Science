@@ -15,6 +15,8 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+from .exploration.cli_seats import scrubbed_environment
+
 STALE_REVISION_STATUS = 3
 CALL_TIMEOUT = 30.0
 MAX_DOCUMENT = 256 * 1024
@@ -46,6 +48,7 @@ def _run(arguments, stdin=None):
         raise SettingsUnavailable('The native supervisor is not available to this service')
     completed = subprocess.run(command + arguments, input=stdin, capture_output=True, text=True,
                                encoding='utf-8', timeout=CALL_TIMEOUT,
+                               env=scrubbed_environment(),
                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     return completed
 

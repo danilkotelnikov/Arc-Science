@@ -6,6 +6,7 @@ import {E2E_TOKEN, watchForTokenLeaks} from './fixtures.js';
 test('the render form stays gated until a runtime exists and reports its absence truthfully', async ({page}) => {
   const check = watchForTokenLeaks(page);
   await page.goto('/');
+  await page.getByRole('navigation', {name: 'Workspaces'}).getByRole('button', {name: 'Molecules'}).click();
   const controls = page.getByRole('complementary', {name: 'Molecular render controls'}).or(page.getByLabel('Molecular render controls')).first();
   await expect(controls.getByRole('button', {name: 'Load renders'})).toBeDisabled();
   await expect(controls.getByText('Load with your operator token.')).toBeVisible();
@@ -31,6 +32,7 @@ const TINY_PDB = ['HEADER    TEST', 'ATOM      1  N   ALA A   1       0.000   0.
 test('a chosen coordinate file is shown in the viewer at once, with its settings, before any render exists', async ({page}) => {
   const check = watchForTokenLeaks(page);
   await page.goto('/');
+  await page.getByRole('navigation', {name: 'Workspaces'}).getByRole('button', {name: 'Molecules'}).click();
   await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await page.getByLabel('Coordinate file').setInputFiles({name: 'tiny.pdb', mimeType: 'chemical/x-pdb', buffer: Buffer.from(TINY_PDB)});
   const viewer = page.getByLabel('Molecular viewer');

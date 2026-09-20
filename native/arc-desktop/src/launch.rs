@@ -12,7 +12,7 @@ use std::{
 };
 
 const SUPERVISOR: &str = "arc-science-native";
-const STEP_TIMEOUT: Duration = Duration::from_secs(60);
+pub const STEP_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub struct Check {
@@ -291,15 +291,88 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-const STYLE: &str = "<style>body{margin:0;font:15px/1.5 system-ui,Segoe UI,sans-serif;color:#17212d;background:#fff}main{max-width:720px;margin:12vh auto;padding:0 24px}h1{font-size:22px;margin:0 0 8px}p{margin:8px 0}ul{padding-left:18px}li{margin:4px 0}.muted{color:#5b6875}.bad{color:#bb3e03}code{font-size:13px}</style>";
+const STYLE: &str = "<style>body{margin:0;font:15px/1.5 system-ui,Segoe UI,sans-serif;color:#17212d;background:#fff}main{max-width:720px;margin:12vh auto;padding:0 24px}h1{font-size:22px;margin:0 0 8px}p{margin:8px 0}ul{padding-left:18px}li{margin:4px 0}.muted{color:#5b6875}.bad{color:#bb3e03}code{font-size:13px}.startup-status{margin:18px 0}.progress-track{position:relative;height:7px;overflow:hidden;border-radius:999px;background:#e7edf2}.progress-track::before{content:\"\";position:absolute;inset:0 auto 0 0;width:38%;border-radius:inherit;background:#315d7c;animation:arc-indeterminate 1.35s ease-in-out infinite}.failure-card{padding:14px 0;border-top:1px solid #e7edf2;border-bottom:1px solid #e7edf2}.recovery-actions{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.button-link{display:inline-flex;align-items:center;min-height:30px;padding:0 12px;border-radius:5px;background:#315d7c;color:#fff;text-decoration:none;font-size:13px}.button-link.secondary{background:#eef3f6;color:#243542;border:1px solid #d8e1e7}@keyframes arc-indeterminate{0%{transform:translateX(-105%)}100%{transform:translateX(265%)}}@media (prefers-reduced-motion:reduce){.progress-track::before{animation:none;transform:translateX(80%)}}</style>";
 
-/// The page shown while the local service starts.
-pub fn starting_page(plan: Option<&Plan>) -> String {
+#[derive(Debug, Clone, Default)]
+pub struct StartupProgress {
+    pub operation: String,
+    pub elapsed: Option<Duration>,
+    pub timeout: Option<Duration>,
+    pub timeout_note: Option<String>,
+}
+
+fn format_seconds(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds == 1 {
+        "1 second".into()
+    } else {
+        format!("{seconds} seconds")
+    }
+}
+
+fn progress_html(progress: &StartupProgress) -> String {
+    let operation = if progress.operation.trim().is_empty() {
+        "Starting the local service"
+    } else {
+        progress.operation.trim()
+    };
+    let mut body = format!(
+        "<section class=\"startup-status\" aria-label=\"Startup status\"><p>{}</p><div class=\"progress-track\" role=\"progressbar\" aria-label=\"Startup progress\" aria-valuetext=\"{}\"></div>",
+        escape(operation),
+        escape(operation)
+    );
+    if progress.elapsed.is_some() || progress.timeout.is_some() {
+        body.push_str("<p class=\"muted\">");
+        match (
+            progress.elapsed,
+            progress.timeout,
+            progress.timeout_note.as_deref(),
+        ) {
+            (Some(elapsed), Some(timeout), Some(note)) => body.push_str(&format!(
+                "Elapsed {}. {} {}.",
+                format_seconds(elapsed),
+                format_seconds(timeout),
+                escape(note)
+            )),
+            (Some(elapsed), Some(timeout), None) => body.push_str(&format!(
+                "Elapsed {} of {} timeout.",
+                format_seconds(elapsed),
+                format_seconds(timeout)
+            )),
+            (Some(elapsed), None, Some(note)) => {
+                body.push_str(&format!(
+                    "Elapsed {}. {}.",
+                    format_seconds(elapsed),
+                    escape(note)
+                ));
+            }
+            (Some(elapsed), None, None) => {
+                body.push_str(&format!("Elapsed {}.", format_seconds(elapsed)));
+            }
+            (None, Some(timeout), Some(note)) => {
+                body.push_str(&format!("{} {}.", format_seconds(timeout), escape(note)));
+            }
+            (None, Some(timeout), None) => {
+                body.push_str(&format!("Timeout {}.", format_seconds(timeout)));
+            }
+            (None, None, Some(note)) => body.push_str(&escape(note)),
+            (None, None, None) => {}
+        }
+        body.push_str("</p>");
+    }
+    body.push_str("</section>");
+    body
+}
+
+/// The page shown while the local service starts, with optional observed progress.
+pub fn starting_page_with_progress(plan: Option<&Plan>, progress: &StartupProgress) -> String {
     let mut body = String::from("<h1>Arc Science</h1>");
-    body.push_str(match plan {
-        Some(plan) if !plan.ready => "<p class=\"bad\">A readiness check failed; starting anyway so the reason is visible.</p>",
-        _ => "<p>Starting the local service…</p>",
-    });
+    body.push_str(&progress_html(progress));
+    if let Some(plan) = plan
+        && !plan.ready
+    {
+        body.push_str("<p class=\"bad\">A readiness check failed; starting anyway so the reason is visible.</p>");
+    }
     if let Some(plan) = plan {
         body.push_str("<ul>");
         for check in &plan.checks {
@@ -328,11 +401,16 @@ pub fn starting_page(plan: Option<&Plan>) -> String {
 }
 
 /// The page shown when the service could not start; the reason is the whole message.
-pub fn failure_page(reason: &str, plan: Option<&Plan>) -> String {
+pub fn failure_page(reason: &str, plan: Option<&Plan>, log_path: Option<&Path>) -> String {
     let mut body = format!(
-        "<h1>Arc Science could not start</h1><p class=\"bad\">{}</p>",
+        "<h1>Arc Science could not start</h1><section class=\"failure-card\" role=\"alert\"><p class=\"bad\">{}</p></section>",
         escape(reason)
     );
+    body.push_str("<p class=\"recovery-actions\"><a class=\"button-link\" href=\"arc-science://startup/retry\">Retry</a>");
+    if log_path.is_some() {
+        body.push_str("<a class=\"button-link secondary\" href=\"arc-science://startup/open-log\">Open redacted startup log</a>");
+    }
+    body.push_str("</p>");
     if let Some(plan) = plan {
         body.push_str(&format!(
             "<p class=\"muted\">Configuration: <code>{}</code>. Edit it or delete it to discover the runtime again. Supervisor: <code>{}</code>.</p>",
@@ -346,6 +424,12 @@ pub fn failure_page(reason: &str, plan: Option<&Plan>) -> String {
             }
             body.push_str("</ul>");
         }
+    }
+    if let Some(log_path) = log_path {
+        body.push_str(&format!(
+            "<p class=\"muted\">Startup log: <code>{}</code></p>",
+            escape(&log_path.display().to_string())
+        ));
     }
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>Arc Science</title>{STYLE}</head><body><main>{body}</main></body></html>"
@@ -429,12 +513,56 @@ mod tests {
             }],
             notes: vec!["a & b".into()],
         };
-        let starting = starting_page(Some(&plan));
+        let starting = starting_page_with_progress(Some(&plan), &StartupProgress::default());
         assert!(starting.contains("python: &lt;missing&gt;") && starting.contains("class=\"bad\""));
-        let failure = failure_page("<script>x</script>", Some(&plan));
+        let log_path = Path::new("C:/ArcScience/startup.log");
+        let failure = failure_page("<script>x</script>", Some(&plan), Some(log_path));
         assert!(
             failure.contains("&lt;script&gt;x&lt;/script&gt;") && failure.contains("a &amp; b")
         );
         assert!(!failure.contains("<script>"));
+        assert!(failure.contains("arc-science://startup/retry"));
+        assert!(failure.contains("arc-science://startup/open-log"));
+        assert!(failure.contains("startup.log"));
+    }
+
+    #[test]
+    fn starting_page_has_honest_indeterminate_progress() {
+        let page = starting_page_with_progress(None, &StartupProgress::default());
+        assert!(page.contains("role=\"progressbar\""));
+        assert!(page.contains("Starting the local service"));
+        assert!(page.contains("arc-indeterminate"));
+        assert!(!page.contains("aria-valuenow"));
+        assert!(!page.contains(">100%"));
+        assert!(!page.contains("100 percent"));
+        assert!(!page.contains("ready"));
+    }
+
+    #[test]
+    fn starting_page_reports_operation_elapsed_and_timeout_when_supplied() {
+        let page = starting_page_with_progress(
+            None,
+            &StartupProgress {
+                operation: "Discovering runtime <paths>".into(),
+                elapsed: Some(Duration::from_secs(2)),
+                timeout: Some(Duration::from_secs(60)),
+                timeout_note: Some("per-step configuration timeout".into()),
+            },
+        );
+        assert!(page.contains("Discovering runtime &lt;paths&gt;"));
+        assert!(page.contains("Elapsed 2 seconds. 60 seconds per-step configuration timeout."));
+        assert!(page.contains("aria-valuetext=\"Discovering runtime &lt;paths&gt;\""));
+        assert!(!page.contains(">2%"));
+        assert!(!page.contains(">100%"));
+    }
+
+    #[test]
+    fn failure_page_keeps_alert_visible_without_startup_progress() {
+        let page = failure_page("Supervisor timed out <after launch>", None, None);
+        assert!(page.contains("role=\"alert\""));
+        assert!(page.contains("Supervisor timed out &lt;after launch&gt;"));
+        assert!(page.contains("arc-science://startup/retry"));
+        assert!(!page.contains("arc-science://startup/open-log"));
+        assert!(!page.contains("role=\"progressbar\""));
     }
 }

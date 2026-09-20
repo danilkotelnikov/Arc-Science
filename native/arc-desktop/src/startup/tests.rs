@@ -85,6 +85,38 @@ fn navigation_requires_same_origin_but_preserves_object_downloads() {
 }
 
 #[test]
+fn native_unlock_only_matches_the_configured_api_origin() {
+    let url = LocalUrl::parse("http://127.0.0.1:8080/workbench").unwrap();
+    assert_eq!(url.origin(), "http://127.0.0.1:8080");
+    for allowed in [
+        "http://127.0.0.1:8080/api",
+        "http://127.0.0.1:8080/api/",
+        "http://127.0.0.1:8080/api/missions?x=1",
+    ] {
+        assert!(url.is_api_resource(allowed), "must match {allowed}");
+    }
+    for denied in [
+        "http://127.0.0.1:8080/apiology",
+        "http://127.0.0.1:8081/api",
+        "http://127.0.0.2:8080/api",
+        "http://localhost:8080/api",
+        "https://127.0.0.1:8080/api",
+        "blob:http://127.0.0.1:8080/api/id",
+        "data:text/plain,api",
+    ] {
+        assert!(!url.is_api_resource(denied), "must reject {denied}");
+    }
+}
+
+#[test]
+fn ipv6_native_unlock_origin_is_bracketed_and_exact() {
+    let url = LocalUrl::parse("http://[::1]:8080/workbench").unwrap();
+    assert_eq!(url.origin(), "http://[::1]:8080");
+    assert!(url.is_api_resource("http://[::1]:8080/api/memory"));
+    assert!(!url.is_api_resource("http://[::1]:8081/api/memory"));
+}
+
+#[test]
 fn argument_vector_preserves_spaces_empty_strings_and_quotes() {
     let config = Config::parse(&env(&[
         (
@@ -186,6 +218,25 @@ fn healthy_service_is_reused_without_attempting_to_spawn() {
 }
 
 #[test]
+fn native_session_secret_is_not_used_for_a_reused_service() {
+    let (url, thread) = peer(
+        "HTTP/1.1 200 OK\r\nX-Arc-Science-Service: arc-science-v1\r\nContent-Length: 0\r\n\r\n",
+    );
+    let config = Config {
+        url,
+        executable: "does-not-exist-arc-science".into(),
+        args: vec![],
+        timeout: Duration::from_secs(1),
+    };
+    assert!(
+        start_service_with_native_session(&config, Some("not-used-by-reused-service"))
+            .unwrap()
+            .is_none()
+    );
+    thread.join().unwrap();
+}
+
+#[test]
 fn a_foreign_listener_fails_without_spawning() {
     let (url, thread) = peer("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
     let config = Config {
@@ -250,6 +301,37 @@ fn startup_reports_early_child_exit() {
             .unwrap()
             .contains("Service exited before readiness")
     );
+}
+
+#[test]
+fn native_session_secret_is_passed_only_to_owned_child() {
+    let mut config = closed_port_config();
+    config.args = [
+        "--exact",
+        "startup::tests::native_session_fixture",
+        "--ignored",
+        "--nocapture",
+    ]
+    .map(OsString::from)
+    .into();
+    let error = start_service_with_native_session(
+        &config,
+        Some("owned-child-secret-not-printed-0123456789"),
+    )
+    .err()
+    .unwrap();
+    assert!(error.contains("native-session-present"));
+    assert!(!error.contains("owned-child-secret-not-printed-0123456789"));
+}
+
+#[test]
+#[ignore = "subprocess fixture: reports native-session environment presence"]
+fn native_session_fixture() {
+    if std::env::var_os(NATIVE_SESSION_ENV).is_some() {
+        eprintln!("native-session-present");
+    } else {
+        eprintln!("native-session-absent");
+    }
 }
 
 #[test]

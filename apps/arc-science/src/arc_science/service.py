@@ -35,6 +35,7 @@ from .exploration.evidence import evidence_graph
 from .exploration.catalog import TrustedPublicTools
 
 VERSION=__version__
+NATIVE_SESSION_ENV='ARC_NATIVE_SESSION_SECRET'
 
 
 class ProseText(BaseModel):
@@ -66,6 +67,17 @@ class ProbeRequest(BaseModel):
 class ProbeReply(BaseModel):
     """The smallest schema-valid answer: a probe proves reachability and identity, nothing more."""
     ok:bool
+
+
+def _configured_native_session_secret():
+    value=os.environ.get(NATIVE_SESSION_ENV)
+    if value is None:return None
+    if value!=value.strip():return None
+    if len(value)<43:return None
+    if len(value)>256:return None
+    if any(ord(character)<33 or ord(character)>126 for character in value):return None
+    return value
+
 
 ENDPOINTS={'openai':'https://api.openai.com/v1/responses',
            'anthropic':'https://api.anthropic.com/v1/messages',
@@ -332,6 +344,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         anchored.owner_only(token_path)
         token=token_path.read_text().strip()
     if len(token)<32:raise ValueError('Use a randomly generated API token of at least 32 characters')
+    native_session_secret=_configured_native_session_secret()
     repository=MissionRepository(root/'missions.db');running={}
 
     @asynccontextmanager
@@ -353,10 +366,18 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     app.state.repository=repository
     app.state.running=running
 
-    async def authorized(authorization:str|None=Header(default=None)):
+    async def authorized(authorization:str|None=Header(default=None),
+                         x_arc_native_session:str|None=Header(default=None)):
         expected='Bearer '+token
-        if not authorization or not secrets.compare_digest(authorization,expected):
-            raise HTTPException(401,'Authentication required',headers={'WWW-Authenticate':'Bearer'})
+        if authorization and secrets.compare_digest(authorization,expected):return
+        if (native_session_secret and x_arc_native_session and
+                secrets.compare_digest(x_arc_native_session,native_session_secret)):
+            return
+        raise HTTPException(401,'Authentication required',headers={'WWW-Authenticate':'Bearer'})
+
+    @app.get('/api/session/status',dependencies=[Depends(authorized)])
+    async def session_status():
+        return {'status':'authorized'}
 
     from .bioart.web import create_router as create_bioart_router
     app.include_router(create_bioart_router(root,authorized))
@@ -917,10 +938,13 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         return {**report,'event_chain':True,'release':decision.model_dump(mode='json')}
 
     static=Path(__file__).parent/'static'
-    @app.get('/diagnostics')
-    async def diagnostics():return FileResponse(static/'diagnostics.html')
-    app.mount('/assets-local',StaticFiles(directory=static),name='diagnostic-assets')
     web=static/'web'
+    @app.get('/diagnostics')
+    async def diagnostics():
+        # A direct URL and a refresh open the same authenticated workbench shell.
+        # Keep the legacy page only as a recovery fallback when no UI bundle exists.
+        return FileResponse(web/'index.html' if (web/'index.html').exists() else static/'diagnostics.html')
+    app.mount('/assets-local',StaticFiles(directory=static),name='diagnostic-assets')
     if web.is_dir() and (web/'index.html').exists():
         app.mount('/',StaticFiles(directory=web,html=True),name='web')
     else:

@@ -16,6 +16,8 @@ dependencies = [
  "serde_json",
  "tao",
  "ureq",
+ "webview2-com",
+ "windows",
  "wry",
 ]
 

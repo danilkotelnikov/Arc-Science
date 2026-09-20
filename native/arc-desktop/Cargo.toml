@@ -21,3 +21,9 @@ tao = "0.37.0"
 ureq = { version = "3.4.2", default-features = false }
 wry = "0.57.0"
 serde_json = "=1.0.145"
+
+[target.'cfg(windows)'.dependencies]
+# Promoted from wry's locked transitive graph so the desktop host can register a
+# native WebView2 request interceptor without adding a new runtime package.
+webview2-com = "0.39.1"
+windows = "0.62.2"

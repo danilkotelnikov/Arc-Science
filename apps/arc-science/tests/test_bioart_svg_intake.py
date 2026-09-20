@@ -175,3 +175,28 @@ def test_worker_cannot_invent_or_omit_requested_response_metadata(tmp_path,resul
           f'p.joinpath("result.json").write_text({json.dumps(json.dumps(result))})')
     with pytest.raises(ValueError,match='response metadata'):
         run_worker([sys.executable,'-c',code],{},timeout=5,limit=1024,metadata={})
+
+
+def test_owned_worker_environment_is_scrubbed_but_keeps_arc_science_importable(tmp_path, monkeypatch):
+    from arc_science.bioart.isolation import run_worker
+
+    monkeypatch.setenv('ARC_NATIVE_SESSION_SECRET', 'native-session-secret-must-not-leak')
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'operator-api-key-must-not-leak')
+    monkeypatch.setenv('PYTHONPATH', '/unsafe/import/path')
+    code = (
+        'import json, os, pathlib, sys; '
+        'import arc_science.bioart.worker; '
+        'p=pathlib.Path(sys.argv[1]); '
+        'payload={"has_secret":"ARC_NATIVE_SESSION_SECRET" in os.environ,'
+        '"has_key":"ANTHROPIC_API_KEY" in os.environ,'
+        '"pythonpath":os.environ.get("PYTHONPATH")}; '
+        'p.joinpath("response.bin").write_bytes(json.dumps(payload).encode()); '
+        'p.joinpath("result.json").write_text("{\\"ok\\": true}")'
+    )
+
+    payload = json.loads(run_worker([sys.executable, '-c', code], {}, timeout=5, limit=1024))
+
+    assert payload['has_secret'] is False
+    assert payload['has_key'] is False
+    assert payload['pythonpath'] != '/unsafe/import/path'
+    assert payload['pythonpath'].endswith('src')

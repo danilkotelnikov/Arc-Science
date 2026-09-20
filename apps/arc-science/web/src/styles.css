@@ -20,6 +20,8 @@ button svg { flex-shrink: 0; }
 .brand-mark { width: 26px; height: 26px; margin-right: -6px; border-radius: 6px; }
 .token-field { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; color: #4d5962; white-space: nowrap; }.token-field input { width: 220px; margin: 0; padding: 6px 8px; font-size: 12px; }
 .header-note { color: #68727a; font-size: 11px; }.header-note code { font-size: 10px; }
+.native-session { margin-left: auto; display: flex; align-items: center; gap: 10px; color: #315d7c; font-size: 12px; }
+.native-session .button { font-size: 11px; }
 .app-header>a { font-size: 11px; color: #68727a; }
 .download-notice { margin: 0; padding: 5px 10px; font-size: 11px; border-radius: 4px; color: #315d7c; background: #eaf0f4; border: 1px solid #d9e3e9; }
 .download-notice.alert { color: #a23d3d; background: #fbeeee; border-color: #efd3d3; padding: 5px 10px; }
@@ -29,6 +31,8 @@ button svg { flex-shrink: 0; }
 .workspace-nav .eyebrow { padding: 0 10px 10px; }
 .workspace-nav .button { justify-content: flex-start; gap: 10px; border-radius: 5px; font-size: 12px; }
 .workspace-nav .button[aria-pressed="true"] { color: #315d7c; background: #eaf0f4; }
+.nav-utility { margin-top: auto; padding-top: 18px; border-top: 1px solid #e4e7e9; display: flex; flex-direction: column; gap: 6px; }
+.nav-utility .eyebrow { padding-bottom: 4px; }
 .workspace-content { min-width: 0; }
 .molecular-workspace { display: grid; grid-template-columns: 228px minmax(0,1fr); min-height: calc(100vh - 58px); }
 .inspector { padding: 28px 20px; border-right: 1px solid #e9ebed; }
@@ -69,11 +73,36 @@ summary { cursor: pointer; font-weight: 500; }
 .error-line { padding-left: 22px; }
 .workspace-message { padding: 40px; }
 .research-workspace { display: grid; grid-template-columns: 340px minmax(0,1fr); }
+.guided-research { display: flex; flex-direction: column; min-height: calc(100vh - 58px); }
+.research-composer { padding: 26px 32px 22px; border-bottom: 1px solid #e9ebed; }
+.composer-heading { max-width: 760px; }
+.composer-heading h1 { margin: 10px 0; }
+.composer-grid { display: grid; grid-template-columns: minmax(360px,1fr) minmax(220px,280px); gap: 18px; align-items: start; margin-top: 18px; }
+.question-field label,.research-options label { display: block; margin: 0 0 7px; font-size: 11px; }
+.question-field textarea { min-height: 112px; }
+.composer-action-panel { display: flex; flex-direction: column; gap: 10px; padding-top: 22px; }
+.composer-action-panel>.button { width: 100%; border-radius: 5px; }
+.unlock-card.compact { margin: 0; }
+.research-options { margin-top: 14px; max-width: 840px; color: #3d4b55; }
+.research-options>.formrow { max-width: 520px; }
+.research-options .check { display: flex; gap: 8px; align-items: flex-start; margin: 9px 0; line-height: 1.6; font-size: 12px; }
+.research-options details { margin-top: 10px; }
+.research-workbench { display: grid; grid-template-columns: 300px minmax(0,1fr); flex: 1; min-width: 0; }
+.saved-missions { min-width: 0; padding: 24px; border-right: 1px solid #e9ebed; }
+.saved-missions-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.saved-missions-heading .button { flex-shrink: 0; font-size: 11px; border-radius: 5px; }
 .research-form { padding: 28px 24px; border-right: 1px solid #e9ebed; }
 .research-form h1 { margin: 10px 0; }
 .research-form>label { display: block; margin: 20px 0 7px; font-size: 11px; }
 input:not([type="checkbox"]),textarea,select { width: 100%; border: 1px solid #dce1e5; background: #fff; border-radius: 5px; padding: 9px 10px; font: inherit; font-size: 12px; }
 textarea { resize: vertical; }
+.unlock-card { margin: 18px 0; padding: 12px; border: 1px solid #d9e3e9; border-radius: 5px; background: #f8fbfd; color: #3d4b55; }
+.unlock-card strong { display: block; margin-bottom: 4px; font-size: 12px; }
+.unlock-card p { font-size: 11px; color: #4d5962; }
+.example-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.example-row .button { font-size: 11px; border-radius: 5px; }
+.guided-research .example-row .button { border: 1px solid #d7e0e6; background: #f8fbfd; padding: 6px 10px; }
+.guided-research .example-row .button:hover { background: #eaf0f4; }
 .field-note { font-size: 10px; margin-top: 6px; }
 .formrow { display: grid; grid-template-columns: 1fr 80px; gap: 10px; margin: 18px 0; }
 .formrow label { display: block; font-size: 11px; margin-bottom: 6px; }
@@ -85,6 +114,9 @@ input[type="checkbox"] { margin-top: 3px; accent-color: #315d7c; }
 .mission-choice { width: 100%; height: auto; min-height: 36px; justify-content: flex-start; white-space: normal; text-align: left; font-size: 11px; }
 .research-results { min-width: 0; padding: 28px 32px; }
 .research-results h2 { margin: 22px 0 12px; }
+.result-disclosure { padding: 14px 0; border-bottom: 1px solid #edf0f2; }
+.result-disclosure>summary { font-size: 14px; font-weight: 600; color: #28323b; }
+.result-disclosure[open]>summary { margin-bottom: 8px; }
 .results-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .results-heading h2 { font-size: 20px; margin: 8px 0; }
 .status-label { padding: 4px 8px; border: 1px solid #dce1e5; border-radius: 4px; color: #61717c; font-size: 11px; }
@@ -141,8 +173,8 @@ input[type="checkbox"] { margin-top: 3px; accent-color: #315d7c; }
 .import-record code { overflow-wrap: anywhere; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 10px; padding: 12px 0; }.prose-output { font-size: 13px; font-family: inherit; }.edits { padding-left: 18px; font-size: 13px; }.prose-detect { margin-top: 10px; }.seats { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 12px; }.seats th, .seats td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #e6e9ec; vertical-align: middle; }.seats input, .seats select { width: 100%; margin: 0; padding: 4px 6px; font-size: 12px; }.list-editor .record { margin-bottom: 8px; }
 footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e9ebed; font-size: 10px; color: #4d5962; line-height: 1.7; }
-@media(max-width:1100px) { .app-body { grid-template-columns: 122px minmax(0,1fr); }.molecular-workspace { grid-template-columns: 200px minmax(0,1fr); }.inspector { padding: 24px 15px; }.header-note { display: none; }.app-header>a { margin-left: auto; }.research-workspace { grid-template-columns: 300px minmax(0,1fr); }.research-results { padding: 24px 20px; }.bioart-workspace { grid-template-columns: 270px minmax(0,1fr); }.bioart-main { padding: 24px 20px; }.bioart-entry-grid,.receipt-grid { gap: 22px; } }
-@media(max-width:760px) { .app-header { padding: 12px 16px; }.brand { gap: 10px; font-size: 16px; }.token-field input { width: 120px; }.app-header>a { display: none; }.app-body { display: block; }.workspace-nav { flex-direction: row; padding: 8px 12px; border-bottom: 1px solid #e4e7e9; }.workspace-nav .eyebrow,.molecular-workspace,.research-workspace,.bioart-workspace { display: flex; flex-direction: column; }.inspector { order: 2; border-top: 1px solid #e9ebed; border-right: 0; }.figure-stage { height: auto; min-height: 300px; padding: 8px; }.figure-toolbar { padding: 10px; }.stage-footer { padding: 8px 10px; }.research-form,.bioart-search { border-right: 0; border-bottom: 1px solid #e9ebed; }.research-results,.bioart-main { padding: 24px; }.bioart-entry-grid,.receipt-grid { grid-template-columns: 1fr; }.bioart-heading { flex-direction: column; }.status-stack { align-items: flex-start; }.bioart-control-row { grid-template-columns: 1fr; } }
+@media(max-width:1100px) { .app-body { grid-template-columns: 122px minmax(0,1fr); }.molecular-workspace { grid-template-columns: 200px minmax(0,1fr); }.inspector { padding: 24px 15px; }.header-note { display: none; }.app-header>a { margin-left: auto; }.research-workspace { grid-template-columns: 300px minmax(0,1fr); }.research-composer { padding: 24px 20px 20px; }.research-workbench { grid-template-columns: 260px minmax(0,1fr); }.research-results { padding: 24px 20px; }.bioart-workspace { grid-template-columns: 270px minmax(0,1fr); }.bioart-main { padding: 24px 20px; }.bioart-entry-grid,.receipt-grid { gap: 22px; } }
+@media(max-width:760px) { .app-header { padding: 12px 16px; }.brand { gap: 10px; font-size: 16px; }.token-field input { width: 120px; }.app-header>a { display: none; }.app-body { display: block; }.workspace-nav { flex-direction: row; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid #e4e7e9; overflow-x: visible; }.workspace-nav>.eyebrow { display: none; }.workspace-nav>.button { flex: 1 1 120px; justify-content: center; min-width: 0; font-weight: 600; }.workspace-nav .button { justify-content: center; min-width: 0; }.molecular-workspace,.research-workspace,.bioart-workspace { display: flex; flex-direction: column; }.nav-utility { width: 100%; margin-top: 0; padding: 6px 0 0; border-top: 1px solid #d9dee2; flex-direction: row; flex-wrap: wrap; align-items: stretch; }.nav-utility .eyebrow { display: none; }.nav-utility .button { flex: 1 1 112px; color: #4d5962; font-size: 11px; font-weight: 500; background: #fff; }.composer-grid,.research-workbench { grid-template-columns: 1fr; }.composer-action-panel { padding-top: 0; }.saved-missions { border-right: 0; border-bottom: 1px solid #e9ebed; padding: 22px 24px; }.example-row { align-items: flex-start; flex-direction: column; }.inspector { order: 2; border-top: 1px solid #e9ebed; border-right: 0; }.figure-stage { height: auto; min-height: 300px; padding: 8px; }.figure-toolbar { padding: 10px; }.stage-footer { padding: 8px 10px; }.research-form,.bioart-search { border-right: 0; border-bottom: 1px solid #e9ebed; }.research-results,.bioart-main { padding: 24px; }.bioart-entry-grid,.receipt-grid { grid-template-columns: 1fr; }.bioart-heading { flex-direction: column; }.status-stack { align-items: flex-start; }.bioart-control-row { grid-template-columns: 1fr; } }
 .release-checks { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; font-size: 12px; }
 .check-state { font-weight: 600; }
 .check-satisfied { color: #2e6b3f; } .check-not_applicable { color: #68727a; } .check-unknown, .check-stale { color: #8a6d1d; } .check-failed, .check-error { color: #a23d3d; }
@@ -160,3 +192,7 @@ footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e9ebed; fon
 .software-report li.absent { color: #6b6b6b; }
 .software-report li.unprobed { color: #8a6d1f; }
 .software-report li.indirect { color: #4a5a8a; }
+@media(max-width:760px) {
+  .nav-utility { align-items: center; gap: 4px; }
+  .nav-utility .button { flex: 0 0 auto; min-height: 30px; padding: 4px 12px; background: transparent; }
+}

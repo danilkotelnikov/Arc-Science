@@ -17,6 +17,8 @@ import os
 import subprocess
 import tempfile
 
+from .exploration.cli_seats import scrubbed_environment
+
 
 @functools.lru_cache(maxsize=1)
 def cairo_available() -> bool:
@@ -60,7 +62,7 @@ def render_png_bytes(svg_bytes: bytes, width: int | None = None, height: int | N
         with open(source, 'wb') as handle:
             handle.write(svg_bytes)
         argv = [tool, source, target] + ([str(int(width))] if width else [])
-        subprocess.run(argv, check=True)
+        subprocess.run(argv, check=True, env=scrubbed_environment())
         with open(target, 'rb') as handle:
             return handle.read()
 

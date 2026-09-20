@@ -1,4 +1,5 @@
 """A small MCP server over stdio for the connector tests (official SDK, FastMCP)."""
+import json
 import os
 import sys
 
@@ -23,6 +24,22 @@ def where() -> str:
 def fail(reason: str) -> str:
     """Always reports an error."""
     raise ValueError(reason)
+
+
+if '--env-report' in sys.argv:
+    @server.tool()
+    def env_report() -> str:
+        """Report selected environment variables for containment regression tests."""
+        names = (
+            'ARC_NATIVE_SESSION_SECRET',
+            'ARC_MODEL_TOKEN_FILE',
+            'ANTHROPIC_API_KEY',
+            'OPENAI_API_KEY',
+            'GEMINI_API_KEY',
+            'ARC_TEST_SECRET',
+            'MCP_TOOL_TOKEN',
+        )
+        return json.dumps({name: os.environ.get(name) for name in names if os.environ.get(name) is not None}, sort_keys=True)
 
 
 if '--with-ref' in sys.argv:

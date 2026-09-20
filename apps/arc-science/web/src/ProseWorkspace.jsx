@@ -1,6 +1,6 @@
 import React, {useCallback, useLayoutEffect, useRef, useState} from 'react';
 import {Button} from '@heroui/react/button';
-import {checkedFetch} from './http';
+import {apiFetch} from './http';
 
 // Prose control: a rule-based local rewrite that never touches scientific content, and
 // third-party AI-detection that needs consent on every request because the text leaves
@@ -23,8 +23,8 @@ export default function ProseWorkspace({token, setToken}) {
   }, [token]);
   const read = useCallback(async (path, signal, method = 'GET', body) => {
     signal.throwIfAborted();
-    const response = await checkedFetch('/api/prose' + path, {
-      method, signal, headers: {Authorization: 'Bearer ' + token, 'Content-Type': 'application/json'},
+    const response = await apiFetch('/api/prose' + path, {
+      token, method, signal, headers: {'Content-Type': 'application/json'},
       body: body ? JSON.stringify(body) : undefined,
     });
     const data = await response.json();

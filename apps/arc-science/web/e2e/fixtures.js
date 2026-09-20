@@ -29,11 +29,12 @@ export async function runDemoMission(page, {goal, rounds = 5, vision = false} = 
   await openWorkspace(page, 'Research', 'Research results');
   await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await page.getByLabel('Research goal').fill(goal ?? 'E2E: explore the response curve of the offline fixture.');
+  await page.getByText('Execution settings', {exact: true}).click();
   await page.getByLabel('Execution').selectOption('demo');
   await page.getByLabel('Round limit').fill(String(rounds));
   if (vision) await page.getByLabel(/Require configured visual review/).check();
   await page.getByRole('button', {name: 'Create and start'}).click();
-  const status = page.locator('.status-label');
+  const status = page.getByRole('region', {name: 'Research results'}).locator('.status-label');
   await expect(status).toHaveText(/completed|budget_exhausted|needs_input|cancelled|error/, {timeout: 120_000});
   return status;
 }

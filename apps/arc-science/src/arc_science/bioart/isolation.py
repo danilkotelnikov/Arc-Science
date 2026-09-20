@@ -13,11 +13,19 @@ import threading
 import time
 
 from .. import anchored
+from ..exploration.cli_seats import scrubbed_environment
 from .cache import encoded
 from ..vector_assets import _open_directory, _read_regular, _write_regular_at
 
 
 _ASYNC_SIGNALS = ({signal.SIGINT, signal.SIGTERM, signal.SIGALRM} if os.name == 'posix' else set())
+_SOURCE_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _worker_environment():
+    environment = scrubbed_environment()
+    environment['PYTHONPATH'] = str(_SOURCE_ROOT)
+    return environment
 
 
 def _mask_async_signals():
@@ -91,7 +99,8 @@ def _run_worker(command,request,*,timeout,limit,metadata=None):
         process=None
         try:
             process=subprocess.Popen([*command,str(root)],stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True)
+                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True,
+                env=_worker_environment())
             _restore_signal_mask(previous_mask)
             while True:
                 remaining=end-time.monotonic()

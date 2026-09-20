@@ -157,3 +157,25 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   acceptance matrix, provider/connector gates and the native migration order.
 - This is a plan for the user's review. No product behavior or credential was changed
   in this planning loop. The existing 2026-09-20 program remains historical evidence.
+
+## Execution loop — 2026-09-20, Codex (product recovery)
+
+- User approved the [recovery plan](2026-09-20-product-recovery-plan.md). The current
+  implementation and qualification evidence is in the [recovery record](2026-09-20-recovery-record.md).
+- Research is first with a blank question and explicit example; primary navigation is
+  Research → Memory → Molecules → BioArt. Protected Research/Memory controls now gate
+  absent/expired auth, preserve the relevant draft, and stop expired polling.
+- The Windows Wry host has an owned-service native session broker described in the
+  [security design](2026-09-20-native-session-design.md). The real window loaded missions
+  without a page token; a separate browser stayed locked and a reused-service native
+  window retained manual unlock. Independent security review accepted this bounded
+  boundary with redirect/stale-restart/XSS limits still open.
+- Diagnostics now shares the HeroUI shell and in-memory session. The first visual
+  comparison and chosen [guided Research layout](2026-09-20-guided-research-design.md)
+  are being evaluated against desktop/narrow screenshots and a separate code review.
+- Targeted molecular contact/viewer continuity passed mocked tests and independent
+  code review; real Blender/WebGL/vision qualification remains open. After fixing
+  native-secret inheritance in service child processes, the full Python suite passed
+  809 with 65 skips; frontend and browser checks are linked
+  in the recovery record. Claude Opus/Sonnet 5 pairing was attempted but both were
+  refused for insufficient account credit and is not independent evidence.

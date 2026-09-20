@@ -96,6 +96,37 @@ def test_settings_are_read_from_the_supervisor_and_replaced_with_the_revision_se
         assert rejected.status_code == 422 and 'effort must be one of' in rejected.json()['detail']
 
 
+def test_settings_supervisor_gets_scrubbed_environment(tmp_path, monkeypatch):
+    guard = r'''
+import os, sys
+for name in ("ARC_NATIVE_SESSION_SECRET", "OPENAI_API_KEY", "PYTHONPATH"):
+    if os.environ.get(name):
+        print("leaked " + name, file=sys.stderr)
+        sys.exit(91)
+'''
+    script = tmp_path / 'stub-supervisor.py'
+    script.write_text(guard + STUB, encoding='utf-8')
+    if os.name == 'nt':
+        launcher = tmp_path / 'stub-supervisor.cmd'
+        launcher.write_text(f'@"{sys.executable}" "{script}" %*\n', encoding='utf-8')
+    else:
+        launcher = tmp_path / 'stub-supervisor'
+        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding='utf-8')
+        launcher.chmod(0o755)
+    project = tmp_path / 'project'
+    project.mkdir()
+    monkeypatch.setenv('ARC_SUPERVISOR', str(launcher))
+    monkeypatch.setenv('ARC_PROJECT', str(project))
+    monkeypatch.setenv('ARC_NATIVE_SESSION_SECRET', 'native-session-secret-must-not-leak')
+    monkeypatch.setenv('OPENAI_API_KEY', 'operator-api-key-must-not-leak')
+    monkeypatch.setenv('PYTHONPATH', '/unsafe/import/path')
+
+    snap = settings.snapshot()
+
+    assert snap['settings']['schema_version'] == 1
+    assert len(snap['revision']) == 64
+
+
 def test_without_a_supervisor_settings_are_unavailable_or_read_only(tmp_path, monkeypatch):
     monkeypatch.delenv('ARC_SUPERVISOR', raising=False)
     monkeypatch.delenv('ARC_PROJECT', raising=False)

@@ -16,8 +16,10 @@ test('an offline mission explores competing branches, reconciles them and verifi
   await expect(results.locator('.branch.focus')).toHaveCount(1);
   await expect(branches.filter({hasText: /parents: root/})).toHaveCount(1);
   await expect(branches.filter({hasText: /Falsifier:/})).toHaveCount(3);
-  // Reconciliation keeps analyst and falsifier positions visible, disagreement included.
-  await expect(results.getByRole('heading', {name: 'Reconciliation'})).toBeVisible();
+  // Reconciliation is discoverable but collapsed until the operator asks for the raw role trace.
+  const reconciliation = results.locator('details.result-disclosure').filter({hasText: 'Reconciliation'});
+  await expect(reconciliation).not.toHaveAttribute('open', '');
+  await reconciliation.getByText('Reconciliation').click();
   await expect(results.locator('.record h3').filter({hasText: /analyst · /}).first()).toBeVisible();
   await expect(results.locator('.record h3').filter({hasText: /falsifier · /}).first()).toBeVisible();
   await expect(results.locator('.record h3').filter({hasText: /· challenge$/}).first()).toBeVisible();
@@ -113,7 +115,7 @@ test('cancelling an unfinished mission fences late results; a finished one keeps
   await page.getByRole('button', {name: 'Load missions'}).click();
   await page.locator('.mission-choice').filter({hasText: 'ready · E2E: cancel before it runs.'}).first().click();
   const results = page.getByRole('region', {name: 'Research results'});
-  const status = page.locator('.status-label');
+  const status = results.locator('.status-label');
   await expect(status).toHaveText('ready');
   await expect(results.getByRole('button', {name: 'Resume'})).toBeEnabled();
   await results.getByRole('button', {name: 'Cancel'}).click();
@@ -142,7 +144,7 @@ test('saved missions reload with their outcome and an empty list is actionable',
   const saved = page.locator('.mission-choice').filter({hasText: 'E2E: saved mission listing.'});
   await expect(saved.first()).toBeVisible();
   await saved.first().click();
-  await expect(page.locator('.status-label')).toHaveText(/completed|budget_exhausted/);
+  await expect(page.getByRole('region', {name: 'Research results'}).locator('.status-label')).toHaveText(/completed|budget_exhausted/);
 });
 
 test('a presentation finding is repaired, reviewed again as a new candidate, and the ledger reads the repair', async ({page}) => {

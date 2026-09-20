@@ -2,7 +2,7 @@
 import {test, expect} from '@playwright/test';
 import {openWorkspace, watchForTokenLeaks} from './fixtures.js';
 
-test('the workbench opens with its mark, six workspaces and no packaged example', async ({page}) => {
+test('the workbench opens on a blank Research question in the requested order', async ({page}) => {
   const requested = [];
   page.on('request', (request) => requested.push(request.url()));
   await page.goto('/');
@@ -12,11 +12,15 @@ test('the workbench opens with its mark, six workspaces and no packaged example'
   await expect(mark).toBeVisible();
   expect(await mark.evaluate((img) => img.complete && img.naturalWidth > 0)).toBe(true);
   const nav = page.getByRole('navigation', {name: 'Workspaces'});
-  for (const name of ['Molecules', 'BioArt', 'Research', 'Memory', 'Prose', 'Settings']) {
+  const names = ['Research', 'Memory', 'Molecules', 'BioArt', 'Prose', 'Settings', 'Diagnostics'];
+  for (const name of names) {
     await expect(nav.getByRole('button', {name})).toBeEnabled();
   }
-  // Molecules is the landing workspace and it is empty: the operator's renders only.
-  await expect(page.getByRole('heading', {name: 'Render locally'})).toBeVisible();
+  expect(await nav.getByRole('button').allTextContents()).toEqual(names);
+  await expect(page.getByRole('heading', {name: 'Start with a question.'})).toBeVisible();
+  await expect(page.getByLabel('Research goal')).toHaveValue('');
+  await expect(page.getByRole('button', {name: 'Create and start'})).toBeDisabled();
+  await nav.getByRole('button', {name: 'Molecules'}).click();
   await expect(page.getByRole('region', {name: 'Molecular figure'}).getByRole('status')).toContainText('Choose a coordinate file or a saved render');
   await expect(page.getByRole('button', {name: 'Export SVG'})).toHaveCount(0);
   await expect(page.getByText(/EXAMPLE \/ 01/)).toHaveCount(0);
@@ -40,7 +44,7 @@ test('workspaces switch without losing the shared in-memory token, and the token
   check();
 });
 
-test('the diagnostics page and the API refuse unauthenticated private reads', async ({page, request}) => {
+test('Diagnostics shares the shell and the API refuses unauthenticated private reads', async ({page, request}) => {
   const api = await request.get('/api/missions');
   expect(api.status()).toBe(401);
   expect(api.headers()['www-authenticate']).toBe('Bearer');
@@ -48,5 +52,10 @@ test('the diagnostics page and the API refuse unauthenticated private reads', as
   expect(diagnostics.status()).toBe(200);
   expect(diagnostics.headers()['content-security-policy']).toContain("script-src 'self'");
   await page.goto('/');
-  await expect(page.getByRole('link', {name: /Diagnostics/})).toHaveAttribute('href', '/diagnostics');
+  await page.getByRole('navigation', {name: 'Workspaces'}).getByRole('button', {name: 'Diagnostics'}).click();
+  await expect(page).toHaveURL(/\/diagnostics$/);
+  await expect(page.getByRole('region', {name: 'Diagnostics'})).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Local unlock required');
+  await page.getByRole('button', {name: 'Research', exact: true}).last().click();
+  await expect(page.getByRole('heading', {name: 'Start with a question.'})).toBeVisible();
 });

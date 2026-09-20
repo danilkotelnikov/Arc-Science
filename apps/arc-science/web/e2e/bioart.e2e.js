@@ -21,8 +21,10 @@ test('an offline search miss requires explicit egress consent and the browser ne
   await expect(search.getByRole('checkbox', {name: /Permit NIH network access/})).not.toBeChecked();
   await search.getByRole('button', {name: 'Search NIH BioArt'}).click();
   const alert = page.getByRole('region', {name: 'BioArt evidence workspace'}).getByRole('alert');
-  await expect(alert).toContainText('409');
-  await expect(alert).toContainText(/egress|consent|network/i);
+  await expect(alert).toContainText('No cached BioArt source is available yet');
+  await expect(alert).toContainText('Consent is used once and clears after the request');
+  await expect(alert).not.toContainText('409');
+  await expect(alert).not.toContainText('--allow-egress');
   // The documented fallback for dynamic keyword search is the official site, opened outside the app.
   const link = search.getByRole('link', {name: 'Open NIH search'});
   await expect(link).toHaveAttribute('target', '_blank');
@@ -46,5 +48,7 @@ test('direct entry inspection validates the identifier before any request and re
   await expect(inspect).toBeEnabled();
   // Without consent the inspection stays offline: a cache miss is a 409, not a fetch.
   await inspect.click();
-  await expect(page.getByRole('region', {name: 'BioArt evidence workspace'}).getByRole('alert')).toContainText('409');
+  const alert = page.getByRole('region', {name: 'BioArt evidence workspace'}).getByRole('alert');
+  await expect(alert).toContainText('No cached BioArt source is available yet');
+  await expect(alert).not.toContainText('409');
 });
