@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import tempfile
 from pathlib import Path
+
+from .cli_seats import scrubbed_environment
 
 PROTOCOL_VERSION = 1
 CONNECT_TIMEOUT = 20.0
@@ -50,18 +53,30 @@ class AcpAgent:
         self.session_id = None
         self.agent = None
         self.workdir = None
+        self.job = None
+        self.lock = asyncio.Lock()
 
     async def start(self):
         resolved = self.command if Path(self.command).is_absolute() else shutil.which(self.command)
         if not resolved:
             raise AcpError('command ' + self.command + ' is not on PATH')
         self.workdir = Path(self.cwd) if self.cwd else Path(tempfile.mkdtemp(prefix='arc-acp-'))
+        # The same allowlisted environment as the CLI seats (the agent finds its own
+        # login there, nothing of Arc's), and the same kill-on-close job on Windows.
+        from ..figure_render import _assign_process_to_job, _kill_on_close_job
+        self.job = _kill_on_close_job() if os.name == 'nt' else None
         try:
             self.process = await asyncio.create_subprocess_exec(
                 resolved, *self.args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL, cwd=str(self.workdir), limit=MAX_LINE)
+                stderr=asyncio.subprocess.DEVNULL, cwd=str(self.workdir), env=scrubbed_environment(), limit=MAX_LINE)
         except OSError as error:
             raise AcpError('agent cannot start: ' + type(error).__name__) from None
+        if self.job is not None:
+            try:
+                _assign_process_to_job(self.job, self.process)
+            except OSError:
+                self.process.kill()
+                raise AcpError('agent process could not be contained') from None
         self.reader = asyncio.create_task(self._read(self.process.stdout))
         result = await self._request('initialize', {
             'protocolVersion': PROTOCOL_VERSION,
@@ -79,16 +94,19 @@ class AcpAgent:
         return self.session_id
 
     async def prompt(self, text):
-        if self.session_id is None:
-            await self.new_session()
         if len(text) > MAX_PROMPT:
             raise AcpError('prompt exceeds the consultation limit')
-        self.chunks = []
-        result = await self._request('session/prompt', {'sessionId': self.session_id, 'prompt': [{'type': 'text', 'text': text}]},
-                                     self.prompt_timeout)
-        answer = ''.join(self.chunks)[:MAX_TEXT]
-        return {'agent': self.name, 'text': answer, 'stop_reason': result.get('stopReason'),
-                'refused_requests': list(self.refusals), 'scope': 'consultation_untrusted_text_not_evidence'}
+        # One consultation at a time per agent: the text stream is per session.
+        async with self.lock:
+            if self.session_id is None:
+                await self.new_session()
+            self.chunks = []
+            self.refusals = []
+            result = await self._request('session/prompt', {'sessionId': self.session_id, 'prompt': [{'type': 'text', 'text': text}]},
+                                         self.prompt_timeout)
+            answer = ''.join(self.chunks)[:MAX_TEXT]
+            return {'agent': self.name, 'text': answer, 'stop_reason': result.get('stopReason'),
+                    'refused_requests': list(self.refusals), 'scope': 'consultation_untrusted_text_not_evidence'}
 
     async def _request(self, method, params, timeout):
         self.next_id += 1
@@ -175,6 +193,7 @@ class AcpAgent:
                           'error': {'code': -32601, 'message': 'Arc Science does not serve ' + method}})
 
     async def close(self):
+        from ..figure_render import _close_job
         if self.reader is not None:
             self.reader.cancel()
         if self.process is not None and self.process.returncode is None:
@@ -183,6 +202,9 @@ class AcpAgent:
                 await asyncio.wait_for(self.process.wait(), 5)
             except asyncio.TimeoutError:
                 pass
+        if self.job is not None:
+            _close_job(self.job)
+            self.job = None
         if self.cwd is None and self.workdir is not None:
             shutil.rmtree(self.workdir, ignore_errors=True)
 
@@ -193,7 +215,7 @@ def tool_spec(agent):
             'parameters': {'prompt': 'string, maximum ' + str(MAX_PROMPT) + ' characters'},
             'input_schema': {'type': 'object', 'properties': {'prompt': {'type': 'string', 'minLength': 1, 'maxLength': MAX_PROMPT}},
                              'required': ['prompt'], 'additionalProperties': False},
-            'execution': 'external_connector'}
+            'execution': 'external_connector', 'claim_eligible': False}
 
 
 class AcpConsultations:
@@ -203,18 +225,28 @@ class AcpConsultations:
     def __init__(self, agents):
         self.agents = [a for a in agents if a.get('enabled', True) and a.get('consent')]
         self.running = {}
+        self.starting = {}
         self.tools = {}
         for agent in self.agents:
             name = 'acp_' + ''.join(c if c.isalnum() or c in '_-' else '_' for c in agent['name'])[:60] + '_consult'
+            if name in self.tools:
+                raise ValueError('ACP agent names collide once normalised: ' + name)
             self.tools[name] = (tool_spec(agent), self._consult(agent))
 
     def _consult(self, agent):
         async def call(arguments):
-            client = self.running.get(agent['name'])
-            if client is None:
-                client = AcpAgent(agent['name'], agent['command'], agent.get('args') or [])
-                await client.start()
-                self.running[agent['name']] = client
+            # Start once per agent even under concurrent consultations; a failed start is closed.
+            lock = self.starting.setdefault(agent['name'], asyncio.Lock())
+            async with lock:
+                client = self.running.get(agent['name'])
+                if client is None:
+                    client = AcpAgent(agent['name'], agent['command'], agent.get('args') or [])
+                    try:
+                        await client.start()
+                    except BaseException:
+                        await client.close()
+                        raise
+                    self.running[agent['name']] = client
             return await client.prompt(str(arguments['prompt']))
         return call
 
@@ -234,7 +266,7 @@ async def inspect_agents(agents, *, connect_timeout=CONNECT_TIMEOUT):
         client = AcpAgent(agent['name'], agent['command'], agent.get('args') or [], connect_timeout=connect_timeout)
         try:
             info = await client.start()
-            report.append({'agent': agent['name'], 'ok': True, **info})
+            report.append({'agent': agent['name'], 'ok': True, **info, 'environment': 'allowlisted', 'contained': client.job is not None})
         except Exception as error:
             report.append({'agent': agent['name'], 'ok': False, 'error': type(error).__name__ + ': ' + str(error)[:300]})
         finally:

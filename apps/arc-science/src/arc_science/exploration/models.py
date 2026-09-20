@@ -87,6 +87,9 @@ class Observation(Record):
     dataset_digest: Digest
     request_digest: Digest
     replayable: bool = True
+    # Connector content (MCP servers, ACP agents) is an observation the roles may read
+    # and never evidence: it cannot support a hypothesis or count toward its scope.
+    claim_eligible: bool = True
 
     @property
     def digest(self):

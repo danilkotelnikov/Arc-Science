@@ -51,7 +51,7 @@ export default function SettingsWorkspace({token}) {
   }
   async function check(kind, signal) {
     // Cost-free and data-free: an MCP server lists its tools, an ACP agent answers initialize.
-    const result = await read(kind === 'mcp' ? '/mcp/servers' : '/acp/agents', signal);
+    const result = await read(kind === 'mcp' ? '/mcp/servers/check' : '/acp/agents/check', signal, 'POST');
     setChecks(current => ({...current, [kind]: result}));
   }
   async function probe(provider, signal) {

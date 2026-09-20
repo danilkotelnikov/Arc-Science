@@ -5,6 +5,7 @@ mode `permission` it asks the client for permission and reads a file before answ
 so the client's refusals are visible in the answer.
 """
 import json
+import os
 import sys
 import time
 
@@ -55,7 +56,8 @@ for line in sys.stdin:
             refused.append(answer.get('error', {}).get('code'))
         if mode == 'hang':
             time.sleep(30)
-        for piece in ('Echo: ', text, ' | refusals=' + json.dumps(refused)):
+        leaked = [name for name in ('ARC_TEST_SECRET', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'ARC_TOKEN_FILE') if name in os.environ]
+        for piece in ('Echo: ', text, ' | refusals=' + json.dumps(refused)) + ((' | LEAKED ' + ','.join(leaked),) if leaked else ()):
             send({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': 'sess-1', 'update': {
                 'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': piece}}}})
         send({'jsonrpc': '2.0', 'id': ident, 'result': {'stopReason': 'end_turn'}})

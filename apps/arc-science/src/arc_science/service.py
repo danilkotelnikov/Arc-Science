@@ -118,6 +118,16 @@ def _endpoint_from_seat(settings, role, seat):
         effort=effort)
 
 
+def connector_route(settings):
+    """The consented connectors a live mission may reach, without anything but their
+    identity: part of the route bound to the mission."""
+    servers=[{k:s.get(k) for k in ('name','transport','command','args','url')}
+             for s in (settings.get('mcp_servers') or []) if s.get('enabled',True) and s.get('consent')]
+    agents=[{k:a.get(k) for k in ('name','command','args')}
+            for a in (settings.get('acp_agents') or []) if a.get('enabled',True) and a.get('consent')]
+    return {'mcp_servers':servers,'acp_agents':agents}
+
+
 def endpoints_from_settings(settings):
     """(planner, reviewer, falsifier) endpoints from the settings file, or None when
     the planner seat is not configured there."""
@@ -130,8 +140,8 @@ def endpoints_from_settings(settings):
             _endpoint_from_seat(settings,'falsifier',falsifier))
 
 
-def configured_endpoints():
-    from_settings=endpoints_from_settings(operator_settings.current())
+def configured_endpoints(settings=None):
+    from_settings=endpoints_from_settings(operator_settings.current() if settings is None else settings)
     if from_settings is not None:
         return from_settings[0],from_settings[1]
     provider=(os.environ.get('ARC_PROVIDER') or 'openai')
@@ -157,8 +167,8 @@ def configured_endpoints():
     return first,second
 
 
-def configured_falsifier_endpoint(first,second):
-    from_settings=endpoints_from_settings(operator_settings.current())
+def configured_falsifier_endpoint(first,second,settings=None):
+    from_settings=endpoints_from_settings(operator_settings.current() if settings is None else settings)
     return from_settings[2] if from_settings is not None else second
 
 
@@ -171,33 +181,45 @@ def live_seats_ready():
     return first,second
 
 
+def live_route(vision_review=False):
+    """Everything a live mission reaches, from one reading of the settings: the seats and
+    the consented connectors. One immutable snapshot taken when the mission is scheduled
+    and handed to the worker, never re-read."""
+    settings=operator_settings.current()
+    first,second=configured_endpoints(settings)
+    seats={'planner':first,'reviewer':second,'falsifier':configured_falsifier_endpoint(first,second,settings)}
+    if vision_review:seats['vision']=configured_vision_endpoint(settings)
+    return {'seats':seats,**connector_route(settings or {})}
+
+
 def live_seats(vision_review=False):
-    """The endpoints a live mission runs with: one immutable snapshot taken when the
-    mission is scheduled and handed to the worker, never re-read from the settings."""
-    first,second=configured_endpoints()
-    seats={'planner':first,'reviewer':second,'falsifier':configured_falsifier_endpoint(first,second)}
-    if vision_review:seats['vision']=configured_vision_endpoint()
-    return seats
+    return live_route(vision_review)['seats']
 
 
-def seat_plan(seats):
-    """The whole route without secrets (provider, transport, model, effort, credential name,
-    endpoint or executable, OpenClaw agent and isolation), its digest, and a short reading
-    of it. Bound to the mission at its first start so a later settings change cannot
-    redirect the same context elsewhere unnoticed."""
-    route={role:e.model_dump(mode='json') for role,e in seats.items()}
-    route_digest=digest(route)
+def seat_plan(route):
+    """The whole route without secrets (per seat: provider, transport, model, effort,
+    credential name, endpoint or executable, OpenClaw agent and isolation; per consented
+    connector: its identity), its digest, and a short reading of it. Bound to the mission
+    at its first start so a later settings change cannot redirect the same context
+    elsewhere unnoticed."""
+    seats=route['seats'] if 'seats' in route else route
+    plan={'seats':{role:e.model_dump(mode='json') for role,e in seats.items()},
+          'mcp_servers':route.get('mcp_servers',[]),'acp_agents':route.get('acp_agents',[])}
+    route_digest=digest(plan)
     summary={role:':'.join((e.provider,e.transport,e.model,e.effort or 'default',e.credential_ref)) for role,e in seats.items()}
+    for kind in ('mcp_servers','acp_agents'):
+        if plan[kind]:summary[kind]=[entry['name'] for entry in plan[kind]]
     return route_digest,'sha256:'+route_digest+' '+json.dumps(summary,separators=(',',':'),sort_keys=True)
 
 
-def configured_vision_endpoint():
-    first,second=configured_endpoints()
-    vision=operator_settings.seat(operator_settings.current(),'vision')
+def configured_vision_endpoint(settings=None):
+    if settings is None:settings=operator_settings.current()
+    first,second=configured_endpoints(settings)
+    vision=operator_settings.seat(settings,'vision')
     if vision is not None:
         if vision.get('auth')=='cli':
             raise ValueError('Visual review is not available through a CLI login; give the vision seat an API credential')
-        endpoint=_endpoint_from_seat(operator_settings.current(),'vision',vision)
+        endpoint=_endpoint_from_seat(settings,'vision',vision)
         if endpoint.provider=='openclaw':
             raise ValueError('Visual review requires an OpenAI, Anthropic or Gemini native image endpoint')
         return endpoint
@@ -386,7 +408,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if current is None:raise HTTPException(503,'Settings are not available to this service')
         return [dict(entry) for entry in (current.get(key) or [])]
 
-    @app.get('/api/mcp/servers',dependencies=[Depends(authorized)])
+    @app.post('/api/mcp/servers/check',dependencies=[Depends(authorized)])
     async def mcp_servers():
         from .exploration import mcp_tools
         entries=connector_entries('mcp_servers')
@@ -395,7 +417,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         return {'sdk':mcp_tools.sdk_version(),'servers':report,
                 'consented':[e['name'] for e in entries if e.get('enabled',True) and e.get('consent')]}
 
-    @app.get('/api/acp/agents',dependencies=[Depends(authorized)])
+    @app.post('/api/acp/agents/check',dependencies=[Depends(authorized)])
     async def acp_agents():
         from .exploration import acp_client
         entries=connector_entries('acp_agents')
@@ -584,7 +606,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     async def read_evidence(mid:str):
         return evidence_graph(MissionState.model_validate(get(mid)['state']))
 
-    async def worker(mid,seats=None):
+    async def worker(mid,route=None):
         row=repository.get(mid);revision=row['revision']
         request=MissionRequest.model_validate(row['request'])
         def emit(state):
@@ -601,6 +623,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 if request.mode=='demo':agent=DemoVisionAgent() if request.vision_review else DemoAgent()
                 else:
                     # The snapshot bound when the mission was scheduled, never the current settings.
+                    seats=route['seats']
                     first,second,third=seats['planner'],seats['reviewer'],seats['falsifier']
                     vision=seats.get('vision') if request.vision_review else None
                     def resolve(ref,principal,project):
@@ -640,13 +663,12 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                             protocol=biorender['protocol'])
                         adapter=await biorender_tools(provider,schema_digest=biorender['schema_digest'])
                         tools=combine_trusted_tools(tools,adapter)
-                    # Consented connectors, for this mission only: MCP sessions open now and
-                    # close with the mission; ACP agents start on first consultation.
-                    current=operator_settings.current() or {}
+                    # The consented connectors bound with the route, for this mission only: MCP
+                    # sessions open now and close with the mission; ACP agents start on first use.
                     from .exploration.acp_client import AcpConsultations
                     from .exploration.mcp_tools import McpToolset
-                    consultations=AcpConsultations(current.get('acp_agents') or [])
-                    servers=[srv for srv in (current.get('mcp_servers') or []) if srv.get('enabled',True) and srv.get('consent')]
+                    consultations=AcpConsultations([{**a,'consent':True} for a in route['acp_agents']])
+                    servers=[{**s,'consent':True} for s in route['mcp_servers']]
                     mcp=McpToolset(servers) if servers else None
                     for name,binding in consultations.tools.items():
                         if name in tools:raise ValueError('Connector tool name collides: '+name)
@@ -689,26 +711,26 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         the plan bound at the first start before anything is written; then the resume is
         recorded, the plan bound if this is the first start, and the worker scheduled with
         the same immutable snapshot of the seats."""
-        request=MissionRequest.model_validate(row['request']);seats=None
+        request=MissionRequest.model_validate(row['request']);route=None
         if request.mode=='live':
-            try:seats=live_seats(request.vision_review)
+            try:route=live_route(request.vision_review)
             except Exception as error:raise HTTPException(409,'Configure the model seats before starting: '+str(error)[:300]) from None
-            route_digest,detail=seat_plan(seats)
+            route_digest,detail=seat_plan(route)
             state=MissionState.model_validate(row['state'])
             bound=next((e for e in reversed(state.events) if e.kind=='seats_bound'),None)
             if bound is not None and not bound.detail.startswith('sha256:'+route_digest+' '):
-                raise HTTPException(409,'The model seats changed since this mission was first started; a permission change is a '
+                raise HTTPException(409,'The model seats or connectors changed since this mission was first started; a permission change is a '
                                         'separate authorization: restore the seats or create a new mission')
         change=None
         if row['state']['status']=='paused':
             change=record_resume(row,declared if declared is not None else MISSION_CHANGES['resume']['derived'],note or 'Resumed from the workspace.')
             row=get(row['id'])
-        if seats is not None and bound is None:
+        if route is not None and bound is None:
             state=MissionState.model_validate(row['state'])
             state=state.model_copy(update={'events':state.events+(Event(kind='seats_bound',round=state.round,detail=detail[:1200]),)})
             try:repository.save(row['id'],state,expected_revision=row['revision'])
             except RevisionConflict:raise HTTPException(409,'Mission changed; retry') from None
-        running[row['id']]=asyncio.create_task(worker(row['id'],seats))
+        running[row['id']]=asyncio.create_task(worker(row['id'],route))
         return change
 
     @app.post('/api/missions/{mid}/start',status_code=202,dependencies=[Depends(authorized)])

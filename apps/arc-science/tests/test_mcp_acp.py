@@ -38,9 +38,20 @@ def test_schemas_are_tightened_into_the_catalogue_form_or_refused_with_a_reason(
     assert mcp_tools.tighten({'enum': ['a', 'b']}) == {'type': 'string', 'enum': ['a', 'b']}
     for bad, reason in (({'$ref': '#/x'}, '\\$ref'), ({'type': ['string', 'null']}, 'several types'), ({}, 'unconstrained'),
                         ({'type': 'object', 'properties': {'a': {'allOf': []}}}, 'allOf'), ({'type': 'array'}, 'item schema'),
-                        ({'description': 'no type'}, 'no type')):
+                        ({'description': 'no type'}, 'no type'),
+                        # Assertions the catalogue cannot express withhold the tool; only annotations are dropped.
+                        ({'type': 'array', 'items': {'type': 'string'}, 'uniqueItems': True}, 'uniqueItems'),
+                        ({'type': 'number', 'multipleOf': 2}, 'multipleOf'), ({'type': 'integer', 'exclusiveMinimum': 0}, 'exclusiveMinimum'),
+                        ({'type': 'object', 'properties': {}, 'minProperties': 1}, 'minProperties')):
         with pytest.raises(ValueError, match=reason):
             mcp_tools.tighten(bad)
+
+    class Tool:
+        name = 'either'
+        description = 'union at the top'
+        inputSchema = {'anyOf': [{'type': 'object', 'properties': {'a': {'type': 'string'}}}, {'type': 'string'}]}
+    with pytest.raises(ValueError, match='not an object'):
+        mcp_tools.catalog_entry('srv', Tool())
 
 
 def test_a_consented_server_offers_its_representable_tools_and_calls_are_bounded_observations():
@@ -77,6 +88,52 @@ def test_servers_without_consent_or_disabled_are_not_connected_and_failures_are_
         listed = await mcp_tools.inspect_servers([mcp_server(consent=False)], connect_timeout=60)
         assert listed[0]['ok'] and any(t['offered'] for t in listed[0]['tools'])
     run(scenario())
+
+
+def test_connector_results_are_bounded_in_every_part():
+    from types import SimpleNamespace as NS
+    big = NS(content=[NS(type='text', text='x' * (65 * 1024))], structuredContent={'k': 'v' * (70 * 1024)}, isError=False)
+    observation = mcp_tools.bounded_result('s', 't', big)
+    assert len(observation['content'][0]['text']) == 64 * 1024 and observation['structured'] is None
+    assert observation['notes'] == ['structured_dropped_over_limit', 'text_truncated']
+    with pytest.raises(ValueError, match='block limit'):
+        mcp_tools.bounded_result('s', 't', NS(content=[NS(type='text', text='a')] * 65, structuredContent=None, isError=False))
+    with pytest.raises(ValueError, match='image exceeds'):
+        mcp_tools.bounded_result('s', 't', NS(content=[NS(type='image', data='A' * (4 * 1024 * 1024 + 1), mimeType='image/png')], structuredContent=None, isError=False))
+    with pytest.raises(ValueError, match='uri exceeds'):
+        mcp_tools.bounded_result('s', 't', NS(content=[NS(type='resource', resource=NS(uri='u' * 2049, text=''))], structuredContent=None, isError=False))
+    with pytest.raises(ValueError, match='size limit'):
+        mcp_tools.bounded_result('s', 't', NS(content=[NS(type='text', text='x' * 60000)] * 5, structuredContent=None, isError=False))
+
+
+def test_connector_content_is_read_but_never_supports_a_hypothesis():
+    from arc_science.exploration import claim_scope
+
+    class Agent:
+        model = 'fixture-agent'
+
+        async def propose(self, context):
+            if context['observations']:
+                return {'stop': True, 'reason': 'consulted'}
+            return {'branches': [{'id': 'b', 'title': 'Echo', 'hypothesis': 'The connector answers', 'falsifier': 'It does not', 'parents': []}],
+                    'actions': [{'id': 'a', 'branch_id': 'b', 'tool': 'mcp_fake_echo', 'arguments': {'text': 'ping', 'times': 1}}]}
+
+        async def assess(self, role, context):
+            # Both roles try to lean on the connector's answer as support.
+            return {'assessments': [{'branch_id': 'b', 'position': 'support', 'finding': 'the server said so', 'evidence_ids': ['a'],
+                                     'next_test': 'independent data'}], 'summary': 'leaning on the connector'}
+
+    async def scenario():
+        async with mcp_tools.McpToolset([mcp_server()], connect_timeout=60) as toolset:
+            request = MissionRequest(goal='Consult the connector', mode='live', allow_egress=True, max_rounds=2)
+            return await explore(request, Agent(), extra_tools=toolset.tools)
+    state = run(scenario())
+    assert state.observations[0].status == 'ok' and state.observations[0].claim_eligible is False
+    # The reviews were rejected as unbound support, so nothing stands for the branch...
+    assert state.assessments == () and any(e.kind == 'review_rejected' for e in state.events)
+    # ...and the claim scope counts no successful test for it either.
+    branch = claim_scope.derive_claim_scope(state).branches[0]
+    assert branch.status == 'unassessed' and [u.reason for u in branch.uncertainties][:1] == ['untested']
 
 
 def test_a_mission_may_use_an_mcp_tool_only_with_egress_consent_and_records_it_as_an_observation():
@@ -119,6 +176,10 @@ def test_an_acp_agent_answers_a_consultation_and_every_request_it_makes_is_refus
             assert answer['scope'] == 'consultation_untrusted_text_not_evidence'
             again = await consult({'prompt': 'again'})
             assert again['text'].startswith('Echo: again') and len(consultations.running) == 1
+            # Concurrent consultations share one agent and never mix their text.
+            replies = await asyncio.gather(*(consult({'prompt': 'n' + str(i)}) for i in range(4)))
+            assert sorted(r['text'].split(' | ')[0] for r in replies) == ['Echo: n0', 'Echo: n1', 'Echo: n2', 'Echo: n3']
+            assert len(consultations.running) == 1
             with pytest.raises(acp_client.AcpError, match='exceeds'):
                 await consult({'prompt': 'x' * 4001})
         finally:
@@ -126,8 +187,29 @@ def test_an_acp_agent_answers_a_consultation_and_every_request_it_makes_is_refus
         assert consultations.running == {}
         report = await acp_client.inspect_agents([acp_agent(), {'name': 'gone', 'command': 'no-such-acp-agent', 'args': [], 'enabled': True}])
         assert report[0] == {'agent': 'fake', 'ok': True, 'protocol_version': 1, 'agent_info': {'name': 'fake-acp', 'version': '0.1'},
-                             'capabilities': {'loadSession': False}, 'auth_methods': []}
+                             'capabilities': {'loadSession': False}, 'auth_methods': [], 'environment': 'allowlisted',
+                             'contained': sys.platform == 'win32'}
         assert report[1]['ok'] is False and 'not on PATH' in report[1]['error']
+    run(scenario())
+
+
+def test_acp_names_that_collide_once_normalised_are_refused_and_a_failed_start_is_closed(monkeypatch):
+    monkeypatch.setenv('ARC_TEST_SECRET', 'must-not-leak')
+    with pytest.raises(ValueError, match='collide'):
+        acp_client.AcpConsultations([acp_agent(name='agent.one'), acp_agent(name='agent_one')])
+
+    async def scenario():
+        consultations = acp_client.AcpConsultations([{'name': 'gone', 'command': 'no-such-acp-agent', 'args': [], 'enabled': True, 'consent': True},
+                                                     acp_agent()])
+        try:
+            with pytest.raises(acp_client.AcpError, match='not on PATH'):
+                await consultations.tools['acp_gone_consult'][1]({'prompt': 'x'})
+            assert consultations.running == {}
+            answer = await consultations.tools['acp_fake_consult'][1]({'prompt': 'env?'})
+            # The allowlisted environment: no Arc token file, no provider key reaches the agent.
+            assert 'LEAKED' not in answer['text']
+        finally:
+            await consultations.close()
     run(scenario())
 
 

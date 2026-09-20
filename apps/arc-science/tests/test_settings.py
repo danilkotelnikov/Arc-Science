@@ -157,13 +157,13 @@ def test_seats_configured_in_settings_drive_the_endpoints_and_the_falsifier_gets
     first, second = service.configured_endpoints()
     assert (first.provider, first.transport, first.endpoint, first.effort) == ('openai', 'cli', str(fake), 'xhigh')
     assert (second.provider, second.transport) == ('anthropic', 'api')
-    route_digest, detail = service.seat_plan(service.live_seats())
+    route_digest, detail = service.seat_plan(service.live_route())
     assert detail == 'sha256:' + route_digest + ' ' + json.dumps({'falsifier': 'openai:api:gpt-5.6-mini:medium:falsifier-key',
         'planner': 'openai:cli:gpt-5.5:xhigh:planner', 'reviewer': 'anthropic:api:claude-sonnet-5:low:reviewer'}, separators=(',', ':'))
     # The digest covers the whole route, not only the summary: an endpoint change is a different plan.
     doc['providers']['anthropic']['endpoint'] = 'https://proxy.example/v1/messages'
     settings.replace(doc, None)
-    assert service.seat_plan(service.live_seats())[0] != route_digest
+    assert service.seat_plan(service.live_route())[0] != route_digest
 
 
 def test_a_named_credential_is_read_from_the_store_and_a_missing_name_is_refused(tmp_path, monkeypatch):
@@ -259,11 +259,11 @@ def test_a_live_mission_runs_each_seat_through_its_own_cli_and_binds_the_seat_pl
         settings.replace(doc, None)
         before = repo.get(row['id'])
         refused = c.post(f"/api/missions/{row['id']}/start", headers=AUTH)
-        assert refused.status_code == 409 and 'seats changed' in refused.json()['detail']
+        assert refused.status_code == 409 and 'connectors changed' in refused.json()['detail']
         # A declared change is the other resume path; it is refused the same way, and neither
         # path wrote anything: no resume recorded, revision unchanged.
         declared = c.post(f"/api/missions/{row['id']}/changes", headers=AUTH, json={'kind': 'resume', 'declared_effects': ['analysis', 'claim']})
-        assert declared.status_code == 409 and 'seats changed' in declared.json()['detail']
+        assert declared.status_code == 409 and 'connectors changed' in declared.json()['detail']
         after = repo.get(row['id'])
         assert after['revision'] == before['revision'] and after['state']['status'] == 'paused'
         assert len(after['state']['changes']) == len(before['state']['changes'])
@@ -324,12 +324,12 @@ print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 're
         assert caps['connectors'] == {'mcp': {'configured': 2, 'consented': 1, 'sdk': caps['connectors']['mcp']['sdk']}, 'acp': {'configured': 1, 'consented': 1}}
         assert caps['connectors']['mcp']['sdk']
         # Operator checks: every enabled server is listed (consent or not), nothing is called.
-        listed = c.get('/api/mcp/servers', headers=AUTH).json()
+        listed = c.post('/api/mcp/servers/check', headers=AUTH).json()
         assert listed['consented'] == ['fake'] and [srv['server'] for srv in listed['servers']] == ['fake', 'quiet']
         assert {t['name']: t['offered'] for t in listed['servers'][0]['tools']} == {'echo': True, 'where': True, 'fail': True}
-        agents = c.get('/api/acp/agents', headers=AUTH).json()
+        agents = c.post('/api/acp/agents/check', headers=AUTH).json()
         assert agents['agents'][0]['ok'] and agents['agents'][0]['agent_info']['name'] == 'fake-acp' and agents['consented'] == ['fake']
-        assert c.get('/api/mcp/servers').status_code == 401
+        assert c.post('/api/mcp/servers/check').status_code == 401 and c.get('/api/mcp/servers/check', headers=AUTH).status_code in (404, 405)
         row = c.post('/api/missions', headers=AUTH, json={'goal': 'Ask the connectors', 'mode': 'live', 'max_rounds': 2, 'allow_egress': True}).json()
         assert c.post(f"/api/missions/{row['id']}/start", headers=AUTH).status_code == 202
         state = wait_final(c, row['id'])['state']
@@ -339,6 +339,19 @@ print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 're
         assert by_tool['acp_fake_consult']['status'] == 'ok' and by_tool['acp_fake_consult']['data']['text'].startswith('Echo: hello')
         assert by_tool['acp_fake_consult']['data']['refused_requests'] == ['Run rm -rf', 'fs/read_text_file']
         assert 'mcp_quiet_echo' not in json.dumps(state['model_records'][0]['input_context']['tools'])
+        # The consented connectors are part of the bound route: withdrawing consent after the
+        # first start is a different route, refused on resume like a changed seat.
+        bound = next(e for e in state['events'] if e['kind'] == 'seats_bound')
+        assert json.loads(bound['detail'].split(' ', 1)[1])['mcp_servers'] == ['fake'] and json.loads(bound['detail'].split(' ', 1)[1])['acp_agents'] == ['fake']
+        repo = c.app.state.repository
+        current = repo.get(row['id'])
+        from arc_science.exploration.models import MissionState
+        repo.save(row['id'], MissionState.model_validate({**current['state'], 'status': 'paused'}), expected_revision=current['revision'])
+        doc = settings.snapshot()['settings']
+        doc['mcp_servers'][0]['consent'] = False
+        settings.replace(doc, None)
+        refused = c.post(f"/api/missions/{row['id']}/start", headers=AUTH)
+        assert refused.status_code == 409 and 'connectors changed' in refused.json()['detail']
 
 
 def test_the_falsifier_seat_reaches_the_agents():

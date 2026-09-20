@@ -20,10 +20,10 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (path, options = {}) => {
     calls.push({path, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null, auth: options.headers?.Authorization});
     if (path === '/api/capabilities') return json({live});
-    if (path === '/api/mcp/servers') return json({sdk: '1.27.0', consented: ['pubmed'], servers: [
+    if (path === '/api/mcp/servers/check' && options.method === 'POST') return json({sdk: '1.27.0', consented: ['pubmed'], servers: [
       {server: 'pubmed', ok: true, tools: [{name: 'search_articles', offered: true, as: 'mcp_pubmed_search_articles'}, {name: 'nested', offered: false, reason: 'schema uses $ref, which the catalogue cannot represent'}]},
       {server: 'arxiv', ok: false, error: 'McpError: Connection closed', tools: []}]});
-    if (path === '/api/acp/agents') return json({protocol_version: 1, consented: [], agents: [
+    if (path === '/api/acp/agents/check' && options.method === 'POST') return json({protocol_version: 1, consented: [], agents: [
       {agent: 'gemini', ok: true, protocol_version: 1, agent_info: {name: 'gemini-cli', version: '0.56.0'}, capabilities: {}, auth_methods: ['oauth-personal', 'gemini-api-key']}]});
     if (path === '/api/providers/openai/probe' && options.method === 'POST') return json({transport: 'codex', provider: 'openai', results: [{model: 'gpt-5.5', effort: 'xhigh', roles: ['planner'], ok: true, observed_model: null, identity_verified: false}]});
     if (path === '/api/settings' && (options.method || 'GET') === 'GET') return json({settings: stored, revision, path: 'C:/ws/settings.toml', applied_live: ['seats'], restart_required: []});
@@ -125,5 +125,5 @@ test('connection checks list MCP tools and ACP agents as the service reports the
   await user.click(screen.getByRole('button', {name: 'Check ACP agents'}));
   const acp = within(await screen.findByLabelText('ACP agents checked'));
   expect(acp.getByText(/gemini-cli 0\.56\.0 · auth: oauth-personal, gemini-api-key/)).toBeInTheDocument();
-  expect(calls.filter(c => c.path === '/api/mcp/servers' || c.path === '/api/acp/agents').every(c => c.method === 'GET' && c.auth === 'Bearer operator')).toBe(true);
+  expect(calls.filter(c => c.path === '/api/mcp/servers/check' || c.path === '/api/acp/agents/check').every(c => c.method === 'POST' && c.auth === 'Bearer operator')).toBe(true);
 });

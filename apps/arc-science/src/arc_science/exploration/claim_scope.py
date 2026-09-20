@@ -52,7 +52,8 @@ def identity_verified(state: MissionState, role: str, round: int) -> bool:
 
 def scope_branch(branch, state: MissionState, latest) -> ScopedBranch:
     observations = [o for o in state.observations if o.branch_id == branch.id]
-    successful = [o for o in observations if o.status == 'ok']
+    # Connector content is read, never counted: it neither tests a hypothesis nor supports it.
+    successful = [o for o in observations if o.status == 'ok' and o.claim_eligible]
     positions = {role: latest.get((role, branch.id)) for role in ROLES}
     present = [role for role in ROLES if positions[role] is not None]
     uncertainties = []

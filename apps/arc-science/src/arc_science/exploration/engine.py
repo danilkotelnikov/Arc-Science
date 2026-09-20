@@ -34,7 +34,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
     extra_tools=extra_tools or {}
     trusted_public=isinstance(extra_tools,TrustedPublicTools)
     trusted_external={**PUBLIC_CATALOG,**BIORENDER_CATALOG}
-    execution_policy={}
+    execution_policy={};claim_policy={}
     for name,(spec,_) in extra_tools.items():
         if name in trusted_external and not (trusted_public and spec==trusted_external[name]):
             raise ValueError(f'Extra tool {name} collides with a trusted runtime adapter')
@@ -44,6 +44,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         if policy not in {'external_connector','local_pure'}:
             raise ValueError(f'Extra tool {name} has an unsupported execution policy')
         execution_policy[name]='external_connector' if name in trusted_external else policy
+        claim_policy[name]=name in trusted_external or spec.get('claim_eligible',True) is not False
     extra_catalog=validate_catalog({name:value[0] for name,value in extra_tools.items()})
     runtime_catalog={**(CATALOG if state.points else {}),**extra_catalog}
     if state.request_digest!=digest(request): raise ValueError('The mission contract changed')
@@ -183,7 +184,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                 return Observation(id=action.id,action=action,tool=action.tool,tool_version=version,
                     branch_id=action.branch_id,round=state.round,status=status,data=data,
                     dataset_digest=state.dataset_digest,request_digest=digest([action.model_dump(mode='json'),state.dataset_digest]),
-                    replayable=replayable)
+                    replayable=replayable,claim_eligible=claim_policy.get(action.tool,True))
         observations=await asyncio.gather(*(execute(a) for a in actions))
         change(observations=state.observations+tuple(observations))
         for o in observations: event('observation',o.id+': '+o.status)
@@ -296,8 +297,8 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                     raise ValueError('Fabricated evidence')
                 for a in packet.assessments:
                     referenced=[o for o in state.observations if o.id in a.evidence_ids]
-                    if a.position=='support' and not any(o.status=='ok' for o in referenced):
-                        raise ValueError('Tool failures cannot support a hypothesis')
+                    if a.position=='support' and not any(o.status=='ok' and o.claim_eligible for o in referenced):
+                        raise ValueError('Tool failures and connector content cannot support a hypothesis')
                 return role,packet
             except Exception: return role,None
         # Neither invocation sees the other's current-round answer.
