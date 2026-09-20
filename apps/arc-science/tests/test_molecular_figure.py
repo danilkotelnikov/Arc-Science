@@ -328,6 +328,37 @@ def test_raster_contains_visible_projected_atom_labels_and_distances(tmp_path):
     assert any('65°' in text for text in texts if text)
 
 
+def test_worker_style_defaults_match_the_registry_and_are_bounded_again(tmp_path):
+    import json
+    from arc_science.render_presets import BASE, PRESETS, STYLE_SCHEMA
+    worker=module('molecular_worker')
+    # The reviewed defaults copied into the worker are the registry's base style.
+    assert worker.DEFAULT_STYLE==BASE
+    assert set(worker.BACKGROUNDS)==set(STYLE_SCHEMA['background']['choices'])
+    for name,preset in PRESETS.items():
+        path=tmp_path/(name+'.json'); path.write_text(json.dumps(dict(preset=name,**preset['style'])))
+        assert worker.load_style(str(path))==preset['style'], name
+    assert worker.load_style(None)==BASE
+    for bad in ({'isovalue':0.05},{'stick_radius':2},{'roughness':-1},{'antibody_color':'red'},{'background':'neon'},{'world_strength':'0.7'}):
+        path=tmp_path/'bad.json'; path.write_text(json.dumps({**BASE,**bad}))
+        with pytest.raises(ValueError):
+            worker.load_style(str(path))
+
+
+def test_composition_panels_take_the_preset_background_while_the_canvas_stays_white(tmp_path):
+    figure=module('molecular_figure')
+    from arc_science.molecular import prepare_complex
+    source=structure(tmp_path); output=tmp_path/'panels'; output.mkdir()
+    scene=prepare_complex(source,antibody_chains=('L','H'),antigen_chains=('A',))
+    for name in ('overview','interface','rotated'):
+        Image.new('RGBA',(320,200),(0,0,0,0)).save(output/(name+'.png'))
+    figure.compose_complex(scene,output,width=1400,panel_background='#1F2326')
+    svg=(output/'collage.svg').read_text(encoding='utf-8')
+    assert svg.count('fill="#1F2326"')==3 and '<rect width="1400" height="1090" fill="#FFFFFF"/>' in svg
+    checks=figure.check_images(output)
+    assert checks['images']['canvas']['white_background_pixels'] is True
+
+
 @pytest.mark.parametrize('entrypoint',['cli','api'])
 def test_default_render_emits_reviewed_candidate_settings(tmp_path, monkeypatch, entrypoint):
     import sys

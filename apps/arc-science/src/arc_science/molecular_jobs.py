@@ -250,6 +250,7 @@ class MolecularJobs:
         self.router.add_api_route('/capabilities', self.capabilities, methods=['GET'])
         self.router.add_api_route('/presets', self.presets, methods=['GET'])
         self.router.add_api_route('/catalogue', self.catalogue, methods=['GET'])
+        self.router.add_api_route('/catalogue/refresh', self.catalogue_refresh, methods=['POST'])
         self.software = molecular_catalogue.Catalogue()
         self.router.add_api_route('/renders', self.list_jobs, methods=['GET'])
         self.router.add_api_route('/renders', self.submit, methods=['POST'], status_code=202)
@@ -487,9 +488,13 @@ class MolecularJobs:
         return {'default': default, 'default_source': source,
                 'names': [{'name': name, 'description': p['description']} for name, p in render_presets.PRESETS.items()]}
 
-    async def catalogue(self, refresh: bool = False):
+    async def catalogue(self):
         """The software catalogue with what the probes observed: presence, never qualification."""
-        return await self.software.report(refresh=refresh)
+        return await self.software.report()
+
+    async def catalogue_refresh(self):
+        """Probing runs processes, so a refresh is an explicit POST."""
+        return await self.software.report(refresh=True)
 
     async def presets(self):
         """Every preset with its full style: presentation only, never validity."""

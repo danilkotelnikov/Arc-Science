@@ -108,11 +108,18 @@ def check_declaration(declared, derived) -> None:
 
 
 def molecular_effects(base_settings: dict, new_settings: dict) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """(derived effects, changed fields) between two renders of the same coordinates."""
+    """(derived effects, changed fields) between two renders of the same coordinates. A
+    preset change is presentation, and also scientific depiction when the two presets
+    draw different meshes (envelope isovalue, stick radius)."""
+    from ..render_presets import geometry_changes
     changed = tuple(field for fields in MOLECULAR_FIELDS.values() for field in fields
                     if base_settings.get(field) != new_settings.get(field))
-    derived = tuple(effect for effect, fields in MOLECULAR_FIELDS.items() if any(f in changed for f in fields))
-    return derived, changed
+    derived = [effect for effect, fields in MOLECULAR_FIELDS.items() if any(f in changed for f in fields)]
+    if 'preset' in changed and geometry_changes(base_settings.get('preset'), new_settings.get('preset')) \
+            and 'scientific_depiction' not in derived:
+        derived.insert(list(MOLECULAR_FIELDS).index('scientific_depiction') if 'presentation' in derived else 0, 'scientific_depiction')
+        derived = [effect for effect in MOLECULAR_FIELDS if effect in derived]
+    return tuple(derived), changed
 
 
 def declare_resume(state, declared, note: str, at: int | None = None):

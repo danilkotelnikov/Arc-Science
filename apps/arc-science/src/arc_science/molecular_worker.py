@@ -133,7 +133,9 @@ residues, avoiding fictitious links across omitted segments or partner chains.
 
 DEFAULT_STYLE = {'background': 'transparent', 'world_strength': .7, 'roughness': .72, 'specular': .22,
                  'antibody_color': '#91AEC5', 'antigen_color': '#C4C9CC', 'isovalue': .45, 'stick_radius': .13}
-WORLD_COLORS = {'transparent': (1, 1, 1), 'white': (1, 1, 1), 'light': (.92, .92, .92), 'dark': (.12, .12, .13), 'black': (0, 0, 0)}
+# The background names the composed figure's panel fill; the rendered views keep their
+# transparent film and white world light under every one of them.
+BACKGROUNDS = ('transparent', 'white', 'light', 'dark', 'black')
 
 
 def load_style(path):
@@ -145,7 +147,7 @@ def load_style(path):
         for key in DEFAULT_STYLE:
             if key in given:
                 style[key] = given[key]
-    if style['background'] not in WORLD_COLORS: raise ValueError('Unknown background')
+    if style['background'] not in BACKGROUNDS: raise ValueError('Unknown background')
     for key, low, high in (('world_strength', 0, 3), ('roughness', 0, 1), ('specular', 0, 1), ('isovalue', .2, .8), ('stick_radius', .1, .5)):
         if not isinstance(style[key], (int, float)) or not low <= style[key] <= high: raise ValueError('Style value out of range: ' + key)
     for key in ('antibody_color', 'antigen_color'):
@@ -241,13 +243,13 @@ def main(scene_path, output, width, samples, seed, style_path=None):
     scene.render.threads_mode='FIXED'; scene.render.threads=4
     scene.render.resolution_x=width; scene.render.resolution_y=round(width*.66)
     scene.render.resolution_percentage=100
-    scene.render.film_transparent=style['background']=='transparent'
+    scene.render.film_transparent=True
     scene.render.image_settings.file_format='PNG'; scene.render.image_settings.color_mode='RGBA'
     scene.render.image_settings.color_depth='8'
     scene.view_settings.view_transform='Standard'
-    scene.world=bpy.data.worlds.new('Preset environment')
+    scene.world=bpy.data.worlds.new('Soft white environment')
     scene.world.use_nodes=True
-    scene.world.node_tree.nodes['Background'].inputs['Color'].default_value=(*WORLD_COLORS[style['background']],1)
+    scene.world.node_tree.nodes['Background'].inputs['Color'].default_value=(1,1,1,1)
     scene.world.node_tree.nodes['Background'].inputs['Strength'].default_value=style['world_strength']
     materials={}
     partner_colors={'antibody':style['antibody_color'],'antigen':style['antigen_color']}

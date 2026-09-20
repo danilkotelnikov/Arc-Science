@@ -253,9 +253,9 @@ def test_presets_are_a_registry_the_render_takes_and_the_default_follows_the_set
         assert client.get(PREFIX + '/presets').status_code == 401
         listed = client.get(PREFIX + '/presets', headers=AUTH).json()
         assert listed['default'] == 'publication_white' and listed['default_source'] == 'registry'
-        assert set(listed['presets']) == set(render_presets.PRESETS) and len(listed['presets']) >= 20
-        assert listed['presets']['publication_dark']['style']['background'] == 'dark'
-        assert listed['presets']['draft']['render'] == {'width': 800, 'samples': 12}
+        assert set(listed['presets']) == set(render_presets.PRESETS) and len(listed['presets']) >= 18
+        assert listed['presets']['publication_dark']['style']['background'] == 'dark' and listed['panel_colors']['dark'] == '#1F2326'
+        assert listed['geometry_keys'] == ['isovalue', 'stick_radius'] and 'render' not in listed['presets']['publication_dark']
         caps = client.get(PREFIX + '/capabilities', headers=AUTH).json()
         assert caps['presets']['default'] == 'publication_white' and any(p['name'] == 'colourblind_safe' for p in caps['presets']['names'])
         # An unknown preset is refused before any job exists; a known one is recorded as a setting.
@@ -273,10 +273,16 @@ def test_presets_are_a_registry_the_render_takes_and_the_default_follows_the_set
         # A settings name the registry does not know falls back to the registry default and says so.
         jobs.default_preset = lambda: 'mystery'
         assert client.get(PREFIX + '/presets', headers=AUTH).json()['default_source'].startswith('registry (settings name unknown')
-        # A preset change of the same coordinates is a presentation change.
+        # A preset change of the same coordinates is a presentation change when only the
+        # finish differs, and a change of scientific depiction too when the mesh differs.
         change = client.post(PREFIX + '/renders', headers=AUTH, json={**REQUEST, 'preset': 'warm', 'base_job': row['id'], 'declared_effects': ['presentation']})
         assert change.status_code == 202 and change.json()['change']['derived_effects'] == ['presentation'] and change.json()['change']['changed_fields'] == ['preset']
         terminal(client, change.json()['id'])
+        narrow = client.post(PREFIX + '/renders', headers=AUTH, json={**REQUEST, 'preset': 'tight_envelope', 'base_job': row['id'], 'declared_effects': ['presentation']})
+        assert narrow.status_code == 409 and 'scientific_depiction' in narrow.json()['detail']
+        full = client.post(PREFIX + '/renders', headers=AUTH, json={**REQUEST, 'preset': 'tight_envelope', 'base_job': row['id'], 'declared_effects': ['presentation', 'scientific_depiction']})
+        assert full.status_code == 202 and full.json()['change']['derived_effects'] == ['presentation', 'scientific_depiction']
+        terminal(client, full.json()['id'])
 
 
 def test_the_software_catalogue_reports_presence_by_probe_and_never_installs(tmp_path, runtime, monkeypatch):
@@ -286,6 +292,7 @@ def test_the_software_catalogue_reports_presence_by_probe_and_never_installs(tmp
         assert client.get(PREFIX + '/catalogue').status_code == 401
         report = client.get(PREFIX + '/catalogue', headers=AUTH).json()
         assert report['counts']['total'] == len(molecular_catalogue.CATALOGUE) >= 100
+        assert set(report['counts']) == {'present', 'absent', 'indirect', 'unprobed', 'total'}
         by_id = {e['id']: e for e in report['entries']}
         # This interpreter's own modules are observed through an isolated import.
         assert by_id['gemmi']['present'] is True and by_id['gemmi']['evidence'] == 'import' and by_id['gemmi']['where'] == 'host python'
@@ -295,11 +302,38 @@ def test_the_software_catalogue_reports_presence_by_probe_and_never_installs(tmp
         assert by_id['claude_science']['present'] is False
         # Entries with no probe say so instead of claiming absence.
         assert by_id['molstar']['present'] is None and by_id['cdk']['evidence'] is None
-        assert 'not qualification' in report['scope'] and 'confirm at the project home' in report['licence_note']
+        assert 'never qualification' in report['scope'] and 'indirect evidence' in report['scope'] and 'confirm at the project home' in report['licence_note']
         assert set(report['categories']) >= {'structure_prediction', 'cheminformatics', 'antibody_tools'}
-        # The report is cached until a refresh is asked for.
+        # The report is cached until a refresh is asked for, and a refresh runs probes, so it is a POST.
         assert client.get(PREFIX + '/catalogue', headers=AUTH).json()['checked_at'] == report['checked_at']
-        assert client.get(PREFIX + '/catalogue?refresh=true', headers=AUTH).json()['checked_at'] >= report['checked_at']
+        assert client.post(PREFIX + '/catalogue/refresh').status_code == 401
+        assert client.post(PREFIX + '/catalogue/refresh', headers=AUTH).json()['checked_at'] >= report['checked_at']
+
+
+def test_environment_and_daemon_probes_are_indirect_evidence_never_presence(monkeypatch):
+    from arc_science import molecular_catalogue as c
+    monkeypatch.setattr(c, 'wsl_available', lambda: True)
+    monkeypatch.setattr(c, '_run', lambda argv, timeout: subprocess.CompletedProcess(argv, 0,
+        '/home/user/miniforge3/envs/SE3nv\n/home/user/miniforge3/envs/plip\n' if 'envs' in argv[-1] else '{"running": true, "version": "0.1.27"}', ''))
+    c._WSL_ENVS.update(at=0.0, value=None); c._BENCH.update(at=0.0, value=None)
+    seen = c.probe({'probe': {'kind': 'wsl_env', 'env': 'SE3nv'}})
+    assert seen['present'] is None and seen['observed'] == 'environment_seen' and seen['evidence'] == 'environment'
+    assert c.probe({'probe': {'kind': 'wsl_env', 'env': 'nope'}})['present'] is False
+    daemon = c.probe({'probe': {'kind': 'bench'}})
+    assert daemon['present'] is None and daemon['observed'] == 'daemon_reachable' and 'not observed' in daemon['detail']
+    c._WSL_ENVS.update(at=0.0, value=None); c._BENCH.update(at=0.0, value=None)
+
+
+def test_probe_processes_run_under_the_seat_boundary(tmp_path):
+    from arc_science import molecular_catalogue as c
+    import os as _os
+    # Allowlisted environment, private empty working directory, bounded output.
+    completed = c._run([sys.executable, '-I', '-c', 'import os, sys; print(os.getcwd()); print(sorted(k for k in os.environ if k in ("ARC_MODEL_TOKEN_FILE", "ANTHROPIC_API_KEY"))); sys.stdout.write("x" * 200000)'], 20)
+    lines = completed.stdout.splitlines()
+    assert _os.path.basename(lines[0]).startswith('arc-probe-') and not _os.path.isdir(lines[0])
+    assert lines[1] == '[]' and len(completed.stdout) <= c.MAX_OUTPUT
+    with pytest.raises(subprocess.TimeoutExpired):
+        c._run([sys.executable, '-I', '-c', 'import time; time.sleep(30)'], 1)
 
 
 def test_asset_tampering_after_completion_is_detected(tmp_path, runtime):

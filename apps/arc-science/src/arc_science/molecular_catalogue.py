@@ -16,12 +16,18 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from pathlib import Path
+
+from .exploration.cli_seats import scrubbed_environment
 
 PROBE_TIMEOUT = 20.0
 PARALLEL = 4
 CACHE_SECONDS = 300.0
+MAX_OUTPUT = 64 * 1024
+_SHARED = threading.Lock()
 CATEGORIES = {
     'structure_prediction': 'Structure prediction',
     'protein_design': 'Protein and antibody design',
@@ -116,7 +122,7 @@ CATALOGUE = [
     # visualisation
     _e('molstar', 'Mol*', 'visualization', 'MIT', 'https://molstar.org', note='bundled viewer in this workbench'),
     _e('blender', 'Blender', 'visualization', 'GPL-3.0', 'https://www.blender.org', exe='blender', paths=[PF + r'\Blender Foundation\Blender 4.2\blender.exe', PF + r'\Blender Foundation\Blender 4.1\blender.exe', PF + r'\Blender Foundation\Blender 4.0\blender.exe', PF + r'\Blender Foundation\Blender 5.0\blender.exe']),
-    _e('molecularnodes', 'Molecular Nodes (Blender add-on)', 'visualization', 'GPL-3.0', 'https://github.com/BradyAJohnston/MolecularNodes', note='inside Blender; probed with Blender'),
+    _e('molecularnodes', 'Molecular Nodes (Blender add-on)', 'visualization', 'GPL-3.0', 'https://github.com/BradyAJohnston/MolecularNodes', note='inside Blender; not probed from here'),
     _e('pymol', 'PyMOL (open source)', 'visualization', 'BSD-like (Schrödinger open-source)', 'https://github.com/schrodinger/pymol-open-source', python='pymol'),
     _e('chimerax', 'UCSF ChimeraX', 'visualization', 'UCSF ChimeraX licence (free for non-commercial use)', 'https://www.cgl.ucsf.edu/chimerax/', exe='ChimeraX', paths=[PF + r'\ChimeraX 1.10\bin\ChimeraX.exe', PF + r'\ChimeraX 1.9\bin\ChimeraX.exe', PF + r'\ChimeraX\bin\ChimeraX.exe']),
     _e('vmd', 'VMD', 'visualization', 'UIUC Open Source (non-commercial)', 'https://www.ks.uiuc.edu/Research/vmd/', exe='vmd'),
@@ -146,7 +152,7 @@ CATALOGUE = [
     _e('ccp4', 'CCP4 suite', 'crystallography_cryoem', 'CCP4 licence', 'https://www.ccp4.ac.uk', wsl_exe='refmac5'),
     _e('phenix', 'Phenix', 'crystallography_cryoem', 'Phenix licence', 'https://phenix-online.org', wsl_exe='phenix.refine'),
     _e('coot', 'Coot', 'crystallography_cryoem', 'GPL-3.0', 'https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/', wsl_exe='coot'),
-    _e('relion', 'RELION', 'crystallography_cryoem', 'GPL-2.0', 'https://relion.readthedocs.io', wsl_exe='relion'),
+    _e('relion', 'RELION', 'crystallography_cryoem', 'GPL-2.0', 'https://relion.readthedocs.io', wsl_exe='relion_refine'),
     _e('cryosparc', 'CryoSPARC', 'crystallography_cryoem', 'CryoSPARC licence', 'https://cryosparc.com', wsl_exe='cryosparcm'),
     _e('mrcfile', 'mrcfile', 'crystallography_cryoem', 'BSD-3-Clause', 'https://github.com/ccpem/mrcfile', python='mrcfile'),
     # interactions
@@ -169,9 +175,58 @@ BY_ID = {entry['id']: entry for entry in CATALOGUE}
 assert len(BY_ID) == len(CATALOGUE), 'duplicate catalogue id'
 
 
-def _run(argv, timeout, **options):
-    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace',
-                          creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), **options)
+def _run(argv, timeout):
+    """A probe process under the same boundary as the CLI seats: allowlisted environment,
+    a private empty working directory, bounded output, and a kill-on-close job (Windows)
+    or its own session group (POSIX) so a timeout takes the whole tree."""
+    from .figure_render import _assign_process_to_job, _close_job, _kill_on_close_job
+    workdir = tempfile.mkdtemp(prefix='arc-probe-')
+    job = _kill_on_close_job() if os.name == 'nt' else None
+    options = {'creationflags': getattr(subprocess, 'CREATE_NO_WINDOW', 0)} if os.name == 'nt' else {'start_new_session': True}
+    process = None
+    try:
+        process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=workdir,
+                                   env=scrubbed_environment(), **options)
+        if job is not None:
+            try:
+                _assign_process_to_job(job, process)
+            except OSError:
+                process.kill()
+                raise
+        chunks = {'out': bytearray(), 'err': bytearray()}
+
+        def drain(name, stream):
+            while True:
+                piece = stream.read(65536)
+                if not piece:
+                    return
+                if len(chunks[name]) < MAX_OUTPUT:
+                    chunks[name].extend(piece[:MAX_OUTPUT - len(chunks[name])])
+        readers = [threading.Thread(target=drain, args=(name, stream), daemon=True) for name, stream in (('out', process.stdout), ('err', process.stderr))]
+        for reader in readers:
+            reader.start()
+        try:
+            returncode = process.wait(timeout)
+        except subprocess.TimeoutExpired:
+            if os.name != 'nt':
+                try:
+                    import signal
+                    os.killpg(process.pid, signal.SIGKILL)
+                except (OSError, AttributeError):
+                    pass
+            process.kill()
+            returncode = process.wait(5)
+            raise subprocess.TimeoutExpired(argv, timeout)
+        for reader in readers:
+            reader.join(2)
+        return subprocess.CompletedProcess(argv, returncode, chunks['out'].decode('utf-8', errors='replace'),
+                                           chunks['err'].decode('utf-8', errors='replace'))
+    finally:
+        if process is not None and process.returncode is None:
+            process.kill()
+        if job is not None:
+            _close_job(job)
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def probe_python(module, interpreter=None):
@@ -218,27 +273,32 @@ def wsl_available():
 
 
 def wsl_environments():
-    """Conda environment names inside the WSL bench, listed once per cache window."""
+    """Conda environment names inside the WSL bench, listed once per cache window and
+    once per report even when four probes ask at the same time."""
     if not wsl_available():
         return None
-    if _WSL_ENVS['value'] is not None and time.monotonic() - _WSL_ENVS['at'] < CACHE_SECONDS:
-        return _WSL_ENVS['value']
-    try:
-        completed = _run(['wsl.exe', '-d', 'Ubuntu', '--', 'bash', '-lc',
-                          'ls -d ~/miniforge3/envs/* ~/miniconda3/envs/* ~/mambaforge/envs/* ~/anaconda3/envs/* 2>/dev/null'], PROBE_TIMEOUT)
-        # ls exits non-zero when one of the globs has no match; the listed paths still count.
-        names = sorted({Path(line.strip()).name for line in completed.stdout.splitlines() if line.strip().startswith('/')})
-    except (OSError, subprocess.SubprocessError):
-        names = None
-    _WSL_ENVS.update(at=time.monotonic(), value=names)
-    return names
+    with _SHARED:
+        if _WSL_ENVS['value'] is not None and time.monotonic() - _WSL_ENVS['at'] < CACHE_SECONDS:
+            return _WSL_ENVS['value']
+        try:
+            completed = _run(['wsl.exe', '-d', 'Ubuntu', '--', 'bash', '-lc',
+                              'ls -d ~/miniforge3/envs/* ~/miniconda3/envs/* ~/mambaforge/envs/* ~/anaconda3/envs/* 2>/dev/null'], PROBE_TIMEOUT)
+            # ls exits non-zero when one of the globs has no match; the listed paths still count.
+            names = sorted({Path(line.strip()).name for line in completed.stdout.splitlines() if line.strip().startswith('/')})
+        except (OSError, subprocess.SubprocessError):
+            names = None
+        _WSL_ENVS.update(at=time.monotonic(), value=names)
+        return names
 
 
 def probe_wsl_env(env):
+    """An environment seen is not the package observed: reported as indirect evidence."""
     names = wsl_environments()
     if names is None:
         return {'present': False, 'detail': 'WSL bench not reachable'}
-    return {'present': env in names, 'detail': 'conda env ' + env if env in names else 'no conda env ' + env, 'where': 'wsl' if env in names else None}
+    if env in names:
+        return {'present': None, 'observed': 'environment_seen', 'detail': 'conda env ' + env + ' exists; the package itself was not observed', 'where': 'wsl'}
+    return {'present': False, 'detail': 'no conda env ' + env}
 
 
 def probe_wsl_exe(name):
@@ -256,22 +316,27 @@ _BENCH = {'at': 0.0, 'value': None}
 
 
 def probe_bench():
-    """The Claude Science daemon's own status, once per cache window."""
+    """The Claude Science daemon's own status, once per cache window; a reachable daemon
+    is indirect evidence for the skills it hosts, never the package observed."""
     if not wsl_available():
         return {'present': False, 'detail': 'WSL bench not reachable'}
-    if _BENCH['value'] is not None and time.monotonic() - _BENCH['at'] < CACHE_SECONDS:
-        return dict(_BENCH['value'])
-    try:
-        import json
-        completed = _run(['wsl.exe', '-d', 'Ubuntu', '--', 'bash', '-lc', 'cd /home/user && ./linux-x64 status'], PROBE_TIMEOUT)
-        status = json.loads(completed.stdout.strip()) if completed.stdout.strip() else {}
-        running = bool(status.get('running'))
-        value = {'present': running, 'detail': ('running' if running else 'installed, not running') + (' · v' + str(status['version']) if status.get('version') else ''),
-                 'where': 'wsl' if status else None}
-    except (OSError, subprocess.SubprocessError, ValueError):
-        value = {'present': False, 'detail': 'daemon status unavailable'}
-    _BENCH.update(at=time.monotonic(), value=value)
-    return dict(value)
+    with _SHARED:
+        if _BENCH['value'] is not None and time.monotonic() - _BENCH['at'] < CACHE_SECONDS:
+            return dict(_BENCH['value'])
+        try:
+            import json
+            completed = _run(['wsl.exe', '-d', 'Ubuntu', '--', 'bash', '-lc', 'cd /home/user && ./linux-x64 status'], PROBE_TIMEOUT)
+            status = json.loads(completed.stdout.strip()) if completed.stdout.strip() else {}
+            running = bool(status.get('running'))
+            version = ' · v' + str(status['version']) if status.get('version') else ''
+            if running:
+                value = {'present': None, 'observed': 'daemon_reachable', 'detail': 'daemon running' + version + '; the package itself was not observed', 'where': 'wsl'}
+            else:
+                value = {'present': False, 'detail': ('daemon installed, not running' if status else 'daemon status unavailable') + version}
+        except (OSError, subprocess.SubprocessError, ValueError):
+            value = {'present': False, 'detail': 'daemon status unavailable'}
+        _BENCH.update(at=time.monotonic(), value=value)
+        return dict(value)
 
 
 # What a positive probe actually observed; an environment's existence is not the
@@ -322,9 +387,11 @@ class Catalogue:
                     return {**entry, **{k: v for k, v in result.items()}}
             entries = await asyncio.gather(*(one(entry) for entry in CATALOGUE))
             counts = {'present': sum(1 for e in entries if e['present'] is True), 'absent': sum(1 for e in entries if e['present'] is False),
-                      'unprobed': sum(1 for e in entries if e['present'] is None), 'total': len(entries)}
+                      'indirect': sum(1 for e in entries if e['present'] is None and e.get('observed')),
+                      'unprobed': sum(1 for e in entries if e['present'] is None and not e.get('observed')), 'total': len(entries)}
             self.cached = {'checked_at': int(time.time()), 'categories': CATEGORIES, 'counts': counts, 'entries': entries,
-                           'scope': 'presence observed by probes; not qualification, correctness or currency; nothing is installed',
+                           'scope': 'presence observed by probes (an import or an executable); an environment or a daemon seen is indirect evidence, '
+                                    'not the package; never qualification, correctness or currency; nothing is installed',
                            'licence_note': 'licence names as recorded when the catalogue was written; confirm at the project home before relying on one'}
             self.at = time.monotonic()
             return self.cached

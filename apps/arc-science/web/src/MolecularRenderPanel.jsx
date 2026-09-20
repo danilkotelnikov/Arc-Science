@@ -162,14 +162,14 @@ function RenderControls({token,onJobChange,onShowJob,onSource}) {
       <p className="field-note">The catalogue of structural-biology and cheminformatics software the workbench knows, with what a probe observed: presence, never qualification; nothing is installed.</p>
       <div className="actions"><Button variant="secondary" size="sm" isDisabled={!token||softwareBusy} onPress={async()=>{
         setSoftwareBusy(true);
-        try{const data=await(await request(token,'/api/molecular/catalogue'+(software?'?refresh=true':''),new AbortController().signal)).json();setSoftware(data);}
+        try{const data=await(await request(token,software?'/api/molecular/catalogue/refresh':'/api/molecular/catalogue',new AbortController().signal,software?{}:undefined)).json();setSoftware(data);}
         catch(reason){setError(reason.message);}
         finally{setSoftwareBusy(false);}
       }}>{software?'Probe again':'Check packages'}</Button></div>
       {software&&<div className="software-report" aria-label="Software catalogue">
-        <p className="field-note">{software.counts.present} present · {software.counts.absent} absent · {software.counts.unprobed} not probed · {software.counts.total} known</p>
+        <p className="field-note">{software.counts.present} present · {software.counts.indirect} seen indirectly · {software.counts.absent} absent · {software.counts.unprobed} not probed · {software.counts.total} known</p>
         {Object.entries(software.categories).map(([key,label])=>{const rows=software.entries.filter(e=>e.category===key);return rows.length?<div key={key}><h3>{label}</h3><ul>
-          {rows.map(e=><li key={e.id} className={e.present===true?'present':e.present===false?'absent':'unprobed'}><strong>{e.name}</strong> — {e.present===true?'present ('+e.evidence+(e.where?', '+e.where:'')+': '+e.detail+')':e.present===false?'absent ('+e.detail+')':'not probed'+(e.note?' ('+e.note+')':'')}{e.licence?' · '+e.licence:''}</li>)}
+          {rows.map(e=><li key={e.id} className={e.present===true?'present':e.present===false?'absent':e.observed?'indirect':'unprobed'}><strong>{e.name}</strong> — {e.present===true?'present ('+e.evidence+(e.where?', '+e.where:'')+': '+e.detail+')':e.present===false?'absent ('+e.detail+')':e.observed?e.observed.replace('_',' ')+' ('+e.detail+')':'not probed'+(e.note?' ('+e.note+')':'')}{e.licence?' · '+e.licence:''}</li>)}
         </ul></div>:null;})}
         <p className="field-note">{software.licence_note}</p>
       </div>}

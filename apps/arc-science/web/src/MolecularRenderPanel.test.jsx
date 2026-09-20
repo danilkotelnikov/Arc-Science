@@ -44,10 +44,11 @@ beforeEach(()=>{
     if(path==='/api/settings')return json({settings:{viewer:{representation:'surface',colouring:'element',assembly:'asymmetric_unit',background:'black'}}});
     if(path==='/api/molecular/renders/job-1/events')return new Response('',{status:404});
     if(path==='/api/molecular/renders/job-1/source')return new Response('data_complex\n',{headers:{'Content-Type':'chemical/x-mmcif'}});
-    if(path.startsWith('/api/molecular/catalogue'))return json({checked_at:1,counts:{present:1,absent:1,unprobed:1,total:3},categories:{cheminformatics:'Cheminformatics',visualization:'Visualisation and rendering'},
+    if(path.startsWith('/api/molecular/catalogue'))return json({checked_at:1,counts:{present:1,indirect:1,absent:1,unprobed:1,total:4},categories:{cheminformatics:'Cheminformatics',visualization:'Visualisation and rendering',protein_design:'Protein and antibody design'},
       licence_note:'licence names as recorded; confirm at the project home',scope:'presence, not qualification',entries:[
         {id:'rdkit',name:'RDKit',category:'cheminformatics',licence:'BSD-3-Clause',present:true,evidence:'import',where:'host python',detail:'2025.09.1'},
         {id:'obabel',name:'Open Babel',category:'cheminformatics',licence:'GPL-2.0',present:false,detail:'not on PATH'},
+        {id:'rfdiffusion',name:'RFdiffusion',category:'protein_design',licence:'see project home',present:null,observed:'environment_seen',evidence:'environment',where:'wsl',detail:'conda env SE3nv exists; the package itself was not observed'},
         {id:'molstar',name:'Mol*',category:'visualization',licence:'MIT',present:null,note:'bundled viewer in this workbench'}]});
     if(path==='/api/molecular/renders/job-1/scene')return new Response(JSON.stringify({contacts:[{antibody_residue:'A:1',antigen_residue:'C:1'}]}),{status:200,headers:{'Content-Type':'application/json','X-Arc-Scene':'verified'}});
     throw new Error('Unexpected path: '+path);
@@ -104,13 +105,15 @@ test('the package catalogue reports what each probe observed, never more',async(
   await user.click(screen.getByText('Packages'));
   await user.click(screen.getByRole('button',{name:'Check packages'}));
   const report=within(await screen.findByLabelText('Software catalogue'));
-  expect(report.getByText(/1 present · 1 absent · 1 not probed · 3 known/)).toBeInTheDocument();
+  expect(report.getByText(/1 present · 1 seen indirectly · 1 absent · 1 not probed · 4 known/)).toBeInTheDocument();
   expect(report.getByText(/present \(import, host python: 2025\.09\.1\)/)).toBeInTheDocument();
   expect(report.getByText(/absent \(not on PATH\)/)).toBeInTheDocument();
+  // An environment seen is said to be exactly that, never the package.
+  expect(report.getByText(/environment seen \(conda env SE3nv exists; the package itself was not observed\)/)).toBeInTheDocument();
   expect(report.getByText(/not probed \(bundled viewer in this workbench\)/)).toBeInTheDocument();
   expect(calls.find(c=>c.path.startsWith('/api/molecular/catalogue')).options.headers.Authorization).toBe('Bearer operator');
   await user.click(screen.getByRole('button',{name:'Probe again'}));
-  await waitFor(()=>expect(calls.filter(c=>c.path==='/api/molecular/catalogue?refresh=true')).toHaveLength(1));
+  await waitFor(()=>expect(calls.filter(c=>c.path==='/api/molecular/catalogue/refresh'&&c.options.method==='POST')).toHaveLength(1));
 });
 
 test('shows unavailable runtime while retained completed renders remain available',async()=>{

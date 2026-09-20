@@ -25,8 +25,9 @@ def _svg_to_png(svg_bytes: bytes, out_path: Path, width: int) -> None:
     svg_raster.render_png_file(svg_bytes, out_path, width)
 
 
-def compose_complex(scene: dict, output: Path, *, width: int = 1400) -> dict:
-    """White four-panel scientific figure; molecular annotations are projections."""
+def compose_complex(scene: dict, output: Path, *, width: int = 1400, panel_background: str = '#FFFFFF') -> dict:
+    """White four-panel scientific figure; molecular annotations are projections. The
+    panels behind the rendered views take the preset's background; the canvas stays white."""
     output=Path(output)
     fields=['antibody_residue','antigen_residue','antibody_atom','antigen_atom','distance','atom_pair_count']
     with (output/'contacts.csv').open('w',newline='') as stream:
@@ -58,6 +59,7 @@ def compose_complex(scene: dict, output: Path, *, width: int = 1400) -> dict:
     annotation_records={}; label_layout={}
     for name,x,y in [('overview',36,95),('interface',732,95),('rotated',36,582)]:
         box_w,box_h=632,405
+        if panel_background.upper()!='#FFFFFF': svg.append(f'<rect x="{x}" y="{y}" width="{box_w}" height="{box_h}" fill="{panel_background}"/>')
         encoded=base64.b64encode((output/(name+'.png')).read_bytes()).decode()
         svg.append(f'<image x="{x}" y="{y}" width="{box_w}" height="{box_h}" preserveAspectRatio="xMidYMid meet" xlink:href="data:image/png;base64,{encoded}"/>')
         with Image.open(output/(name+'.png')) as raster:
@@ -242,7 +244,8 @@ def render_complex(scene: dict, output: Path, *, blender_python: str,
         if hashlib.sha256(worker.read_bytes()).hexdigest()!=worker_sha256: raise ValueError('Worker code digest changed')
         for name in ('overview','interface','rotated'):
             if (output/(name+'.blend')).stat().st_size<1000: raise ValueError('Missing editable Blender geometry')
-        composition=compose_complex(scene,output,width=width)
+        from .render_presets import PANEL_COLORS
+        composition=compose_complex(scene,output,width=width,panel_background=PANEL_COLORS[style['background']])
         checks=check_images(output)
         checks['source_replay']=True
         checks['finite_coordinates']=all(math.isfinite(v) for a in scene['atoms'] for v in a['position'])

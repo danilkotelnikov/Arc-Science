@@ -1,11 +1,15 @@
 """Blender render presets: named, fully specified styles the molecular pipeline applies.
 
-A preset changes presentation only — background, lighting strength, material finish,
-partner colours, envelope tightness, stick radius, figure width and sample count. It
-never changes the coordinates, the chain selection, the contact cutoff or the
-geometry the worker derives from them, and a render under any preset establishes no
-scientific validity. The worker reads the style it is given from a file recorded in
-the manifest, so a render replays under the preset it was made with.
+A preset changes presentation only — the panel background of the composed figure,
+lighting strength, material finish, partner colours, envelope tightness and stick
+radius. It never changes the coordinates, the chain selection, the contact cutoff or
+the atoms the worker draws, and a render under any preset establishes no scientific
+validity. Two style keys (envelope isovalue, stick radius) change the drawn mesh, so a
+preset change between them is a change of scientific depiction, not presentation only.
+The worker reads the style it is given from a file recorded in the manifest, so a
+render replays under the preset it was made with. The rendered views keep their
+transparent film and the figure its white canvas under every preset: the background
+colours the panels behind the views.
 """
 from __future__ import annotations
 
@@ -13,6 +17,10 @@ import re
 
 HEX = re.compile(r'^#[0-9A-Fa-f]{6}$')
 BACKGROUNDS = ('transparent', 'white', 'light', 'dark', 'black')
+# The panel fill behind each rendered view in the composed figure; the canvas stays white.
+PANEL_COLORS = {'transparent': '#FFFFFF', 'white': '#FFFFFF', 'light': '#EEF1F3', 'dark': '#1F2326', 'black': '#000000'}
+# Style keys that change the drawn geometry rather than its finish.
+GEOMETRY_KEYS = ('isovalue', 'stick_radius')
 # Every style key with its bounds; the worker applies exactly these.
 STYLE_SCHEMA = {
     'background': {'type': 'choice', 'choices': BACKGROUNDS},
@@ -24,24 +32,23 @@ STYLE_SCHEMA = {
     'isovalue': {'type': 'number', 'min': 0.2, 'max': 0.8},
     'stick_radius': {'type': 'number', 'min': 0.1, 'max': 0.5},
 }
-RENDER_SCHEMA = {'width': {'min': 640, 'max': 2400}, 'samples': {'min': 1, 'max': 128}}
 BASE = {'background': 'transparent', 'world_strength': 0.7, 'roughness': 0.72, 'specular': 0.22,
         'antibody_color': '#91AEC5', 'antigen_color': '#C4C9CC', 'isovalue': 0.45, 'stick_radius': 0.13}
 
 
-def _preset(description, *, render=None, **style):
+def _preset(description, **style):
     unknown = set(style) - set(STYLE_SCHEMA)
     if unknown:
         raise ValueError('Unknown style keys: ' + ', '.join(sorted(unknown)))
-    return {'description': description, 'style': {**BASE, **style}, 'render': dict(render or {})}
+    return {'description': description, 'style': {**BASE, **style}}
 
 
 PRESETS = {
     'publication_white': _preset('The reviewed default: transparent film over a soft white world, matte partners in blue-grey and warm grey.'),
     'publication_transparent': _preset('The default look with the film left transparent and the world dimmed for compositing.', world_strength=0.5),
-    'publication_dark': _preset('A dark world with brighter, slightly glossier partners for slides.', background='dark', world_strength=1.0,
+    'publication_dark': _preset('Dark figure panels with brighter, slightly glossier partners for slides.', background='dark', world_strength=1.0,
                                 roughness=0.55, specular=0.35, antibody_color='#9ECAE1', antigen_color='#E0E0E0'),
-    'publication_black': _preset('Black world, luminous partners; for posters on dark backgrounds.', background='black', world_strength=1.2,
+    'publication_black': _preset('Black figure panels, luminous partners; for posters on dark backgrounds.', background='black', world_strength=1.2,
                                  roughness=0.5, specular=0.4, antibody_color='#A6CEE3', antigen_color='#F0F0F0'),
     'flat_diagram': _preset('Matte, specular-free surfaces that read as a diagram rather than a photograph.', roughness=1.0, specular=0.0,
                             world_strength=0.9),
@@ -58,11 +65,10 @@ PRESETS = {
     'soft_envelope': _preset('A looser, smoother envelope.', isovalue=0.32),
     'thick_sticks': _preset('Heavier contact-residue sticks for small panels.', stick_radius=0.2),
     'thin_sticks': _preset('Lighter contact-residue sticks.', stick_radius=0.1),
-    'draft': _preset('A quick low-sample preview at a small width.', render={'width': 800, 'samples': 12}),
-    'print_wide': _preset('The widest figure with the most samples the pipeline accepts.', render={'width': 2400, 'samples': 128}),
-    'slide_dark_flat': _preset('Dark world with flat, matte partners for projected slides.', background='dark', world_strength=1.0,
+    'light_panels': _preset('Light grey figure panels behind the default finish.', background='light'),
+    'slide_dark_flat': _preset('Dark figure panels with flat, matte partners for projected slides.', background='dark', world_strength=1.0,
                                roughness=1.0, specular=0.0, antibody_color='#8ECAE6', antigen_color='#FFD166'),
-    'poster_black_glossy': _preset('Black world, glossy saturated partners, tight envelope.', background='black', world_strength=1.3,
+    'poster_black_glossy': _preset('Black figure panels, glossy saturated partners, tight envelope.', background='black', world_strength=1.3,
                                    roughness=0.35, specular=0.5, antibody_color='#4CC9F0', antigen_color='#F72585', isovalue=0.55),
 }
 DEFAULT_PRESET = 'publication_white'
@@ -94,15 +100,18 @@ def validate_style(style):
     return dict(style)
 
 
+def geometry_changes(old_name, new_name):
+    """True when the two presets draw different meshes (envelope or sticks)."""
+    old, new = PRESETS.get(old_name, {}).get('style', BASE), PRESETS.get(new_name, {}).get('style', BASE)
+    return any(old.get(key) != new.get(key) for key in GEOMETRY_KEYS)
+
+
 def catalogue():
-    """What the API reports: every preset with its style and render overrides."""
-    return {'default': DEFAULT_PRESET, 'style_schema': STYLE_SCHEMA, 'render_schema': RENDER_SCHEMA,
-            'presets': {name: {'description': p['description'], 'style': dict(p['style']), 'render': dict(p['render'])}
-                        for name, p in PRESETS.items()}}
+    """What the API reports: every preset with its style; the effects a change between
+    presets has are derived from the styles, never declared."""
+    return {'default': DEFAULT_PRESET, 'style_schema': STYLE_SCHEMA, 'panel_colors': PANEL_COLORS, 'geometry_keys': list(GEOMETRY_KEYS),
+            'presets': {name: {'description': p['description'], 'style': dict(p['style'])} for name, p in PRESETS.items()}}
 
 
 for _name, _p in PRESETS.items():
     validate_style(_p['style'])
-    for _key, _value in _p['render'].items():
-        if _key not in RENDER_SCHEMA or not RENDER_SCHEMA[_key]['min'] <= _value <= RENDER_SCHEMA[_key]['max']:
-            raise ValueError('Preset ' + _name + ' has an invalid render override')
