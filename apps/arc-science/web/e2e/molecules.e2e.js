@@ -44,6 +44,12 @@ test('a chosen coordinate file is shown in the viewer at once, with its settings
   await expect(viewer.getByRole('status')).toContainText('Loaded 9 atoms');
   // The viewer sends nothing anywhere: no molecular request was made for the upload.
   expect(await page.evaluate(() => performance.getEntriesByType('resource').filter(e => e.name.includes('/api/molecular/')).length)).toBe(0);
+  // Saving the view goes through a blob: download, the path the desktop shell accepts.
+  const download = page.waitForEvent('download');
+  await viewer.getByRole('button', {name: 'Save view'}).click();
+  const saved = await download;
+  expect(saved.suggestedFilename()).toBe('tiny-view.png');
+  expect(saved.url()).toMatch(/^blob:/);
   check();
 });
 

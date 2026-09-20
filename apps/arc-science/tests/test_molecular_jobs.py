@@ -167,7 +167,7 @@ def test_progress_streams_each_stage_as_its_output_appears_and_the_scene_is_read
             if scene.status_code == 200:
                 break
             time.sleep(.02)
-        assert scene.status_code == 200 and scene.json()['contacts'] == [{}]
+        assert scene.status_code == 200 and scene.json()['contacts'] == [{}] and scene.headers['x-arc-scene'] == 'provisional'
         assert client.get(f'{PREFIX}/renders/{job_id}', headers=AUTH).json()['status'] == 'rendering'
         # The test client delivers a streamed body only once it is complete; the stages carry
         # their own timestamps, and the browser suite reads the stream live.
@@ -208,10 +208,41 @@ def test_progress_streams_each_stage_as_its_output_appears_and_the_scene_is_read
         assert source.headers['etag'] == '"' + row['source_sha256'] + '"'
         (tmp_path / 'molecular' / job_id / 'input' / 'complex.cif').write_text('data_changed\n')
         assert client.get(f'{PREFIX}/renders/{job_id}/source', headers=AUTH).status_code == 409
-        # A completed job's scene is checked against the recorded asset digest.
-        assert client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH).status_code == 200
+        # A completed job's scene is verified against the recorded asset digest.
+        verified = client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH)
+        assert verified.status_code == 200 and verified.headers['x-arc-scene'] == 'verified'
         (tmp_path / 'molecular' / job_id / 'output' / 'scene.json').write_text('{}')
         assert client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH).status_code == 409
+        # A resume id past the recorded stages replays nothing it never sent.
+        with client.stream('GET', f'{PREFIX}/renders/{job_id}/events', headers={**AUTH, 'Last-Event-ID': '99999'}) as stream:
+            text = ''.join(stream.iter_text())
+        assert 'event: stage' not in text and 'event: status' in text
+
+
+def test_a_provisional_scene_is_served_only_while_running_and_only_when_bound_to_the_source(tmp_path, runtime):
+    runtime['value'] = 'sleep'
+    with TestClient(make_app(tmp_path)) as client:
+        job_id = client.post(PREFIX + '/renders', headers=AUTH, json=REQUEST).json()['id']
+        for _ in range(200):
+            if (tmp_path / 'molecular' / job_id / 'started').exists():
+                break
+            time.sleep(.02)
+        output = tmp_path / 'molecular' / job_id / 'output'
+        output.mkdir(exist_ok=True)
+        # Not bound to the uploaded source, or not a scene at all: nothing is served.
+        (output / 'scene.json').write_text(json.dumps({'source': {'sha256': 'f' * 64}, 'contacts': []}))
+        assert client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH).status_code == 404
+        (output / 'scene.json').write_text('not json')
+        assert client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH).status_code == 404
+        digest = hashlib.sha256(REQUEST['source_text'].encode()).hexdigest()
+        (output / 'scene.json').write_text(json.dumps({'source': {'sha256': digest}, 'contacts': [{'antibody_residue': 'A:1', 'antigen_residue': 'C:1'}]}))
+        early = client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH)
+        assert early.status_code == 200 and early.headers['x-arc-scene'] == 'provisional'
+        assert client.post(f'{PREFIX}/renders/{job_id}/cancel', headers=AUTH).status_code == 200
+        row = terminal(client, job_id)
+        # A cancelled job has no scene to serve, bound or not.
+        assert row['status'] == 'cancelled' and client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH).status_code == 404
+        assert [s['stage'] for s in row['stages']][:2] == ['preparing', 'contacts_ready']
 
 
 def test_asset_tampering_after_completion_is_detected(tmp_path, runtime):

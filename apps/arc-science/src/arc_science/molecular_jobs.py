@@ -53,6 +53,7 @@ SETTINGS = ('antibody_chains', 'antigen_chains', 'assembly', 'model_index', 'cut
 # (rendering started), the composed figure, the image checks.
 STAGE_FILES = (('contacts_ready', 'scene.json'), ('rendering', 'worker.log'), ('composing', 'collage.svg'),
                ('checking', 'checks.json'))
+STAGES = ('preparing', 'contacts_ready', 'rendering', 'composing', 'checking', 'verifying')
 MAX_STAGES = 16
 SCENE_LIMIT = 4 * 1024 * 1024
 STREAM_HEARTBEAT = 15.0
@@ -120,6 +121,12 @@ class AssetRecord(BaseModel):
     media_type: str = Field(max_length=64)
 
 
+class StageRecord(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    stage: Literal['preparing', 'contacts_ready', 'rendering', 'composing', 'checking', 'verifying']
+    at: float = Field(ge=0, allow_inf_nan=False)
+
+
 class JobRecord(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     id: str = Field(pattern=r'^[0-9a-f]{32}$')
@@ -135,8 +142,8 @@ class JobRecord(BaseModel):
     # change of this one; None for records written before settings were kept.
     settings: dict | None = None
     change: ChangeRecord | None = None
-    # Pipeline stages observed while the job ran, in order; empty for older records.
-    stages: list[dict] = Field(default_factory=list, max_length=MAX_STAGES)
+    # Pipeline outputs observed while the job ran, in order; empty for older records.
+    stages: list[StageRecord] = Field(default_factory=list, max_length=MAX_STAGES)
 
 
 def _json_bytes(value):
@@ -597,9 +604,10 @@ class MolecularJobs:
         as it is observed (ids are stage indices, so Last-Event-ID resumes), then the
         terminal status and `end`. Authenticated by header like every other route; the
         browser reads it with fetch, never a native EventSource."""
-        await self.get_job(job_id)
+        row = await self.get_job(job_id)
         last = request.headers.get('last-event-id', '')
-        index = int(last) + 1 if last.isdigit() else 0
+        # Bounded to the stages that exist: a resume never skips what was not sent.
+        index = min(int(last) + 1, len(row.get('stages', []))) if last.isdigit() and len(last) < 6 else 0
 
         def event(kind, payload, ident=None):
             head = ('id: ' + str(ident) + '\n') if ident is not None else ''
@@ -611,6 +619,9 @@ class MolecularJobs:
             yield event('snapshot', {'id': row['id'], 'status': row['status'], 'stages': row.get('stages', []),
                                      'contact_pairs': row.get('contact_pairs'), 'error': row.get('error')})
             while True:
+                # The waiter is taken before the state is read, so a change that lands in
+                # between is seen at once rather than at the next heartbeat.
+                waiter = self.changed
                 row = self.jobs.get(job_id) or row
                 stages = row.get('stages', [])
                 while index < len(stages):
@@ -621,7 +632,6 @@ class MolecularJobs:
                                            'assets': sorted(row.get('assets', {}))})
                     yield b'event: end\ndata: {}\n\n'
                     return
-                waiter = self.changed
                 try:
                     await asyncio.wait_for(waiter.wait(), STREAM_HEARTBEAT)
                 except TimeoutError:
@@ -630,18 +640,30 @@ class MolecularJobs:
                                  headers={'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no'})
 
     async def scene(self, job_id: str):
-        """The pipeline's scene (selection, atoms, residue contacts) as soon as it exists,
-        before the render finishes: what the viewer overlays while Blender still runs."""
+        """The pipeline's scene (selection, atoms, residue contacts): verified against the
+        recorded artifact once the render completed, or provisional while the job still
+        runs — parsed, bound to the uploaded source's digest, and marked as provisional.
+        A failed or cancelled job has no scene to serve."""
         row = await self.get_job(job_id)
+        if row['status'] not in ('queued', 'rendering', 'completed'):
+            raise HTTPException(404, 'No scene is available for this render')
         try:
             data = await asyncio.to_thread(_read_file, self.root / job_id / 'output', 'scene.json', SCENE_LIMIT)
+            scene = json.loads(data)
+            if not isinstance(scene, dict) or scene.get('source', {}).get('sha256') != row['source_sha256'] \
+                    or not isinstance(scene.get('contacts'), list):
+                raise ValueError('scene is not bound to the uploaded source')
         except (OSError, ValueError):
+            if row['status'] == 'completed':
+                raise HTTPException(409, 'Molecular artifact integrity check failed') from None
             raise HTTPException(404, 'No scene has been computed for this render yet') from None
+        state = 'provisional'
         if row['status'] == 'completed':
             record = row['assets'].get('scene.json')
             if record is None or hashlib.sha256(data).hexdigest() != record['sha256']:
                 raise HTTPException(409, 'Molecular artifact integrity check failed')
-        return Response(data, media_type='application/json', headers={'Cache-Control': 'no-store'})
+            state = 'verified'
+        return Response(data, media_type='application/json', headers={'Cache-Control': 'no-store', 'X-Arc-Scene': state})
 
     async def source(self, job_id: str):
         """The coordinates the job was given, for the viewer: the uploaded file itself,

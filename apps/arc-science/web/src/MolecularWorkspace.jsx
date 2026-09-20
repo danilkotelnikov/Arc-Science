@@ -2,6 +2,11 @@ import React, {Suspense, lazy, useCallback, useEffect, useState} from 'react';
 import MolecularRenderPanel, {MolecularRenderResult, stageLine} from './MolecularRenderPanel';
 import {checkedFetch} from './http';
 
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 // Mol* is its own chunk: the workbench loads it the first time a structure is shown.
 const MolecularViewer = lazy(() => import('./MolecularViewer'));
 const hasContacts = job => job?.status === 'completed' || (job?.stages || []).some(s => s.stage === 'contacts_ready');
@@ -25,26 +30,34 @@ export default function MolecularWorkspace({token, setToken}) {
       .catch(() => {});
     return () => controller.abort();
   }, [token]);
-  // A selected render supplies its own coordinates unless the same upload is already shown.
+  // A selected render supplies its own coordinates; the upload already shown is reused
+  // only when its digest is the one the render recorded, never by name.
   useEffect(() => {
-    if (!token || !renderJob) return undefined;
-    if (source?.origin === 'upload' && source.filename === renderJob.filename && source.job === undefined) {
-      setSource(current => ({...current, job: renderJob.id}));
-      return undefined;
-    }
-    if (source?.job === renderJob.id) return undefined;
+    if (!token || !renderJob || source?.job === renderJob.id) return undefined;
     const controller = new AbortController();
-    checkedFetch('/api/molecular/renders/' + renderJob.id + '/source', {signal: controller.signal, headers: {Authorization: 'Bearer ' + token}})
-      .then(r => r.text()).then(text => { if (!controller.signal.aborted) { setSource({filename: renderJob.filename, text, origin: 'job', job: renderJob.id}); setScene(null); } })
-      .catch(() => {});
+    (async () => {
+      if (source?.origin === 'upload' && source.job === undefined && source.digest === undefined) {
+        const digest = await sha256Hex(source.text).catch(() => null);
+        if (controller.signal.aborted) return;
+        if (digest && digest === renderJob.source_sha256) { setSource(current => ({...current, digest, job: renderJob.id})); return; }
+      }
+      try {
+        const response = await checkedFetch('/api/molecular/renders/' + renderJob.id + '/source', {signal: controller.signal, headers: {Authorization: 'Bearer ' + token}});
+        const text = await response.text();
+        if (!controller.signal.aborted) { setSource({filename: renderJob.filename, text, origin: 'job', job: renderJob.id, digest: renderJob.source_sha256}); setScene(null); }
+      } catch { /* the viewer keeps what it has; the render result still opens */ }
+    })();
     return () => controller.abort();
   }, [token, renderJob?.id]);
-  // Contacts are overlaid as soon as the pipeline has written them, while it still renders.
+  // Contacts are overlaid as soon as the pipeline has written them (provisional while it
+  // still renders, verified once the artifacts are collected).
   useEffect(() => {
-    if (!token || !renderJob || !hasContacts(renderJob) || scene?.job === renderJob.id) return undefined;
+    if (!token || !renderJob || !hasContacts(renderJob)) return undefined;
+    if (scene?.job === renderJob.id && (scene.state === 'verified' || renderJob.status !== 'completed')) return undefined;
     const controller = new AbortController();
     checkedFetch('/api/molecular/renders/' + renderJob.id + '/scene', {signal: controller.signal, headers: {Authorization: 'Bearer ' + token}})
-      .then(r => r.json()).then(data => { if (!controller.signal.aborted) setScene({...data, job: renderJob.id}); })
+      .then(async r => ({data: await r.json(), state: r.headers.get('X-Arc-Scene') || 'provisional'}))
+      .then(({data, state}) => { if (!controller.signal.aborted) setScene({...data, job: renderJob.id, state}); })
       .catch(() => {});
     return () => controller.abort();
   }, [token, renderJob?.id, renderJob?.status, (renderJob?.stages || []).length]);

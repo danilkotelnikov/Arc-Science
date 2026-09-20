@@ -97,7 +97,8 @@ export default function MolecularViewer({source, scene, defaults, stage}) {
       }
       const atoms = structure.data?.elementCount ?? 0;
       loaded.current = source.text;
-      setStatus('Loaded ' + atoms + ' atoms' + (residues.length ? '; ' + residues.length + ' contact residues highlighted' : scene ? '; no contacts at the cutoff' : '') + '.');
+      const origin = scene?.state === 'verified' ? 'the verified scene' : 'the provisional scene';
+      setStatus('Loaded ' + atoms + ' atoms' + (residues.length ? '; ' + residues.length + ' contact residues from ' + origin + ' highlighted' : scene ? '; no contacts in ' + origin : '') + '.');
       PluginCommands.Camera.Reset(context, {});
     } catch (reason) { setError('The coordinates could not be shown: ' + (reason?.message || String(reason))); }
   }, [source, scene, settings.representation, settings.colouring, settings.assembly, settings.model_index, settings.quality, settings.contacts, settings.waters]);
@@ -115,9 +116,13 @@ export default function MolecularViewer({source, scene, defaults, stage}) {
     const context = plugin.current;
     if (!context) return;
     try {
+      // A blob: URL, which the desktop shell accepts as a download target (a data: URI is not).
       const uri = await context.helpers.viewportScreenshot.getImageDataUri();
-      const link = document.createElement('a'); link.href = uri; link.download = (source?.filename || 'structure').replace(/\.[^.]+$/, '') + '-view.png';
-      document.body.appendChild(link); link.click(); link.remove();
+      const bytes = Uint8Array.from(atob(uri.slice(uri.indexOf(',') + 1)), c => c.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], {type: 'image/png'}));
+      const link = document.createElement('a'); link.href = url; link.download = (source?.filename || 'structure').replace(/\.[^.]+$/, '') + '-view.png';
+      document.body.appendChild(link);
+      try { link.click(); } finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
     } catch (reason) { setError('Screenshot failed: ' + reason.message); }
   }
   const select = (key, options, label) => <label>{label}<select aria-label={label} value={settings[key]} onChange={e => set(key, e.target.value)}>

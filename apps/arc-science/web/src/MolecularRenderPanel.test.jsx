@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import MolecularWorkspace from './MolecularWorkspace';
 
 // Mol* needs WebGL and a browser; the unit tests stand in a stub for the lazy chunk.
-vi.mock('./MolecularViewer', () => ({default: ({source, scene, stage}) => <div data-testid="viewer">viewer {source.filename}{scene ? ' · ' + scene.contacts.length + ' contacts' : ''}{stage ? ' · ' + stage : ''}</div>}));
+vi.mock('./MolecularViewer', () => ({default: ({source, scene, stage}) => <div data-testid="viewer">viewer {source.filename}{source.origin === 'job' ? ' (fetched)' : ' (upload)'}{scene ? ' · ' + scene.contacts.length + ' ' + scene.state + ' contacts' : ''}{stage ? ' · ' + stage : ''}</div>}));
 const EMPTY = 'Choose a coordinate file or a saved render to view it.';
 
 const assets=Object.fromEntries(['collage.png','collage.svg','contacts.csv','manifest.json'].map(name=>[name,{url:'/api/molecular/renders/job-1/assets/'+name,sha256:'a'.repeat(64),bytes:120,media_type:name.endsWith('.png')?'image/png':'application/octet-stream'}]));
@@ -43,7 +43,7 @@ beforeEach(()=>{
     if(path==='/api/settings')return json({settings:{viewer:{representation:'surface',colouring:'element',assembly:'asymmetric_unit',background:'black'}}});
     if(path==='/api/molecular/renders/job-1/events')return new Response('',{status:404});
     if(path==='/api/molecular/renders/job-1/source')return new Response('data_complex\n',{headers:{'Content-Type':'chemical/x-mmcif'}});
-    if(path==='/api/molecular/renders/job-1/scene')return json({contacts:[{antibody_residue:'A:1',antigen_residue:'C:1'}]});
+    if(path==='/api/molecular/renders/job-1/scene')return new Response(JSON.stringify({contacts:[{antibody_residue:'A:1',antigen_residue:'C:1'}]}),{status:200,headers:{'Content-Type':'application/json','X-Arc-Scene':'verified'}});
     throw new Error('Unexpected path: '+path);
   }));
   URL.createObjectURL=vi.fn(()=> 'blob:molecular');URL.revokeObjectURL=vi.fn();
@@ -57,7 +57,7 @@ test('loads explicitly and submits coordinates, author chains and reproducible d
   await user.click(screen.getByRole('button',{name:'Load renders'}));await screen.findByText('Local renderer ready.');
   await fillSource(user);
   // The chosen coordinates are shown before any render exists, without a request.
-  expect(await screen.findByTestId('viewer')).toHaveTextContent('viewer complex.cif');
+  expect(await screen.findByTestId('viewer')).toHaveTextContent('viewer complex.cif (upload)');
   await user.click(screen.getByRole('button',{name:'Render structure'}));
   await screen.findByText('Render status: queued');
   const sent=calls.find(call=>call.path==='/api/molecular/renders'&&call.options.method==='POST');
@@ -82,7 +82,7 @@ test('completed render uses an authenticated blob preview and downloads, then cl
   expect(calls.every(call=>!call.path.includes('operator'))).toBe(true);
   await user.click(screen.getByRole('button',{name:'Close render'}));
   // Closing the collage returns to the viewer of the render's own coordinates and contacts.
-  expect(await screen.findByTestId('viewer')).toHaveTextContent('viewer complex.cif · 1 contacts · render complete');
+  expect(await screen.findByTestId('viewer')).toHaveTextContent('viewer complex.cif (fetched) · 1 verified contacts · render complete');
   expect(calls.find(call=>call.path==='/api/molecular/renders/job-1/source').options.headers.Authorization).toBe('Bearer operator');
   expect(calls.every(call=>!call.path.includes('/api/examples/'))).toBe(true);
   rendered.unmount();expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:molecular');
