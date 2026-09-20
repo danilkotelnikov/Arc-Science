@@ -191,7 +191,7 @@ test('a finished mission keeps its outcome: Cancel is disabled, Verify and expor
 test('molecules opens on the local render form with an empty stage and no packaged example',async()=>{
   render(<App/>);
   expect(await screen.findByRole('heading',{name:'Render locally'})).toBeInTheDocument();
-  expect(screen.getByRole('status')).toHaveTextContent('No render selected');
+  expect(screen.getByRole('status')).toHaveTextContent('Choose a coordinate file or a saved render to view it.');
   expect(screen.queryByText(/EXAMPLE/)).toBeNull();
   expect(screen.queryByRole('button',{name:'Export SVG'})).toBeNull();
   expect(requests.some(r=>String(r.path).includes('/api/examples'))).toBe(false);

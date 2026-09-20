@@ -22,6 +22,7 @@ from typing import Annotated, Literal
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator, model_validator
 
 from . import anchored
@@ -47,6 +48,15 @@ JobStatus = Literal['queued', 'rendering', 'completed', 'failed', 'cancelled', '
 
 
 SETTINGS = ('antibody_chains', 'antigen_chains', 'assembly', 'model_index', 'cutoff', 'width', 'samples', 'seed')
+# Progress is read from the pipeline's own outputs as they appear, never from a claim
+# the pipeline makes about itself: the scene (contacts computed), the Blender log
+# (rendering started), the composed figure, the image checks.
+STAGE_FILES = (('contacts_ready', 'scene.json'), ('rendering', 'worker.log'), ('composing', 'collage.svg'),
+               ('checking', 'checks.json'))
+MAX_STAGES = 16
+SCENE_LIMIT = 4 * 1024 * 1024
+STREAM_HEARTBEAT = 15.0
+SOURCE_MEDIA = {'.pdb': 'chemical/x-pdb', '.ent': 'chemical/x-pdb', '.cif': 'chemical/x-mmcif', '.mmcif': 'chemical/x-mmcif'}
 
 
 class RenderRequest(BaseModel):
@@ -125,6 +135,8 @@ class JobRecord(BaseModel):
     # change of this one; None for records written before settings were kept.
     settings: dict | None = None
     change: ChangeRecord | None = None
+    # Pipeline stages observed while the job ran, in order; empty for older records.
+    stages: list[dict] = Field(default_factory=list, max_length=MAX_STAGES)
 
 
 def _json_bytes(value):
@@ -210,6 +222,8 @@ class MolecularJobs:
         self.lock = asyncio.Lock()
         self.probe_lock = asyncio.Lock()
         self.probe_result = None
+        # Replaced on every change so a stream waits on exactly the next change.
+        self.changed = asyncio.Event()
         self._recover()
         self.router = APIRouter(prefix='/api/molecular', dependencies=[Depends(authorized)])
         self.router.add_api_route('/capabilities', self.capabilities, methods=['GET'])
@@ -217,6 +231,10 @@ class MolecularJobs:
         self.router.add_api_route('/renders', self.submit, methods=['POST'], status_code=202)
         self.router.add_api_route('/renders/{job_id}', self.get_job, methods=['GET'])
         self.router.add_api_route('/renders/{job_id}/cancel', self.cancel, methods=['POST'])
+        self.router.add_api_route('/renders/{job_id}/events', self.events, methods=['GET'])
+        self.router.add_api_route('/renders/{job_id}/scene', self.scene, methods=['GET'])
+        self.router.add_api_route('/renders/{job_id}/source', self.source, methods=['GET'])
+
         self.router.add_api_route('/renders/{job_id}/assets/{filename:path}', self.asset, methods=['GET'])
 
     def _change_of(self, parameters, settings):
@@ -288,11 +306,33 @@ class MolecularJobs:
                 anchored.unlink(handle, temporary)
             anchored.close_directory(handle)
 
+    def _notify(self):
+        previous, self.changed = self.changed, asyncio.Event()
+        previous.set()
+
     def _finish(self, row, status, error=None):
         row.update(status=status, error=error, updated_at=time.time())
         if status != 'completed':
             row.update(assets={}, contact_pairs=None)
         self._save(row)
+        self._notify()
+
+    def _stage(self, row, stage):
+        if any(s['stage'] == stage for s in row.get('stages', ())) or len(row.get('stages', ())) >= MAX_STAGES:
+            return
+        row.setdefault('stages', []).append({'stage': stage, 'at': time.time()})
+        row['updated_at'] = time.time()
+        self._save(row)
+        self._notify()
+
+    async def _watch_stages(self, row, directory):
+        """Record each pipeline stage the moment its output appears."""
+        output = directory / 'output'
+        while True:
+            for stage, name in STAGE_FILES:
+                if (output / name).is_file():
+                    self._stage(row, stage)
+            await asyncio.sleep(.25)
 
     @staticmethod
     def _asset_url(job_id, name):
@@ -515,10 +555,21 @@ class MolecularJobs:
         return assets, contact_pairs
 
     async def _worker(self, row, parameters, directory):
+        watcher = None
         try:
             self._finish(row, 'rendering')
+            self._stage(row, 'preparing')
+            watcher = asyncio.create_task(self._watch_stages(row, directory))
             async with asyncio.timeout(RENDER_DEADLINE_SECONDS):
                 await self._run_process(self._command(parameters, directory), directory, RENDER_DEADLINE_SECONDS, track=True)
+                watcher.cancel()
+                with suppress(asyncio.CancelledError):
+                    await watcher
+                watcher = None
+                for stage, name in STAGE_FILES:
+                    if (directory / 'output' / name).is_file():
+                        self._stage(row, stage)
+                self._stage(row, 'verifying')
                 assets, contact_pairs = await asyncio.to_thread(self._collect_assets, row, directory)
             row.update(assets=assets, contact_pairs=contact_pairs)
             self._finish(row, 'completed')
@@ -534,8 +585,77 @@ class MolecularJobs:
         except Exception:
             self._finish(row, 'failed', 'Molecular rendering or artifact checks failed. Verify coordinates, chain selections and server runtime.')
         finally:
+            if watcher is not None:
+                watcher.cancel()
+                with suppress(asyncio.CancelledError):
+                    await watcher
             self.active_id = None
             self.task = None
+
+    async def events(self, job_id: str, request: Request):
+        """The job's progress as a server-sent event stream: a snapshot, then each stage
+        as it is observed (ids are stage indices, so Last-Event-ID resumes), then the
+        terminal status and `end`. Authenticated by header like every other route; the
+        browser reads it with fetch, never a native EventSource."""
+        await self.get_job(job_id)
+        last = request.headers.get('last-event-id', '')
+        index = int(last) + 1 if last.isdigit() else 0
+
+        def event(kind, payload, ident=None):
+            head = ('id: ' + str(ident) + '\n') if ident is not None else ''
+            return (head + 'event: ' + kind + '\ndata: ' + json.dumps(payload, ensure_ascii=True) + '\n\n').encode('utf-8')
+
+        async def stream():
+            nonlocal index
+            row = self.jobs[job_id]
+            yield event('snapshot', {'id': row['id'], 'status': row['status'], 'stages': row.get('stages', []),
+                                     'contact_pairs': row.get('contact_pairs'), 'error': row.get('error')})
+            while True:
+                row = self.jobs.get(job_id) or row
+                stages = row.get('stages', [])
+                while index < len(stages):
+                    yield event('stage', stages[index], index)
+                    index += 1
+                if row['status'] not in ('queued', 'rendering'):
+                    yield event('status', {'status': row['status'], 'error': row.get('error'), 'contact_pairs': row.get('contact_pairs'),
+                                           'assets': sorted(row.get('assets', {}))})
+                    yield b'event: end\ndata: {}\n\n'
+                    return
+                waiter = self.changed
+                try:
+                    await asyncio.wait_for(waiter.wait(), STREAM_HEARTBEAT)
+                except TimeoutError:
+                    yield b': keep-alive\n\n'
+        return StreamingResponse(stream(), media_type='text/event-stream',
+                                 headers={'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no'})
+
+    async def scene(self, job_id: str):
+        """The pipeline's scene (selection, atoms, residue contacts) as soon as it exists,
+        before the render finishes: what the viewer overlays while Blender still runs."""
+        row = await self.get_job(job_id)
+        try:
+            data = await asyncio.to_thread(_read_file, self.root / job_id / 'output', 'scene.json', SCENE_LIMIT)
+        except (OSError, ValueError):
+            raise HTTPException(404, 'No scene has been computed for this render yet') from None
+        if row['status'] == 'completed':
+            record = row['assets'].get('scene.json')
+            if record is None or hashlib.sha256(data).hexdigest() != record['sha256']:
+                raise HTTPException(409, 'Molecular artifact integrity check failed')
+        return Response(data, media_type='application/json', headers={'Cache-Control': 'no-store'})
+
+    async def source(self, job_id: str):
+        """The coordinates the job was given, for the viewer: the uploaded file itself,
+        bound to the recorded digest."""
+        row = await self.get_job(job_id)
+        try:
+            data = await asyncio.to_thread(_read_file, self.root / job_id / 'input', row['filename'], MAX_SOURCE_BYTES)
+        except (OSError, ValueError):
+            raise HTTPException(404, 'The uploaded coordinates are no longer available') from None
+        if hashlib.sha256(data).hexdigest() != row['source_sha256']:
+            raise HTTPException(409, 'Molecular artifact integrity check failed')
+        media = SOURCE_MEDIA.get(Path(row['filename']).suffix.lower(), 'text/plain')
+        return Response(data, media_type=media, headers={'Cache-Control': 'no-store', 'ETag': '"' + row['source_sha256'] + '"',
+                                                          'Content-Disposition': 'attachment; filename="' + row['filename'] + '"'})
 
     async def cancel(self, job_id: str):
         row = await self.get_job(job_id)

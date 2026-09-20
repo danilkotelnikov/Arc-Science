@@ -4,6 +4,10 @@ import {act, render, screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import MolecularWorkspace from './MolecularWorkspace';
 
+// Mol* needs WebGL and a browser; the unit tests stand in a stub for the lazy chunk.
+vi.mock('./MolecularViewer', () => ({default: ({source, scene, stage}) => <div data-testid="viewer">viewer {source.filename}{scene ? ' · ' + scene.contacts.length + ' contacts' : ''}{stage ? ' · ' + stage : ''}</div>}));
+const EMPTY = 'Choose a coordinate file or a saved render to view it.';
+
 const assets=Object.fromEntries(['collage.png','collage.svg','contacts.csv','manifest.json'].map(name=>[name,{url:'/api/molecular/renders/job-1/assets/'+name,sha256:'a'.repeat(64),bytes:120,media_type:name.endsWith('.png')?'image/png':'application/octet-stream'}]));
 const completed={id:'job-1',status:'completed',filename:'complex.cif',source_sha256:'b'.repeat(64),contact_pairs:42,error:null,assets};
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
@@ -15,7 +19,7 @@ function Harness({initialToken='operator'}) {
 }
 async function openPanel() {
   await screen.findByRole('heading',{name:'Render locally'});
-  expect(screen.getByRole('status')).toHaveTextContent('No render selected');
+  expect(screen.getByRole('status')).toHaveTextContent(EMPTY);
 }
 async function loadPanel(user) {
   await openPanel();
@@ -36,6 +40,10 @@ beforeEach(()=>{
     if(path==='/api/molecular/renders/job-1/cancel')return json({...submitted,status:'cancelled'});
     if(path==='/api/molecular/renders/job-1')return json(jobs.find(job=>job.id==='job-1')||submitted);
     if(path.startsWith('/api/molecular/renders/job-1/assets/'))return new Response('verified artifact');
+    if(path==='/api/settings')return json({settings:{viewer:{representation:'surface',colouring:'element',assembly:'asymmetric_unit',background:'black'}}});
+    if(path==='/api/molecular/renders/job-1/events')return new Response('',{status:404});
+    if(path==='/api/molecular/renders/job-1/source')return new Response('data_complex\n',{headers:{'Content-Type':'chemical/x-mmcif'}});
+    if(path==='/api/molecular/renders/job-1/scene')return json({contacts:[{antibody_residue:'A:1',antigen_residue:'C:1'}]});
     throw new Error('Unexpected path: '+path);
   }));
   URL.createObjectURL=vi.fn(()=> 'blob:molecular');URL.revokeObjectURL=vi.fn();
@@ -47,7 +55,10 @@ test('loads explicitly and submits coordinates, author chains and reproducible d
   const user=userEvent.setup();render(<Harness/>);await openPanel(user);
   expect(calls.filter(call=>call.path.startsWith('/api/molecular'))).toHaveLength(0);
   await user.click(screen.getByRole('button',{name:'Load renders'}));await screen.findByText('Local renderer ready.');
-  await fillSource(user);await user.click(screen.getByRole('button',{name:'Render structure'}));
+  await fillSource(user);
+  // The chosen coordinates are shown before any render exists, without a request.
+  expect(await screen.findByTestId('viewer')).toHaveTextContent('viewer complex.cif');
+  await user.click(screen.getByRole('button',{name:'Render structure'}));
   await screen.findByText('Render status: queued');
   const sent=calls.find(call=>call.path==='/api/molecular/renders'&&call.options.method==='POST');
   expect(sent.options.headers.Authorization).toBe('Bearer operator');
@@ -70,7 +81,9 @@ test('completed render uses an authenticated blob preview and downloads, then cl
   expect(calls.find(call=>call.path===assets['manifest.json'].url).options.headers.Authorization).toBe('Bearer operator');
   expect(calls.every(call=>!call.path.includes('operator'))).toBe(true);
   await user.click(screen.getByRole('button',{name:'Close render'}));
-  expect(screen.getByRole('status')).toHaveTextContent('No render selected');
+  // Closing the collage returns to the viewer of the render's own coordinates and contacts.
+  expect(await screen.findByTestId('viewer')).toHaveTextContent('viewer complex.cif · 1 contacts · render complete');
+  expect(calls.find(call=>call.path==='/api/molecular/renders/job-1/source').options.headers.Authorization).toBe('Bearer operator');
   expect(calls.every(call=>!call.path.includes('/api/examples/'))).toBe(true);
   rendered.unmount();expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:molecular');
 });
@@ -107,7 +120,7 @@ test('token changes clear protected state and suppress an obsolete authenticated
   await act(async()=>finish());
   expect(screen.queryByRole('img',{name:'Rendered molecular collage: complex.cif'})).not.toBeInTheDocument();
   expect(screen.queryByRole('button',{name:'completed · complex.cif'})).not.toBeInTheDocument();
-  expect(screen.getByRole('status')).toHaveTextContent('No render selected');
+  expect(screen.getByRole('status')).toHaveTextContent(EMPTY);
   expect(URL.createObjectURL).not.toHaveBeenCalled();
   expect(calls.find(call=>call.path===assets['collage.png'].url).options.signal.aborted).toBe(true);
 });

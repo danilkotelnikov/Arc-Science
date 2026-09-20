@@ -129,6 +129,8 @@ See [provider behavior](apps/arc-science/docs/bioart.md) and the separate
 
 ## Molecular workspace
 
+The viewer is Mol* (MIT), mounted headless on one canvas and loaded as its own chunk the first time a structure is shown. A chosen coordinate file is drawn at once from the browser's own copy, before any render exists and without a request; a saved render supplies its coordinates through the authenticated `source` route. Representation, colouring, background, quality, assembly, waters, contacts and spin are the viewer's settings, with defaults from the operator's settings file. While the local pipeline runs, its stages are read from the outputs it writes (contacts computed, rendering, composing, checking, verifying) and streamed to the workbench as server-sent events fetched with the token in a header (never a native EventSource); the pipeline's residue contacts are overlaid the moment the scene exists, and polling stands in when the stream is unavailable. What the viewer shows is geometry, never validation.
+
 The workspace opens empty, on the operator's own renders; no example collage is
 packaged (the frozen 1DQJ / HyHEL-63 example was removed on 2026-09-19). The
 authenticated **Render your structure locally** form accepts coordinate files and

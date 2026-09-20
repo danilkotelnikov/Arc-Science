@@ -11,7 +11,8 @@ const directories=cleanDist?[resolve('dist/assets')]:[join(target,'assets'),reso
 for(const directory of directories) {
   if(!existsSync(directory))continue;
   for(const entry of readdirSync(directory,{withFileTypes:true})) {
-    if(entry.isFile()&&/^index-[\w-]+\.(js|css)$/.test(entry.name))unlinkSync(join(directory,entry.name));
+    // Every Vite chunk: the main bundle and lazy chunks such as the Mol* viewer.
+    if(entry.isFile()&&/^[A-Za-z]\w*-[\w-]+\.(js|css)$/.test(entry.name))unlinkSync(join(directory,entry.name));
   }
 }
 if(!cleanDist){

@@ -1,6 +1,7 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {Button} from '@heroui/react/button';
 import {checkedFetch} from './http';
+import {STAGE_LABELS, useRenderEvents} from './renderEvents';
 
 const pending=status=>status==='queued'||status==='rendering';
 const defaults={assembly:'asymmetric_unit',model_index:0,cutoff:4,width:1400,samples:96,seed:23};
@@ -25,7 +26,13 @@ function readSource(file,signal) {
   });
 }
 
-function RenderControls({token,onJobChange,onShowJob}) {
+export function stageLine(job) {
+  const stages=job?.stages||[];
+  if(!stages.length)return '';
+  return stages.map(s=>STAGE_LABELS[s.stage]||s.stage).join(' → ');
+}
+
+function RenderControls({token,onJobChange,onShowJob,onSource}) {
   const [capabilities,setCapabilities]=useState(null),[jobs,setJobs]=useState(null),[job,setJob]=useState(null);
   const [file,setFile]=useState(null),[antibody,setAntibody]=useState(''),[antigen,setAntigen]=useState('');
   const [options,setOptions]=useState(defaults),[busy,setBusy]=useState(false),[error,setError]=useState(''),[pollAttempt,setPollAttempt]=useState(0);
@@ -39,8 +46,19 @@ function RenderControls({token,onJobChange,onShowJob}) {
   },[onJobChange]);
 
   useEffect(()=>()=>{operation.current?.abort();polling.current?.abort();},[]);
+  // Progress arrives on the event stream while a job runs; polling stands in only
+  // when the stream is not live.
+  const live=useRenderEvents({token,jobId:job?.id,active:!!job&&pending(job.status),onEvent:event=>{
+    if(event.event==='stage'){setJob(current=>{
+      if(!current||current.id!==job.id)return current;
+      const stages=current.stages||[];
+      if(stages.some(s=>s.stage===event.data.stage))return current;
+      const next={...current,stages:[...stages,event.data]};onJobChange(next);return next;
+    });}
+    else if(event.event==='status'||event.event==='end'||event.event==='lost'){setPollAttempt(value=>value+1);}
+  }});
   useEffect(()=>{
-    if(!job||!pending(job.status))return;
+    if(!job||!pending(job.status)||live)return;
     const controller=new AbortController();polling.current=controller;let timer;
     async function poll() {
       try {
@@ -101,9 +119,14 @@ function RenderControls({token,onJobChange,onShowJob}) {
     <Button variant="secondary" isDisabled={!token||busy} onPress={()=>run(load)}>{jobs===null?'Load renders':'Refresh renders'}</Button>
     {capabilities?<p>{capabilities.configured?'Local renderer ready.':capabilities.reason||'The local Blender renderer is unavailable.'}</p>:<p className="field-note">Load with your operator token.</p>}
     <form onSubmit={event=>{event.preventDefault();run(submit);}}>
+      <fieldset disabled={busy||!token}>
+        <label htmlFor="molecular-source">Coordinate file</label><input id="molecular-source" type="file" accept=".cif,.mmcif,.pdb" aria-required="true" onChange={event=>{const chosen=event.target.files[0]||null;setFile(chosen);
+          // Viewing needs no renderer: the chosen coordinates are shown at once.
+          if(chosen&&chosen.size<=(capabilities?.limits.max_source_bytes||750000)){const controller=new AbortController();readSource(chosen,controller.signal).then(text=>onSource?.({filename:chosen.name,text,origin:'upload'})).catch(()=>{});}
+        }}/>
+        <p className="field-note">PDB or mmCIF, up to {(capabilities?.limits.max_source_bytes||750000).toLocaleString()} bytes; shown in the viewer at once, rendered only with the local pipeline.</p>
+      </fieldset>
       <fieldset disabled={busy||!capabilities?.configured}>
-        <label htmlFor="molecular-source">Coordinate file</label><input id="molecular-source" type="file" accept=".cif,.mmcif,.pdb" aria-required="true" onChange={event=>setFile(event.target.files[0]||null)}/>
-        <p className="field-note">PDB or mmCIF, up to {(capabilities?.limits.max_source_bytes||750000).toLocaleString()} bytes.</p>
         <label htmlFor="molecular-antibody">Antibody chains</label><input id="molecular-antibody" value={antibody} required placeholder="A, B" onChange={event=>setAntibody(event.target.value)}/>
         <label htmlFor="molecular-antigen">Antigen chains</label><input id="molecular-antigen" value={antigen} required placeholder="C" onChange={event=>setAntigen(event.target.value)}/>
         <p className="field-note">Author chain IDs, separated by commas.</p>
@@ -123,13 +146,14 @@ function RenderControls({token,onJobChange,onShowJob}) {
     {busy&&<p role="status">Molecular request in progress…</p>}
     {error&&<p role="alert">{error}</p>}
     {job&&<div className="molecular-job-controls"><Button variant="ghost" onPress={()=>onShowJob(true)}>View selected render</Button>{pending(job.status)&&<Button variant="secondary" isDisabled={busy} onPress={()=>run(cancel)}>Cancel render</Button>}</div>}
+    {job&&(job.stages?.length>0||pending(job.status))&&<p className="field-note" aria-label="Render progress">{pending(job.status)?(live?'live':'polling')+' · ':''}{stageLine(job)||'waiting for the pipeline'}</p>}
     {jobs!==null&&<><h2>Recent renders</h2>{jobs.length?jobs.map(row=><Button variant="ghost" key={row.id} isDisabled={busy} aria-pressed={job?.id===row.id} onPress={()=>run(signal=>select(row.id,signal))}>{row.status} · {row.filename}</Button>):<p>No saved renders yet.</p>}</>}
   </div>;
 }
 
-export default function MolecularRenderPanel({token,setToken,onJobChange,onShowJob}) {
+export default function MolecularRenderPanel({token,setToken,onJobChange,onShowJob,onSource}) {
   return <section className="inspector-section molecular-render-panel" aria-labelledby="molecular-render-heading"><h2 id="molecular-render-heading">Render locally</h2>
-    <RenderControls key={token} token={token} onJobChange={onJobChange} onShowJob={onShowJob}/>
+    <RenderControls key={token} token={token} onJobChange={onJobChange} onShowJob={onShowJob} onSource={onSource}/>
   </section>;
 }
 

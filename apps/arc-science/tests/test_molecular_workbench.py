@@ -40,6 +40,7 @@ def test_home_serves_compiled_ui_with_the_empty_workbench(client):
     assert 'Molecules' in response.text
     assert 'vision_review' in response.text
     assert 'Render locally' in response.text and 'Settings' in response.text
-    assert 'No render selected' in response.text
+    assert 'Choose a coordinate file or a saved render to view it.' in response.text
+    assert 'MolecularViewer-' in response.text  # the Mol* viewer is a lazy chunk, not part of the bundle
     assert '/api/examples/' not in response.text
     assert 'Export SVG' not in response.text

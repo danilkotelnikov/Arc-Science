@@ -53,6 +53,12 @@ if mode=='fail':
 output=root/'output'; output.mkdir()
 raw=(root/'input'/'complex.cif').read_bytes()
 source_hash=hashlib.sha256(raw).hexdigest()
+if mode=='staged':
+    # The pipeline's outputs appear one by one: contacts first, then the render log.
+    (output/'scene.json').write_bytes(json.dumps({'source':{'sha256':source_hash},'contacts':[{}]}).encode())
+    time.sleep(.7)
+    (output/'worker.log').write_bytes(b'private log')
+    time.sleep(.7)
 files={'source.cif':raw,'collage.png':b'\\x89PNG\\r\\n\\x1a\\nfixture',
        'collage.svg':b'<svg xmlns="http://www.w3.org/2000/svg"/>',
        'contacts.csv':b'antibody_residue,antigen_residue\\nA:1,C:1\\n',
@@ -147,6 +153,65 @@ def test_completion_exposes_only_authenticated_digest_bound_assets(tmp_path, run
         assert client.get(f'{PREFIX}/renders/{row["id"]}/assets/worker.log', headers=AUTH).status_code == 404
         assert client.get(f'{PREFIX}/renders/{row["id"]}/assets/../job.json', headers=AUTH).status_code == 404
         assert client.get(PREFIX + '/renders', headers=AUTH).json()[0]['id'] == row['id']
+
+
+def test_progress_streams_each_stage_as_its_output_appears_and_the_scene_is_readable_early(tmp_path, runtime):
+    runtime['value'] = 'staged'
+    with TestClient(make_app(tmp_path)) as client:
+        job_id = client.post(PREFIX + '/renders', headers=AUTH, json=REQUEST).json()['id']
+        assert client.get(f'{PREFIX}/renders/{job_id}/events').status_code == 401
+        assert client.get(f'{PREFIX}/renders/{job_id}/scene').status_code == 401
+        # The scene exists before the render finishes, while the job is still running.
+        for _ in range(200):
+            scene = client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH)
+            if scene.status_code == 200:
+                break
+            time.sleep(.02)
+        assert scene.status_code == 200 and scene.json()['contacts'] == [{}]
+        assert client.get(f'{PREFIX}/renders/{job_id}', headers=AUTH).json()['status'] == 'rendering'
+        # The test client delivers a streamed body only once it is complete; the stages carry
+        # their own timestamps, and the browser suite reads the stream live.
+        events = []
+        with client.stream('GET', f'{PREFIX}/renders/{job_id}/events', headers=AUTH) as stream:
+            assert stream.headers['content-type'].startswith('text/event-stream')
+            block = {}
+            for line in stream.iter_lines():
+                if line == '':
+                    if block:
+                        events.append(block)
+                    block = {}
+                    if events and events[-1].get('event') == 'end':
+                        break
+                    continue
+                if line.startswith(':'):
+                    continue
+                key, _, value = line.partition(': ')
+                block[key] = json.loads(value) if key == 'data' else value
+        ats = [e['data']['at'] for e in events if e['event'] == 'stage']
+        assert ats == sorted(ats) and ats[2] - ats[1] >= .5  # rendering was observed after contacts, as the pipeline ran
+        kinds = [e['event'] for e in events]
+        assert kinds[0] == 'snapshot' and kinds[-2:] == ['status', 'end']
+        stages = [e['data']['stage'] for e in events if e['event'] == 'stage']
+        assert stages[:3] == ['preparing', 'contacts_ready', 'rendering'] and stages[-1] == 'verifying'
+        assert [e['id'] for e in events if e['event'] == 'stage'] == [str(i) for i in range(len(stages))]
+        assert events[-2]['data']['status'] == 'completed' and 'collage.png' in events[-2]['data']['assets']
+        row = client.get(f'{PREFIX}/renders/{job_id}', headers=AUTH).json()
+        assert [s['stage'] for s in row['stages']] == stages
+        # Resuming from a stage id replays only what came after it, then the terminal status.
+        with client.stream('GET', f'{PREFIX}/renders/{job_id}/events', headers={**AUTH, 'Last-Event-ID': str(len(stages) - 2)}) as stream:
+            text = ''.join(stream.iter_text())
+        assert text.count('event: stage') == 1 and 'event: status' in text and text.rstrip().endswith('data: {}')
+        # The uploaded coordinates are served bound to their digest, never without the token.
+        assert client.get(f'{PREFIX}/renders/{job_id}/source').status_code == 401
+        source = client.get(f'{PREFIX}/renders/{job_id}/source', headers=AUTH)
+        assert source.status_code == 200 and source.text == REQUEST['source_text'] and source.headers['content-type'].startswith('chemical/x-mmcif')
+        assert source.headers['etag'] == '"' + row['source_sha256'] + '"'
+        (tmp_path / 'molecular' / job_id / 'input' / 'complex.cif').write_text('data_changed\n')
+        assert client.get(f'{PREFIX}/renders/{job_id}/source', headers=AUTH).status_code == 409
+        # A completed job's scene is checked against the recorded asset digest.
+        assert client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH).status_code == 200
+        (tmp_path / 'molecular' / job_id / 'output' / 'scene.json').write_text('{}')
+        assert client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH).status_code == 409
 
 
 def test_asset_tampering_after_completion_is_detected(tmp_path, runtime):

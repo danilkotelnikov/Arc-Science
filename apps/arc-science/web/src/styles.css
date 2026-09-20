@@ -147,3 +147,10 @@ footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e9ebed; fon
 .check-state { font-weight: 600; }
 .check-satisfied { color: #2e6b3f; } .check-not_applicable { color: #68727a; } .check-unknown, .check-stale { color: #8a6d1d; } .check-failed, .check-error { color: #a23d3d; }
 .check-report p { margin: 2px 0; font-size: 13px; overflow-wrap: anywhere; }
+.viewer { display: flex; flex-direction: column; height: 100%; min-height: 420px; }
+.viewer-canvas { position: relative; flex: 1 1 auto; min-height: 360px; background: #fff; }
+.viewer-canvas canvas { width: 100%; height: 100%; display: block; }
+.viewer-controls { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: end; padding: 8px 0; font-size: 12px; }
+.viewer-controls label { display: flex; flex-direction: column; gap: 2px; }
+.viewer-controls select, .viewer-controls input:not([type=checkbox]) { margin: 0; padding: 3px 6px; font-size: 12px; width: auto; }
+.viewer-controls label.check { flex-direction: row; align-items: center; gap: 4px; }

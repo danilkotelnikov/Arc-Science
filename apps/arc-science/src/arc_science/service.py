@@ -380,8 +380,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     # snapshot and forwards a whole replacement with the revision the operator saw.
     # What the service consumes today, and what is stored for a later loop; the UI
     # shows both so nothing reads as applied when it is not.
-    APPLIED={'applied_live':['seats','seats.effort','providers','prose','mcp_servers','acp_agents'],
-             'stored_pending':['blender','viewer'],'restart_required':[]}
+    APPLIED={'applied_live':['seats','seats.effort','providers','prose','mcp_servers','acp_agents','viewer'],
+             'stored_pending':['blender'],'restart_required':[]}
     settings_writer=asyncio.Semaphore(1)
     @app.get('/api/settings',dependencies=[Depends(authorized)])
     async def settings_snapshot():

@@ -17,7 +17,7 @@ test('the workbench opens with its mark, six workspaces and no packaged example'
   }
   // Molecules is the landing workspace and it is empty: the operator's renders only.
   await expect(page.getByRole('heading', {name: 'Render locally'})).toBeVisible();
-  await expect(page.getByRole('region', {name: 'Molecular figure'}).getByRole('status')).toContainText('No render selected');
+  await expect(page.getByRole('region', {name: 'Molecular figure'}).getByRole('status')).toContainText('Choose a coordinate file or a saved render');
   await expect(page.getByRole('button', {name: 'Export SVG'})).toHaveCount(0);
   await expect(page.getByText(/EXAMPLE \/ 01/)).toHaveCount(0);
   expect(requested.filter((url) => url.includes('/api/examples'))).toEqual([]);
