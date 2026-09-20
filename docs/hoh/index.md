@@ -100,3 +100,11 @@ native-window automation is not exposed by the current computer-use tool.
 Inspect the current working tree before edits. The earlier molecular work is part
 of this accepted candidate and must be preserved. Continue the next failed/unverified gate with a bounded plan;
 do not re-run unrelated passed suites without a changed dependency or new concern.
+
+## Program — 2026-09-20, Claude (launch, settings, seats, MCP/ACP, viewer, presets, catalogue, prose)
+
+- Decisions and assumptions: [program](2026-09-20-program.md); per-loop record and
+  evaluations: [program record](2026-09-20-program-record.md).
+- Loop 1 (launch): `Arc Science.exe` starts from a double-click — the supervisor
+  discovers the runtime and prints a startup plan, the window opens first, failures
+  are shown in the window and a native dialog. Sol: changes required → accept.
