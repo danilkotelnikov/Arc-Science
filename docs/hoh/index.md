@@ -174,8 +174,16 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   comparison and chosen [guided Research layout](2026-09-20-guided-research-design.md)
   are being evaluated against desktop/narrow screenshots and a separate code review.
 - Targeted molecular contact/viewer continuity passed mocked tests and independent
-  code review; real Blender/WebGL/vision qualification remains open. After fixing
+  code review. A [real 1DQJ browser render qualification](2026-09-20-real-render-qualification.md)
+  then exercised Blender 5.2.2, two completed presets and one cancellation, with
+  source/artifact hashes and one independently recomputed contact distance. Native
+  render/download, independent vision and evolving trajectories remain open. After fixing
   native-secret inheritance in service child processes, the full Python suite passed
   809 with 65 skips; frontend and browser checks are linked
   in the recovery record. Claude Opus/Sonnet 5 pairing was attempted but both were
   refused for insufficient account credit and is not independent evidence.
+- [Claude Opus Ultracode continuation prompt](2026-09-20-claude-opus-ultracode-handoff.md)
+  preserves the current operating contract, evidence limits and next design/native-
+  Playwright acceptance increment for a fresh Claude Code session.
+- [Claude↔Codex plugin inspection](2026-09-20-claude-codex-plugin-check.md)
+  records the installed commands without claiming an authenticated consultation.

@@ -48,5 +48,5 @@ The local Claude Code CLI 2.1.231 was asked for read-only Opus 5 and Sonnet 5 pa
 
 - Live failure-window click validation of Retry/Open Log and a slow-start screenshot. The test-only launches with an intentionally invalid or sleeping executable were rejected by automatic approval review with only `blocked by policy`; source tests and healthy-window evidence do not close this failure-path observation.
 - Direct native redirect and stale-service-restart adversarial checks. Same-origin script authority is a documented limitation, not a passed isolation claim.
-- A real configured Blender render and native Mol* camera/contact observation; browser fixture rendering and mocked viewer tests do not qualify those.
+- The [subsequent real 1DQJ Blender/browser run](2026-09-20-real-render-qualification.md) closed a bounded external-renderer gate. Native WebView render/download, numeric camera continuity, independent vision review and evolving trajectory frames remain unverified.
 - Cargo/Python dependency audits were unavailable because the audit tools are not installed. The npm audit is clear; it does not qualify unrelated native/Python dependencies.

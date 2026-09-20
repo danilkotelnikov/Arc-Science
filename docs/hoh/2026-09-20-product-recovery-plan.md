@@ -1,6 +1,6 @@
 # Arc Science product recovery plan
 
-Date: 20 September 2026. Status: **planning handoff; implementation has not started under this plan**.
+Date: 20 September 2026. Status: **approved and partly executed; see the [recovery record](2026-09-20-recovery-record.md) for the current state**.
 
 ## Decision and current evidence
 
@@ -269,6 +269,5 @@ separate increments; neither is held hostage to a complete native rewrite. Every
 increment is closed by green targeted checks, browser/native observations where
 available, independent QA, and an updated pass/failed/unverified/blocked ledger.
 
-This plan is the requested handoff. It does not enable egress, install packages,
-move credentials, publish a build or implement changes before the next development
-instruction.
+At drafting time, this was the requested planning handoff. Later authorized work is
+recorded in the recovery record; the plan alone is not acceptance evidence.
