@@ -141,3 +141,19 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   blocked or unverified: Claude credits, Gemini tier, API-key seats live, MCP
   `tools/call` and ACP `session/prompt` live, Blender, licence rows, `api.edgeshop.ai`,
   Linux paths, the native download on a rendered workbench.
+
+## Planning handoff — 2026-09-20, Codex
+
+- The user clarified that the executable currently launches; the active complaint is
+  internal functionality and UX. The current target is a Rust/C++ core with Blender
+  retained as an external renderer.
+- The two [original](https://chatgpt.com/share/6aaa6001-0768-83eb-8867-a89085928cca)
+  [shared conversations](https://chatgpt.com/share/6aaa5f66-76bc-83ed-8e97-105265ca599e)
+  were read in the browser for this handoff. Their OpenClaw guidance describes a
+  trusted Gateway adapter and restricted reviewer execution, not a named pair of
+  existing modules.
+- [Product recovery plan](2026-09-20-product-recovery-plan.md) records live UI
+  findings, the first Research-first/authentication increment, a visible-control
+  acceptance matrix, provider/connector gates and the native migration order.
+- This is a plan for the user's review. No product behavior or credential was changed
+  in this planning loop. The existing 2026-09-20 program remains historical evidence.
