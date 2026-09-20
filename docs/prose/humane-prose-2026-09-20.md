@@ -170,7 +170,10 @@ falls with perceived machine involvement and rises with plain, specific statemen
   machine generation, and imitating a named person — and it leaves the scientific
   words alone ("avoid detection bias in the assay", "pass the detector output to
   Results"). It is not a guarantee against every paraphrase; a paraphrase it misses
-  reaches the behaviour's own refusal, which is a prompt.
+  reaches the behaviour's own refusal, which is a prompt. It errs on the side of
+  refusing: a product name refuses even in an innocent instruction ("keep the paragraph
+  about Turnitin false positives"), and the refusal names the phrase so the author can
+  send the instruction without it.
 - The behaviour reaches the prose seat as a system prompt on Claude Code
   (`--system-prompt`) and Gemini CLI (`GEMINI_SYSTEM_MD`) and as the body of an HTTP
   request's `system` / `instructions` / `system_instruction` field. Codex CLI has no

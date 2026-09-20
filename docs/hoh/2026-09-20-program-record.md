@@ -284,3 +284,69 @@ asserted) and the live render under a preset remains an unverified gate.
 | Shared WSL/daemon probes raced across four threads; a failed listing was retried per entry | medium | One lock; failures cached with a sentinel |
 | Two notes contradicted their probes; an unavailable daemon counted as indirect | low/medium | Corrected |
 | Recorded gate: no Blender here, so no render ran under a preset; licence rows not independently verified | gate | Unverified |
+
+## Loop 12 — humane prose (`1a3a1f9`, `2625f9b`, `39aa447`)
+
+The research digest (`docs/prose/humane-prose-2026-09-20.md`) reads the recent studies
+and states what they support: detectors disagree by orders of magnitude on the same
+human-written pages and move in opposite directions under the same professional edit
+(Park, Jeong and Kim 2026, 135,389 manuscript pairs, read), misclassify non-native
+writers (Liang et al. 2023) and fail under paraphrase (Sadasivan et al. 2023; RAID;
+PADBen); style words rose in scientific abstracts after 2022 while syntactic variety
+fell (Kobak et al. 2024, read); professional writers edit model prose into seven
+categories with specificity the most valuable and the one a model cannot supply alone
+(Chakrabarty, Laban and Wu 2024, LAMP, read — a corpus of literary fiction, travel,
+food and personal-essay paragraphs, so the transfer to scientific prose is recorded as
+an editorial judgement); readers' trust falls with perceived machine involvement. The
+behaviour derived from it (`arc-humane-prose-2`, packaged as `humane-prose.md` and
+installed as the `humane-prose` skill with a parity test) edits for the reader:
+preserve every fact, number, citation and qualification; specificity first, then
+redundant exposition, clichés, purple prose, structure, word choice, tense; a
+scientific convention wins over a category; the corpora's style words used only when
+exact; the author's voice kept and nothing added; a marked gap instead of an invented
+fact; and a stated refusal to promise what any detector will say.
+
+The Prose workspace gains local diagnostics that count what the corpora measured
+(style words per thousand words, formulaic frames, sentence-length spread, repeated
+openings, triplets, closing summaries) and name the writers' edit categories the
+frames point at — the style-word density stays an observation, never a category on
+its own — with a note beside every result that they are not an authorship estimate;
+and a seat rewrite that sends the text, with per-request consent, to the prose seat
+configured in the settings (CLI or API-key transport through one `structured()` call)
+under the behaviour, verifies every protected span byte for byte or returns nothing,
+requires the seat's provenance record, names the channel the behaviour travelled by
+(Codex CLI has no system prompt), and writes an audit line with a keyed hash of the
+text. An instruction that asks for detector evasion or impersonation is refused by the
+service before any seat, consent or lock is involved, by a pattern that recognises
+explicit requests (named detector products, AI-text detectors with an evasion or score
+verb, "undetectable", "reads as human-written", hiding the traces of machine
+generation, imitating a named person) and leaves the scientific words alone; an API
+seat whose credential is not stored is refused as unavailable before consent, and the
+capabilities say whether it is stored. A value whose unit an earlier protection class
+claimed (4.2 nM) keeps its number protected (protection version 2).
+
+Boundaries recorded in the digest (§5): the user's permission to take commercial
+detector or "humanizer" internals was not used — every source is a public paper; the
+request to prevent AI-writing detection is not promised and not attempted, because
+the studies show no detector can be answered for honestly.
+
+Checks: Python 796 passed / 65 skipped; vitest 62; Playwright 20. Live here through
+the Codex seat (gpt-5.5, effort low, behaviour in the prompt): the sample lost its
+stock frames and kept its hedge, its numbers, its residues and its citation, with six
+marked gaps where the text had claimed without facts. Claude Code (credits) and
+Gemini CLI (tier) seats remain unverified live; no API-key seat was exercised against
+a real provider (mock transport only).
+
+## Evaluation of loop 12 (Sol): changes required ×2 → addressed → accept-with-findings
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| The rewrite called the CLI agents' private entry point; API-key prose seats could not answer | high | `structured()` on both transports; a mock-transport route test for an OpenAI Responses-shaped seat |
+| The refusal of evasion instructions lived in the prompt alone | medium | Local pattern refusal before any text leaves; then moved ahead of seat resolution, consent and the lock, one audit record |
+| The refusal pattern refused scientific "detection" and missed score, trace and imitation phrasings | medium | AI-text context required for generic terms; products, scores, traces, imitation of a named person recognised; documented as explicit requests, not every paraphrase |
+| A missing API credential was answered as a provider rejection after an attempted line | medium | Credential preflight → 409 `seat_unavailable` before consent and audit; capabilities report stored/missing |
+| Style-word density became an edit category by itself | medium | Observation only; frames indicate the category |
+| The LAMP taxonomy was presented without its creative-writing domain | medium | Behaviour and digest name the corpus (§4.1) and call the transfer editorial |
+| Audit-key failure was a 500; results did not say when the text changed | low | 409 `audit_key`; stale notices and behaviour toggle in the workspace |
+| A product name refuses even an innocent instruction | medium (accepted, non-blocking) | Recorded as a conservative false refusal; the refusal names the phrase |
+| Recorded gates: Claude and Gemini seats unverified live; no real API-key provider exercised | gate | Unverified |

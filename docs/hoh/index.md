@@ -122,5 +122,10 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   viewer as its own chunk, coordinates drawn on upload, pipeline stages streamed as
   observations with the provisional scene overlaid while Blender runs. Loops 10–11
   (catalogue, presets): 101 packages probed for presence with indirect evidence kept
-  apart; nineteen style-only render presets bounded again by the worker. Sol: changes
-  required → accept on each.
+  apart; nineteen style-only render presets bounded again by the worker. Loop 12
+  (humane prose): a research digest and the behaviour derived from it
+  (`arc-humane-prose-2`, also a skill), local diagnostics as observations, a consented
+  seat rewrite on either transport that keeps every protected span or returns nothing,
+  explicit evasion or impersonation instructions refused before any seat; the
+  permission to take commercial internals was not used and detector evasion is not
+  promised. Sol: changes required → accept (accept-with-findings on loops 3, 4, 12).
