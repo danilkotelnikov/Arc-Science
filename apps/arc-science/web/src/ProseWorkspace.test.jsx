@@ -25,8 +25,49 @@ beforeEach(() => {
         results: {HEMINGWAY: {grade: '8', words: '5'}}, text_sha256: 'a'.repeat(64), response_sha256: 'b'.repeat(64),
         note: 'Third-party classifier estimate from api.edgeshop.ai; it establishes neither AI nor human authorship and has no bearing on any release decision.'});
     }
+    if (path === '/api/prose/diagnose') return json({diagnostics_version: 'arc-prose-diagnostics-1', protected_count: 2, authorship_claim: 'none',
+      edit_categories: ['cliché / awkward word choice', 'unnecessary or redundant exposition'],
+      observations: {style_words: {count: 2, per_1000_words: 80, words: {crucial: 1, delve: 1}}, formulaic_frames: {count: 1, instances: [{label: 'announcing frame', text: 'it is important to note'}]},
+        sentence_length: {sentences: 3, mean_words: 9, spread_words: 2.1, share_within_20pct_of_mean: 0.67}, repeated_openings: {count: 0, openings: {}},
+        triplets: {count: 1}, closing_summaries: {count: 1, paragraphs: 1}, bullets: {count: 0}, words: 25},
+      note: 'Observations about the text: counts and ratios of things corpus studies measured. Not an authorship estimate, and not a prediction of what any detector would say.'});
+    if (path === '/api/prose/behaviour') return json({version: 'arc-humane-prose-1', text: '# Humane prose behaviour\n\nPreserve before you polish.'});
+    if (path === '/api/prose/humanise') {
+      if (!options.body.includes('"allow_egress":true')) return json({detail: {code: 'consent_required', detail: 'The text would leave this machine for the anthropic seat'}}, 422);
+      return json({status: 'edited', text: 'We fit 12 points to compare; the assay ran twice.', notes: ['Replaced a stock phrase.'], facts_needed: ['[author: which assay?]'], protected_count: 2,
+        transport: {provider: 'anthropic', requested_model: 'claude-sonnet-5', observed_model: 'claude-sonnet-5', transport: 'claude-code'},
+        statement: 'An edit by the configured prose seat under the humane-prose behaviour; protected spans were preserved byte for byte. Not a human-authorship claim.'});
+    }
     throw new Error('Unexpected path: ' + path);
   }));
+});
+
+test('diagnosis is local, reads as observations, and a seat rewrite needs its own consent every time', async () => {
+  const user = userEvent.setup(); render(<Harness/>);
+  await user.type(screen.getByLabelText('Text'), 'It is important to note that we delve into crucial results in order to compare.');
+  await user.click(screen.getByRole('button', {name: 'Diagnose locally'}));
+  const diagnosis = within(await screen.findByLabelText('Prose diagnosis'));
+  expect(diagnosis.getByText(/cliché \/ awkward word choice · unnecessary or redundant exposition · 2 protected spans/)).toBeInTheDocument();
+  expect(diagnosis.getByText(/2 \(80 per 1,000 words\): crucial, delve/)).toBeInTheDocument();
+  expect(diagnosis.getByText(/announcing frame: “it is important to note”/)).toBeInTheDocument();
+  expect(diagnosis.getByText(/Not an authorship estimate/)).toBeInTheDocument();
+  expect(calls.filter(c => c.path === '/api/prose/diagnose')).toHaveLength(1);
+  expect(calls.every(c => !c.path.includes('humanise'))).toBe(true);
+  // The seat rewrite: disabled until consent, consent spent per request, the seat's notes and gaps shown.
+  const seatButton = screen.getByRole('button', {name: 'Rewrite with the prose seat (sends text)'});
+  expect(seatButton).toBeDisabled();
+  await user.type(screen.getByLabelText('Instructions to the seat (optional)'), 'grant abstract');
+  await user.click(screen.getByLabelText(/I consent to sending this text to the prose seat/));
+  await user.click(seatButton);
+  const results = screen.getByRole('region', {name: 'Prose results'});
+  expect(await within(results).findByText('We fit 12 points to compare; the assay ran twice.')).toBeInTheDocument();
+  expect(results).toHaveTextContent('Edited by the prose seat · 2 protected spans preserved · anthropic claude-sonnet-5 (observed claude-sonnet-5)');
+  expect(results).toHaveTextContent('Facts needed from the author: [author: which assay?]');
+  const sent = calls.find(c => c.path === '/api/prose/humanise');
+  expect(sent.body).toEqual({text: 'It is important to note that we delve into crucial results in order to compare.', allow_egress: true, instructions: 'grant abstract'});
+  expect(seatButton).toBeDisabled(); // consent was spent
+  await user.click(screen.getByRole('button', {name: 'Show the behaviour'}));
+  expect(await screen.findByText(/Preserve before you polish/)).toBeInTheDocument();
 });
 afterEach(() => { vi.unstubAllGlobals(); });
 

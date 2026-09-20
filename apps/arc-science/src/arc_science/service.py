@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import time
 import uuid
+import hmac
 import httpx
 import json
 from pydantic import BaseModel, Field
@@ -40,6 +41,11 @@ class ProseText(BaseModel):
 
 class ProseDetect(ProseText):
     allow_egress:bool=False
+
+class ProseHumanise(ProseText):
+    """The text leaves this machine for the prose seat's provider: consent per request."""
+    allow_egress:bool=False
+    instructions:str=Field(default='',max_length=2000)
 
 class SettingsReplace(BaseModel):
     settings:dict
@@ -212,6 +218,14 @@ def seat_plan(route):
     return route_digest,'sha256:'+route_digest+' '+json.dumps(summary,separators=(',',':'),sort_keys=True)
 
 
+def configured_prose_endpoint(settings=None):
+    """The prose seat from the settings, or None when it is not configured."""
+    if settings is None:settings=operator_settings.current()
+    seat=operator_settings.seat(settings,'prose')
+    if seat is None:return None
+    return _endpoint_from_seat(settings,'prose',seat)
+
+
 def configured_vision_endpoint(settings=None):
     if settings is None:settings=operator_settings.current()
     first,second=configured_endpoints(settings)
@@ -368,6 +382,63 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     async def prose_rewrite(body:ProseText):
         try:return prose_module.rewrite(body.text)
         except prose_module.ProseRefused as refused:prose_error(refused)
+
+    from . import prose_humane
+    humanise_lock=asyncio.Lock()
+
+    @app.get('/api/prose/behaviour',dependencies=[Depends(authorized)])
+    async def prose_behaviour():
+        return {'version':prose_humane.BEHAVIOUR_VERSION,'text':prose_humane.behaviour_text(),
+                'digest':'docs/prose/humane-prose-2026-09-20.md'}
+
+    @app.post('/api/prose/diagnose',dependencies=[Depends(authorized)])
+    async def prose_diagnose(body:ProseText):
+        # Local counts and ratios; nothing leaves the machine and nothing is a verdict.
+        try:return prose_humane.diagnose(body.text)
+        except prose_module.ProseRefused as refused:prose_error(refused)
+
+    @app.post('/api/prose/humanise',dependencies=[Depends(authorized)])
+    async def prose_humanise(body:ProseHumanise):
+        """One consented call to the operator's prose seat under the humane-prose behaviour;
+        refused unless every protected span survives byte for byte; one at a time; an
+        audit line with a keyed hash of the text, never the text."""
+        from .exploration.cli_seats import CliAgent
+        try:cfg=configured_prose_endpoint()
+        except Exception as error:raise HTTPException(409,'The prose seat is not usable: '+str(error)[:300]) from None
+        if cfg is None:raise HTTPException(409,'Configure the prose seat in the settings before a seat rewrite')
+        if not body.allow_egress:
+            prose_error(prose_module.ProseRefused('consent_required','The text would leave this machine for the '+cfg.provider
+                +' seat; send allow_egress: true to consent to this one request'))
+        if humanise_lock.locked():prose_error(prose_module.ProseRefused('busy','A seat rewrite is already in flight'))
+        async with humanise_lock:
+            keyed=hmac.new(detector._key(),body.text.encode('utf-8'),'sha256').hexdigest()
+            audit=root/'prose'/'humanise.jsonl'
+            def line(record):
+                with audit.open('a',encoding='utf-8') as handle:handle.write(json.dumps({'at':int(time.time()),'text_hmac':keyed,**record},sort_keys=True)+'\n')
+            line({'status':'attempted','provider':cfg.provider,'transport':cfg.transport,'model':cfg.model,'chars':len(body.text)})
+            seat=None
+            try:
+                async with httpx.AsyncClient(trust_env=False) as client:
+                    if cfg.transport=='cli':
+                        command=claude_code_command() if cfg.provider=='anthropic' else [cfg.endpoint]
+                        seat=CliAgent(command,cfg.model,cfg.model,provider=cfg.provider,efforts={'prose':cfg.effort} if cfg.effort else None)
+                    else:
+                        def resolve(ref,principal,project):
+                            style=AUTH_STYLES.get(cfg.provider,'bearer')
+                            if cfg.provider=='anthropic' and os.environ.get('ARC_ANTHROPIC_AUTH') in ('oauth','bearer'):style='oauth'
+                            return AccessGrant(token=_secret(ref),principal=principal,project_id=project,resource=cfg.endpoint,
+                                credential_ref=ref,expires_at=int(time.time())+60,auth_style=style)
+                        seat=HTTPAgent(cfg,reviewer_config=cfg,falsifier_config=cfg,client=client,resolver=resolve,project='prose',principal='local-operator')
+                    result=await prose_humane.humanise(seat,body.text,body.instructions)
+            except prose_module.ProseRefused as refused:
+                line({'status':refused.code});prose_error(refused)
+            except Exception as error:
+                line({'status':'provider_rejected'})
+                raise HTTPException(502,{'code':'provider_rejected','detail':'The prose seat did not return a usable edit: '+str(error)[:200],'spans':[]}) from None
+            finally:
+                if seat is not None and hasattr(seat,'close'):seat.close()
+            line({'status':result['status'],'rewritten_sha256':result['rewritten_sha256']})
+            return result
 
     @app.post('/api/prose/detect',dependencies=[Depends(authorized)])
     async def prose_detect(body:ProseDetect):
@@ -563,7 +634,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         def summary(key):
             entries=current.get(key) or []
             return {'configured':len(entries),'consented':len([e for e in entries if e.get('enabled',True) and e.get('consent')])}
+        try:prose_seat=configured_prose_endpoint()
+        except Exception:prose_seat=None
         return {'version':VERSION,'live':live,'vision':visual,
+                'prose_seat':{'configured':prose_seat is not None,**({'provider':prose_seat.provider,'transport':prose_seat.transport,'model':prose_seat.model} if prose_seat else {})},
                 'connectors':{'mcp':{**summary('mcp_servers'),'sdk':mcp_tools.sdk_version()},'acp':summary('acp_agents')},
                 'numeric_tools':['describe_data','polynomial_fit','permutation_control'],
                 'public_network_tools_enabled':os.environ.get('ARC_PUBLIC_READS')=='1',

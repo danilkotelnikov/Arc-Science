@@ -10,10 +10,15 @@ export default function ProseWorkspace({token, setToken}) {
   const [text, setText] = useState(''), [rules, setRules] = useState(null);
   const [rewritten, setRewritten] = useState(null), [receipt, setReceipt] = useState(null);
   const [consent, setConsent] = useState(false), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  // Humane prose: local diagnostics (nothing leaves), and a rewrite by the operator's own
+  // prose seat under the behaviour text, with its own consent because the text leaves.
+  const [diagnosis, setDiagnosis] = useState(null), [humane, setHumane] = useState(null), [seatConsent, setSeatConsent] = useState(false);
+  const [instructions, setInstructions] = useState(''), [behaviour, setBehaviour] = useState(null);
   const credential = useRef(null);
   useLayoutEffect(() => {
     const controller = new AbortController(); credential.current = controller;
     setText(''); setRules(null); setRewritten(null); setReceipt(null); setConsent(false); setError(''); setBusy(false);
+    setDiagnosis(null); setHumane(null); setSeatConsent(false); setInstructions(''); setBehaviour(null);
     return () => controller.abort();
   }, [token]);
   const read = useCallback(async (path, signal, method = 'GET', body) => {
@@ -40,6 +45,12 @@ export default function ProseWorkspace({token, setToken}) {
     const granted = consent; setConsent(false);
     setReceipt(await read('/detect', signal, 'POST', {text, allow_egress: granted}));
   }
+  async function diagnose(signal) { setDiagnosis(await read('/diagnose', signal, 'POST', {text})); }
+  async function humanise(signal) {
+    const granted = seatConsent; setSeatConsent(false);
+    setHumane(await read('/humanise', signal, 'POST', {text, allow_egress: granted, instructions}));
+  }
+  async function loadBehaviour(signal) { setBehaviour(await read('/behaviour', signal)); }
   const detection = rules?.detection;
   return <div className="research-workspace">
     <aside className="research-form">
@@ -50,8 +61,19 @@ export default function ProseWorkspace({token, setToken}) {
       <p className="field-note">{text.length.toLocaleString()} / 20,000 characters.</p>
       <div className="actions">
         <Button isDisabled={busy || !token || !text.trim()} onPress={() => task(rewrite)}>Rewrite locally</Button>
+        <Button variant="secondary" isDisabled={busy || !token || !text.trim()} onPress={() => task(diagnose)}>Diagnose locally</Button>
         <Button variant="secondary" isDisabled={busy || !token} onPress={() => task(loadRules)}>{rules ? 'Reload rules' : 'Show rules and detection terms'}</Button>
       </div>
+      <fieldset className="prose-detect"><legend>Seat rewrite</legend>
+        <p className="field-note">Sends the text to the prose seat configured in Settings and asks for its edit under the humane-prose behaviour; every protected span must come back byte for byte or nothing is returned.</p>
+        <label htmlFor="prose-instructions">Instructions to the seat (optional)</label>
+        <input id="prose-instructions" value={instructions} disabled={busy} maxLength={2000} onChange={e => setInstructions(e.target.value)} placeholder="e.g. keep British spelling; it is a grant abstract"/>
+        <label className="check"><input type="checkbox" checked={seatConsent} disabled={busy} onChange={e => setSeatConsent(e.target.checked)}/>I consent to sending this text to the prose seat's provider for this one request.</label>
+        <div className="actions">
+          <Button variant="secondary" isDisabled={busy || !token || !seatConsent || !text.trim()} onPress={() => task(humanise)}>Rewrite with the prose seat (sends text)</Button>
+          <Button variant="ghost" size="sm" isDisabled={busy || !token} onPress={() => task(loadBehaviour)}>{behaviour ? 'Hide behaviour' : 'Show the behaviour'}</Button>
+        </div>
+      </fieldset>
       <fieldset className="prose-detect"><legend>Third-party detection</legend>
         <p className="field-note">{detection ? (detection.enabled ? `Sends the text to ${detection.recipient} (${detection.detectors.join(', ')}); ${detection.bounds.min_chars}–${detection.bounds.max_chars.toLocaleString()} characters.` : 'Detection is switched off on this service.') : 'Load the rules to see where the text would be sent.'}</p>
         <label className="check"><input type="checkbox" checked={consent} disabled={busy || !detection?.enabled} onChange={e => setConsent(e.target.checked)}/>I consent to sending this text to api.edgeshop.ai for this one request.</label>
@@ -61,6 +83,27 @@ export default function ProseWorkspace({token, setToken}) {
       {error && <p role="alert">{error}</p>}
     </aside>
     <section className="research-results" aria-label="Prose results">
+      <h2>Diagnosis</h2>
+      {diagnosis ? <div className="record" aria-label="Prose diagnosis">
+        <h3>{diagnosis.edit_categories.length ? diagnosis.edit_categories.join(' · ') : 'No edit category indicated'} · {diagnosis.protected_count} protected spans</h3>
+        <dl className="receipt-metadata">
+          <dt>Style words</dt><dd>{diagnosis.observations.style_words.count} ({diagnosis.observations.style_words.per_1000_words} per 1,000 words){Object.keys(diagnosis.observations.style_words.words).length ? ': ' + Object.entries(diagnosis.observations.style_words.words).map(([w, n]) => w + (n > 1 ? ' ×' + n : '')).join(', ') : ''}</dd>
+          <dt>Formulaic frames</dt><dd>{diagnosis.observations.formulaic_frames.count ? diagnosis.observations.formulaic_frames.instances.map(f => f.label + ': “' + f.text.trim() + '”').join(' · ') : 'none'}</dd>
+          <dt>Sentence length</dt><dd>{diagnosis.observations.sentence_length.sentences} sentences · mean {diagnosis.observations.sentence_length.mean_words} words · spread {diagnosis.observations.sentence_length.spread_words} · {Math.round(diagnosis.observations.sentence_length.share_within_20pct_of_mean * 100)}% within 20% of the mean</dd>
+          <dt>Repeated openings</dt><dd>{Object.keys(diagnosis.observations.repeated_openings.openings).length ? Object.entries(diagnosis.observations.repeated_openings.openings).map(([o, n]) => '“' + o + '” ×' + n).join(', ') : 'none'}</dd>
+          <dt>Triplets · closing summaries · bullets</dt><dd>{diagnosis.observations.triplets.count} · {diagnosis.observations.closing_summaries.count} of {diagnosis.observations.closing_summaries.paragraphs} paragraphs · {diagnosis.observations.bullets.count}</dd>
+        </dl>
+        <p className="muted">{diagnosis.note}</p>
+      </div> : <p className="muted">No diagnosis yet.</p>}
+      <h2>Seat rewrite</h2>
+      {humane ? <div className="record" data-status={humane.status}>
+        <h3>{humane.status === 'edited' ? 'Edited by the prose seat' : 'Returned unchanged'} · {humane.protected_count} protected spans preserved{humane.transport ? ' · ' + humane.transport.provider + ' ' + humane.transport.requested_model + (humane.transport.observed_model ? ' (observed ' + humane.transport.observed_model + ')' : ' (identity requested-only)') : ''}</h3>
+        <pre className="prose-output">{humane.text}</pre>
+        {humane.notes.length > 0 && <ul className="edits">{humane.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
+        {humane.facts_needed.length > 0 && <p className="muted">Facts needed from the author: {humane.facts_needed.join('; ')}</p>}
+        <p className="muted">{humane.statement}</p>
+      </div> : <p className="muted">No seat rewrite yet.</p>}
+      {behaviour && <details className="record" open><summary>Behaviour {behaviour.version}</summary><pre className="prose-output">{behaviour.text}</pre></details>}
       <h2>Local rewrite</h2>
       {rewritten ? <div className="record" data-status={rewritten.status}>
         <h3>{rewritten.status === 'edited' ? `${rewritten.edits.reduce((n, e) => n + e.count, 0)} edits` : 'No change'}{rewritten.reason ? ` · ${rewritten.reason.replace(/_/g, ' ')}` : ''} · {rewritten.protected_count} protected spans ({rewritten.protected_classes.join(', ') || 'none'})</h3>

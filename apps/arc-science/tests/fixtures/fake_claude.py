@@ -60,9 +60,20 @@ if violations:
     sys.exit(0)
 
 
+def humane():
+    # The seat's edit under the behaviour: a plain-word substitution that keeps every protected span,
+    # or (mode 'mangle') one that drops a number, which the service must refuse.
+    text = request['context']['text']
+    edited = text.replace('in order to', 'to').replace('utilize', 'use')
+    if mode == 'mangle':
+        edited = edited.replace('4.2 nM', 'about four nanomolar')
+    return {'text': edited, 'notes': ['Replaced two stock phrases with plain words.'], 'facts_needed': ['[author: which assay?]'] if 'assay' in text else []}
+
+
 def envelope(**overrides):
     body = {'type': 'result', 'subtype': 'success', 'is_error': False,
             'result': json.dumps({'ok': True} if schema_title == 'ProbeReply' else PROPOSAL if schema_title == 'Proposal'
+                                 else humane() if schema_title == 'HumaneRewrite'
                                  else {'assessments': [], 'summary': 'Nothing observed yet.'}),
             'modelUsage': {model: {'inputTokens': 10, 'outputTokens': 20}},
             'usage': {'input_tokens': 10, 'output_tokens': 20}, 'total_cost_usd': 0.001, 'permission_denials': []}
@@ -70,7 +81,7 @@ def envelope(**overrides):
     return json.dumps(body)
 
 
-if mode == 'success':
+if mode in ('success', 'mangle'):
     print(envelope())
 elif mode == 'auth':
     print(envelope(is_error=True, result='Failed to authenticate: OAuth session expired and could not be refreshed', modelUsage={}))

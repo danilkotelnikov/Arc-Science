@@ -33,7 +33,7 @@ from pathlib import Path
 import httpx
 
 RULES_VERSION = 'arc-prose-rules-1'
-PROTECTION_VERSION = 'arc-prose-protect-1'
+PROTECTION_VERSION = 'arc-prose-protect-2'
 DETECTION_ENDPOINT = 'https://api.edgeshop.ai/rewrite/text-detection'
 DETECTION_HOST = 'api.edgeshop.ai'
 REFERENCE_CLIENT = 'text2go/ai-humanizer-mcp-server'
@@ -111,16 +111,29 @@ class ProseRefused(ValueError):
 
 
 def protected_spans(text: str):
-    """Ordered, non-overlapping (start, end, class, literal) spans; earlier classes win."""
+    """Ordered, non-overlapping (start, end, class, literal) spans; earlier classes win.
+    A later match that runs into an earlier span only at its tail (a number whose unit
+    an earlier class already holds, `4.2 nM`) keeps its head (`4.2`) when the head is
+    still an instance of its own class, so a value is never left unprotected because
+    its unit was claimed first."""
     taken = []
     spans = []
     for name, pattern in PROTECTED_PATTERNS:
         for match in pattern.finditer(text):
             start, end = match.span()
-            if start == end or any(start < e and s < end for s, e in taken):
+            if start == end:
                 continue
+            overlapping = [(s, e) for s, e in taken if start < e and s < end]
+            if overlapping:
+                first = min(s for s, _ in overlapping)
+                if first <= start:
+                    continue
+                head = text[start:first].rstrip()
+                if not head or not pattern.fullmatch(head):
+                    continue
+                end = start + len(head)
             taken.append((start, end))
-            spans.append((start, end, name, match.group(0)))
+            spans.append((start, end, name, text[start:end]))
     return sorted(spans)
 
 
