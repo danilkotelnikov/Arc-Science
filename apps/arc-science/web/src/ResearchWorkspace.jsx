@@ -9,7 +9,7 @@ function ReleaseLedger({release}) {
   if(!release)return null;
   return <section className="record release-ledger" aria-label="Release decision">
     <h3>Release decision: {RELEASE_LABEL[release.status]||release.status}</h3>
-    <p className="muted">Eligibility means ready for a human reviewer. It is never scientific validation and never publication authorization.</p>
+    <p className="muted">Eligible means ready for a human reviewer, not validated.</p>
     <ul className="release-checks">{release.checks.map(check=><li key={check.name} data-state={check.state}><strong>{check.name.replace(/_/g,' ')}</strong> · <span className={'check-state check-'+check.state}>{check.state.replace('_',' ')}</span> — {check.reason}</li>)}</ul>
     {release.blocking_reasons.length>0&&<p role="status">Blocked by: {release.blocking_reasons.join(', ')}.</p>}
   </section>;
@@ -47,7 +47,7 @@ function ClaimScopeView({scope}) {
   // discriminating test, derived from the reconciliation at the stop; a narrower
   // conclusion is a valid research output and nothing here is validation.
   return <section aria-label="Claim scope"><h2>Claim scope</h2>{scope?<>
-    <p className="muted">{scope.rule} Derived at round {scope.basis_round} ({scope.derivation_version}).</p>
+    <p className="muted">Derived at round {scope.basis_round}; provisional support is exploratory, never validation.</p>
     {scope.branches.map(branch=><article className="record claim" key={branch.branch_id} data-status={branch.status}>
       <h3>{branch.branch_id} · {CLAIM_LABEL[branch.status]||branch.status}</h3>
       <dl>
@@ -63,14 +63,14 @@ function ClaimScopeView({scope}) {
 function Changes({changes,obligations}) {
   // Every operator change on the mission: what was declared, what the server derived,
   // and the state of each obligation as the release ledger reads it now.
-  return <section aria-label="Declared changes"><h2>Declared changes</h2>{changes.length?<ol className="changes">{changes.map(change=><li key={change.id} data-kind={change.kind}>{change.kind} at round {change.round} · declared {change.declared_effects.join(', ')} · derived {change.derived_effects.join(', ')} · obligations: {(obligations?.[change.id]||change.required_checks.map(check=>({check,state:'unknown'}))).map(o=><span key={o.check} className={'check-state check-'+o.state}>{o.check.replace(/_/g,' ')} {o.state.replace('_',' ')}</span>).reduce((acc,el,i)=>i?[...acc,' · ',el]:[el],[])}{change.note?<span className="muted"> — {change.note}</span>:null}</li>)}</ol>:<p className="muted">No change declared. Resuming declares an analysis change; claims cannot be edited and permissions are granted at creation.</p>}</section>;
+  return <section aria-label="Declared changes"><h2>Declared changes</h2>{changes.length?<ol className="changes">{changes.map(change=><li key={change.id} data-kind={change.kind}>{change.kind} at round {change.round} · declared {change.declared_effects.join(', ')} · derived {change.derived_effects.join(', ')} · obligations: {(obligations?.[change.id]||change.required_checks.map(check=>({check,state:'unknown'}))).map(o=><span key={o.check} className={'check-state check-'+o.state}>{o.check.replace(/_/g,' ')} {o.state.replace('_',' ')}</span>).reduce((acc,el,i)=>i?[...acc,' · ',el]:[el],[])}{change.note?<span className="muted"> — {change.note}</span>:null}</li>)}</ol>:<p className="muted">No declared change.</p>}</section>;
 }
 
 function RepairCycles({repairs}) {
   // Each cycle re-rendered the reviewed images under a presentation preset and had
   // them reviewed again as a new candidate; the outcome is that fresh review's own
   // verdict, or the reason the cycle could not run. Nothing here is inferred.
-  return <section aria-label="Figure repair cycles"><h2>Figure repair cycles</h2>{repairs.length?<ol className="repairs">{repairs.map((cycle,i)=><li key={i} data-outcome={cycle.outcome}>Cycle {cycle.cycle} · round {cycle.round} · preset {cycle.preset} · addressed {cycle.addressed.join(', ')||'—'} → <strong>{cycle.outcome}</strong>{cycle.reason?<span className="muted"> — {cycle.reason}</span>:null}</li>)}</ol>:<p className="muted">No repair cycle ran. A repair only answers presentation findings; substance, uncertainty and reviewer errors wait for a human.</p>}</section>;
+  return <section aria-label="Figure repair cycles"><h2>Figure repair cycles</h2>{repairs.length?<ol className="repairs">{repairs.map((cycle,i)=><li key={i} data-outcome={cycle.outcome}>Cycle {cycle.cycle} · round {cycle.round} · preset {cycle.preset} · addressed {cycle.addressed.join(', ')||'—'} → <strong>{cycle.outcome}</strong>{cycle.reason?<span className="muted"> — {cycle.reason}</span>:null}</li>)}</ol>:<p className="muted">No repair cycle.</p>}</section>;
 }
 
 export default function ResearchWorkspace({token,setToken}) {
@@ -130,19 +130,18 @@ export default function ResearchWorkspace({token,setToken}) {
   const state=mission?.state;
   return <div className="research-workspace">
     <aside className="research-form"><p className="eyebrow">RESEARCH / DEVELOPMENT</p><h1>Start with a question.</h1><p className="muted">Keep alternatives, evidence and uncertainty visible.</p>
-      <label htmlFor="token">Local operator token</label><input id="token" type="password" value={token} onChange={e=>setToken(e.target.value)} autoComplete="off"/><p className="field-note">In memory only. Read with <code>arc-science token --data ./data</code>.</p>
       <label htmlFor="goal">Research goal</label><textarea id="goal" rows={4} value={goal} onChange={e=>setGoal(e.target.value)}/>
       <div className="formrow"><div><label htmlFor="mode">Execution</label><select id="mode" value={mode} onChange={e=>setMode(e.target.value)}><option value="demo">Offline validation fixture</option><option value="live">Configured live models</option></select></div><div><label htmlFor="rounds">Round limit</label><input id="rounds" type="number" min="1" max="12" value={rounds} onChange={e=>setRounds(e.target.value)}/></div></div>
       <details><summary>Optional x/y measurements</summary><label htmlFor="points">Measurement JSON</label><textarea id="points" rows={4} value={points} onChange={e=>setPoints(e.target.value)}/><p className="muted">8–2000 numeric x/y points. Leave empty for public-source exploration in live mode.</p></details>
       <label className="check"><input type="checkbox" checked={egress} onChange={e=>setEgress(e.target.checked)}/>Permit sending this mission’s data to configured models.</label>
       <label className="check"><input type="checkbox" checked={vision} onChange={e=>setVision(e.target.checked)}/>Require configured visual review of each new fit image.</label>
       <div className="actions"><Button isDisabled={busy||!goal.trim()} onPress={()=>task(start)}>Create and start</Button><Button variant="secondary" isDisabled={busy} onPress={()=>task(async signal=>setMissions(await read('/missions',signal)))}>Load missions</Button></div>
-      <p className="muted">Offline mode uses a scripted planner and real numerical computations. It is not a live-model benchmark.</p>
+      <p className="muted">Offline mode: scripted planner, real numerical computation.</p>
       <h2>Saved missions</h2>{missions===null?<p className="muted">Load missions with your operator token.</p>:missions.length?missions.map(row=><Button className="mission-choice" variant="ghost" key={row.id} isDisabled={busy} onPress={()=>task(signal=>select(row.id,signal))}>{row.status} · {row.goal}</Button>):<p>No saved missions. Create a mission to begin.</p>}
     </aside>
     <section className="research-results" aria-label="Research results">
       {error&&<p role="alert">{error}</p>}
-      {!state?<div className="empty-state"><h2>Evidence begins with a mission.</h2><p>Create one or load a saved run to inspect its decision frontier.</p></div>:<>
+      {!state?<div className="empty-state"><h2>No mission selected.</h2></div>:<>
         <div className="results-heading"><div><p className="eyebrow">Selected mission: {mission.id}</p><h2>Decision frontier</h2></div><span className="status-label">{state.status}</span></div>
         <p className="muted">Round {state.round} · {state.actions_used} actions · {state.model_calls_used} model-role calls · data: {state.data_origin}</p>
         <div className="actions"><Button isDisabled={busy} onPress={()=>task(async signal=>{setVerification(await (await request('/missions/'+mission.id+'/verify','POST',undefined,signal)).json());await refresh(mission.id,signal);})}>Verify and recompute</Button><Button variant="secondary" isDisabled={busy||!mission.release?.eligible_for_human_review} onPress={()=>task(exportCapsule)}>Export replay capsule</Button><Button variant="ghost" isDisabled={busy||!['ready','paused'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/start','POST',undefined,signal);await refresh(mission.id,signal);})}>{state.status==='paused'?'Resume (declares an analysis change)':'Resume'}</Button><Button variant="danger" isDisabled={busy||['cancelled','completed','budget_exhausted','error','needs_input'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/cancel','POST',undefined,signal);await refresh(mission.id,signal);})}>Cancel</Button></div>
@@ -150,14 +149,13 @@ export default function ResearchWorkspace({token,setToken}) {
         <ClaimScopeView scope={state.claim_scope}/>
         <div className="branches">{state.branches.map(branch=><article key={branch.id} className={'branch'+(state.focus===branch.id?' focus':'')}><h3>{branch.title}</h3><p>{branch.hypothesis}</p><p>Falsifier: {branch.falsifier}</p><p className="muted">Opened round {branch.created_round} · parents: {branch.parents.join(', ')||'root'}</p></article>)}</div>
         <h2>Visual artifacts</h2><div className="artifacts">{state.artifacts.length?state.artifacts.map(artifact=><Artifact key={mission.id+artifact.digest} missionId={mission.id} artifact={artifact} request={request} release={mission.release} superseded={state.artifacts.some(a=>a.repair_of===artifact.digest)}/>):<p className="muted">No visual artifacts in this mission.</p>}</div>
-        <h2>Visual review</h2>{state.visual_reports.length?state.visual_reports.map((report,i)=><div className="record" key={i}><h3>{report.model} · round {report.round} · {report.verdict}</h3>{report.findings.map((finding,j)=><p key={j}>{finding.category}: {finding.detail}</p>)}</div>):<p className="muted">No visual review report. No passing qualification is implied.</p>}
+        <h2>Visual review</h2>{state.visual_reports.length?state.visual_reports.map((report,i)=><div className="record" key={i}><h3>{report.model} · round {report.round} · {report.verdict}</h3>{report.findings.map((finding,j)=><p key={j}>{finding.category}: {finding.detail}</p>)}</div>):<p className="muted">No visual review.</p>}
         <RepairCycles repairs={state.repairs||[]}/>
         <Changes changes={state.changes||[]} obligations={mission.change_obligations}/>
         <h2>Reconciliation</h2>{state.assessments.slice(-12).map((assessment,i)=><div className="record" key={i}><h3>{assessment.role} · {assessment.branch_id} · {assessment.position}</h3><p>{assessment.finding}</p><p className="muted">Evidence: {assessment.evidence_ids.join(', ')} · Model: {assessment.model}</p></div>)}
         <h2>Execution evidence</h2>{state.observations.map(observation=><details className="record" key={observation.id}><summary>{observation.id} · {observation.tool} · {observation.status}</summary><pre>{JSON.stringify(observation.data,null,2)}</pre></details>)}
         <h2>Event history</h2>{state.events.slice(-15).reverse().map((event,i)=><p className="muted" key={i}>[{event.round}] {event.kind}: {event.detail}</p>)}
       </>}
-      <footer>Reconciliation is advisory. Reproducible computation and model agreement do not establish biological validity. Publication is not authorized.</footer>
     </section>
   </div>;
 }

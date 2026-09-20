@@ -10,10 +10,11 @@ const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:
 let jobs, submitted, capabilities, calls, downloads;
 function Harness({initialToken='operator'}) {
   const [token,setToken]=useState(initialToken);
-  return <MolecularWorkspace token={token} setToken={setToken}/>;
+  // The operator token lives in the app header; the harness stands in for it.
+  return <><label>Operator token<input type="password" value={token} onChange={e=>setToken(e.target.value)}/></label><MolecularWorkspace token={token} setToken={setToken}/></>;
 }
 async function openPanel() {
-  await screen.findByRole('heading',{name:'Render your structure locally'});
+  await screen.findByRole('heading',{name:'Render locally'});
   expect(screen.getByRole('status')).toHaveTextContent('No render selected');
 }
 async function loadPanel(user) {
@@ -101,8 +102,8 @@ test('token changes clear protected state and suppress an obsolete authenticated
   fetch.mockImplementation((path,options)=>path===assets['collage.png'].url?new Promise(resolve=>{calls.push({path,options});finish=()=>resolve(new Response('private old image'));}):original(path,options));
   const user=userEvent.setup();render(<Harness/>);await loadPanel(user);await user.click(screen.getByRole('button',{name:'completed · complex.cif'}));
   await waitFor(()=>expect(finish).toBeTypeOf('function'));
-  await user.clear(screen.getByLabelText('Operator token for Molecules'));
-  await user.type(screen.getByLabelText('Operator token for Molecules'),'different');
+  await user.clear(screen.getByLabelText('Operator token'));
+  await user.type(screen.getByLabelText('Operator token'),'different');
   await act(async()=>finish());
   expect(screen.queryByRole('img',{name:'Rendered molecular collage: complex.cif'})).not.toBeInTheDocument();
   expect(screen.queryByRole('button',{name:'completed · complex.cif'})).not.toBeInTheDocument();

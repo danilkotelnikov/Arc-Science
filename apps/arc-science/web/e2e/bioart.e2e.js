@@ -14,7 +14,7 @@ test('an offline search miss requires explicit egress consent and the browser ne
   await openWorkspace(page, 'BioArt', 'BioArt evidence workspace');
   const search = page.getByRole('complementary', {name: 'BioArt search'}).or(page.getByLabel('BioArt search')).first();
   await expect(search.getByRole('button', {name: 'Search NIH BioArt'})).toBeDisabled();
-  await search.getByLabel('Operator token for BioArt').fill(E2E_TOKEN);
+  await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await search.getByLabel('BioArt search query').fill('');
   await expect(search.getByRole('button', {name: 'Search NIH BioArt'})).toBeDisabled();
   await search.getByLabel('BioArt search query').fill('antibody');
@@ -37,7 +37,7 @@ test('direct entry inspection validates the identifier before any request and re
   const search = page.getByLabel('BioArt search');
   const inspect = search.getByRole('button', {name: 'Inspect entry'});
   await expect(inspect).toBeDisabled();
-  await search.getByLabel('Operator token for BioArt').fill(E2E_TOKEN);
+  await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await search.getByLabel('NIH entry ID').fill('-3');
   await expect(search.getByLabel('NIH entry ID')).toHaveAttribute('aria-invalid', 'true');
   await expect(inspect).toBeDisabled();

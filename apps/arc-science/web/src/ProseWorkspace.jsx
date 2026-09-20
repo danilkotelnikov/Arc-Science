@@ -44,10 +44,7 @@ export default function ProseWorkspace({token, setToken}) {
   return <div className="research-workspace">
     <aside className="research-form">
       <p className="eyebrow">PROSE / CONTROL</p><h1>Edit the words, not the evidence.</h1>
-      <p className="muted">A rule-based rewrite runs on this machine and leaves numbers, identifiers, citations, units and code untouched. Detection sends the text to a third party and returns an estimate, never a verdict on authorship.</p>
-      <label htmlFor="prose-token">Operator token for Prose</label>
-      <input id="prose-token" type="password" value={token} onChange={e => setToken(e.target.value)} autoComplete="off"/>
-      <p className="field-note">In memory only. Read with <code>arc-science token --data ./data</code>.</p>
+      <p className="muted">A rule-based rewrite on this machine that leaves numbers, identifiers, citations, units and code untouched.</p>
       <label htmlFor="prose-text">Text</label>
       <textarea id="prose-text" rows={10} value={text} disabled={busy} onChange={e => setText(e.target.value)} maxLength={20000}/>
       <p className="field-note">{text.length.toLocaleString()} / 20,000 characters.</p>
@@ -70,14 +67,14 @@ export default function ProseWorkspace({token, setToken}) {
         <pre className="prose-output">{rewritten.text}</pre>
         {rewritten.edits.length > 0 && <ul className="edits">{rewritten.edits.map(e => <li key={e.rule}>{e.rule} ×{e.count}: “{e.before}” → “{e.after || '∅'}”</li>)}</ul>}
         <p className="muted">{rewritten.statement} Rules {rewritten.rules_version}, protection {rewritten.protection_version}.</p>
-      </div> : <p className="muted">No rewrite yet. The rewrite is deterministic: the same text always yields the same result, and a protected span that would change refuses the whole edit.</p>}
+      </div> : <p className="muted">No rewrite yet.</p>}
       <h2>Detection receipt</h2>
       {receipt ? <div className="record" data-complete={String(receipt.complete)}>
         <h3>{receipt.service} · {receipt.returned_types.join(', ') || 'no detector answered'}{receipt.missing_types.length ? ` · missing ${receipt.missing_types.join(', ')}` : ''}</h3>
         <dl className="receipt-metadata">{Object.entries(receipt.results).map(([type, result]) => <React.Fragment key={type}><dt>{type}</dt><dd>{Object.entries(result).map(([k, v]) => `${k}: ${v}`).join(' · ') || '—'}</dd></React.Fragment>)}
           <dt>Text SHA-256</dt><dd><code>{receipt.text_sha256}</code></dd><dt>Response SHA-256</dt><dd><code>{receipt.response_sha256}</code></dd></dl>
         <p className="muted">{receipt.note}</p>
-      </div> : <p className="muted">No detection yet. Each request needs its own consent; the audit keeps a keyed hash of the text, never the text.</p>}
+      </div> : <p className="muted">No detection yet.</p>}
       {rules && <details className="record"><summary>Rules ({rules.rules.length}) and protected classes ({rules.protected_classes.length})</summary>
         <ul className="edits">{rules.rules.map(r => <li key={r.rule}><code>{r.rule}</code>: <code>{r.pattern}</code> → “{r.replacement || '∅'}”</li>)}</ul>
         <p className="muted">Protected: {rules.protected_classes.join(', ')}.</p></details>}

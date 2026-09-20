@@ -16,7 +16,7 @@ test('the workbench opens with its mark, five workspaces and no packaged example
     await expect(nav.getByRole('button', {name})).toBeEnabled();
   }
   // Molecules is the landing workspace and it is empty: the operator's renders only.
-  await expect(page.getByRole('heading', {name: 'Render your structure locally'})).toBeVisible();
+  await expect(page.getByRole('heading', {name: 'Render locally'})).toBeVisible();
   await expect(page.getByRole('region', {name: 'Molecular figure'}).getByRole('status')).toContainText('No render selected');
   await expect(page.getByRole('button', {name: 'Export SVG'})).toHaveCount(0);
   await expect(page.getByText(/EXAMPLE \/ 01/)).toHaveCount(0);
@@ -28,13 +28,13 @@ test('workspaces switch without losing the shared in-memory token, and the token
   const check = watchForTokenLeaks(page, shared);
   await page.goto('/');
   await openWorkspace(page, 'Research', 'Research results');
-  await page.getByLabel('Local operator token').fill(shared);
+  await page.getByLabel('Operator token').fill(shared);
   await openWorkspace(page, 'Memory', 'Memory');
-  await expect(page.getByLabel('Operator token for Memory')).toHaveValue(shared);
+  await expect(page.getByLabel('Operator token')).toHaveValue(shared);
   await openWorkspace(page, 'BioArt', 'BioArt evidence workspace');
-  await expect(page.getByLabel('Operator token for BioArt')).toHaveValue(shared);
+  await expect(page.getByLabel('Operator token')).toHaveValue(shared);
   await openWorkspace(page, 'Molecules', 'Molecular figure');
-  await expect(page.getByLabel('Operator token for Molecules')).toHaveValue(shared);
+  await expect(page.getByLabel('Operator token')).toHaveValue(shared);
   // The token also stays out of the page URL and history.
   expect(page.url()).not.toContain(shared);
   check();

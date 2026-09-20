@@ -19,7 +19,7 @@ test('a completed mission is recalled from memory, searched, paged and retained 
   const missionId = (await page.locator('.eyebrow').filter({hasText: 'Selected mission:'}).textContent()).split(': ')[1].trim();
 
   await openWorkspace(page, 'Memory', 'Memory');
-  await expect(page.getByLabel('Operator token for Memory')).toHaveValue(E2E_TOKEN);
+  await expect(page.getByLabel('Operator token')).toHaveValue(E2E_TOKEN);
   await page.getByRole('button', {name: 'Load sessions'}).click();
   const memory = page.getByRole('region', {name: 'Memory'});
   const aside = page.locator('aside');
@@ -82,16 +82,16 @@ test('a completed mission is recalled from memory, searched, paged and retained 
   await expect(memory.getByText('Remove from retrieval hides a record from search and session recall; it does not erase the stored history.')).toBeVisible();
 
   // A credential change clears every loaded identity and result.
-  await aside.getByLabel('Operator token for Memory').fill('another-token-that-must-clear-private-state-000');
+  await page.getByLabel('Operator token').fill('another-token-that-must-clear-private-state-000');
   await expect(aside.getByText('Load sessions with your operator token.')).toBeVisible();
-  await expect(memory.getByRole('heading', {name: 'Recall captured sessions.'})).toBeVisible();
+  await expect(memory.getByRole('heading', {name: 'No sessions loaded.'})).toBeVisible();
   check();
 });
 
 test('memory refuses to answer without a valid operator token', async ({page}) => {
   await page.goto('/');
   await openWorkspace(page, 'Memory', 'Memory');
-  await page.getByLabel('Operator token for Memory').fill('not-the-operator-token-at-all-0000000000');
+  await page.getByLabel('Operator token').fill('not-the-operator-token-at-all-0000000000');
   await page.getByRole('button', {name: 'Load sessions'}).click();
   await expect(page.getByRole('region', {name: 'Memory'}).getByRole('alert')).toContainText('401');
 });

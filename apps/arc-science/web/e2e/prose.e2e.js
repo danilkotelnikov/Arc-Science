@@ -11,7 +11,7 @@ test('the local rewrite edits prose only and every protected span survives byte 
   const check = watchForTokenLeaks(page);
   await page.goto('/');
   await openWorkspace(page, 'Prose', 'Prose results');
-  await page.getByLabel('Operator token for Prose').fill(E2E_TOKEN);
+  await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await page.getByLabel('Text', {exact: true}).fill(TEXT);
   await page.getByRole('button', {name: 'Rewrite locally'}).click();
   const results = page.getByRole('region', {name: 'Prose results'});
@@ -33,7 +33,7 @@ test('the local rewrite edits prose only and every protected span survives byte 
 test('detection is refused without consent and the workspace names the recipient before asking for it', async ({page, request}) => {
   await page.goto('/');
   await openWorkspace(page, 'Prose', 'Prose results');
-  await page.getByLabel('Operator token for Prose').fill(E2E_TOKEN);
+  await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await page.getByLabel('Text', {exact: true}).fill(TEXT);
   const consent = page.getByLabel(/I consent to sending this text to api.edgeshop.ai/);
   await expect(consent).toBeDisabled();

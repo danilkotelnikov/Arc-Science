@@ -49,14 +49,14 @@ afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();});
 test('workspace switches retain in-memory token, goal and selected mission',async()=>{
   const user=userEvent.setup();render(<App/>);
   await user.click(screen.getByRole('button',{name:'Research'}));
-  await user.type(screen.getByLabelText('Local operator token'),'secret-token');
+  await user.type(screen.getByLabelText('Operator token'),'secret-token');
   await user.clear(screen.getByLabelText('Research goal'));await user.type(screen.getByLabelText('Research goal'),'Retained research question');
   await user.click(screen.getByRole('button',{name:'Load missions'}));
   await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
   expect(await screen.findByText('Selected mission: mission-1')).toBeInTheDocument();
   await user.click(screen.getByRole('button',{name:'Molecules'}));
   await user.click(screen.getByRole('button',{name:'Research'}));
-  expect(screen.getByLabelText('Local operator token')).toHaveValue('secret-token');
+  expect(screen.getByLabelText('Operator token')).toHaveValue('secret-token');
   expect(screen.getByLabelText('Research goal')).toHaveValue('Retained research question');
   expect(screen.getByText('Selected mission: mission-1')).toBeVisible();
   expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
@@ -64,7 +64,7 @@ test('workspace switches retain in-memory token, goal and selected mission',asyn
 
 test('mission creation sends actual egress and visual-review consent and execution settings',async()=>{
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
-  await user.type(screen.getByLabelText('Local operator token'),'operator');
+  await user.type(screen.getByLabelText('Operator token'),'operator');
   await user.selectOptions(screen.getByLabelText('Execution'),'live');
   await user.click(screen.getByLabelText(/Permit sending/));await user.click(screen.getByLabelText(/Require configured visual review/));
   await user.click(screen.getByRole('button',{name:'Create and start'}));
@@ -78,7 +78,7 @@ test('selected mission exposes authenticated artifacts, visual reports, verify, 
   selectedRow.state.artifacts=[{digest:'d'.repeat(64),source_observation_id:'obs-1',media_type:'image/png'}];
   selectedRow.state.visual_reports=[{model:'configured-reviewer',round:1,verdict:'revise',findings:[{category:'legibility',detail:'Inspect labels'}]}];
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
-  await user.type(screen.getByLabelText('Local operator token'),'private');
+  await user.type(screen.getByLabelText('Operator token'),'private');
   await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
   expect(await screen.findByRole('img',{name:'Artifact from obs-1'})).toHaveAttribute('src','blob:artifact');
   expect(requests.find(r=>r.path?.includes('/artifacts/')).options.headers.Authorization).toBe('Bearer private');
@@ -97,13 +97,13 @@ test('a blocked release ledger explains itself and withholds the capsule until v
   selectedRow.release=blockedRelease;
   selectedRow.state.artifacts=[{digest:'d'.repeat(64),source_observation_id:'obs-1',media_type:'image/png'}];
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
-  await user.type(screen.getByLabelText('Local operator token'),'private');
+  await user.type(screen.getByLabelText('Operator token'),'private');
   await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
   const ledger=await screen.findByRole('region',{name:'Release decision'});
   expect(ledger).toHaveTextContent('Release decision: Blocked');
   expect(ledger).toHaveTextContent('replay integrity · unknown — Replay verification has not been run for this mission.');
   expect(ledger).toHaveTextContent('Blocked by: replay_integrity:unknown.');
-  expect(ledger).toHaveTextContent('never scientific validation');
+  expect(ledger).toHaveTextContent('not validated');
   expect(screen.getByRole('button',{name:'Export replay capsule'})).toBeDisabled();
   // Inline inspection stays; the explicit file download consults the same ledger.
   expect(await screen.findByRole('img',{name:'Artifact from obs-1'})).toBeInTheDocument();
@@ -124,7 +124,7 @@ test('repair cycles are listed with their own outcomes and superseded artifacts 
   selectedRow.state.repairs=[{cycle:1,round:0,policy_digest:'e'.repeat(64),preset:'spacious',trigger_report_digest:'c'.repeat(64),addressed:['legibility'],superseded_digests:[first],artifact_digests:[second],outcome:'adequate',reason:''},
     {cycle:2,round:0,policy_digest:'e'.repeat(64),preset:'large_text',trigger_report_digest:'d'.repeat(64),addressed:['labels'],superseded_digests:[second],artifact_digests:[],outcome:'blocked',reason:'The large_text preset rendered an image that already exists; the repair changed nothing.'}];
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
-  await user.type(screen.getByLabelText('Local operator token'),'private');
+  await user.type(screen.getByLabelText('Operator token'),'private');
   await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
   const repairs=await screen.findByRole('region',{name:'Figure repair cycles'});
   const items=within(repairs).getAllByRole('listitem');
@@ -147,10 +147,10 @@ test('the claim scope shows each hypothesis narrowed to its evidence, its uncert
      {branch_id:'quadratic',requested:'The response requires a quadratic term.',status:'provisionally_supported',supported_scope:['analyst: Low error on the exploratory split.','falsifier: Low error on the exploratory split. Adaptive reuse prevents confirmatory interpretation.'],scope_qualifier:'on the exploratory validation split of the frozen dataset; not independent data',
       uncertainties:[],next_tests:[{role:'analyst',round:1,test:'Use independently acquired data before a scientific conclusion.',evidence_ids:['fit-quadratic']}],evidence_ids:['fit-quadratic']}]};
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
-  await user.type(screen.getByLabelText('Local operator token'),'private');
+  await user.type(screen.getByLabelText('Operator token'),'private');
   await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
   const scope=await screen.findByRole('region',{name:'Claim scope'});
-  expect(scope).toHaveTextContent('Nothing above is scientific validation');
+  expect(scope).toHaveTextContent('provisional support is exploratory, never validation');
   const claims=within(scope).getAllByRole('article');
   expect(claims).toHaveLength(2);
   expect(claims[0]).toHaveAttribute('data-status','contradicted');
@@ -167,7 +167,7 @@ test('declared changes list what was declared, what was derived and each obligat
   selectedRow.state.changes=[{id:'c'.repeat(32),kind:'resume',declared_effects:['analysis','claim'],derived_effects:['analysis','claim'],required_checks:['re_execution','dependent_claim_invalidation','evidence_review','scope_review'],base_digest:'e'.repeat(64),note:'Second round.',round:1,at:1}];
   selectedRow.change_obligations={['c'.repeat(32)]:[{check:'re_execution',state:'satisfied',sources:['operational_status']},{check:'dependent_claim_invalidation',state:'stale',sources:['claim_scope']},{check:'evidence_review',state:'stale',sources:['evidence_graph','reconciliation']},{check:'scope_review',state:'stale',sources:['claim_scope']}]};
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
-  await user.type(screen.getByLabelText('Local operator token'),'private');
+  await user.type(screen.getByLabelText('Operator token'),'private');
   await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
   const changes=await screen.findByRole('region',{name:'Declared changes'});
   const item=within(changes).getByRole('listitem');
@@ -178,7 +178,7 @@ test('declared changes list what was declared, what was derived and each obligat
 test('a finished mission keeps its outcome: Cancel is disabled, Verify and export stay available',async()=>{
   selectedRow.state.status='completed';selectedRow.state.stop_reason='Exploration completed within budget.';
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
-  await user.type(screen.getByLabelText('Local operator token'),'private');
+  await user.type(screen.getByLabelText('Operator token'),'private');
   await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
   expect(await screen.findByText('completed')).toBeInTheDocument();
   expect(screen.getByRole('button',{name:'Cancel'})).toBeDisabled();
@@ -190,7 +190,7 @@ test('a finished mission keeps its outcome: Cancel is disabled, Verify and expor
 
 test('molecules opens on the local render form with an empty stage and no packaged example',async()=>{
   render(<App/>);
-  expect(await screen.findByRole('heading',{name:'Render your structure locally'})).toBeInTheDocument();
+  expect(await screen.findByRole('heading',{name:'Render locally'})).toBeInTheDocument();
   expect(screen.getByRole('status')).toHaveTextContent('No render selected');
   expect(screen.queryByText(/EXAMPLE/)).toBeNull();
   expect(screen.queryByRole('button',{name:'Export SVG'})).toBeNull();
@@ -212,14 +212,14 @@ test('failed authenticated artifact stops loading and retries without losing Res
     return normalFetch(path,options);
   });
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
-  await user.type(screen.getByLabelText('Local operator token'),'private');
+  await user.type(screen.getByLabelText('Operator token'),'private');
   await user.click(screen.getByRole('button',{name:'Load missions'}));
   await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
   expect(await screen.findByText(/Artifact unavailable:/)).toHaveTextContent('503');
   expect(screen.queryByText('Loading authenticated artifact…')).not.toBeInTheDocument();
   expect(screen.queryByRole('img',{name:'Artifact from obs-1'})).not.toBeInTheDocument();
   await user.click(screen.getByRole('button',{name:'Molecules'}));await user.click(screen.getByRole('button',{name:'Research'}));
-  expect(screen.getByLabelText('Local operator token')).toHaveValue('private');
+  expect(screen.getByLabelText('Operator token')).toHaveValue('private');
   expect(screen.getByText('Selected mission: mission-1')).toBeVisible();
   unavailable=false;
   await user.click(screen.getByRole('button',{name:'Retry artifact'}));
@@ -236,9 +236,9 @@ test('failed authenticated artifact stops loading and retries without losing Res
 test('BioArt search is authenticated, cache-first, and shares the in-memory operator token',async()=>{
   const user=userEvent.setup();render(<App/>);
   await user.click(screen.getByRole('button',{name:'Research'}));
-  await user.type(screen.getByLabelText('Local operator token'),'shared-operator');
+  await user.type(screen.getByLabelText('Operator token'),'shared-operator');
   await user.click(screen.getByRole('button',{name:'BioArt'}));
-  expect(screen.getByLabelText('Operator token for BioArt')).toHaveValue('shared-operator');
+  expect(screen.getByLabelText('Operator token')).toHaveValue('shared-operator');
   await user.clear(screen.getByLabelText('BioArt search query'));
   await user.type(screen.getByLabelText('BioArt search query'),'antibody');
   await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
@@ -257,13 +257,14 @@ test('BioArt freezes request controls while their submitted state is in flight',
   });
   const user=userEvent.setup();render(<App/>);
   await user.click(screen.getByRole('button',{name:'BioArt'}));
-  const token=screen.getByLabelText('Operator token for BioArt');
+  const token=screen.getByLabelText('Operator token');
   const query=screen.getByLabelText('BioArt search query');
   const consent=screen.getByLabelText('Permit NIH network access for the next search or inspection');
   await user.type(token,'operator');await user.click(consent);
   await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
   expect(await screen.findByRole('status')).toHaveTextContent('request in progress');
-  expect(token).toBeDisabled();expect(query).toBeDisabled();expect(consent).toBeDisabled();
+  // The shared header token stays editable; the request's own controls freeze.
+  expect(query).toBeDisabled();expect(consent).toBeDisabled();
   finish();
   await waitFor(()=>expect(screen.queryByRole('status')).not.toBeInTheDocument());
 });
@@ -271,7 +272,7 @@ test('BioArt freezes request controls while their submitted state is in flight',
 test('BioArt inspects, fetches the automatic neutral SVG, verifies a protected preview, and imports it',async()=>{
   const user=userEvent.setup();render(<App/>);
   await user.click(screen.getByRole('button',{name:'BioArt'}));
-  await user.type(screen.getByLabelText('Operator token for BioArt'),'bioart-operator');
+  await user.type(screen.getByLabelText('Operator token'),'bioart-operator');
   const metadataConsent=screen.getByLabelText('Permit NIH network access for the next search or inspection');
   await user.click(metadataConsent);
   await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
@@ -306,7 +307,7 @@ test('BioArt inspects, fetches the automatic neutral SVG, verifies a protected p
 test('BioArt manual representation override is explicit and fetch errors preserve the inspected entry',async()=>{
   const user=userEvent.setup();render(<App/>);
   await user.click(screen.getByRole('button',{name:'BioArt'}));
-  await user.type(screen.getByLabelText('Operator token for BioArt'),'operator');
+  await user.type(screen.getByLabelText('Operator token'),'operator');
   await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
   await user.click(await screen.findByRole('button',{name:'Antibody · BIOART-000018'}));
   await user.selectOptions(screen.getByLabelText('Representation'),'63');
@@ -324,7 +325,7 @@ test('BioArt manual representation override is explicit and fetch errors preserv
 test('BioArt exposes original vector formats without previewing or importing download-only EPS',async()=>{
   const user=userEvent.setup();render(<App/>);
   await user.click(screen.getByRole('button',{name:'BioArt'}));
-  await user.type(screen.getByLabelText('Operator token for BioArt'),'operator');
+  await user.type(screen.getByLabelText('Operator token'),'operator');
   await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
   await user.click(await screen.findByRole('button',{name:'Antibody · BIOART-000018'}));
   expect(screen.getAllByRole('option').map(option=>option.value)).toEqual(expect.arrayContaining(['SVG','PNG','AI','EPS']));
@@ -342,7 +343,7 @@ test('BioArt exposes original vector formats without previewing or importing dow
 test('memory workspace loads a captured session and searches its reasoning',async()=>{
   const user=userEvent.setup();render(<App/>);
   await user.click(screen.getByRole('button',{name:'Memory'}));
-  await user.type(screen.getByLabelText('Operator token for Memory'),'tok');
+  await user.type(screen.getByLabelText('Operator token'),'tok');
   await user.click(screen.getByRole('button',{name:'Load sessions'}));
   await user.click(await screen.findByRole('button',{name:/mission-1 · 18 records/}));
   await screen.findByText(/Captured trajectory/);
@@ -353,7 +354,7 @@ test('memory workspace loads a captured session and searches its reasoning',asyn
 });
 
 test('native shell download outcomes are announced in the header and replace each other',async()=>{
-  render(<App/>);await screen.findByRole('heading',{name:'Render your structure locally'});
+  render(<App/>);await screen.findByRole('heading',{name:'Render locally'});
   expect(document.querySelector('.download-notice')).toBeNull();
   act(()=>{window.dispatchEvent(new CustomEvent('arc-download',{detail:{file:'1dqj-collage.svg',folder:'C:\Users\a b\Downloads',success:true}}));});
   expect(screen.getByText('Saved 1dqj-collage.svg in C:\Users\a b\Downloads')).toHaveAttribute('role','status');

@@ -47,14 +47,13 @@ test('an offline mission explores competing branches, reconciles them and verifi
   await expect(quadratic).toHaveText(/shared identity: Both roles ran as the same model identity \(scripted-fixture-v1\)/);
   await expect(quadratic).toHaveText(/Next discriminating test/);
   await expect(scope.locator('article[data-status="provisionally_supported"]')).toHaveCount(0);
-  await expect(scope.getByText(/Nothing above is scientific validation/)).toBeVisible();
+  await expect(scope.getByText(/provisional support is exploratory, never validation/)).toBeVisible();
   // No operator change was declared on this mission; the section says what a change would mean.
   const declared = page.getByRole('region', {name: 'Declared changes'});
-  await expect(declared).toHaveText(/No change declared\. Resuming declares an analysis change; claims cannot be edited/);
+  await expect(declared).toHaveText(/No declared change\./);
   await expect(results.getByRole('button', {name: /^Resume/})).toBeDisabled();
   await expect(ledger.locator('li[data-state="satisfied"]').filter({hasText: 'claim scope'})).toHaveText(/contradicted 2, unresolved 1\); a next discriminating test is proposed for 3 of 3/);
-  await expect(ledger).toContainText('never scientific validation');
-  await expect(results.locator('footer')).toContainText('Publication is not authorized');
+  await expect(ledger).toContainText('not validated');
   check();
 });
 
@@ -110,7 +109,7 @@ test('cancelling an unfinished mission fences late results; a finished one keeps
   expect(created.status()).toBe(201);
   await page.goto('/');
   await openWorkspace(page, 'Research', 'Research results');
-  await page.getByLabel('Local operator token').fill(E2E_TOKEN);
+  await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await page.getByRole('button', {name: 'Load missions'}).click();
   await page.locator('.mission-choice').filter({hasText: 'ready · E2E: cancel before it runs.'}).first().click();
   const results = page.getByRole('region', {name: 'Research results'});
@@ -137,8 +136,8 @@ test('saved missions reload with their outcome and an empty list is actionable',
   await runDemoMission(page, {goal: 'E2E: saved mission listing.'});
   await page.reload();
   await openWorkspace(page, 'Research', 'Research results');
-  await expect(page.getByText('Evidence begins with a mission.')).toBeVisible();
-  await page.getByLabel('Local operator token').fill(E2E_TOKEN);
+  await expect(page.getByText('No mission selected.')).toBeVisible();
+  await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await page.getByRole('button', {name: 'Load missions'}).click();
   const saved = page.locator('.mission-choice').filter({hasText: 'E2E: saved mission listing.'});
   await expect(saved.first()).toBeVisible();

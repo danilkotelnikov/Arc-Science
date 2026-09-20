@@ -11,10 +11,10 @@ export default function MolecularWorkspace({token,setToken}) {
   return <div className="molecular-workspace">
     <aside className="inspector" aria-label="Molecular render controls">
       <p className="eyebrow">MOLECULAR WORKBENCH</p><h1>Your structure</h1>
-      <p className="muted">Render an antibody–antigen complex from your own coordinates with the local pipeline: white background, the least graphical detail, restrained colour. Rendering establishes neither scientific validity nor publication approval.</p>
+      <p className="muted">Render a complex from your own coordinates with the local pipeline.</p>
       <MolecularRenderPanel token={token} setToken={setToken} onJobChange={updateRender} onShowJob={setShowRender}/>
     </aside>
     {generated?<MolecularRenderResult key={token+':'+renderJob.id} token={token} job={renderJob} onReturn={()=>setShowRender(false)}/>
-      :<section className="figure-workspace" aria-label="Molecular figure"><div className="workspace-message"><p role="status">No render selected. Upload coordinates and name the author chains, or load a retained render, to see its collage here.</p></div></section>}
+      :<section className="figure-workspace" aria-label="Molecular figure"><div className="workspace-message"><p role="status">No render selected.</p></div></section>}
   </div>;
 }

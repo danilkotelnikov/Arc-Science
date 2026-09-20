@@ -99,11 +99,11 @@ function RenderControls({token,onJobChange,onShowJob}) {
 
   return <div className="molecular-render-controls" aria-busy={busy}>
     <Button variant="secondary" isDisabled={!token||busy} onPress={()=>run(load)}>{jobs===null?'Load renders':'Refresh renders'}</Button>
-    {capabilities?<p>{capabilities.configured?'Local renderer ready.':capabilities.reason||'The local Blender renderer is unavailable.'}</p>:<p className="field-note">Load to check the renderer and find saved jobs.</p>}
+    {capabilities?<p>{capabilities.configured?'Local renderer ready.':capabilities.reason||'The local Blender renderer is unavailable.'}</p>:<p className="field-note">Load with your operator token.</p>}
     <form onSubmit={event=>{event.preventDefault();run(submit);}}>
       <fieldset disabled={busy||!capabilities?.configured}>
         <label htmlFor="molecular-source">Coordinate file</label><input id="molecular-source" type="file" accept=".cif,.mmcif,.pdb" aria-required="true" onChange={event=>setFile(event.target.files[0]||null)}/>
-        <p className="field-note">PDB or mmCIF · up to {(capabilities?.limits.max_source_bytes||750000).toLocaleString()} bytes. Processed by the local server.</p>
+        <p className="field-note">PDB or mmCIF, up to {(capabilities?.limits.max_source_bytes||750000).toLocaleString()} bytes.</p>
         <label htmlFor="molecular-antibody">Antibody chains</label><input id="molecular-antibody" value={antibody} required placeholder="A, B" onChange={event=>setAntibody(event.target.value)}/>
         <label htmlFor="molecular-antigen">Antigen chains</label><input id="molecular-antigen" value={antigen} required placeholder="C" onChange={event=>setAntigen(event.target.value)}/>
         <p className="field-note">Author chain IDs, separated by commas.</p>
@@ -128,9 +128,7 @@ function RenderControls({token,onJobChange,onShowJob}) {
 }
 
 export default function MolecularRenderPanel({token,setToken,onJobChange,onShowJob}) {
-  return <section className="inspector-section molecular-render-panel" aria-labelledby="molecular-render-heading"><h2 id="molecular-render-heading">Render your structure locally</h2>
-    <label htmlFor="molecular-token">Operator token for Molecules</label><input id="molecular-token" type="password" value={token} autoComplete="off" onChange={event=>setToken(event.target.value)}/>
-    <p className="field-note">Shared across workspaces, in memory only. Read with <code>arc-science token --data ./data</code>.</p>
+  return <section className="inspector-section molecular-render-panel" aria-labelledby="molecular-render-heading"><h2 id="molecular-render-heading">Render locally</h2>
     <RenderControls key={token} token={token} onJobChange={onJobChange} onShowJob={onShowJob}/>
   </section>;
 }

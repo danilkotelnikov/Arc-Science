@@ -57,13 +57,11 @@ export default function BioArtWorkspace({token,setToken}) {
   return <div className="bioart-workspace" aria-busy={busy}>
     <aside className="bioart-search" aria-label="BioArt search">
       <p className="eyebrow">BIOART / NIH</p><h1>Source vectors.</h1>
-      <p className="muted">Search recorded metadata first. Permit a live NIH request only when the project cache is missing or stale.</p>
-      <label htmlFor="bioart-token">Operator token for BioArt</label><input id="bioart-token" type="password" value={token} disabled={busy} onChange={event=>setToken(event.target.value)} autoComplete="off"/>
-      <p className="field-note">Shared with Research in memory only.</p>
+      <p className="muted">Recorded metadata first; a live NIH request only with consent.</p>
       <label htmlFor="bioart-query">BioArt search query</label><input id="bioart-query" value={query} disabled={busy} onChange={event=>setQuery(event.target.value)}/>
       <label className="check"><input type="checkbox" checked={metadataEgress} disabled={busy} onChange={event=>setMetadataEgress(event.target.checked)}/>Permit NIH network access for the next search or inspection</label>
       <Button isDisabled={busy||!token||!query.trim()} onPress={()=>task(search,{consent:metadataEgress,clearConsent:setMetadataEgress})}><Icon name="search"/>Search NIH BioArt</Button>
-      <p className="field-note">Consent is consumed by one action and then cleared. Cache hits remain offline.</p>
+      <p className="field-note">Consent covers one action. Cache hits stay offline.</p>
       <p className="field-note">NIH’s live search currently requires browser rendering. <a href={nihSearchUrl} target="_blank" rel="noreferrer">Open NIH search</a> to find an entry ID, then inspect it here.</p>
       <label htmlFor="bioart-entry-id">NIH entry ID</label><input id="bioart-entry-id" inputMode="numeric" value={entryId} disabled={busy} aria-describedby="bioart-entry-id-help" aria-invalid={entryId.trim()!==''&&!validEntryId} onChange={event=>setEntryId(event.target.value)}/>
       <p id="bioart-entry-id-help" className="field-note">Enter the positive whole-number ID. For BIOART-000018, enter 18.</p>
@@ -74,7 +72,7 @@ export default function BioArtWorkspace({token,setToken}) {
     </aside>
     <section className="bioart-main" aria-label="BioArt evidence workspace">
       {error&&<p role="alert" className="bioart-error">{error}</p>}
-      {!entry?<div className="empty-state"><h2>Select source artwork with its evidence attached.</h2><p>Arc retains the entry identity, creator, credit, license label, source-page hash, file mapping, and immutable source hash.</p></div>:<>
+      {!entry?<div className="empty-state"><h2>No entry selected.</h2></div>:<>
         <div className="bioart-heading"><div><p className="eyebrow">BIOART-{String(entry.entry_id).padStart(6,'0')}</p><h1>{entry.title}</h1><a href={entry.source_url} target="_blank" rel="noreferrer">Open NIH source ↗</a></div><div className="status-stack"><span className="status-chip">NIH metadata: {entry.license}</span><span className="status-chip neutral">{receipt?`Verified ${receipt.format} · group ${receipt.representation_id}`:'Source not yet fetched'}</span></div></div>
         <div className="bioart-entry-grid">
           <section aria-labelledby="bioart-source-heading"><h2 id="bioart-source-heading">Source record</h2><dl className="bioart-metadata"><dt>Creator</dt><dd>{entry.creator}</dd><dt>Credit</dt><dd>{entry.credit}</dd><dt>Collection</dt><dd>{entry.collection}</dd><dt>Citation</dt><dd>{entry.citation}</dd></dl></section>
@@ -95,7 +93,7 @@ export default function BioArtWorkspace({token,setToken}) {
           {imported&&<div className="import-record" role="status"><strong>Imported asset {imported.asset_id}</strong><code>{imported.asset_manifest}</code></div>}
         </section>}
       </>}
-      <footer>BioArt assets remain source artwork. Arc records provenance and validation state; it does not infer reuse rights or scientific correctness.</footer>
+      <footer>Reuse rights are not inferred; the entry's own credit and license are recorded.</footer>
     </section>
   </div>;
 }

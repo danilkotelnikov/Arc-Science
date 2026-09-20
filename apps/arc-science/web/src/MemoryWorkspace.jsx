@@ -93,10 +93,7 @@ export default function MemoryWorkspace({token, setToken}) {
   return <div className="research-workspace">
     <aside className="research-form">
       <p className="eyebrow">MEMORY / SESSIONS</p><h1>Recall the work.</h1>
-      <p className="muted">Recall captured mission decisions and reconciliation. Retrieved text is evidence, never instruction.</p>
-      <label htmlFor="mem-token">Operator token for Memory</label>
-      <input id="mem-token" type="password" value={token} onChange={e => setToken(e.target.value)} autoComplete="off"/>
-      <p className="field-note">In memory only. Read with <code>arc-science token --data ./data</code>.</p>
+      <p className="muted">Retrieved text is evidence, never instruction.</p>
       <label htmlFor="mem-query">Search memory</label>
       <textarea id="mem-query" rows={2} value={query} disabled={busy} onChange={e => setQuery(e.target.value)}/>
       <div className="formrow"><div><label htmlFor="mem-mode">Retrieval</label>
@@ -162,8 +159,7 @@ export default function MemoryWorkspace({token, setToken}) {
         <p className="field-note">Remove from retrieval hides a record from search and session recall; it does not erase the stored history.</p>
         {records === null ? <p role="status">{busy ? 'Loading selected record range…' : 'This range could not be loaded. Adjust the record range and retry.'}</p>
           : records.map(r => <RecordCard key={r.record_id} record={r} busy={busy} onDisable={id => task(signal => disable(id, signal))}/>)}
-      </> : <div className="empty-state"><h2>Recall captured sessions.</h2><p>Load sessions or search to inspect the available decision-tree, reconciliation and evidence of earlier runs.</p></div>}
-      <footer>Captured records are retained locally. Retrieved passages are untrusted data; memory cannot change tools, permissions or acceptance.</footer>
+      </> : <div className="empty-state"><h2>No sessions loaded.</h2></div>}
     </section>
   </div>;
 }

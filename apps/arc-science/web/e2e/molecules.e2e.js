@@ -8,8 +8,8 @@ test('the render form stays gated until a runtime exists and reports its absence
   await page.goto('/');
   const controls = page.getByRole('complementary', {name: 'Molecular render controls'}).or(page.getByLabel('Molecular render controls')).first();
   await expect(controls.getByRole('button', {name: 'Load renders'})).toBeDisabled();
-  await expect(controls.getByText('Load to check the renderer and find saved jobs.')).toBeVisible();
-  await controls.getByLabel('Operator token for Molecules').fill(E2E_TOKEN);
+  await expect(controls.getByText('Load with your operator token.')).toBeVisible();
+  await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await controls.getByRole('button', {name: 'Load renders'}).click();
   await expect(controls.getByText('Configure ARC_MOLECULAR_BLENDER_PYTHON on the server, then restart the service.')).toBeVisible();
   await expect(controls.getByText('Local renderer ready.')).toHaveCount(0);
