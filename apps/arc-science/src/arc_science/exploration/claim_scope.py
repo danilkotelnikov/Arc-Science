@@ -40,8 +40,10 @@ def latest_assessments(state: MissionState) -> dict[tuple[str, str], object]:
 
 def identity_verified(state: MissionState, role: str, round: int) -> bool:
     """False only when the role's record for that round carries transport provenance
-    that says the identity was not observed; records without provenance are the
-    scripted or HTTP seats, whose identity is checked inline."""
+    that says the identity was not observed. Records without provenance are scripted
+    fixtures or records from before provenance existed: the engine refuses to record a
+    live review whose transport handed over no provenance, so a live record here always
+    carries it."""
     for record in state.model_records:
         if record.role == role and record.round == round and record.transport:
             return record.transport.get('identity_verified', True) is not False

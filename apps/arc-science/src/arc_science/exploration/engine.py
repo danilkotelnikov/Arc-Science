@@ -76,8 +76,12 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
     def identity(role):
         return agent.model_for(role) if hasattr(agent, "model_for") else agent.model
     def provenance(role):
-        # Transports that record per-call evidence hand it over exactly once per record.
-        return agent.take_provenance(role) if hasattr(agent, 'take_provenance') else None
+        # Transports that record per-call evidence hand it over exactly once per record;
+        # a live transport that has none for this call fails closed.
+        if not hasattr(agent, 'take_provenance'): return None
+        record=agent.take_provenance(role)
+        if record is None: raise ValueError('Missing transport provenance for '+role)
+        return record
     def context(reviewing=None):
         # A vision seat sees earlier rounds plus exactly the batch it reviews, and no
         # same-round report: a repair is reviewed with fresh eyes as a new candidate.
@@ -301,10 +305,12 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         check_cancel()
         assessments=list(state.assessments);records=list(state.model_records)
         for role,packet in packets:
+            try:transport=provenance(role) if packet is not None else None
+            except ValueError:packet=None
             if packet is None:
                 event('review_rejected',role+': missing, malformed or unbound review; no success inferred.')
                 continue
-            records.append(ModelRecord(role=role,round=state.round,model=identity(role),context_digest=digest(frozen),input_context=frozen,payload=packet.model_dump(mode='json'),transport=provenance(role)))
+            records.append(ModelRecord(role=role,round=state.round,model=identity(role),context_digest=digest(frozen),input_context=frozen,payload=packet.model_dump(mode='json'),transport=transport))
             assessments.extend(Assessed(**a.model_dump(),role=role,round=state.round,model=identity(role)) for a in packet.assessments)
         change(assessments=tuple(assessments),model_records=tuple(records))
         fits=[o for o in state.observations if o.status=='ok' and o.tool=='polynomial_fit']

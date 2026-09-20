@@ -76,10 +76,24 @@ def failure_category(text):
     return 'provider_rejected'
 
 
+SECRET_PAIR = re.compile(r'(?i)\b(authorization|token|api[_-]?key|secret|password|credential)(\s*[:=]\s*)(?:bearer\s+)?\S+')
+BEARER = re.compile(r'(?i)\bbearer\s+\S+')
+OPAQUE = re.compile(r'\b[A-Za-z0-9_\-]{32,}\b')
+
+
+def redact(text):
+    """Provider or CLI text that may be shown or stored: bearer values, secret pairs and
+    long opaque tokens replaced before it leaves the transport."""
+    text = SECRET_PAIR.sub(lambda m: m.group(1) + m.group(2) + '[redacted]', str(text or ''))
+    text = BEARER.sub('Bearer [redacted]', text)
+    return OPAQUE.sub('[redacted]', text)
+
+
 def failure_reason(text):
-    """The category, with a short excerpt of the provider's own words when no category fits."""
+    """The category, with a short redacted excerpt of the provider's own words when no
+    category fits."""
     category = failure_category(text)
-    excerpt = ' '.join(str(text or '').split())[:200]
+    excerpt = redact(' '.join(str(text or '').split()))[:200]
     return category + (' (' + excerpt + ')' if category == 'provider_rejected' and excerpt else '')
 
 

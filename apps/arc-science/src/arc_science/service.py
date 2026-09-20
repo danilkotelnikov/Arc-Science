@@ -22,6 +22,7 @@ from .exploration.models import Event, MissionRequest, MissionState
 from .exploration.engine import initialize, explore, MissionCancelled
 from .exploration.agents import DemoAgent, DemoVisionAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
+from .exploration.cli_seats import redact
 from . import settings as operator_settings
 from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, declare_resume, mission_change, obligation_states
 from .exploration.claim_scope import derive_claim_scope
@@ -170,14 +171,24 @@ def live_seats_ready():
     return first,second
 
 
-def seat_plan(vision_review=False):
-    """The routing a live mission would use, without secrets: role -> provider, transport,
-    model, effort and credential name. Bound to the mission at its first start so a later
-    settings change cannot redirect the same context elsewhere unnoticed."""
+def live_seats(vision_review=False):
+    """The endpoints a live mission runs with: one immutable snapshot taken when the
+    mission is scheduled and handed to the worker, never re-read from the settings."""
     first,second=configured_endpoints()
     seats={'planner':first,'reviewer':second,'falsifier':configured_falsifier_endpoint(first,second)}
     if vision_review:seats['vision']=configured_vision_endpoint()
-    return {role:':'.join((e.provider,e.transport,e.model,e.effort or 'default',e.credential_ref)) for role,e in seats.items()}
+    return seats
+
+
+def seat_plan(seats):
+    """The whole route without secrets (provider, transport, model, effort, credential name,
+    endpoint or executable, OpenClaw agent and isolation), its digest, and a short reading
+    of it. Bound to the mission at its first start so a later settings change cannot
+    redirect the same context elsewhere unnoticed."""
+    route={role:e.model_dump(mode='json') for role,e in seats.items()}
+    route_digest=digest(route)
+    summary={role:':'.join((e.provider,e.transport,e.model,e.effort or 'default',e.credential_ref)) for role,e in seats.items()}
+    return route_digest,'sha256:'+route_digest+' '+json.dumps(summary,separators=(',',':'),sort_keys=True)
 
 
 def configured_vision_endpoint():
@@ -468,7 +479,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                                     'identity_verified':call['identity_verified'],'applied_effort':call['applied_effort'],
                                     'duration_ms':int((time.monotonic()-started)*1000)})
                 except Exception as error:
-                    results.append({'model':model,'effort':effort,'roles':roles,'ok':False,'error':str(error)[:300],
+                    results.append({'model':model,'effort':effort,'roles':roles,'ok':False,'error':redact(str(error))[:300],
                                     'duration_ms':int((time.monotonic()-started)*1000)})
                 finally:seat.close()
             probes[name]={'at':int(time.time()),'transport':name,'provider':provider,'results':results}
@@ -543,7 +554,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     async def read_evidence(mid:str):
         return evidence_graph(MissionState.model_validate(get(mid)['state']))
 
-    async def worker(mid):
+    async def worker(mid,seats=None):
         row=repository.get(mid);revision=row['revision']
         request=MissionRequest.model_validate(row['request'])
         def emit(state):
@@ -559,9 +570,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 tools=TrustedPublicTools()
                 if request.mode=='demo':agent=DemoVisionAgent() if request.vision_review else DemoAgent()
                 else:
-                    first,second=configured_endpoints()
-                    third=configured_falsifier_endpoint(first,second)
-                    vision=configured_vision_endpoint() if request.vision_review else None
+                    # The snapshot bound when the mission was scheduled, never the current settings.
+                    first,second,third=seats['planner'],seats['reviewer'],seats['falsifier']
+                    vision=seats.get('vision') if request.vision_review else None
                     def resolve(ref,principal,project):
                         cfg={'planner':first,'vision':vision,'falsifier':third}.get(ref,second)
                         if ref not in ('planner','reviewer','vision','falsifier','biorender'):cfg=next((c for c in (first,second,third,vision) if c and c.credential_ref==ref),second)
@@ -624,33 +635,39 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         except RevisionConflict:raise HTTPException(409,'Mission changed; retry') from None
         return change
 
-    def bind_seats(row):
-        # The seat plan is part of what the operator consented to: it is recorded at the
-        # first start and a resume with different routing is refused, not re-routed.
-        request=MissionRequest.model_validate(row['request'])
-        if request.mode!='live':return
-        try:plan=json.dumps(seat_plan(request.vision_review),separators=(',',':'),sort_keys=True)
-        except Exception as error:raise HTTPException(409,'Configure the model seats before starting: '+str(error)[:300]) from None
-        state=MissionState.model_validate(row['state'])
-        bound=next((e for e in reversed(state.events) if e.kind=='seats_bound'),None)
-        if bound is None:
-            state=state.model_copy(update={'events':state.events+(Event(kind='seats_bound',round=state.round,detail=plan[:1200]),)})
+    def schedule(row,declared=None,note=''):
+        """The one path that starts or resumes a mission: the live route is checked against
+        the plan bound at the first start before anything is written; then the resume is
+        recorded, the plan bound if this is the first start, and the worker scheduled with
+        the same immutable snapshot of the seats."""
+        request=MissionRequest.model_validate(row['request']);seats=None
+        if request.mode=='live':
+            try:seats=live_seats(request.vision_review)
+            except Exception as error:raise HTTPException(409,'Configure the model seats before starting: '+str(error)[:300]) from None
+            route_digest,detail=seat_plan(seats)
+            state=MissionState.model_validate(row['state'])
+            bound=next((e for e in reversed(state.events) if e.kind=='seats_bound'),None)
+            if bound is not None and not bound.detail.startswith('sha256:'+route_digest+' '):
+                raise HTTPException(409,'The model seats changed since this mission was first started; a permission change is a '
+                                        'separate authorization: restore the seats or create a new mission')
+        change=None
+        if row['state']['status']=='paused':
+            change=record_resume(row,declared if declared is not None else MISSION_CHANGES['resume']['derived'],note or 'Resumed from the workspace.')
+            row=get(row['id'])
+        if seats is not None and bound is None:
+            state=MissionState.model_validate(row['state'])
+            state=state.model_copy(update={'events':state.events+(Event(kind='seats_bound',round=state.round,detail=detail[:1200]),)})
             try:repository.save(row['id'],state,expected_revision=row['revision'])
             except RevisionConflict:raise HTTPException(409,'Mission changed; retry') from None
-        elif bound.detail!=plan[:1200]:
-            raise HTTPException(409,'The model seats changed since this mission was first started; a permission change is a '
-                                    'separate authorization: restore the seats or create a new mission')
+        running[row['id']]=asyncio.create_task(worker(row['id'],seats))
+        return change
 
     @app.post('/api/missions/{mid}/start',status_code=202,dependencies=[Depends(authorized)])
     async def start(mid:str):
         row=get(mid)
         if mid in running or row['state']['status'] not in ('ready','paused'):
             raise HTTPException(409,'Only ready or interrupted missions can start or resume')
-        if row['state']['status']=='paused':
-            record_resume(row,MISSION_CHANGES['resume']['derived'],'Resumed from the workspace.')
-            row=get(mid)
-        bind_seats(row)
-        running[mid]=asyncio.create_task(worker(mid))
+        schedule(row)
         return {'id':mid,'status':'scheduled'}
 
     @app.get('/api/changes',dependencies=[Depends(authorized)])
@@ -666,8 +683,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         except ChangeRefused as refused:raise HTTPException(409,str(refused)) from None
         if mid in running or row['state']['status']!='paused':
             raise HTTPException(409,'Only an interrupted mission can be resumed')
-        change=record_resume(row,declaration.declared_effects,declaration.note)
-        running[mid]=asyncio.create_task(worker(mid))
+        change=schedule(row,declaration.declared_effects,declaration.note)
         return {'id':mid,'status':'scheduled','change':change.model_dump(mode='json')}
 
     @app.post('/api/missions/{mid}/cancel',dependencies=[Depends(authorized)])

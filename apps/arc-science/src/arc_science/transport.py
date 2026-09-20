@@ -17,10 +17,30 @@ class AuthorizationError(RuntimeError):
 class ProviderError(RuntimeError):
     pass
 
-def validate_endpoint(url: str) -> str:
+def is_loopback_http(url: str) -> bool:
+    """`http://` with an authority that is exactly a loopback host and an optional valid
+    port; `localhost.evil.example` is not loopback. Mirrors the native settings rule."""
+    if not url.startswith('http://'):return False
+    authority=url[7:].split('/',1)[0].split('?',1)[0].split('#',1)[0]
+    if authority.startswith('['):
+        inside,_,after=authority[1:].partition(']')
+        if not (after=='' or (after.startswith(':') and _valid_port(after[1:]))):return False
+        host=inside
+    elif ':' in authority:
+        host,port=authority.rsplit(':',1)
+        if not _valid_port(port):return False
+    else:host=authority
+    return host in ('127.0.0.1','localhost','::1')
+
+def _valid_port(port: str) -> bool:
+    return port.isdigit() and 0<int(port)<65536
+
+def validate_endpoint(url: str, *, loopback: bool=False) -> str:
     parsed=urlsplit(url)
+    if loopback and is_loopback_http(url) and not (parsed.username or parsed.password or parsed.query or parsed.fragment):
+        return url
     if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ValueError('A credential-free HTTPS endpoint is required')
+        raise ValueError('A credential-free HTTPS endpoint is required' + (' (or an exact loopback http URL)' if loopback else ''))
     return url
 
 @dataclass(frozen=True)

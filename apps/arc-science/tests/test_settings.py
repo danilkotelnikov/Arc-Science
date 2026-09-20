@@ -157,8 +157,13 @@ def test_seats_configured_in_settings_drive_the_endpoints_and_the_falsifier_gets
     first, second = service.configured_endpoints()
     assert (first.provider, first.transport, first.endpoint, first.effort) == ('openai', 'cli', str(fake), 'xhigh')
     assert (second.provider, second.transport) == ('anthropic', 'api')
-    assert service.seat_plan() == {'planner': 'openai:cli:gpt-5.5:xhigh:planner', 'reviewer': 'anthropic:api:claude-sonnet-5:low:reviewer',
-                                   'falsifier': 'openai:api:gpt-5.6-mini:medium:falsifier-key'}
+    route_digest, detail = service.seat_plan(service.live_seats())
+    assert detail == 'sha256:' + route_digest + ' ' + json.dumps({'falsifier': 'openai:api:gpt-5.6-mini:medium:falsifier-key',
+        'planner': 'openai:cli:gpt-5.5:xhigh:planner', 'reviewer': 'anthropic:api:claude-sonnet-5:low:reviewer'}, separators=(',', ':'))
+    # The digest covers the whole route, not only the summary: an endpoint change is a different plan.
+    doc['providers']['anthropic']['endpoint'] = 'https://proxy.example/v1/messages'
+    settings.replace(doc, None)
+    assert service.seat_plan(service.live_seats())[0] != route_digest
 
 
 def test_a_named_credential_is_read_from_the_store_and_a_missing_name_is_refused(tmp_path, monkeypatch):
@@ -235,7 +240,7 @@ def test_a_live_mission_runs_each_seat_through_its_own_cli_and_binds_the_seat_pl
         assert by_role['falsifier']['transport'] == 'gemini-cli' and by_role['falsifier']['observed_model'] == 'gemini-3-pro'
         assert by_role['falsifier']['effort_source'] == 'provider_default'
         bound = [e for e in state['events'] if e['kind'] == 'seats_bound']
-        assert len(bound) == 1 and json.loads(bound[0]['detail']) == {
+        assert len(bound) == 1 and bound[0]['detail'].startswith('sha256:') and json.loads(bound[0]['detail'].split(' ', 1)[1]) == {
             'planner': 'openai:cli:gpt-5.5:xhigh:planner', 'reviewer': 'anthropic:cli:claude-sonnet-5:high:reviewer',
             'falsifier': 'gemini:cli:gemini-3-pro:medium:falsifier'}
         # The probe runs the provider's CLI seats once per distinct (model, effort) and says what it verified.
@@ -252,10 +257,23 @@ def test_a_live_mission_runs_each_seat_through_its_own_cli_and_binds_the_seat_pl
         doc = settings.snapshot()['settings']
         doc['seats']['planner']['model'] = 'gpt-5.6-sol'
         settings.replace(doc, None)
+        before = repo.get(row['id'])
         refused = c.post(f"/api/missions/{row['id']}/start", headers=AUTH)
         assert refused.status_code == 409 and 'seats changed' in refused.json()['detail']
-        assert repo.get(row['id'])['state']['status'] == 'paused'
-        assert c.get(f"/api/missions/{row['id']}", headers=AUTH).json()['state']['status'] == 'paused'
+        # A declared change is the other resume path; it is refused the same way, and neither
+        # path wrote anything: no resume recorded, revision unchanged.
+        declared = c.post(f"/api/missions/{row['id']}/changes", headers=AUTH, json={'kind': 'resume', 'declared_effects': ['analysis', 'claim']})
+        assert declared.status_code == 409 and 'seats changed' in declared.json()['detail']
+        after = repo.get(row['id'])
+        assert after['revision'] == before['revision'] and after['state']['status'] == 'paused'
+        assert len(after['state']['changes']) == len(before['state']['changes'])
+        # Restoring the route lets the declared resume through; the worker runs with the snapshot.
+        doc['seats']['planner']['model'] = 'gpt-5.5'
+        settings.replace(doc, None)
+        declared = c.post(f"/api/missions/{row['id']}/changes", headers=AUTH, json={'kind': 'resume', 'declared_effects': ['analysis', 'claim']})
+        assert declared.status_code == 202
+        resumed = wait_final(c, row['id'])['state']
+        assert resumed['status'] in ('budget_exhausted', 'completed') and len([e for e in resumed['events'] if e['kind'] == 'seats_bound']) == 1
 
 
 def test_the_falsifier_seat_reaches_the_agents():

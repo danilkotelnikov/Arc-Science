@@ -200,3 +200,33 @@ def test_the_codex_schema_file_is_the_strict_response_schema(tmp_path):
             'additionalProperties': False}
     finally:
         seat.close()
+
+
+def test_provider_text_is_redacted_before_it_is_shown_or_stored():
+    from arc_science.exploration.cli_seats import failure_reason, redact
+    assert redact('Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz0123456789') == 'Authorization: [redacted]'
+    assert redact('api_key=sk-live-1234 and token: xyz') == 'api_key=[redacted] and token: [redacted]'
+    assert redact('opaque ' + 'A' * 40 + ' end') == 'opaque [redacted] end'
+    assert redact('The model is not supported when using Codex') == 'The model is not supported when using Codex'
+    assert failure_reason('HTTP 400 secret=abc') == 'provider_rejected (HTTP 400 secret=[redacted])'
+    assert failure_reason('Rate limit reached') == 'rate_limited'
+
+
+def test_openclaw_may_sit_on_an_exact_loopback_like_the_native_rule():
+    from arc_science.exploration.providers import HTTPAgent
+    from arc_science.transport import is_loopback_http, validate_endpoint
+    for genuine in ('http://127.0.0.1:18789/v1/responses', 'http://localhost/v1', 'http://[::1]:8080/x'):
+        assert is_loopback_http(genuine) and validate_endpoint(genuine, loopback=True) == genuine
+    for deceptive in ('http://localhost.evil.example/v1', 'http://127.0.0.1.evil/v1', 'http://127.0.0.1:0/v1',
+                      'http://127.0.0.1:x/v1', 'http://[::1]x/v1', 'http://user@127.0.0.1/v1'):
+        assert not is_loopback_http(deceptive)
+        with pytest.raises(ValueError):
+            validate_endpoint(deceptive, loopback=True)
+    with pytest.raises(ValueError):
+        validate_endpoint('http://127.0.0.1:18789/v1/responses')  # only OpenClaw seats ask for loopback
+    claw = ModelEndpoint(provider='openclaw', endpoint='http://127.0.0.1:18789/v1/responses', model='agent', credential_ref='c',
+                         agent_id='iso', openclaw_isolated=True)
+    assert HTTPAgent(claw, client=None, resolver=None, project='p', principal='x').model == 'agent'
+    bad = claw.model_copy(update={'endpoint': 'http://localhost.evil.example/v1/responses'})
+    with pytest.raises(ValueError):
+        HTTPAgent(bad, client=None, resolver=None, project='p', principal='x')

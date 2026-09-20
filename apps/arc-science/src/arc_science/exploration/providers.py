@@ -16,7 +16,7 @@ from .models import Artifact, Proposal, Reconciliation, VisualReply, VisualRepor
 from .catalog import BUILTIN_CATALOG, proposal_schema
 from .vision import VISUAL_PROMPT_VERSION, validate_report
 
-MODEL_ID = re.compile(r'^[A-Za-z0-9._:-]{1,160}$')
+MODEL_ID = re.compile(r'^[A-Za-z0-9._-]{1,160}$')
 DATED_SUFFIX = re.compile(r'-\d{8}$')
 
 class ModelEndpoint(Record):
@@ -45,7 +45,7 @@ class ModelEndpoint(Record):
         if self.effort is not None:
             applied_effort(self.provider, self.transport, self.effort)
         if self.provider == 'gemini' and not MODEL_ID.match(self.model):
-            raise ValueError('A Gemini model id is letters, digits, dots, dashes, underscores or colons')
+            raise ValueError('A Gemini model id is letters, digits, dots, dashes or underscores')
         return self
 
 PLAN_PROMPT = '''You are Arc Science's exploratory planner. The user supplies a goal, not an execution script.
@@ -79,7 +79,8 @@ class HTTPAgent:
         self.falsifier_config=falsifier_config or self.reviewer_config
         self.vision_config=vision_config
         for cfg in (self.config,self.reviewer_config,self.falsifier_config) + ((self.vision_config,) if self.vision_config else ()):
-            validate_endpoint(cfg.endpoint)
+            # OpenClaw may sit on this machine: the same exact-loopback rule the settings owner applies.
+            validate_endpoint(cfg.endpoint,loopback=cfg.provider=='openclaw')
             if cfg.provider=='openclaw' and (not cfg.openclaw_isolated or not cfg.agent_id):
                 raise ValueError('OpenClaw requires an explicitly isolated, tool-disabled agent')
         if self.vision_config and self.vision_config.provider == 'openclaw':
