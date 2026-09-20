@@ -16,7 +16,9 @@ from __future__ import annotations
 
 from .models import ClaimScope, ClaimUncertainty, MissionState, ProposedNextTest, ScopedBranch
 
-DERIVATION_VERSION = 'arc-claim-scope-2'
+# 1: the original derivation; 2: a requested-only model identity never counts as an
+# independent reviewer; 3: connector content never counts as a successful test.
+DERIVATION_VERSION = 'arc-claim-scope-3'
 ROLES = ('analyst', 'falsifier')
 SCOPE_QUALIFIER = 'on the exploratory validation split of the frozen dataset; not independent data'
 

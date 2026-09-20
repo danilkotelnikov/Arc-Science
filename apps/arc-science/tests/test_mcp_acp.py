@@ -221,4 +221,14 @@ def test_a_hung_acp_agent_is_cut_at_the_deadline_and_stopped():
             await client.prompt('slow')
         await client.close()
         assert client.process.returncode is not None and not client.workdir.exists()
+        # Through the consultation tool a timed-out session is discarded, so late chunks can
+        # never land in a later answer; the next call starts a fresh agent.
+        consultations = acp_client.AcpConsultations([acp_agent(mode='hang')], prompt_timeout=2)
+        try:
+            call = consultations.tools['acp_fake_consult'][1]
+            with pytest.raises(acp_client.AcpError, match='timed out'):
+                await call({'prompt': 'slow'})
+            assert consultations.running == {}
+        finally:
+            await consultations.close()
     run(scenario())

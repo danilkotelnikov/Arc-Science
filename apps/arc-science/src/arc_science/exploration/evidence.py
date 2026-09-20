@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from ..contracts import canonical, digest
 from .catalog import validate_arguments, validate_catalog
 from .changes import MISSION_CHANGES, required_checks
-from .claim_scope import derive_claim_scope
+from .claim_scope import DERIVATION_VERSION, derive_claim_scope
 from .models import Assessed, Branch, MissionState, Proposal, Reconciliation
 from .repair import POLICIES
 from .vision import current_artifacts, validate_report, visual_context
@@ -259,7 +259,10 @@ def validate_evidence(state: MissionState) -> None:
         if any(finding.artifact_digest not in artifacts for finding in report.findings):
             raise ValueError("Invalid visual finding artifact reference")
 
-    if state.claim_scope is not None and state.claim_scope != derive_claim_scope(state):
+    # A scope derived under the current rule must follow from the record; one derived
+    # under an earlier rule is stale, reported by the ledger and derived again on verify.
+    if (state.claim_scope is not None and state.claim_scope.derivation_version == DERIVATION_VERSION
+            and state.claim_scope != derive_claim_scope(state)):
         raise ValueError("Recorded claim scope does not follow from the recorded reconciliation")
     # Declared changes: each binds to exactly one change_declared event at the point of
     # the history it names, derives what the table says, and every resume has one.

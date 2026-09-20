@@ -42,7 +42,7 @@ def test_the_demo_mission_stops_with_a_scope_per_hypothesis_that_the_reconciliat
     request, state = demo()
     assert state.status == 'completed' and state.claim_scope is not None
     scope = state.claim_scope
-    assert scope.derivation_version == 'arc-claim-scope-2' and scope.basis_round == state.round
+    assert scope.derivation_version == 'arc-claim-scope-3' and scope.basis_round == state.round
     assert {b.branch_id for b in scope.branches} == {b.id for b in state.branches}
     # The linear baseline was challenged by both roles: contradicted, with the findings kept as uncertainty.
     linear = scoped(state, 'linear')
@@ -138,6 +138,32 @@ def test_a_requested_only_identity_never_counts_as_an_independent_reviewer():
     verified = {**record, 'transport': {**record['transport'], 'identity_verified': True, 'observed_model': 'model-falsifier'}}
     state = MissionState.model_validate({**state.model_dump(), 'model_records': [verified]})
     assert claim_scope.derive_claim_scope(state).branches[0].status == 'provisionally_supported'
+
+
+def test_a_scope_derived_under_an_earlier_rule_is_stale_not_contradictory():
+    request, state = demo()
+    older = state.model_copy(update={'claim_scope': state.claim_scope.model_copy(update={'derivation_version': 'arc-claim-scope-2'})})
+    # The record is still valid evidence, the ledger says the scope is stale, and a
+    # verification derives it again under the current rule.
+    validate_evidence(older)
+    ledger = release.evaluate_release(request, older, None, event_chain_ok=True)
+    check = next(c for c in ledger.checks if c.name == 'claim_scope')
+    assert check.state == 'stale' and 'arc-claim-scope-2' in check.reason and 'arc-claim-scope-3' in check.reason
+    assert claim_scope.derive_claim_scope(older).derivation_version == 'arc-claim-scope-3'
+    # Under the current version a scope that does not follow from the record is refused.
+    with pytest.raises(ValueError, match='does not follow'):
+        validate_evidence(state.model_copy(update={'claim_scope': state.claim_scope.model_copy(update={'basis_round': 99})}))
+
+
+def test_connector_observations_recorded_before_the_field_existed_are_read_back_as_ineligible():
+    from arc_science.exploration.models import Observation
+    base = {'id': 'a', 'action': {'id': 'a', 'branch_id': 'b', 'tool': 'mcp_srv_echo', 'arguments': {}}, 'tool': 'mcp_srv_echo',
+            'tool_version': 'arc-external-snapshot-1', 'branch_id': 'b', 'round': 0, 'status': 'ok', 'data': {},
+            'dataset_digest': 'a' * 64, 'request_digest': 'b' * 64, 'replayable': False}
+    assert Observation.model_validate(base).claim_eligible is False
+    assert Observation.model_validate({**base, 'tool': 'acp_x_consult', 'action': {**base['action'], 'tool': 'acp_x_consult'}}).claim_eligible is False
+    assert Observation.model_validate({**base, 'tool': 'literature_search', 'action': {**base['action'], 'tool': 'literature_search'}}).claim_eligible is True
+    assert Observation.model_validate({**base, 'claim_eligible': True}).claim_eligible is True  # an explicit record is kept as written
 
 
 def test_later_rounds_replace_earlier_assessments_and_an_untested_hypothesis_says_so():

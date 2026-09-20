@@ -91,6 +91,15 @@ class Observation(Record):
     # and never evidence: it cannot support a hypothesis or count toward its scope.
     claim_eligible: bool = True
 
+    @model_validator(mode='before')
+    @classmethod
+    def legacy_connector_observations(cls, data):
+        # Observations recorded before the field existed: connector tools carry the
+        # reserved mcp_/acp_ prefixes, so they are read back as ineligible.
+        if isinstance(data, dict) and 'claim_eligible' not in data and str(data.get('tool', '')).startswith(('mcp_', 'acp_')):
+            data = {**data, 'claim_eligible': False}
+        return data
+
     @property
     def digest(self):
         return digest(self)
@@ -295,7 +304,7 @@ class ScopedBranch(Record):
 
 
 class ClaimScope(Record):
-    derivation_version: Literal['arc-claim-scope-1', 'arc-claim-scope-2'] = 'arc-claim-scope-2'
+    derivation_version: Literal['arc-claim-scope-1', 'arc-claim-scope-2', 'arc-claim-scope-3'] = 'arc-claim-scope-3'
     basis_round: int = Field(ge=0)
     branches: tuple[ScopedBranch, ...] = Field(default=(), max_length=64)
     counts: dict[str, int]

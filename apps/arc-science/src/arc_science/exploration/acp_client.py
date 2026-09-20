@@ -68,7 +68,8 @@ class AcpAgent:
         try:
             self.process = await asyncio.create_subprocess_exec(
                 resolved, *self.args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL, cwd=str(self.workdir), env=scrubbed_environment(), limit=MAX_LINE)
+                stderr=asyncio.subprocess.DEVNULL, cwd=str(self.workdir), env=scrubbed_environment(), limit=MAX_LINE,
+                start_new_session=os.name != 'nt')
         except OSError as error:
             raise AcpError('agent cannot start: ' + type(error).__name__) from None
         if self.job is not None:
@@ -197,6 +198,13 @@ class AcpAgent:
         if self.reader is not None:
             self.reader.cancel()
         if self.process is not None and self.process.returncode is None:
+            if os.name != 'nt':
+                # The agent's own session group, so descendants go with it (unverified on Linux here).
+                try:
+                    import signal
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                except (OSError, AttributeError):
+                    pass
             self.process.kill()
             try:
                 await asyncio.wait_for(self.process.wait(), 5)
@@ -222,7 +230,8 @@ class AcpConsultations:
     """The consented agents for one mission, started lazily on first use and closed
     with the mission; `tools` is the extra-tool mapping the engine takes."""
 
-    def __init__(self, agents):
+    def __init__(self, agents, *, prompt_timeout=PROMPT_TIMEOUT):
+        self.prompt_timeout = prompt_timeout
         self.agents = [a for a in agents if a.get('enabled', True) and a.get('consent')]
         self.running = {}
         self.starting = {}
@@ -240,14 +249,22 @@ class AcpConsultations:
             async with lock:
                 client = self.running.get(agent['name'])
                 if client is None:
-                    client = AcpAgent(agent['name'], agent['command'], agent.get('args') or [])
+                    client = AcpAgent(agent['name'], agent['command'], agent.get('args') or [], prompt_timeout=self.prompt_timeout)
                     try:
                         await client.start()
                     except BaseException:
                         await client.close()
                         raise
                     self.running[agent['name']] = client
-            return await client.prompt(str(arguments['prompt']))
+            try:
+                return await client.prompt(str(arguments['prompt']))
+            except AcpError:
+                # A timed-out or broken prompt leaves a session whose late chunks could land
+                # in the next answer: the agent is stopped and started afresh next time.
+                if self.running.get(agent['name']) is client:
+                    self.running.pop(agent['name'], None)
+                    await client.close()
+                raise
         return call
 
     async def close(self):

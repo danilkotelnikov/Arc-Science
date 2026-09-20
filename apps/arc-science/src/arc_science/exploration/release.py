@@ -15,7 +15,7 @@ import time
 from ..contracts import digest
 from .models import (CheckState, MissionCheck, MissionRequest, MissionState, ReleaseCheck,
                      ReleaseDecision, VerificationReceipt)
-from .claim_scope import derive_claim_scope
+from .claim_scope import DERIVATION_VERSION, derive_claim_scope
 from .vision import current_artifacts
 
 POLICY = {'version': 'arc-mission-release-1',
@@ -126,6 +126,9 @@ def _claim_scope(state):
         return 'not_applicable', 'The claim scope is derived when the mission stops; it has not stopped.', ()
     if state.claim_scope is None:
         return 'unknown', 'The mission stopped without a derived claim scope; verification derives and records it.', ()
+    if state.claim_scope.derivation_version != DERIVATION_VERSION:
+        return 'stale', ('The recorded claim scope was derived under an earlier rule (' + state.claim_scope.derivation_version
+                         + '); verification derives it again under ' + DERIVATION_VERSION + '.'), ()
     try:
         expected = derive_claim_scope(state)
     except Exception:
