@@ -299,7 +299,7 @@ def test_the_software_catalogue_reports_presence_by_probe_and_never_installs(tmp
         assert by_id['rdkit']['present'] in (True, False) and by_id['rdkit']['licence'] == 'BSD-3-Clause'
         # Without the WSL bench, environments and the daemon are absent, not guessed.
         assert by_id['chai1']['present'] is False and by_id['chai1']['detail'] == 'WSL bench not reachable'
-        assert by_id['claude_science']['present'] is False
+        assert by_id['claude_science']['present'] is False and by_id['boltz']['present'] is False  # no WSL at all: nothing observed
         # Entries with no probe say so instead of claiming absence.
         assert by_id['molstar']['present'] is None and by_id['cdk']['evidence'] is None
         assert 'never qualification' in report['scope'] and 'indirect evidence' in report['scope'] and 'confirm at the project home' in report['licence_note']
@@ -315,13 +315,30 @@ def test_environment_and_daemon_probes_are_indirect_evidence_never_presence(monk
     monkeypatch.setattr(c, 'wsl_available', lambda: True)
     monkeypatch.setattr(c, '_run', lambda argv, timeout: subprocess.CompletedProcess(argv, 0,
         '/home/user/miniforge3/envs/SE3nv\n/home/user/miniforge3/envs/plip\n' if 'envs' in argv[-1] else '{"running": true, "version": "0.1.27"}', ''))
-    c._WSL_ENVS.update(at=0.0, value=None); c._BENCH.update(at=0.0, value=None)
+    c._WSL_ENVS.update(at=0.0, value=c.UNSET); c._BENCH.update(at=0.0, value=None)
     seen = c.probe({'probe': {'kind': 'wsl_env', 'env': 'SE3nv'}})
     assert seen['present'] is None and seen['observed'] == 'environment_seen' and seen['evidence'] == 'environment'
     assert c.probe({'probe': {'kind': 'wsl_env', 'env': 'nope'}})['present'] is False
-    daemon = c.probe({'probe': {'kind': 'bench'}})
+    daemon = c.probe({'id': 'boltz', 'probe': {'kind': 'bench'}})
     assert daemon['present'] is None and daemon['observed'] == 'daemon_reachable' and 'not observed' in daemon['detail']
-    c._WSL_ENVS.update(at=0.0, value=None); c._BENCH.update(at=0.0, value=None)
+    assert c.probe({'id': 'claude_science', 'probe': {'kind': 'bench'}})['present'] is True  # the daemon is its own package
+    # A stopped or unreachable daemon says nothing about the packages it hosts.
+    c._BENCH.update(at=0.0, value=None)
+    monkeypatch.setattr(c, '_run', lambda argv, timeout: subprocess.CompletedProcess(argv, 0, '{"running": false, "version": "0.1.27"}', ''))
+    stopped = c.probe({'id': 'boltz', 'probe': {'kind': 'bench'}})
+    assert stopped['present'] is None and stopped['observed'] == 'daemon_installed'
+    assert c.probe({'id': 'claude_science', 'probe': {'kind': 'bench'}})['present'] is False
+    # A failed environment listing is cached for the window instead of being retried per entry.
+    c._WSL_ENVS.update(at=0.0, value=c.UNSET)
+    calls = []
+    def failing(argv, timeout):
+        calls.append(argv)
+        raise subprocess.TimeoutExpired(argv, timeout)
+    monkeypatch.setattr(c, '_run', failing)
+    assert c.probe({'probe': {'kind': 'wsl_env', 'env': 'a'}})['detail'] == 'WSL bench not reachable'
+    assert c.probe({'probe': {'kind': 'wsl_env', 'env': 'b'}})['detail'] == 'WSL bench not reachable'
+    assert len(calls) == 1
+    c._WSL_ENVS.update(at=0.0, value=c.UNSET); c._BENCH.update(at=0.0, value=None)
 
 
 def test_probe_processes_run_under_the_seat_boundary(tmp_path):
@@ -334,6 +351,10 @@ def test_probe_processes_run_under_the_seat_boundary(tmp_path):
     assert lines[1] == '[]' and len(completed.stdout) <= c.MAX_OUTPUT
     with pytest.raises(subprocess.TimeoutExpired):
         c._run([sys.executable, '-I', '-c', 'import time; time.sleep(30)'], 1)
+    # A descendant that keeps stdout open does not hold the probe past the leader's exit.
+    started = time.monotonic()
+    completed = c._run([sys.executable, '-I', '-c', 'import subprocess, sys; subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"]); print("leader done")'], 15)
+    assert completed.stdout.strip() == 'leader done' and time.monotonic() - started < 10
 
 
 def test_asset_tampering_after_completion_is_detected(tmp_path, runtime):

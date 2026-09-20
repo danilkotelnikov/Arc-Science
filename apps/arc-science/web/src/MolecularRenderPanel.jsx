@@ -140,7 +140,7 @@ function RenderControls({token,onJobChange,onShowJob,onSource}) {
             <option value="">{'default ('+(capabilities?.presets?.default||'publication_white')+')'}</option>
             {(capabilities?.presets?.names||[]).map(p=><option key={p.name} value={p.name} title={p.description}>{p.name.replace(/_/g,' ')}</option>)}
           </select>
-          <p className="field-note">{(capabilities?.presets?.names||[]).find(p=>p.name===(preset||capabilities?.presets?.default))?.description||'Presentation only: background, finish, colours, envelope and sticks; never the coordinates or the contacts.'}</p>
+          <p className="field-note">{(capabilities?.presets?.names||[]).find(p=>p.name===(preset||capabilities?.presets?.default))?.description||'Panel background, finish and colours are presentation; envelope and stick presets also change the drawn mesh (a change of scientific depiction); never the coordinates or the contacts.'}</p>
           <label htmlFor="molecular-assembly">Assembly</label><input id="molecular-assembly" value={options.assembly} maxLength={64} required onChange={event=>setOptions({...options,assembly:event.target.value})}/>
           <p className="field-note">Use asymmetric_unit or an assembly ID recorded in the source.</p>
           {settings.map(([name,label,min,max,step])=><React.Fragment key={name}><label htmlFor={'molecular-'+name}>{label}</label><input id={'molecular-'+name} type="number" min={min} max={max} step={step} required value={options[name]} onChange={event=>setOptions({...options,[name]:event.target.value===''?'':Number(event.target.value)})}/></React.Fragment>)}

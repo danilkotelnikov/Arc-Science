@@ -196,8 +196,13 @@ def _run(argv, timeout):
         chunks = {'out': bytearray(), 'err': bytearray()}
 
         def drain(name, stream):
+            # os.read returns what is available; a buffered read would wait to fill.
+            fd = stream.fileno()
             while True:
-                piece = stream.read(65536)
+                try:
+                    piece = os.read(fd, 65536)
+                except OSError:
+                    return
                 if not piece:
                     return
                 if len(chunks[name]) < MAX_OUTPUT:
@@ -205,18 +210,29 @@ def _run(argv, timeout):
         readers = [threading.Thread(target=drain, args=(name, stream), daemon=True) for name, stream in (('out', process.stdout), ('err', process.stderr))]
         for reader in readers:
             reader.start()
-        try:
-            returncode = process.wait(timeout)
-        except subprocess.TimeoutExpired:
+
+        def close_tree():
+            # The whole owned tree goes once the leader's status is known, whether it exited
+            # or not: the session group on POSIX, the kill-on-close job on Windows. A
+            # descendant that inherited the pipes then releases them.
+            nonlocal job
             if os.name != 'nt':
                 try:
                     import signal
                     os.killpg(process.pid, signal.SIGKILL)
-                except (OSError, AttributeError):
+                except (OSError, AttributeError, ProcessLookupError):
                     pass
+            elif job is not None:
+                _close_job(job)
+                job = None
+        try:
+            returncode = process.wait(timeout)
+        except subprocess.TimeoutExpired:
             process.kill()
+            close_tree()
             returncode = process.wait(5)
             raise subprocess.TimeoutExpired(argv, timeout)
+        close_tree()
         for reader in readers:
             reader.join(2)
         return subprocess.CompletedProcess(argv, returncode, chunks['out'].decode('utf-8', errors='replace'),
@@ -265,7 +281,8 @@ def probe_exe(name, paths=()):
             'where': 'host' if found else None}
 
 
-_WSL_ENVS = {'at': 0.0, 'value': None}
+UNSET = object()
+_WSL_ENVS = {'at': 0.0, 'value': UNSET}
 
 
 def wsl_available():
@@ -278,7 +295,7 @@ def wsl_environments():
     if not wsl_available():
         return None
     with _SHARED:
-        if _WSL_ENVS['value'] is not None and time.monotonic() - _WSL_ENVS['at'] < CACHE_SECONDS:
+        if _WSL_ENVS['value'] is not UNSET and time.monotonic() - _WSL_ENVS['at'] < CACHE_SECONDS:
             return _WSL_ENVS['value']
         try:
             completed = _run(['wsl.exe', '-d', 'Ubuntu', '--', 'bash', '-lc',
@@ -331,10 +348,12 @@ def probe_bench():
             version = ' · v' + str(status['version']) if status.get('version') else ''
             if running:
                 value = {'present': None, 'observed': 'daemon_reachable', 'detail': 'daemon running' + version + '; the package itself was not observed', 'where': 'wsl'}
+            elif status:
+                value = {'present': None, 'observed': 'daemon_installed', 'detail': 'daemon installed, not running' + version + '; the package itself was not observed', 'where': 'wsl'}
             else:
-                value = {'present': False, 'detail': ('daemon installed, not running' if status else 'daemon status unavailable') + version}
+                value = {'present': None, 'observed': 'daemon_unavailable', 'detail': 'daemon status unavailable; nothing observed'}
         except (OSError, subprocess.SubprocessError, ValueError):
-            value = {'present': False, 'detail': 'daemon status unavailable'}
+            value = {'present': None, 'observed': 'daemon_unavailable', 'detail': 'daemon status unavailable; nothing observed'}
         _BENCH.update(at=time.monotonic(), value=value)
         return dict(value)
 
@@ -346,6 +365,12 @@ EVIDENCE = {'python': 'import', 'exe': 'executable', 'wsl_env': 'environment', '
 
 def probe(entry):
     kind = entry['probe']['kind']
+    if kind == 'bench' and entry['id'] == 'claude_science':
+        # For the daemon's own entry, the daemon is the package: its status is direct evidence.
+        result = probe_bench()
+        running = result.get('observed') == 'daemon_reachable'
+        return {'present': running if result.get('observed') in ('daemon_reachable', 'daemon_installed') else False,
+                'detail': result['detail'].split(';')[0], 'where': result.get('where'), 'evidence': 'daemon'}
     if kind == 'python':
         result = probe_python(entry['probe']['module'])
     elif kind == 'exe':
@@ -374,7 +399,7 @@ class Catalogue:
             if self.cached is not None and not refresh and time.monotonic() - self.at < CACHE_SECONDS:
                 return self.cached
             if refresh:
-                _WSL_ENVS.update(at=0.0, value=None)
+                _WSL_ENVS.update(at=0.0, value=UNSET)
                 _BENCH.update(at=0.0, value=None)
             semaphore = asyncio.Semaphore(PARALLEL)
 
