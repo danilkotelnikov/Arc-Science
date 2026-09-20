@@ -46,3 +46,53 @@ headless `--check-startup` from PowerShell → readiness verified, exit 0.
 | Shown stderr could carry a credential | low | Redaction of bearer values, secret `name=value`/`name: value` pairs and long opaque tokens before display; test |
 | Found during the fixes: the executable was a console-subsystem binary | — | Windowed subsystem with parent-console attachment; the launcher waits explicitly |
 | `load_url` failure was stderr-only; a README sentence described the old order | low | Same failure page and dialog; README corrected |
+
+## Loop 2 — UI and UX audit (`289ed5c`)
+
+Every workspace was read in the browser and the native window. One operator-token
+field in the header replaces five identical fields with five identical notes; the
+version mark, the tagline and the navigation footnote are gone; each workspace keeps
+one short boundary sentence (memory is evidence not instruction; rendering is not
+validation; eligibility is not validation; reuse rights are not inferred; the rewrite
+preserves scientific spans) and the repeated disclaimers, long empty states and
+footers are removed. Sol: accept — the boundaries the HoH contract requires are still
+stated once each.
+
+## Loop 3 — settings (`97a07b5`, `f9a45aa`, `1247aa3`)
+
+Design (Sol's recommendation of supervisor-mediated writes): `settings.toml` beside
+`arc-science.toml` has one owner. The supervisor holds the typed schema (seats
+planner/reviewer/falsifier/vision/prose with provider, model, effort, auth and a
+credential name; providers with endpoint, CLI and the OpenClaw agent; MCP servers;
+ACP agents; prose detection; Blender preset; viewer defaults), the validator (known
+providers and efforts, identifiers, https or an exact loopback authority with a valid
+port, OpenClaw isolation for every seat on it, unique names, stdio/http exclusivity)
+and the writer (`settings replace --stdin --if-revision`: whole document, validated,
+revision = SHA-256 of the file bytes, exclusive lock file around read/check/write,
+atomic rename, status 3 when stale). The service reads through `settings show`,
+forwards a replacement with the revision the operator saw (required at the HTTP
+boundary, writers serialised) and maps 503/409/422; seats configured there drive the
+model seats — the falsifier is now its own seat in both transports; credentials by
+name live in `data/credentials/NAME.credential` written by `arc-science credential
+--name NAME`, and a missing name is refused, never substituted. The snapshot says what
+is applied live (seats, providers, prose detection) and what is stored for later
+loops (effort, MCP, ACP, Blender, viewer); the Settings workspace edits the document,
+saves with the revision and shows a stale save or an owner rejection verbatim.
+
+Checks: Rust 10 settings tests (SHA-256 vectors, round trip, schema refusals, six
+concurrent replacements → one success, deceptive loopbacks and ports); Python
+`test_settings.py` 6 (stub supervisor with the same contract and the real binary,
+credential store, seats → endpoints); vitest 3; Playwright spec through the real
+supervisor (seats persisted, 409 stale, 422 invalid with the file unchanged); full
+suites green.
+
+## Evaluation of loop 3 (Sol): changes required → addressed → accept-with-findings
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| Credentials by name did not match the CLI's store, and a missing custom name fell through to the planner's credential | high | One store, one path, ASCII names; a missing name is refused; readiness checks every seat's own reference, vision included |
+| `if_revision` optional at the HTTP boundary; native read/check/write unlocked, so two writers could both pass | high | Revision required (422 without); exclusive lock file; service semaphore; six-thread test → exactly one success |
+| Loopback check was a prefix match (`localhost.evil.example` passed) | high | Exact authority parse; port 1..65535; deceptive forms tested |
+| "Applied live" claimed sections nothing consumed yet | medium | `applied_live` / `stored_pending` reported and shown; prose detection consumed |
+| OpenClaw isolation enforced for the planner only | medium | Any seat on OpenClaw |
+| Recorded hardening (not blocking): revisionless native replacement should be an explicit `--force`; the 30 s stale-lock takeover is not ownership-safe | watch | Recorded for a later loop |

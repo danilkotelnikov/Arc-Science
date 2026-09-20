@@ -107,4 +107,8 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   evaluations: [program record](2026-09-20-program-record.md).
 - Loop 1 (launch): `Arc Science.exe` starts from a double-click — the supervisor
   discovers the runtime and prints a startup plan, the window opens first, failures
-  are shown in the window and a native dialog. Sol: changes required → accept.
+  are shown in the window and a native dialog. Loop 2 (UI audit): one token field,
+  no version mark, one boundary sentence per workspace. Loop 3 (settings): a
+  supervisor-owned `settings.toml` with seats, providers, MCP/ACP lists and a Settings
+  workspace; writes carry the revision that was read. Sol: changes required → accept
+  on each.
