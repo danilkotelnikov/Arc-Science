@@ -224,7 +224,12 @@ fn run() -> Result<(), String> {
                 service = guard;
                 workbench_loaded.store(true, Ordering::SeqCst);
                 if let Err(error) = webview.load_url(&url) {
-                    eprintln!("arc-science-desktop: cannot load the workbench: {error}");
+                    let reason = format!("Cannot load the workbench at {url}: {error}");
+                    eprintln!("arc-science-desktop: {reason}");
+                    workbench_loaded.store(false, Ordering::SeqCst);
+                    let _ = webview.load_html(&launch::failure_page(&reason, None));
+                    let (owner, text) = (window_handle, reason);
+                    std::thread::spawn(move || launch::message_box(owner, &text));
                 }
             }
             Event::UserEvent(Shell::Failed(reason, plan)) => {

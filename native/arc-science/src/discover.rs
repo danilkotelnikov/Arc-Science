@@ -78,8 +78,11 @@ fn first_file(candidates: Vec<PathBuf>) -> Option<PathBuf> {
 
 /// Run a probe with a deadline in its own contained tree (job object / process
 /// group), draining stdout as it arrives so a noisy program cannot stall the launch;
-/// returns trimmed stdout on success. Output is capped at 64 KiB.
-fn probe(program: &Path, args: &[&str], env: &[(&str, &Path)]) -> Option<String> {
+/// returns trimmed stdout on success. Output is capped at 64 KiB. The deadline covers
+/// the whole lifecycle: once the leader has answered, whatever it left behind is
+/// killed with the tree before the output is collected, and the collection itself
+/// waits no longer than the deadline.
+pub(crate) fn probe(program: &Path, args: &[&str], env: &[(&str, &Path)]) -> Option<String> {
     let mut command = Command::new(program);
     command
         .args(args)
@@ -101,11 +104,12 @@ fn probe(program: &Path, args: &[&str], env: &[(&str, &Path)]) -> Option<String>
     let wrapper = process_wrap::std::JobObject;
     let mut child = crate::acquire::spawn(command, wrapper).ok()?;
     let stdout = child.stdout().take()?;
-    let reader = std::thread::spawn(move || {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
         use std::io::Read;
         let mut out = Vec::new();
         let _ = stdout.take(64 * 1024).read_to_end(&mut out);
-        out
+        let _ = sender.send(out);
     });
     let started = std::time::Instant::now();
     let status = loop {
@@ -115,16 +119,19 @@ fn probe(program: &Path, args: &[&str], env: &[(&str, &Path)]) -> Option<String>
         let waited = child.try_wait();
         match waited {
             Ok(Some(status)) => break Some(status),
-            Ok(None) if started.elapsed() > PROBE_TIMEOUT => {
-                let _ = child.start_kill();
-                break None;
-            }
+            Ok(None) if started.elapsed() > PROBE_TIMEOUT => break None,
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
             Err(_) => break None,
         }
     };
+    // The leader is done (or overdue): nothing it started may outlive the probe, and
+    // killing the tree also closes any inherited copy of the stdout pipe.
+    let _ = child.start_kill();
     let _ = child.wait();
-    let out = reader.join().ok()?;
+    let remaining = PROBE_TIMEOUT
+        .saturating_sub(started.elapsed())
+        .max(Duration::from_millis(250));
+    let out = receiver.recv_timeout(remaining).ok()?;
     if !status?.success() {
         return None;
     }
@@ -290,6 +297,26 @@ mod tests {
                 .join("target")
                 .join("release")
                 .join(name)
+        );
+    }
+
+    #[test]
+    fn a_probe_ends_within_its_deadline_even_when_a_descendant_keeps_stdout() {
+        // The probe leader answers, starts a long-lived child that inherits stdout, and
+        // exits; the probe must still return the answer promptly and leave nothing behind.
+        let (python, _, _) = python();
+        let Some(python) = python else {
+            return; // no interpreter on this machine: nothing to probe with
+        };
+        let script = "import subprocess,sys;print('answer');sys.stdout.flush();\
+subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'],close_fds=False)";
+        let started = std::time::Instant::now();
+        let answer = probe(&python, &["-X", "utf8", "-c", script], &[]);
+        assert_eq!(answer.as_deref(), Some("answer"));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "probe took {:?}",
+            started.elapsed()
         );
     }
 

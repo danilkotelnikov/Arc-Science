@@ -88,8 +88,10 @@ marker detects accidental reuse of another HTTP service; it is **not authenticat
 and is not a defense against another local process imitating Arc Science. API bearer
 authentication is unchanged. Probes disable environment/system proxies and redirects,
 use short connect timeouts, and never exceed the remaining startup deadline. A foreign
-listener, failed executable, early child exit or timeout produces an error and nonzero
-exit, before constructing a window or WebView.
+listener, failed executable, early child exit or timeout is shown in the window and in
+an owned native dialog (the window and WebView exist first, showing the starting
+state); with `--check-startup` the same conditions produce an error and nonzero exit
+without a window.
 
 Main navigation stays on the configured scheme/IP/port. Same-origin `blob:` object
 URLs remain allowed for workbench downloads; other origins and file/data/script URLs
