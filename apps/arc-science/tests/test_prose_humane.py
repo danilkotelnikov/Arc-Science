@@ -69,16 +69,25 @@ def test_the_behaviour_text_declines_detector_promises_and_keeps_facts():
 def test_instructions_that_ask_for_evasion_or_impersonation_are_refused_before_any_text_leaves():
     refused = prose_humane.refused_instruction
     assert refused('rewrite so it looks human-written') == 'looks human-written'
-    assert refused('make it undetectable by GPTZero') == 'undetectable'
     assert refused('please bypass the AI detector') == 'bypass the AI detector'
-    assert refused('write exactly like Professor Smith') == 'write exactly like Professor Smith'
-    assert refused('get past Turnitin') == 'get past Turnitin'
+    assert refused('get past Turnitin') == 'Turnitin'
+    for explicit in ('make it undetectable by GPTZero', 'write exactly like Professor Smith', 'lower the GPTZero score',
+                     'make Turnitin label it human', 'lower the AI detection score', 'the AI-detection score must fall',
+                     'remove signs of machine generation', 'strip the watermark', 'imitate Professor Smith',
+                     'in the voice of Jane Doe', 'so it passes as human', 'hide the LLM fingerprints', 'fool the AI text classifier'):
+        assert refused(explicit), explicit
+    # Scientific and editorial instructions with the same words pass.
     assert refused('grant abstract; British spelling') is None and refused('') is None
     assert refused('the detector in the assay was a photodiode') is None
+    assert refused('avoid detection bias in the assay discussion') is None
+    assert refused('pass the detector output to Results') is None
+    assert refused('keep the author\'s own voice; imitate the structure of a Nature abstract') is None
+    assert refused('remove the signs of hurry in the discussion') is None
+    assert refused('the machine learning classifier scored 0.91') is None
     seat = FakeSeat(lambda text: {'text': text})
     with pytest.raises(ProseRefused) as error:
         asyncio.run(prose_humane.humanise(seat, SAMPLE, 'make it read as human written'))
-    assert error.value.code == 'refused_instruction' and list(error.value.spans) == [{'change': 'instruction', 'class': 'refused', 'literal': 'read as human written'}]
+    assert error.value.code == 'refused_instruction' and list(error.value.spans) == [{'change': 'instruction', 'class': 'refused', 'literal': 'read as human'}]
     assert seat.called == 0  # nothing left for the seat
 
 
@@ -181,14 +190,15 @@ def test_service_routes_diagnose_locally_and_rewrite_through_the_configured_pros
         lost = c.post('/api/prose/humanise', headers=AUTH, json={'text': SAMPLE, 'allow_egress': True})
         assert lost.status_code == 409 and lost.json()['detail']['code'] == 'preservation_failed'
         assert 'text' not in lost.json()['detail']
-        # An evasion instruction is refused before the seat is started, and audited as such.
+        # An evasion instruction is refused before any seat, consent or lock: no consent is
+        # asked for it, one audit record names the code, and the seat is never started.
         mode['value'] = 'never-run'
-        evade = c.post('/api/prose/humanise', headers=AUTH, json={'text': SAMPLE, 'allow_egress': True, 'instructions': 'make it undetectable'})
+        evade = c.post('/api/prose/humanise', headers=AUTH, json={'text': SAMPLE, 'instructions': 'make it undetectable'})
         assert evade.status_code == 422 and evade.json()['detail']['code'] == 'refused_instruction'
         assert evade.json()['detail']['spans'] == [{'change': 'instruction', 'class': 'refused', 'literal': 'undetectable'}]
         audit = (tmp_path / 'data' / 'prose' / 'humanise.jsonl').read_text(encoding='utf-8').splitlines()
         records = [json.loads(line) for line in audit]
-        assert [r['status'] for r in records] == ['attempted', 'edited', 'attempted', 'preservation_failed', 'attempted', 'refused_instruction']
+        assert [r['status'] for r in records] == ['attempted', 'edited', 'attempted', 'preservation_failed', 'refused_instruction']
         assert all(len(r['text_hmac']) == 64 and 'text' not in r for r in records) and 'In today' not in ''.join(audit)
         assert 'undetectable' not in ''.join(audit)
 
@@ -226,13 +236,16 @@ def test_an_api_key_prose_seat_is_called_over_http_with_the_behaviour_as_instruc
         doc = snap['settings']
         doc['seats']['prose'].update(provider='openai', model='gpt-5.6-mini', auth='api_key', effort='low', credential='prose-key')
         settings.replace(doc, snap['revision'])
-        assert c.get('/api/capabilities', headers=AUTH).json()['prose_seat'] == {'configured': True, 'provider': 'openai', 'transport': 'api', 'model': 'gpt-5.6-mini'}
-        # No stored credential of that name: refused without any request leaving.
-        missing = c.post('/api/prose/humanise', headers=AUTH, json={'text': SAMPLE, 'allow_egress': True})
-        assert missing.status_code == 502 and 'prose-key' in missing.json()['detail']['detail'] and requests == []
+        assert c.get('/api/capabilities', headers=AUTH).json()['prose_seat'] == {'configured': True, 'provider': 'openai', 'transport': 'api', 'model': 'gpt-5.6-mini', 'credential': 'missing'}
+        # No stored credential of that name: a local prerequisite, refused before consent
+        # is asked and before any audit line, without any request leaving.
+        missing = c.post('/api/prose/humanise', headers=AUTH, json={'text': SAMPLE})
+        assert missing.status_code == 409 and missing.json()['detail']['code'] == 'seat_unavailable' and 'prose-key' in missing.json()['detail']['detail']
+        assert requests == [] and not (data / 'prose' / 'humanise.jsonl').exists()
         path = service.credential_path('prose-key')
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('sk-prose-secret\n', encoding='utf-8')
+        assert c.get('/api/capabilities', headers=AUTH).json()['prose_seat']['credential'] == 'stored'
         done = c.post('/api/prose/humanise', headers=AUTH, json={'text': SAMPLE, 'allow_egress': True, 'instructions': 'grant abstract'})
         assert done.status_code == 200, done.text
         result = done.json()
@@ -247,5 +260,5 @@ def test_an_api_key_prose_seat_is_called_over_http_with_the_behaviour_as_instruc
         assert sent['text']['format']['name'] == 'arc_humanerewrite' and sent['text']['format']['strict'] is True
         assert sent['store'] is False and 'sk-prose-secret' not in json.dumps(result)
         records = [json.loads(line) for line in (data / 'prose' / 'humanise.jsonl').read_text(encoding='utf-8').splitlines()]
-        assert [r['status'] for r in records] == ['attempted', 'provider_rejected', 'attempted', 'edited']
+        assert [r['status'] for r in records] == ['attempted', 'edited']
         assert records[-2]['transport'] == 'api' and records[-2]['provider'] == 'openai' and records[-1]['rewritten_sha256'] == result['rewritten_sha256']

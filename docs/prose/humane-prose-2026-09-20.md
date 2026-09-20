@@ -159,11 +159,18 @@ falls with perceived machine involvement and rises with plain, specific statemen
   says so beside every result. Style-word density is reported but never turned into
   an edit category on its own: each listed word is exact in many sentences ("robust
   standard errors"), so only a formulaic frame indicates the cliché category.
-- An author instruction that asks for detector evasion or impersonation ("make it
-  undetectable", "so it reads as human-written", "write exactly like Professor X") is
-  refused by the service before any text leaves, by a pattern in `prose_humane.py`
-  (`refused_instruction`), not by the behaviour text alone: the behaviour also
-  declines, but a refusal that lives only in a prompt is not a boundary.
+- An author instruction that asks for detector evasion or impersonation is refused by
+  the service before any seat, consent or lock is involved, by a pattern in
+  `prose_humane.py` (`refused_instruction`), not by the behaviour text alone: the
+  behaviour also declines, but a refusal that lives only in a prompt is not a boundary.
+  The pattern recognises explicit requests — a named detector product (GPTZero,
+  Turnitin, Copyleaks, Originality.ai, Winston, ZeroGPT), an AI-text detector or
+  classifier with an evasion or score verb ("bypass the AI detector", "lower the
+  AI-detection score"), "undetectable", "reads as human-written", hiding the traces of
+  machine generation, and imitating a named person — and it leaves the scientific
+  words alone ("avoid detection bias in the assay", "pass the detector output to
+  Results"). It is not a guarantee against every paraphrase; a paraphrase it misses
+  reaches the behaviour's own refusal, which is a prompt.
 - The behaviour reaches the prose seat as a system prompt on Claude Code
   (`--system-prompt`) and Gemini CLI (`GEMINI_SYSTEM_MD`) and as the body of an HTTP
   request's `system` / `instructions` / `system_instruction` field. Codex CLI has no

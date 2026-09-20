@@ -156,12 +156,30 @@ class HumaneRewrite(BaseModel):
 
 
 # Instructions the service refuses locally, before any text leaves: the behaviour would
-# decline them too, but a prompt-mediated refusal is not a boundary.
+# decline them too, but a prompt-mediated refusal is not a boundary. The pattern recognises
+# explicit requests — a named detector product, an AI-text detector or classifier with an
+# evasion or score verb, "undetectable", "reads as human-written", hiding the traces of
+# machine generation, imitating a named person — not every paraphrase; a paraphrase it
+# misses still meets the behaviour's own refusal, which is a prompt, not a boundary.
+# "detector" and "detection" on their own are scientific words and pass.
+_DETECTOR_PRODUCTS = r'gptzero|turnitin|copyleaks|originality\.?ai|winston ?ai|zerogpt|quillbot|undetectable\.?ai|sapling'
+_AI_DETECTOR = (r'(?:ai|llm|gpt|chatgpt|machine|text|writing|authorship|content)[- ]?(?:text[- ]|writing[- ]|content[- ]|generated[- ]|generation[- ])?'
+                r'(?:detector|detection|classifier|checker)s?')
+_TRACES = r'(?:signs?|traces?|marks?|markers?|fingerprints?|signals?|evidence|tells?|watermarks?|patterns?|artifacts?|artefacts?)'
+_MACHINE = r'(?:ai|llm|gpt|chatgpt|machine|model|bot|automat\w*|generat\w*)'
 REFUSED_INSTRUCTIONS = re.compile(
-    r'(?i)(?:\b(?:bypass|evade|fool|beat|trick|defeat|avoid|pass|escape|circumvent|get (?:past|around)|slip (?:past|by))\b.{0,60}?'
-    r'\b(?:detector|detection|gptzero|turnitin|copyleaks|originality\.?ai|winston|zerogpt|classifier)\b'
-    r'|\bundetectable\b|\b(?:look|read|seem|sound|appear)s?\b.{0,20}\b(?:human[- ]written|written by a human|not (?:ai|machine)[- ]generated)\b'
-    r'|\bimpersonat|\b(?:write|sound|read) (?:exactly )?(?:like|as) (?:a |the )?(?:real |specific )?(?:person|author|scientist|professor|dr\.?|prof\.?) \w+)')
+    r'(?i)(?:\b(?:' + _DETECTOR_PRODUCTS + r')\b'
+    r'|\b(?:bypass|evade|fool|beat|trick|defeat|avoid|pass|escape|circumvent|dodge|game|lower|reduce|drop|get (?:past|around|through)|slip (?:past|by))\b.{0,60}?\b'
+    + _AI_DETECTOR + r'\b'
+    r'|\b' + _AI_DETECTOR + r'\b.{0,30}?\b(?:score|flag|label|rating|verdict|percentage|probability)s?\b'
+    r'|\bundetectable\b'
+    r'|\b(?:(?:look|read|seem|sound|appear|come across|register)s?|pass(?:es)?)\b.{0,24}?\b(?:human[- ]written|written by a human|(?:as|like) (?:a )?human(?: wrote it)?|not (?:ai|machine|llm)[- ]generated|not written by (?:an? )?(?:ai|machine|model))\b'
+    r'|\b(?:remove|hide|mask|erase|strip|conceal|disguise|scrub|eliminate)\b.{0,30}?\b(?:' + _TRACES + r'\b.{0,24}?\b' + _MACHINE + r'|' + _MACHINE + r'\b.{0,24}?\b' + _TRACES + r')\b'
+    r'|\b(?:remove|strip|break|defeat)\b.{0,20}?\bwatermark'
+    r'|\bimpersonat'
+    r'|\b(?:imitat\w*|mimic\w*|emulat\w*|pass (?:it |this )?off as|pose as|in the voice of|as if (?:written )?by)\b.{0,30}?'
+    r'\b(?:professor|prof\.?|dr\.?|scientist|(?:a |the )?(?:real|specific|named|particular) (?:person|author|researcher)|(?-i:[A-Z][a-z]+ [A-Z][a-z]+))'
+    r'|\b(?:write|sound|read) (?:exactly )?(?:like|as) (?:a |the )?(?:real |specific |named )?(?:person|scientist|professor|dr\.?|prof\.?) \w+)')
 
 INSTRUCTIONS_TAIL = ('\n\nYou receive JSON with the text and any author instructions. Return only the JSON object the schema '
                      'describes: `text` is the whole edited text (or the original unchanged when it is already good), '

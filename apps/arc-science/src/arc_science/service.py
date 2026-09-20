@@ -375,7 +375,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
 
     def prose_error(refused):
         status={'consent_required':422,'bounds':422,'empty':422,'too_long':422,'refused_instruction':422,'disabled':409,'busy':409,
-                'preservation_failed':409,'provenance_missing':409,'audit_key':409}.get(refused.code,502)
+                'preservation_failed':409,'provenance_missing':409,'audit_key':409,'seat_unavailable':409}.get(refused.code,502)
         raise HTTPException(status,{'code':refused.code,'detail':str(refused),'spans':list(refused.spans)})
 
     @app.post('/api/prose/rewrite',dependencies=[Depends(authorized)])
@@ -403,20 +403,31 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         refused unless every protected span survives byte for byte; one at a time; an
         audit line with a keyed hash of the text, never the text."""
         from .exploration.cli_seats import CliAgent
+        try:key=detector._key()
+        except prose_module.ProseRefused as refused:prose_error(refused)
+        keyed=hmac.new(key,body.text.encode('utf-8'),'sha256').hexdigest()
+        audit=root/'prose'/'humanise.jsonl'
+        def line(record):
+            with audit.open('a',encoding='utf-8') as handle:handle.write(json.dumps({'at':int(time.time()),'text_hmac':keyed,**record},sort_keys=True)+'\n')
+        # Policy first: an instruction that asks for detector evasion or impersonation is
+        # refused before any seat, consent or lock is involved; one audit record, no text.
+        matched=prose_humane.refused_instruction(body.instructions)
+        if matched:
+            line({'status':'refused_instruction'})
+            prose_error(prose_module.ProseRefused('refused_instruction','The instruction asks for detector evasion or impersonation, which this '
+                'behaviour does not do; the reader-facing edit is available without it',[{'change':'instruction','class':'refused','literal':matched}]))
         try:cfg=configured_prose_endpoint()
         except Exception as error:raise HTTPException(409,'The prose seat is not usable: '+str(error)[:300]) from None
         if cfg is None:raise HTTPException(409,'Configure the prose seat in the settings before a seat rewrite')
+        if cfg.transport=='api':
+            # A missing credential is a local prerequisite, not a provider answer.
+            try:_secret(cfg.credential_ref)
+            except ValueError as error:prose_error(prose_module.ProseRefused('seat_unavailable','The prose seat has no stored credential: '+str(error)[:200]))
         if not body.allow_egress:
             prose_error(prose_module.ProseRefused('consent_required','The text would leave this machine for the '+cfg.provider
                 +' seat; send allow_egress: true to consent to this one request'))
         if humanise_lock.locked():prose_error(prose_module.ProseRefused('busy','A seat rewrite is already in flight'))
         async with humanise_lock:
-            try:key=detector._key()
-            except prose_module.ProseRefused as refused:prose_error(refused)
-            keyed=hmac.new(key,body.text.encode('utf-8'),'sha256').hexdigest()
-            audit=root/'prose'/'humanise.jsonl'
-            def line(record):
-                with audit.open('a',encoding='utf-8') as handle:handle.write(json.dumps({'at':int(time.time()),'text_hmac':keyed,**record},sort_keys=True)+'\n')
             line({'status':'attempted','provider':cfg.provider,'transport':cfg.transport,'model':cfg.model,'chars':len(body.text)})
             seat=None
             try:
@@ -638,8 +649,15 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             return {'configured':len(entries),'consented':len([e for e in entries if e.get('enabled',True) and e.get('consent')])}
         try:prose_seat=configured_prose_endpoint()
         except Exception:prose_seat=None
+        prose_summary={'configured':prose_seat is not None}
+        if prose_seat:
+            prose_summary.update(provider=prose_seat.provider,transport=prose_seat.transport,model=prose_seat.model)
+            if prose_seat.transport=='api':
+                # Whether the named credential is stored; nothing about its validity.
+                try:_secret(prose_seat.credential_ref);prose_summary['credential']='stored'
+                except ValueError:prose_summary['credential']='missing'
         return {'version':VERSION,'live':live,'vision':visual,
-                'prose_seat':{'configured':prose_seat is not None,**({'provider':prose_seat.provider,'transport':prose_seat.transport,'model':prose_seat.model} if prose_seat else {})},
+                'prose_seat':prose_summary,
                 'connectors':{'mcp':{**summary('mcp_servers'),'sdk':mcp_tools.sdk_version()},'acp':summary('acp_agents')},
                 'numeric_tools':['describe_data','polynomial_fit','permutation_control'],
                 'public_network_tools_enabled':os.environ.get('ARC_PUBLIC_READS')=='1',
