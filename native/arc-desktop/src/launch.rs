@@ -69,6 +69,15 @@ pub fn find_supervisor() -> Result<PathBuf, String> {
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
         .ok_or("Cannot locate this executable's directory")?;
     let override_path = std::env::var_os("ARC_DESKTOP_SUPERVISOR").map(PathBuf::from);
+    if let Some(explicit) = &override_path
+        && !explicit.is_file()
+    {
+        // An explicit choice is honoured or refused, never silently replaced.
+        return Err(format!(
+            "ARC_DESKTOP_SUPERVISOR names {}, which is not a file",
+            explicit.display()
+        ));
+    }
     let candidates = supervisor_candidates(&exe_dir, override_path.as_deref());
     candidates
         .iter()
@@ -343,9 +352,21 @@ pub fn failure_page(reason: &str, plan: Option<&Plan>) -> String {
     )
 }
 
+/// The native handle of the shell window (0 when there is none), for owned dialogs.
+#[cfg(windows)]
+pub fn window_handle(window: &tao::window::Window) -> isize {
+    use tao::platform::windows::WindowExtWindows;
+    window.hwnd()
+}
+
+#[cfg(not(windows))]
+pub fn window_handle(_window: &tao::window::Window) -> isize {
+    0
+}
+
 /// A native dialog with the reason, so a double-click failure is never silent.
 #[cfg(windows)]
-pub fn message_box(reason: &str) {
+pub fn message_box(owner: isize, reason: &str) {
     use std::ffi::{OsStr, c_void};
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "user32")]
@@ -356,10 +377,11 @@ pub fn message_box(reason: &str) {
     const MB_ICONERROR: u32 = 0x0000_0010;
     let wide = |s: &str| -> Vec<u16> { OsStr::new(s).encode_wide().chain(Some(0)).collect() };
     let (text, caption) = (wide(reason), wide("Arc Science could not start"));
-    // SAFETY: both buffers are NUL-terminated UTF-16 and outlive the call.
+    // SAFETY: both buffers are NUL-terminated UTF-16 and outlive the call; the owner
+    // is either a live window handle of this process or null.
     unsafe {
         MessageBoxW(
-            std::ptr::null_mut(),
+            owner as *mut c_void,
             text.as_ptr(),
             caption.as_ptr(),
             MB_OK | MB_ICONERROR,
@@ -368,7 +390,7 @@ pub fn message_box(reason: &str) {
 }
 
 #[cfg(not(windows))]
-pub fn message_box(reason: &str) {
+pub fn message_box(_owner: isize, reason: &str) {
     eprintln!("arc-science-desktop: {reason}");
 }
 

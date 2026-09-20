@@ -12,6 +12,13 @@ immediately with the plan's checks; the service starts on a thread; the workbenc
 loads when `/health` answers with the service identity. A failure is shown in the
 window and in a native dialog with the supervisor's last stderr lines.
 
+The executable is a windowed application: a double-click opens no console, and
+when a shell starts it (the launcher, `--check-startup`) that shell's console is
+attached for its text output. Text shown from the supervisor's stderr passes
+through a redaction pass (bearer values, `name=value` secrets, long opaque tokens)
+before it reaches the window or the dialog. An explicit `ARC_DESKTOP_SUPERVISOR`
+that is not a file is refused, never silently replaced.
+
 [The PowerShell launcher](../../scripts/start-arc-science.ps1) remains for
 `-Build`, `-ProjectPath`, `-Python`, optional `-BlenderPython` and headless
 `-CheckStartup`; it sets the explicit environment below, which always wins.

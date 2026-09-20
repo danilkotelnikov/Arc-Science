@@ -95,9 +95,11 @@ try {
             [Environment]::SetEnvironmentVariable($arcKey, $arcEnvironment[$arcKey], 'Process')
         }
     }
-    if ($CheckStartup) { & $arcExecutables.Desktop --check-startup }
-    else { & $arcExecutables.Desktop }
-    if ($LASTEXITCODE -ne 0) { throw "Arc Science exited with status $LASTEXITCODE." }
+    # A windowed executable: wait for it explicitly; its console output is attached to this shell.
+    $arcArguments = if ($CheckStartup) { @('--check-startup') } else { @() }
+    $arcRun = if ($arcArguments.Count) { Start-Process -FilePath $arcExecutables.Desktop -ArgumentList $arcArguments -Wait -PassThru -NoNewWindow }
+              else { Start-Process -FilePath $arcExecutables.Desktop -Wait -PassThru -NoNewWindow }
+    if ($arcRun.ExitCode -ne 0) { throw "Arc Science exited with status $($arcRun.ExitCode)." }
 } finally {
     foreach ($arcKey in $arcPrevious.Keys) {
         if ($null -eq $arcPrevious[$arcKey]) {

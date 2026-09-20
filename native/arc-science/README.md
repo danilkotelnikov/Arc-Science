@@ -5,7 +5,8 @@ Launch without a shell: `init --auto` discovers the interpreter (`py -3.12`,
 required), the package root (`ARC_PACKAGE_PATH`, `lib/python` beside the executable,
 or `apps/arc-science/src` in the development layout) and the sibling components
 (`arc-memory-worker`, `arc-svg2png`); `discover --apply` fills only the empty fields
-of an existing configuration; `startup-plan` prints the URL, the serve arguments and
+of an existing configuration (`worker.python` is never changed; the file is
+rewritten from its typed form, so hand-written comments do not survive); `startup-plan` prints the URL, the serve arguments and
 each readiness check as JSON. `serve` sets `PYTHONUTF8`, `PYTHONPATH` from
 `worker.package_path` and the `ARC_*` component variables from `[components]`, so no
 launcher environment is needed.

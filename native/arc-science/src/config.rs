@@ -165,14 +165,8 @@ pub fn apply_discovery(
         config.components.svg2png = found.svg2png.clone();
         filled.push("components.svg2png");
     }
-    if Path::new(&config.worker.python).components().count() == 1
-        && let Some(python) = &found.python
-    {
-        // A bare name such as "python" depends on the caller's PATH; the discovered
-        // interpreter is the one the probe actually ran.
-        config.worker.python = python.to_str().ok_or("Python path must be Unicode")?.into();
-        filled.push("worker.python");
-    }
+    // worker.python is never touched: a bare name is an explicit choice to follow the
+    // caller's PATH, and a path is an explicit interpreter.
     if filled.is_empty() {
         return Ok(filled);
     }

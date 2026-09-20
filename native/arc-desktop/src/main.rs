@@ -1,8 +1,15 @@
 //! Native Rust host for the local Arc Science workbench. See README for lifecycle limits.
+// A windowed application: a double-click opens no console. When started from a
+// console (the launcher, `--check-startup`), that console is attached for output.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 mod external;
 mod launch;
 mod startup;
 use startup::{Config, ServiceGuard, start_service};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::{Icon, WindowBuilder};
@@ -13,10 +20,12 @@ const SNOGGO: &[u8] = include_bytes!("../assets/snoggo-icon.svg");
 /// Shell events delivered to the event loop from WebView callbacks and the
 /// service-start thread.
 enum Shell {
+    /// Configuration is known; the starting page can show its checks.
+    Planned(Option<launch::Plan>),
     /// The local service answered its health check; the workbench can load.
-    Ready(Option<ServiceGuard>),
+    Ready(String, Option<ServiceGuard>),
     /// The local service could not start; the reason is shown, never swallowed.
-    Failed(String),
+    Failed(String, Option<launch::Plan>),
     /// A download finished; the page is told so it can show the outcome, because
     /// the WebView hosts no download UI of its own here.
     DownloadFinished {
@@ -98,9 +107,9 @@ fn run() -> Result<(), String> {
     if !args.is_empty() && !check_only {
         return Err("Usage: arc-science-desktop [--check-startup]; configure via ARC_DESKTOP_* environment variables".into());
     }
-    let (config, plan) = Config::from_env()?;
     if check_only {
         // Headless readiness stays service-first: nothing to show, only to verify.
+        let (config, _) = Config::from_env()?;
         let service = start_service(&config)?;
         println!(
             "Arc Science readiness verified; service {}",
@@ -113,8 +122,9 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    // Window first: the operator sees the starting state at once, the service starts
-    // on its own thread, and a failure lands in the window and a native dialog.
+    // Window first: the operator sees the starting state at once; configuration,
+    // discovery and the service start all run on one thread, and any failure lands
+    // in the window and a native dialog instead of a console nobody sees.
     let mut service: Option<ServiceGuard> = None;
     let event_loop = EventLoopBuilder::<Shell>::with_user_event().build();
     let shell = event_loop.create_proxy();
@@ -127,16 +137,25 @@ fn run() -> Result<(), String> {
     let window = window
         .build(&event_loop)
         .map_err(|e| format!("Cannot create desktop window: {e}"))?;
-    let origin = config.url.clone();
-    let origin_url = config.url.display.clone();
+    // The service origin is known only once configuration ran; until the workbench
+    // is loaded, only the inline starting and failure pages may navigate, and after
+    // that only the service origin (downloads keep the page's origin).
+    let origin: Arc<Mutex<Option<startup::LocalUrl>>> = Arc::new(Mutex::new(None));
+    let workbench_loaded = Arc::new(AtomicBool::new(false));
+    let (nav_origin, nav_loaded) = (Arc::clone(&origin), Arc::clone(&workbench_loaded));
     let mut context = wry::WebContext::new(profile_directory());
-    // Every downloadable URL is same-origin by construction because navigation is;
-    // the download itself is left to the WebView and only its outcome is reported.
-    // The inline starting and failure pages are the only other navigations allowed.
     let webview = WebViewBuilder::new_with_web_context(&mut context)
-        .with_html(launch::starting_page(plan.as_ref()))
+        .with_html(launch::starting_page(None))
         .with_navigation_handler(move |target| {
-            origin.allows(&target) || target == "about:blank" || target.starts_with("data:")
+            if nav_loaded.load(Ordering::SeqCst) {
+                nav_origin
+                    .lock()
+                    .ok()
+                    .and_then(|o| o.as_ref().map(|o| o.allows(&target)))
+                    .unwrap_or(false)
+            } else {
+                target == "about:blank" || target.starts_with("data:")
+            }
         })
         .with_download_completed_handler(move |_uri, path, success| {
             let text = |p: Option<&std::path::Path>| p.and_then(|p| p.to_str()).map(str::to_owned);
@@ -167,16 +186,27 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("Cannot initialize desktop WebView: {e}"))?;
     {
         let starter = event_loop.create_proxy();
-        let started = config;
+        let origin = Arc::clone(&origin);
         std::thread::spawn(move || {
-            let outcome = match start_service(&started) {
-                Ok(guard) => Shell::Ready(guard),
-                Err(reason) => Shell::Failed(reason),
+            let (config, plan) = match Config::from_env() {
+                Ok(found) => found,
+                Err(reason) => {
+                    let _ = starter.send_event(Shell::Failed(reason, None));
+                    return;
+                }
+            };
+            if let Ok(mut slot) = origin.lock() {
+                *slot = Some(config.url.clone());
+            }
+            let _ = starter.send_event(Shell::Planned(plan.clone()));
+            let outcome = match start_service(&config) {
+                Ok(guard) => Shell::Ready(config.url.display.clone(), guard),
+                Err(reason) => Shell::Failed(reason, plan),
             };
             let _ = starter.send_event(outcome);
         });
     }
-    let url = origin_url;
+    let window_handle = launch::window_handle(&window);
     event_loop.run(move |event, _target, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
@@ -187,16 +217,23 @@ fn run() -> Result<(), String> {
                 service.take();
                 *control_flow = ControlFlow::Exit;
             }
-            Event::UserEvent(Shell::Ready(guard)) => {
+            Event::UserEvent(Shell::Planned(plan)) => {
+                let _ = webview.load_html(&launch::starting_page(plan.as_ref()));
+            }
+            Event::UserEvent(Shell::Ready(url, guard)) => {
                 service = guard;
+                workbench_loaded.store(true, Ordering::SeqCst);
                 if let Err(error) = webview.load_url(&url) {
                     eprintln!("arc-science-desktop: cannot load the workbench: {error}");
                 }
             }
-            Event::UserEvent(Shell::Failed(reason)) => {
+            Event::UserEvent(Shell::Failed(reason, plan)) => {
                 eprintln!("arc-science-desktop: {reason}");
                 let _ = webview.load_html(&launch::failure_page(&reason, plan.as_ref()));
-                launch::message_box(&reason);
+                // The dialog is owned by the window and shown from its own thread, so
+                // the failure page still paints behind it.
+                let (owner, text) = (window_handle, reason.clone());
+                std::thread::spawn(move || launch::message_box(owner, &text));
             }
             Event::UserEvent(Shell::DownloadFinished {
                 file,
@@ -217,11 +254,32 @@ fn run() -> Result<(), String> {
     });
 }
 
+/// Attach the parent console when there is one, so text output still reaches the
+/// shell that started us; a double-click has no parent console and shows nothing.
+#[cfg(windows)]
+fn attach_parent_console() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    // SAFETY: a plain Win32 call with no pointers; failure only means no console.
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
 fn main() -> std::process::ExitCode {
+    #[cfg(windows)]
+    attach_parent_console();
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
+            // Only window creation itself can fail here; even that is never silent.
             eprintln!("arc-science-desktop: {error}");
+            if std::env::args_os().nth(1).is_none() {
+                launch::message_box(0, &error);
+            }
             std::process::ExitCode::FAILURE
         }
     }

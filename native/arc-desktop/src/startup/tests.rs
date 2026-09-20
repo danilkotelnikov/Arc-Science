@@ -282,3 +282,19 @@ fn parent_pipe_fixture() {
     let mut bytes = vec![];
     std::io::stdin().read_to_end(&mut bytes).unwrap();
 }
+
+#[test]
+fn shown_stderr_never_carries_a_credential() {
+    let text = "Authorization: Bearer sk-ant-abcdef0123456789 token=abc123 API_KEY=xyz9 plain words stay\nsecret: hidden 0123456789abcdef0123456789abcdef0123";
+    let shown = redact(text);
+    assert!(!shown.contains("sk-ant-abcdef0123456789"));
+    assert!(shown.contains("Bearer [redacted]"));
+    assert!(shown.contains("token=[redacted]") && shown.contains("API_KEY=[redacted]"));
+    assert!(shown.contains("secret: [redacted]"));
+    assert!(shown.contains("plain words stay"));
+    assert!(!shown.contains("0123456789abcdef0123456789abcdef0123"));
+    assert_eq!(
+        redact("Service exited before readiness: exit code: 1"),
+        "Service exited before readiness: exit code: 1"
+    );
+}

@@ -69,6 +69,9 @@ fn run() -> Result<i32> {
     match cli.command {
         Action::Init { python, auto } => {
             if auto {
+                // Probes run in contained trees, but the supervisor itself is contained
+                // too so an abandoned launch cannot leave interpreters behind.
+                let _ = arc_science_native::containment::contain_process_tree();
                 let found = arc_science_native::discover::run();
                 config::initialize_discovered(&project, python.as_deref(), &found)?;
                 for note in &found.notes {
@@ -80,6 +83,7 @@ fn run() -> Result<i32> {
             println!("Created {}", project.join(config::CONFIG_FILE).display());
         }
         Action::Discover { apply } => {
+            let _ = arc_science_native::containment::contain_process_tree();
             let found = arc_science_native::discover::run();
             let filled = if apply {
                 config::apply_discovery(&project, &found)?
@@ -100,6 +104,7 @@ fn run() -> Result<i32> {
             );
         }
         Action::StartupPlan => {
+            let _ = arc_science_native::containment::contain_process_tree();
             let config = Config::load(&project)?;
             println!(
                 "{}",

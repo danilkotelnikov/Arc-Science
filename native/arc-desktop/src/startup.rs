@@ -211,6 +211,63 @@ impl Drop for ServiceGuard {
     }
 }
 
+/// Strip anything that looks like a credential from text that will be shown: bearer
+/// values, `name=value` pairs for secret-like names, and long opaque tokens. The
+/// contract says no descendant prints secrets; this is the belt to that suspender.
+pub fn redact(text: &str) -> String {
+    let secret_name = |name: &str| {
+        let name = name.to_ascii_lowercase();
+        [
+            "token",
+            "secret",
+            "password",
+            "passwd",
+            "api_key",
+            "apikey",
+            "key",
+            "authorization",
+            "cookie",
+        ]
+        .iter()
+        .any(|needle| name.ends_with(needle))
+    };
+    let opaque = |word: &str| {
+        word.len() >= 32
+            && word.chars().all(|c| {
+                c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '+' | '/' | '=')
+            })
+            && word.chars().any(|c| c.is_ascii_digit())
+    };
+    let mut out = Vec::new();
+    let mut after_bearer = false;
+    for word in text.split_inclusive(char::is_whitespace) {
+        let (body, space) = word.split_at(word.trim_end().len());
+        let replaced = if after_bearer && body.eq_ignore_ascii_case("bearer") {
+            body.to_string() // "Authorization: Bearer x": the value is still ahead
+        } else if after_bearer {
+            after_bearer = false;
+            "[redacted]".to_string()
+        } else if body.eq_ignore_ascii_case("bearer")
+            || body.strip_suffix([':', '=']).is_some_and(secret_name)
+        {
+            // The value follows as the next word ("Bearer x", "secret: x").
+            after_bearer = true;
+            body.to_string()
+        } else if let Some((name, _)) = body
+            .split_once(['=', ':'])
+            .filter(|(name, value)| !value.is_empty() && secret_name(name))
+        {
+            format!("{name}=[redacted]")
+        } else if opaque(body) {
+            "[redacted]".to_string()
+        } else {
+            body.to_string()
+        };
+        out.push(replaced + space);
+    }
+    out.concat()
+}
+
 fn tail_stderr(stream: Option<impl std::io::Read + Send + 'static>) -> Arc<Mutex<String>> {
     let tail = Arc::new(Mutex::new(String::new()));
     if let Some(mut stream) = stream {
@@ -306,7 +363,7 @@ pub fn start_service(config: &Config) -> Result<Option<ServiceGuard>, String> {
     let stderr = tail_stderr(child.stderr.take());
     let mut guard = ServiceGuard { child, stderr };
     let with_tail = |message: String, guard: &ServiceGuard| {
-        let tail = guard.stderr_tail();
+        let tail = redact(&guard.stderr_tail());
         let tail = tail.trim();
         if tail.is_empty() {
             message

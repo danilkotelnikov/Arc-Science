@@ -76,7 +76,9 @@ fn first_file(candidates: Vec<PathBuf>) -> Option<PathBuf> {
     candidates.into_iter().find(|c| c.is_file())
 }
 
-/// Run a probe with a deadline; returns trimmed stdout on success.
+/// Run a probe with a deadline in its own contained tree (job object / process
+/// group), draining stdout as it arrives so a noisy program cannot stall the launch;
+/// returns trimmed stdout on success. Output is capped at 64 KiB.
 fn probe(program: &Path, args: &[&str], env: &[(&str, &Path)]) -> Option<String> {
     let mut command = Command::new(program);
     command
@@ -93,28 +95,40 @@ fn probe(program: &Path, args: &[&str], env: &[(&str, &Path)]) -> Option<String>
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
-    let mut child = command.spawn().ok()?;
+    #[cfg(unix)]
+    let wrapper = process_wrap::std::ProcessGroup::leader();
+    #[cfg(windows)]
+    let wrapper = process_wrap::std::JobObject;
+    let mut child = crate::acquire::spawn(command, wrapper).ok()?;
+    let stdout = child.stdout().take()?;
+    let reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut out = Vec::new();
+        let _ = stdout.take(64 * 1024).read_to_end(&mut out);
+        out
+    });
     let started = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if !status.success() {
-                    return None;
-                }
-                let mut out = String::new();
-                use std::io::Read;
-                child.stdout.take()?.read_to_string(&mut out).ok()?;
-                return Some(out.trim().to_string());
-            }
+    let status = loop {
+        #[cfg(windows)]
+        let waited = child.inner_mut().try_wait();
+        #[cfg(not(windows))]
+        let waited = child.try_wait();
+        match waited {
+            Ok(Some(status)) => break Some(status),
             Ok(None) if started.elapsed() > PROBE_TIMEOUT => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
+                let _ = child.start_kill();
+                break None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(_) => return None,
+            Err(_) => break None,
         }
+    };
+    let _ = child.wait();
+    let out = reader.join().ok()?;
+    if !status?.success() {
+        return None;
     }
+    Some(String::from_utf8_lossy(&out).trim().to_string())
 }
 
 /// The interpreter the launchers would find, resolved to its real `sys.executable`
