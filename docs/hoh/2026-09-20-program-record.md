@@ -235,3 +235,52 @@ workstation, so the live pipeline stream was exercised with the staged stand-in 
 | The PNG download used a data: URI the desktop shell refuses | medium | Blob object URL, revoked after; verified as a real download |
 | Stages were untyped; the stream could miss a wake-up; the resume id was unbounded | low | Typed records; waiter taken before reading state; id bounded to the stages that exist |
 | A scene whose `source` was not an object returned 500 | medium | Checked before reading the digest |
+
+## Loops 10–11 — catalogue and presets (`d27607d`, `666b596`, `8b32eda`, `d60b4f3`)
+
+Nineteen named render presets live in one registry the API reports with its full
+styles: the panel background of the composed figure, world strength, material finish,
+partner colours, envelope tightness and stick radius. The rendered views keep their
+transparent film and the figure its white canvas under every preset, so the reviewed
+image checks hold. The pipeline writes the style beside the scene, hands it to the
+Blender worker, which bounds every value again (tested for parity with the registry)
+and records it in its receipt; the pipeline refuses a render whose receipt carries
+another style; the manifest records preset and style. The operator's default comes
+from the settings file (a name the registry does not know falls back to the registry
+default and the capabilities say so), the render form offers the registry, and a
+preset change of the same coordinates is derived as a presentation change — and a
+change of scientific depiction as well when the two presets draw different meshes
+(envelope isovalue, stick radius), with a narrower declaration refused.
+
+The software catalogue names 101 structural-biology and cheminformatics packages by
+category (14), licence and home, and probes each the way its presence can be observed
+from this workstation: an isolated import in the service's interpreter, an executable
+on PATH or in a versioned install folder, a conda environment or executable inside the
+WSL bench, or the Claude Science daemon's own status. A probe reports presence only
+for an import or an executable it observed; an environment or a daemon seen is
+indirect evidence with its own count, an unavailable daemon observed nothing, and no
+probe installs or qualifies anything. Probes run under the seat boundary (allowlisted
+environment, private empty directory, bounded output drained with `os.read`, the whole
+tree closed once the leader's status is known); a re-probe is an explicit POST; a
+failed WSL listing is cached for the window; licence names are marked as recorded, to
+be confirmed at the project home. The workbench lists the catalogue by category.
+
+Checks: Python 790 passed / 65 skipped; vitest 60; Playwright 20. Live on this
+workstation: 6 present (gemmi 0.7.5, Biopython 1.87, torch 2.11, scikit-learn 1.8,
+ChimeraX 1.10 dev, Open Babel in WSL), 24 seen indirectly (sixteen WSL environments;
+the Claude Science daemon installed, not running), Blender absent — so the worker's
+style path was exercised only up to the renderer boundary (argv and `style.json`
+asserted) and the live render under a preset remains an unverified gate.
+
+## Evaluation of loops 10–11 (Sol): changes required ×3 → addressed → accept
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| Opaque backgrounds would have failed the transparency check | high | Backgrounds colour the figure's panels; film and canvas unchanged |
+| Advertised width/sample overrides were never applied | high | Removed from the contract |
+| Every preset change was presentation, though two keys redraw the mesh | high | `geometry_changes` derives scientific depiction; narrower declarations refused |
+| Probes inherited the service environment, buffered unbounded, killed only the leader; refresh on GET | high | Seat boundary, bounded drain, whole tree closed, POST refresh |
+| An environment or daemon seen counted as the package present | medium | Indirect evidence with its own count; daemon state never implies absence; only the daemon's own entry reads its status |
+| Shared WSL/daemon probes raced across four threads; a failed listing was retried per entry | medium | One lock; failures cached with a sentinel |
+| Two notes contradicted their probes; an unavailable daemon counted as indirect | low/medium | Corrected |
+| Recorded gate: no Blender here, so no render ran under a preset; licence rows not independently verified | gate | Unverified |

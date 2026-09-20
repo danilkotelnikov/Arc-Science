@@ -120,5 +120,7 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   content is never evidence, bound with the route; live: PubMed and Context7 listed,
   `gemini --acp` answered initialize. Loops 8–9 (viewer, progress): a headless Mol*
   viewer as its own chunk, coordinates drawn on upload, pipeline stages streamed as
-  observations with the provisional scene overlaid while Blender runs. Sol: changes
+  observations with the provisional scene overlaid while Blender runs. Loops 10–11
+  (catalogue, presets): 101 packages probed for presence with indirect evidence kept
+  apart; nineteen style-only render presets bounded again by the worker. Sol: changes
   required → accept on each.
