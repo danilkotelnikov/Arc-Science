@@ -36,10 +36,13 @@ export default function MolecularWorkspace({token, setToken}) {
     if (!token || !renderJob || source?.job === renderJob.id) return undefined;
     const controller = new AbortController();
     (async () => {
-      if (source?.origin === 'upload' && source.job === undefined && source.digest === undefined) {
-        const digest = await sha256Hex(source.text).catch(() => null);
+      const captured = source;
+      if (captured?.origin === 'upload' && captured.job === undefined && captured.digest === undefined) {
+        const digest = await sha256Hex(captured.text).catch(() => null);
         if (controller.signal.aborted) return;
-        if (digest && digest === renderJob.source_sha256) { setSource(current => ({...current, digest, job: renderJob.id})); return; }
+        // Only the very upload that was hashed may take the digest and the job; a file
+        // chosen meanwhile is left alone and will be hashed on its own.
+        if (digest && digest === renderJob.source_sha256) { setSource(current => current === captured ? {...current, digest, job: renderJob.id} : current); return; }
       }
       try {
         const response = await checkedFetch('/api/molecular/renders/' + renderJob.id + '/source', {signal: controller.signal, headers: {Authorization: 'Bearer ' + token}});
@@ -48,7 +51,7 @@ export default function MolecularWorkspace({token, setToken}) {
       } catch { /* the viewer keeps what it has; the render result still opens */ }
     })();
     return () => controller.abort();
-  }, [token, renderJob?.id]);
+  }, [token, renderJob?.id, source]);
   // Contacts are overlaid as soon as the pipeline has written them (provisional while it
   // still renders, verified once the artifacts are collected).
   useEffect(() => {

@@ -234,6 +234,8 @@ def test_a_provisional_scene_is_served_only_while_running_and_only_when_bound_to
         assert client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH).status_code == 404
         (output / 'scene.json').write_text('not json')
         assert client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH).status_code == 404
+        (output / 'scene.json').write_text(json.dumps({'source': None, 'contacts': []}))
+        assert client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH).status_code == 404
         digest = hashlib.sha256(REQUEST['source_text'].encode()).hexdigest()
         (output / 'scene.json').write_text(json.dumps({'source': {'sha256': digest}, 'contacts': [{'antibody_residue': 'A:1', 'antigen_residue': 'C:1'}]}))
         early = client.get(f'{PREFIX}/renders/{job_id}/scene', headers=AUTH)

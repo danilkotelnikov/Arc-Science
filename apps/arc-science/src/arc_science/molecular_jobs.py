@@ -650,7 +650,8 @@ class MolecularJobs:
         try:
             data = await asyncio.to_thread(_read_file, self.root / job_id / 'output', 'scene.json', SCENE_LIMIT)
             scene = json.loads(data)
-            if not isinstance(scene, dict) or scene.get('source', {}).get('sha256') != row['source_sha256'] \
+            source = scene.get('source') if isinstance(scene, dict) else None
+            if not isinstance(source, dict) or source.get('sha256') != row['source_sha256'] \
                     or not isinstance(scene.get('contacts'), list):
                 raise ValueError('scene is not bound to the uploaded source')
         except (OSError, ValueError):
