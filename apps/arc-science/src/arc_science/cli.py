@@ -137,9 +137,10 @@ def main(argv=None):
             if not value or len(value)>8192:raise ValueError('Invalid credential length')
             from .service import credential_path
             path=credential_path(args.name,args.data)
+            from . import anchored
             path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-            path.write_text(value+'\n');path.chmod(0o600)
-            print('Stored at '+str(path.resolve()));return 0
+            path.write_text(value+'\n');protection=anchored.owner_only(path)
+            print('Stored at '+str(path.resolve())+' ('+protection+')');return 0
         if args.command=='fixture':result=fixture(args.output,args.seed)
         elif args.command=='verify':result=verify_capsule(args.capsule.read_bytes())
         elif args.command=='validate':result=validate(args.output)

@@ -24,6 +24,7 @@ from .exploration.engine import initialize, explore, MissionCancelled
 from .exploration.agents import DemoAgent, DemoVisionAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
 from .exploration.cli_seats import redact
+from . import anchored
 from . import settings as operator_settings
 from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, declare_resume, mission_change, obligation_states
 from .exploration.claim_scope import DERIVATION_VERSION as CLAIM_DERIVATION_VERSION, derive_claim_scope
@@ -320,8 +321,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             token_path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
             try:
                 with token_path.open('x') as f:f.write(secrets.token_urlsafe(36)+'\n')
-                token_path.chmod(0o600)
             except FileExistsError:pass
+        anchored.owner_only(token_path)
         token=token_path.read_text().strip()
     if len(token)<32:raise ValueError('Use a randomly generated API token of at least 32 characters')
     repository=MissionRepository(root/'missions.db');running={}

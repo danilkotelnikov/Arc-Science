@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import stat
+import subprocess
 
 _POSIX = os.name != 'nt'
 _DIR_FLAGS = os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0) | getattr(os, 'O_NOFOLLOW', 0)
@@ -238,3 +239,34 @@ def dir_fd(handle):
 def as_path(handle):
     """The Windows absolute path, or None on POSIX."""
     return None if _POSIX else handle
+
+
+def owner_only(path) -> str:
+    """Restrict a secret file (token, credential, audit key) to its owner. POSIX: mode
+    0600. Windows: chmod only toggles the read-only bit, so the inherited ACL is replaced
+    by one entry for the current account with `icacls`; the verdict is returned for the
+    record and a failure leaves the file as it was, never raises."""
+    path = Path(path)
+    if os.name != 'nt':
+        path.chmod(0o600)
+        return 'mode 0600'
+    account = os.environ.get('USERNAME') or ''
+    if not account:
+        return 'ACL not applied: no account name'
+    try:
+        done = subprocess.run(['icacls', str(path), '/inheritance:r', '/grant:r', account + ':F'],
+                              capture_output=True, text=True, errors='replace', timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return 'ACL not applied: ' + str(error)[:120]
+    return 'owner-only ACL' if done.returncode == 0 else 'ACL not applied: ' + (done.stderr or done.stdout).strip()[:200]
+
+
+def owner_only_holds(path) -> bool:
+    """Whether the file is readable by its owner alone: mode 0600 on POSIX; on Windows one
+    explicit access entry and nothing inherited (read back from `icacls`)."""
+    path = Path(path)
+    if os.name != 'nt':
+        return stat.S_IMODE(path.stat().st_mode) == 0o600
+    done = subprocess.run(['icacls', str(path)], capture_output=True, text=True, errors='replace', timeout=30)
+    entries = [line for line in done.stdout.splitlines() if ':(' in line]
+    return done.returncode == 0 and len(entries) == 1 and '(I)' not in entries[0]

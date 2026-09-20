@@ -198,6 +198,7 @@ class Detector:
         self.enabled = (os.environ.get('ARC_PROSE_DETECTION', 'on').lower() != 'off') if enabled is None else enabled
         self.transport = transport
         self.busy = False
+        self._key_protected = False
 
     def capabilities(self) -> dict:
         return {'detection': {'enabled': self.enabled, 'recipient': DETECTION_HOST, 'endpoint': DETECTION_ENDPOINT,
@@ -212,7 +213,8 @@ class Detector:
     def _key(self) -> bytes:
         """The audit key: created exclusively (never through a link) with mode 0600 and read
         without following links; a key that is not exactly 32 bytes is refused. Like the
-        service token file, no Windows owner-only ACL is applied beyond the mode."""
+        service token file it is restricted to its owner once per process (an ACL entry
+        on Windows, where the mode alone does nothing)."""
         from . import anchored
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         handle = anchored.open_directory(self.root)
@@ -226,6 +228,9 @@ class Detector:
                     out.write(secrets.token_bytes(32))
             with os.fdopen(anchored.open_read_fd(handle, 'audit.key'), 'rb') as source:
                 key = source.read(64)
+            if not self._key_protected:
+                anchored.owner_only(self.root / 'audit.key')
+                self._key_protected = True
         finally:
             anchored.close_directory(handle)
         if len(key) != 32:
