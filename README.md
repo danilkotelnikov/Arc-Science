@@ -149,6 +149,10 @@ arc-science molecule-render source.cif --antibody A,B --antigen C \
 
 Defaults are a 1400 px white collage, 96 samples and seed 23. The output directory must not already exist. Reproduction requires the specified renderer environment; this migration does not claim a new Blender qualification.
 
+The local pipeline renders under a named preset from a registry of twenty: background, world strength, material finish, partner colours, envelope tightness, stick radius, and for two of them width and samples. A preset changes presentation only — never the coordinates, the chain selection, the cutoff or the derived geometry — and the style it applied is written beside the scene, checked against the worker's receipt and recorded in the manifest, so a render replays under the preset it was made with. The operator's default preset comes from the settings file; a name the registry does not know falls back to the registry default and the capabilities say so. A preset change of the same coordinates is a declared presentation change like width or samples.
+
+The software catalogue names about a hundred structural-biology and cheminformatics packages by category, licence and home, and probes each the way its presence can be observed from this workstation: an isolated import in the service's interpreter, an executable on PATH or at a known install folder, a conda environment or executable inside the WSL bench, or the Claude Science daemon's own status. A probe reports presence and what it observed (an import, an executable, an environment, a daemon) — never qualification, correctness or currency — and nothing is installed; licence names are as recorded and are to be confirmed at the project home.
+
 ## Research and limits
 
 Research preserves goal, execution mode, round limit, explicit egress and visual-review consent, saved missions, start/cancel/resume, numerical verification and replay-capsule export. Artifact inspection/download remains authenticated. Switching workspaces retains the current goal, token and mission.

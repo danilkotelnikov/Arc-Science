@@ -78,7 +78,7 @@ RESUME_STALE = ('operational_status', 'event_chain_integrity', 'replay_integrity
 # Molecular render settings by the effect a change of them has. Coordinates are not a
 # setting: different coordinates are a new subject, not a change.
 MOLECULAR_FIELDS = {
-    'presentation': ('width', 'samples', 'seed'),
+    'presentation': ('width', 'samples', 'seed', 'preset'),
     'scientific_depiction': ('antibody_chains', 'antigen_chains', 'assembly', 'model_index'),
     'analysis': ('cutoff',),
 }

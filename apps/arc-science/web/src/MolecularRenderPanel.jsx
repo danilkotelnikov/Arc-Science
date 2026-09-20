@@ -36,6 +36,9 @@ function RenderControls({token,onJobChange,onShowJob,onSource}) {
   const [capabilities,setCapabilities]=useState(null),[jobs,setJobs]=useState(null),[job,setJob]=useState(null);
   const [file,setFile]=useState(null),[antibody,setAntibody]=useState(''),[antigen,setAntigen]=useState('');
   const [options,setOptions]=useState(defaults),[busy,setBusy]=useState(false),[error,setError]=useState(''),[pollAttempt,setPollAttempt]=useState(0);
+  // The render preset: presentation only, from the registry the service reports; '' means the operator's default.
+  const [preset,setPreset]=useState('');
+  const [software,setSoftware]=useState(null),[softwareBusy,setSoftwareBusy]=useState(false);
   // A render can declare itself a change of the selected completed render of the same
   // coordinates; the server derives the real effects and refuses a narrower declaration.
   const [asChange,setAsChange]=useState(false),[declared,setDeclared]=useState([]);
@@ -105,6 +108,7 @@ function RenderControls({token,onJobChange,onShowJob,onSource}) {
     const source=await readSource(file,signal);
     if(signal.aborted)return;
     const body={...options,filename:file.name,source_text:source,antibody_chains:antibodyChains,antigen_chains:antigenChains};
+    if(preset)body.preset=preset;
     if(asChange&&job){body.base_job=job.id;body.declared_effects=declared;}
     const data=await(await request(token,'/api/molecular/renders',signal,body)).json();
     if(!signal.aborted){updateJob(data);onShowJob(true);}
@@ -131,6 +135,12 @@ function RenderControls({token,onJobChange,onShowJob,onSource}) {
         <label htmlFor="molecular-antigen">Antigen chains</label><input id="molecular-antigen" value={antigen} required placeholder="C" onChange={event=>setAntigen(event.target.value)}/>
         <p className="field-note">Author chain IDs, separated by commas.</p>
         <details className="molecular-advanced"><summary>Assembly & render settings</summary>
+          <label htmlFor="molecular-preset">Render preset</label>
+          <select id="molecular-preset" value={preset} onChange={event=>setPreset(event.target.value)}>
+            <option value="">{'default ('+(capabilities?.presets?.default||'publication_white')+')'}</option>
+            {(capabilities?.presets?.names||[]).map(p=><option key={p.name} value={p.name} title={p.description}>{p.name.replace(/_/g,' ')}</option>)}
+          </select>
+          <p className="field-note">{(capabilities?.presets?.names||[]).find(p=>p.name===(preset||capabilities?.presets?.default))?.description||'Presentation only: background, finish, colours, envelope and sticks; never the coordinates or the contacts.'}</p>
           <label htmlFor="molecular-assembly">Assembly</label><input id="molecular-assembly" value={options.assembly} maxLength={64} required onChange={event=>setOptions({...options,assembly:event.target.value})}/>
           <p className="field-note">Use asymmetric_unit or an assembly ID recorded in the source.</p>
           {settings.map(([name,label,min,max,step])=><React.Fragment key={name}><label htmlFor={'molecular-'+name}>{label}</label><input id={'molecular-'+name} type="number" min={min} max={max} step={step} required value={options[name]} onChange={event=>setOptions({...options,[name]:event.target.value===''?'':Number(event.target.value)})}/></React.Fragment>)}
@@ -148,6 +158,22 @@ function RenderControls({token,onJobChange,onShowJob,onSource}) {
     {job&&<div className="molecular-job-controls"><Button variant="ghost" onPress={()=>onShowJob(true)}>View selected render</Button>{pending(job.status)&&<Button variant="secondary" isDisabled={busy} onPress={()=>run(cancel)}>Cancel render</Button>}</div>}
     {job&&(job.stages?.length>0||pending(job.status))&&<p className="field-note" aria-label="Render progress">{pending(job.status)?(live?'live':'polling')+' · ':''}{stageLine(job)||'waiting for the pipeline'}</p>}
     {jobs!==null&&<><h2>Recent renders</h2>{jobs.length?jobs.map(row=><Button variant="ghost" key={row.id} isDisabled={busy} aria-pressed={job?.id===row.id} onPress={()=>run(signal=>select(row.id,signal))}>{row.status} · {row.filename}</Button>):<p>No saved renders yet.</p>}</>}
+    <details className="molecular-software"><summary>Packages</summary>
+      <p className="field-note">The catalogue of structural-biology and cheminformatics software the workbench knows, with what a probe observed: presence, never qualification; nothing is installed.</p>
+      <div className="actions"><Button variant="secondary" size="sm" isDisabled={!token||softwareBusy} onPress={async()=>{
+        setSoftwareBusy(true);
+        try{const data=await(await request(token,'/api/molecular/catalogue'+(software?'?refresh=true':''),new AbortController().signal)).json();setSoftware(data);}
+        catch(reason){setError(reason.message);}
+        finally{setSoftwareBusy(false);}
+      }}>{software?'Probe again':'Check packages'}</Button></div>
+      {software&&<div className="software-report" aria-label="Software catalogue">
+        <p className="field-note">{software.counts.present} present · {software.counts.absent} absent · {software.counts.unprobed} not probed · {software.counts.total} known</p>
+        {Object.entries(software.categories).map(([key,label])=>{const rows=software.entries.filter(e=>e.category===key);return rows.length?<div key={key}><h3>{label}</h3><ul>
+          {rows.map(e=><li key={e.id} className={e.present===true?'present':e.present===false?'absent':'unprobed'}><strong>{e.name}</strong> — {e.present===true?'present ('+e.evidence+(e.where?', '+e.where:'')+': '+e.detail+')':e.present===false?'absent ('+e.detail+')':'not probed'+(e.note?' ('+e.note+')':'')}{e.licence?' · '+e.licence:''}</li>)}
+        </ul></div>:null;})}
+        <p className="field-note">{software.licence_note}</p>
+      </div>}
+    </details>
   </div>;
 }
 

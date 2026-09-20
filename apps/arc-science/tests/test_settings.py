@@ -75,7 +75,7 @@ def test_settings_are_read_from_the_supervisor_and_replaced_with_the_revision_se
         assert c.get('/api/settings').status_code == 401
         snap = c.get('/api/settings', headers=AUTH).json()
         assert snap['settings']['seats']['planner']['provider'] == '' and len(snap['revision']) == 64
-        assert 'seats.effort' in snap['applied_live'] and 'viewer' in snap['applied_live'] and snap['stored_pending'] == ['blender']
+        assert 'seats.effort' in snap['applied_live'] and 'blender' in snap['applied_live'] and snap['stored_pending'] == []
         # Without the revision that was read, a replacement is not accepted at all.
         assert c.put('/api/settings', headers=AUTH, json={'settings': snap['settings']}).status_code == 422
         edited = snap['settings']

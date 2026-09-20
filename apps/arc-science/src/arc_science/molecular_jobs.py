@@ -26,6 +26,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator, model_validator
 
 from . import anchored
+from . import molecular_catalogue
+from . import render_presets
 from .figure_contract import read_regular, write_new
 from .figure_render import _assign_process_to_job, _close_job, _kill_on_close_job
 
@@ -47,7 +49,7 @@ Chain = Annotated[str, StringConstraints(pattern=r'^[A-Za-z0-9_.-]{1,32}$')]
 JobStatus = Literal['queued', 'rendering', 'completed', 'failed', 'cancelled', 'interrupted']
 
 
-SETTINGS = ('antibody_chains', 'antigen_chains', 'assembly', 'model_index', 'cutoff', 'width', 'samples', 'seed')
+SETTINGS = ('antibody_chains', 'antigen_chains', 'assembly', 'model_index', 'cutoff', 'width', 'samples', 'seed', 'preset')
 # Progress is read from the pipeline's own outputs as they appear, never from a claim
 # the pipeline makes about itself: the scene (contacts computed), the Blender log
 # (rendering started), the composed figure, the image checks.
@@ -76,6 +78,15 @@ class RenderRequest(BaseModel):
     width: int = Field(default=1400, ge=640, le=2400)
     samples: int = Field(default=96, ge=1, le=128)
     seed: int = Field(default=23, ge=0, le=2147483647)
+    # A named render preset from the registry; None takes the operator's default.
+    preset: str | None = Field(default=None, pattern=r'^[a-z][a-z0-9_]{0,63}$')
+
+    @field_validator('preset')
+    @classmethod
+    def known_preset(cls, value):
+        if value is not None and value not in render_presets.PRESETS:
+            raise ValueError('Unknown render preset')
+        return value
 
     @field_validator('filename')
     @classmethod
@@ -215,7 +226,10 @@ def _stop_process(process):
 
 
 class MolecularJobs:
-    def __init__(self, root: Path, authorized):
+    def __init__(self, root: Path, authorized, default_preset=None):
+        # The operator's default preset, read when a render is submitted (a callable so
+        # the settings file is consulted then, not at start).
+        self.default_preset = default_preset or (lambda: render_presets.DEFAULT_PRESET)
         self.root = Path(root) / 'molecular'
         handle = anchored.open_directory(self.root, create=True)
         anchored.close_directory(handle)
@@ -234,6 +248,9 @@ class MolecularJobs:
         self._recover()
         self.router = APIRouter(prefix='/api/molecular', dependencies=[Depends(authorized)])
         self.router.add_api_route('/capabilities', self.capabilities, methods=['GET'])
+        self.router.add_api_route('/presets', self.presets, methods=['GET'])
+        self.router.add_api_route('/catalogue', self.catalogue, methods=['GET'])
+        self.software = molecular_catalogue.Catalogue()
         self.router.add_api_route('/renders', self.list_jobs, methods=['GET'])
         self.router.add_api_route('/renders', self.submit, methods=['POST'], status_code=202)
         self.router.add_api_route('/renders/{job_id}', self.get_job, methods=['GET'])
@@ -449,11 +466,35 @@ class MolecularJobs:
             if self.probe_result is None:
                 self.probe_result = await self._probe_runtime()
         configured, reason = self.probe_result
-        return {'configured': configured, 'reason': reason, 'limits': {
+        return {'configured': configured, 'reason': reason, 'presets': self._preset_summary(), 'limits': {
             'max_source_bytes': MAX_SOURCE_BYTES, 'max_body_bytes': MAX_BODY_BYTES,
             'width': {'min': 640, 'max': 2400}, 'samples': {'min': 1, 'max': 128},
             'cutoff': {'min': .1, 'max': 10}, 'model_index': {'min': 0, 'max': 99},
             'max_jobs': MAX_RECORDS, 'deadline_seconds': RENDER_DEADLINE_SECONDS}}
+
+    def _resolved_default_preset(self):
+        """The operator's default when the registry knows it; otherwise the registry default."""
+        try:
+            wanted = self.default_preset()
+        except Exception:
+            wanted = None
+        if wanted in render_presets.PRESETS:
+            return wanted, 'settings'
+        return render_presets.DEFAULT_PRESET, 'registry' if not wanted else 'registry (settings name unknown: ' + str(wanted)[:64] + ')'
+
+    def _preset_summary(self):
+        default, source = self._resolved_default_preset()
+        return {'default': default, 'default_source': source,
+                'names': [{'name': name, 'description': p['description']} for name, p in render_presets.PRESETS.items()]}
+
+    async def catalogue(self, refresh: bool = False):
+        """The software catalogue with what the probes observed: presence, never qualification."""
+        return await self.software.report(refresh=refresh)
+
+    async def presets(self):
+        """Every preset with its full style: presentation only, never validity."""
+        default, source = self._resolved_default_preset()
+        return {**render_presets.catalogue(), 'default': default, 'default_source': source}
 
     async def list_jobs(self):
         return sorted(self.jobs.values(), key=lambda row: row['created_at'], reverse=True)[:20]
@@ -473,6 +514,8 @@ class MolecularJobs:
             parameters = RenderRequest.model_validate_json(bytes(body))
         except (ValueError, ValidationError):
             raise HTTPException(422, 'Invalid coordinate upload or rendering settings') from None
+        if parameters.preset is None:
+            parameters = parameters.model_copy(update={'preset': self._resolved_default_preset()[0]})
         settings = parameters.model_dump(include=set(SETTINGS))
         change = None
         if parameters.base_job is not None or parameters.declared_effects:
@@ -521,7 +564,8 @@ class MolecularJobs:
                 '--antigen', ','.join(parameters.antigen_chains), '--output', str(directory / 'output'),
                 '--blender-python', self.runtime, '--assembly', parameters.assembly,
                 '--model-index', str(parameters.model_index), '--cutoff', str(parameters.cutoff),
-                '--width', str(parameters.width), '--samples', str(parameters.samples), '--seed', str(parameters.seed)]
+                '--width', str(parameters.width), '--samples', str(parameters.samples), '--seed', str(parameters.seed),
+                '--preset', parameters.preset or render_presets.DEFAULT_PRESET]
 
     def _collect_assets(self, row, directory):
         output = directory / 'output'

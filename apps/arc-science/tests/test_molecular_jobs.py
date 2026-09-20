@@ -247,6 +247,61 @@ def test_a_provisional_scene_is_served_only_while_running_and_only_when_bound_to
         assert [s['stage'] for s in row['stages']][:2] == ['preparing', 'contacts_ready']
 
 
+def test_presets_are_a_registry_the_render_takes_and_the_default_follows_the_settings(tmp_path, runtime, monkeypatch):
+    from arc_science import render_presets
+    with TestClient(make_app(tmp_path)) as client:
+        assert client.get(PREFIX + '/presets').status_code == 401
+        listed = client.get(PREFIX + '/presets', headers=AUTH).json()
+        assert listed['default'] == 'publication_white' and listed['default_source'] == 'registry'
+        assert set(listed['presets']) == set(render_presets.PRESETS) and len(listed['presets']) >= 20
+        assert listed['presets']['publication_dark']['style']['background'] == 'dark'
+        assert listed['presets']['draft']['render'] == {'width': 800, 'samples': 12}
+        caps = client.get(PREFIX + '/capabilities', headers=AUTH).json()
+        assert caps['presets']['default'] == 'publication_white' and any(p['name'] == 'colourblind_safe' for p in caps['presets']['names'])
+        # An unknown preset is refused before any job exists; a known one is recorded as a setting.
+        assert client.post(PREFIX + '/renders', headers=AUTH, json={**REQUEST, 'preset': 'neon'}).status_code == 422
+        row = terminal(client, client.post(PREFIX + '/renders', headers=AUTH, json={**REQUEST, 'preset': 'grayscale'}).json()['id'])
+        assert row['settings']['preset'] == 'grayscale'
+        # Without a preset the operator's default applies; the CLI receives it.
+        jobs = client.app.state.molecular_jobs
+        jobs.default_preset = lambda: 'publication_dark'
+        commands = []
+        original = type(jobs)._command
+        monkeypatch.setattr(type(jobs), '_command', lambda self, request, root: commands.append(request.preset) or original(self, request, root))
+        row2 = terminal(client, client.post(PREFIX + '/renders', headers=AUTH, json=REQUEST).json()['id'])
+        assert row2['settings']['preset'] == 'publication_dark' and commands == ['publication_dark']
+        # A settings name the registry does not know falls back to the registry default and says so.
+        jobs.default_preset = lambda: 'mystery'
+        assert client.get(PREFIX + '/presets', headers=AUTH).json()['default_source'].startswith('registry (settings name unknown')
+        # A preset change of the same coordinates is a presentation change.
+        change = client.post(PREFIX + '/renders', headers=AUTH, json={**REQUEST, 'preset': 'warm', 'base_job': row['id'], 'declared_effects': ['presentation']})
+        assert change.status_code == 202 and change.json()['change']['derived_effects'] == ['presentation'] and change.json()['change']['changed_fields'] == ['preset']
+        terminal(client, change.json()['id'])
+
+
+def test_the_software_catalogue_reports_presence_by_probe_and_never_installs(tmp_path, runtime, monkeypatch):
+    from arc_science import molecular_catalogue
+    monkeypatch.setattr(molecular_catalogue, 'wsl_available', lambda: False)
+    with TestClient(make_app(tmp_path)) as client:
+        assert client.get(PREFIX + '/catalogue').status_code == 401
+        report = client.get(PREFIX + '/catalogue', headers=AUTH).json()
+        assert report['counts']['total'] == len(molecular_catalogue.CATALOGUE) >= 100
+        by_id = {e['id']: e for e in report['entries']}
+        # This interpreter's own modules are observed through an isolated import.
+        assert by_id['gemmi']['present'] is True and by_id['gemmi']['evidence'] == 'import' and by_id['gemmi']['where'] == 'host python'
+        assert by_id['rdkit']['present'] in (True, False) and by_id['rdkit']['licence'] == 'BSD-3-Clause'
+        # Without the WSL bench, environments and the daemon are absent, not guessed.
+        assert by_id['chai1']['present'] is False and by_id['chai1']['detail'] == 'WSL bench not reachable'
+        assert by_id['claude_science']['present'] is False
+        # Entries with no probe say so instead of claiming absence.
+        assert by_id['molstar']['present'] is None and by_id['cdk']['evidence'] is None
+        assert 'not qualification' in report['scope'] and 'confirm at the project home' in report['licence_note']
+        assert set(report['categories']) >= {'structure_prediction', 'cheminformatics', 'antibody_tools'}
+        # The report is cached until a refresh is asked for.
+        assert client.get(PREFIX + '/catalogue', headers=AUTH).json()['checked_at'] == report['checked_at']
+        assert client.get(PREFIX + '/catalogue?refresh=true', headers=AUTH).json()['checked_at'] >= report['checked_at']
+
+
 def test_asset_tampering_after_completion_is_detected(tmp_path, runtime):
     with TestClient(make_app(tmp_path)) as client:
         row = client.post(PREFIX + '/renders', headers=AUTH, json=REQUEST).json()

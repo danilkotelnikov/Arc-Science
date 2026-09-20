@@ -118,6 +118,7 @@ def main(argv=None):
     molecule.add_argument('--assembly',default='asymmetric_unit')
     molecule.add_argument('--model-index',type=int,default=0)
     molecule.add_argument('--cutoff',type=float,default=4.0)
+    molecule.add_argument('--preset',default='publication_white',help='A render preset from the registry (see arc-science presets)')
     for name,default in [('width',1400),('samples',96),('seed',23)]:
         molecule.add_argument('--'+name,type=int,default=default)
     args=parser.parse_args(argv)
@@ -153,7 +154,7 @@ def main(argv=None):
                 antigen_chains=tuple(c.strip() for c in args.antigen.split(',')),
                 model_index=args.model_index,assembly=args.assembly,cutoff=args.cutoff)
             result=render_complex(scene,args.output,blender_python=args.blender_python,
-                width=args.width,samples=args.samples,seed=args.seed)
+                width=args.width,samples=args.samples,seed=args.seed,preset=args.preset)
         elif args.command=='figure-render':
             from .figure_render import render_figure
             result=render_figure(args.asset,args.project,blender=args.blender,blender_python=args.blender_python,

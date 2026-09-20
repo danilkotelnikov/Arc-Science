@@ -340,7 +340,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     app.include_router(create_bioart_router(root,authorized))
 
     from .molecular_jobs import MolecularJobs
-    molecular_jobs=MolecularJobs(root,authorized)
+    def default_preset():
+        return ((operator_settings.current() or {}).get('blender') or {}).get('default_preset')
+    molecular_jobs=MolecularJobs(root,authorized,default_preset)
     app.state.molecular_jobs=molecular_jobs
     app.include_router(molecular_jobs.router)
 
@@ -380,8 +382,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     # snapshot and forwards a whole replacement with the revision the operator saw.
     # What the service consumes today, and what is stored for a later loop; the UI
     # shows both so nothing reads as applied when it is not.
-    APPLIED={'applied_live':['seats','seats.effort','providers','prose','mcp_servers','acp_agents','viewer'],
-             'stored_pending':['blender'],'restart_required':[]}
+    APPLIED={'applied_live':['seats','seats.effort','providers','prose','mcp_servers','acp_agents','viewer','blender'],
+             'stored_pending':[],'restart_required':[]}
     settings_writer=asyncio.Semaphore(1)
     @app.get('/api/settings',dependencies=[Depends(authorized)])
     async def settings_snapshot():

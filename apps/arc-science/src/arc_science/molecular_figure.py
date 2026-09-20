@@ -186,8 +186,10 @@ def check_images(output: Path) -> dict:
 
 
 def render_complex(scene: dict, output: Path, *, blender_python: str,
-                   width: int = 1400, samples: int = 96, seed: int = 23) -> dict:
+                   width: int = 1400, samples: int = 96, seed: int = 23, preset: str = 'publication_white') -> dict:
     """Create a fresh candidate directory. Existing candidates are never overwritten."""
+    from .render_presets import preset as render_preset
+    style=render_preset(preset)['style']
     output=Path(output).absolute()
     if output.exists(): raise FileExistsError('Candidate directory already exists: '+str(output))
     if not isinstance(width,int) or not 640<=width<=4000: raise ValueError('Width must be in [640, 4000]')
@@ -209,6 +211,7 @@ def render_complex(scene: dict, output: Path, *, blender_python: str,
     if not runtime or not Path(runtime).is_file(): raise ValueError('Blender Python executable is absent')
     output.mkdir(parents=True,exist_ok=False)
     _json(output/'scene.json',scene)
+    _json(output/'style.json',dict(preset=preset,**style))
     suffix=Path(scene['source']['path']).suffix.lower()
     (output/('source'+suffix)).write_bytes(raw)
     _json(output/'run.json',dict(status='rendering',width=width,samples=samples,seed=seed))
@@ -217,7 +220,7 @@ def render_complex(scene: dict, output: Path, *, blender_python: str,
         worker=output/'molecular_worker.py'
         worker.write_bytes(worker_bytes)
         worker_sha256=hashlib.sha256(worker_bytes).hexdigest()
-        argv=[runtime,'-I',str(worker),'--',str(output/'scene.json'),str(output),str((width-120)//2),str(samples),str(seed)]
+        argv=[runtime,'-I',str(worker),'--',str(output/'scene.json'),str(output),str((width-120)//2),str(samples),str(seed),str(output/'style.json')]
         # Reuse the bounded local renderer executor: sanitized environment,
         # process-group timeout, and capped logs; no credentials in the worker.
         from .figure_render import _execute
@@ -235,6 +238,7 @@ def render_complex(scene: dict, output: Path, *, blender_python: str,
             raise ValueError('Captured source digest changed')
         receipt=json.loads((output/'worker-receipt.json').read_text())
         if receipt['geometry_source_sha256']!=scene['source']['sha256']: raise ValueError('Worker source digest mismatch')
+        if receipt.get('style')!=style: raise ValueError('Worker did not apply the requested preset style')
         if hashlib.sha256(worker.read_bytes()).hexdigest()!=worker_sha256: raise ValueError('Worker code digest changed')
         for name in ('overview','interface','rotated'):
             if (output/(name+'.blend')).stat().st_size<1000: raise ValueError('Missing editable Blender geometry')
@@ -250,6 +254,7 @@ def render_complex(scene: dict, output: Path, *, blender_python: str,
         manifest=dict(format='molecular-artifacts/v1',source_sha256=scene['source']['sha256'],files=files,
             worker=dict(file='molecular_worker.py',sha256=worker_sha256,blender_version=receipt['blender_version']),
             selection=selection,representation=scene['representation'],composition=composition,
+            preset=preset,style=style,
             checks_passed=True,scientific_scope='Coordinate-derived geometric contacts; no affinity or hydrogen-bond inference',
             visual_review='not performed by this renderer',publication_ready=False)
         _json(output/'manifest.json',manifest)

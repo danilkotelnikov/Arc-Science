@@ -350,6 +350,11 @@ def test_default_render_emits_reviewed_candidate_settings(tmp_path, monkeypatch,
         scene=prepare_complex(source,antibody_chains=('L','H'),antigen_chains=('A',))
         with pytest.raises(RuntimeError,match='test boundary'):
             figure.render_complex(scene,output,blender_python=sys.executable)
-    # 1400-wide figure -> 640-wide molecular raster, with reviewed 96/23 settings.
+    # 1400-wide figure -> 640-wide molecular raster, with reviewed 96/23 settings, and the
+    # preset's style written beside the scene for the worker.
     assert len(commands)==1
-    assert commands[0][-3:] == ['640','96','23']
+    assert commands[0][-4:-1] == ['640','96','23'] and commands[0][-1].endswith('style.json')
+    import json
+    from arc_science.render_presets import PRESETS
+    style=json.loads((output/'style.json').read_text())
+    assert style=={'preset':'publication_white',**PRESETS['publication_white']['style']}

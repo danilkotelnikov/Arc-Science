@@ -154,3 +154,8 @@ footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e9ebed; fon
 .viewer-controls label { display: flex; flex-direction: column; gap: 2px; }
 .viewer-controls select, .viewer-controls input:not([type=checkbox]) { margin: 0; padding: 3px 6px; font-size: 12px; width: auto; }
 .viewer-controls label.check { flex-direction: row; align-items: center; gap: 4px; }
+.software-report h3 { font-size: 12px; margin: 8px 0 2px; }
+.software-report ul { margin: 0; padding-left: 16px; font-size: 12px; }
+.software-report li.present { color: #1f5c2e; }
+.software-report li.absent { color: #6b6b6b; }
+.software-report li.unprobed { color: #8a6d1f; }

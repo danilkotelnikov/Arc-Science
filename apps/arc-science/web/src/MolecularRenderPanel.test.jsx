@@ -1,6 +1,6 @@
 import React, {useState} from 'react';
 import {beforeEach, afterEach, expect, test, vi} from 'vitest';
-import {act, render, screen, waitFor} from '@testing-library/react';
+import {act, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import MolecularWorkspace from './MolecularWorkspace';
 
@@ -32,7 +32,8 @@ async function fillSource(user) {
   await user.type(screen.getByLabelText('Antigen chains'),'C');
 }
 beforeEach(()=>{
-  jobs=[];submitted={...completed,status:'queued',assets:{},contact_pairs:null};capabilities={configured:true,reason:'',limits:{max_source_bytes:750000}};calls=[];downloads=[];
+  jobs=[];submitted={...completed,status:'queued',assets:{},contact_pairs:null};capabilities={configured:true,reason:'',limits:{max_source_bytes:750000},
+    presets:{default:'publication_dark',default_source:'settings',names:[{name:'publication_white',description:'The reviewed default.'},{name:'grayscale',description:'Two greys, for print without colour.'}]}};calls=[];downloads=[];
   vi.stubGlobal('fetch',vi.fn(async(path,options={})=>{
     calls.push({path,options});
     if(path==='/api/molecular/capabilities')return json(capabilities);
@@ -43,6 +44,11 @@ beforeEach(()=>{
     if(path==='/api/settings')return json({settings:{viewer:{representation:'surface',colouring:'element',assembly:'asymmetric_unit',background:'black'}}});
     if(path==='/api/molecular/renders/job-1/events')return new Response('',{status:404});
     if(path==='/api/molecular/renders/job-1/source')return new Response('data_complex\n',{headers:{'Content-Type':'chemical/x-mmcif'}});
+    if(path.startsWith('/api/molecular/catalogue'))return json({checked_at:1,counts:{present:1,absent:1,unprobed:1,total:3},categories:{cheminformatics:'Cheminformatics',visualization:'Visualisation and rendering'},
+      licence_note:'licence names as recorded; confirm at the project home',scope:'presence, not qualification',entries:[
+        {id:'rdkit',name:'RDKit',category:'cheminformatics',licence:'BSD-3-Clause',present:true,evidence:'import',where:'host python',detail:'2025.09.1'},
+        {id:'obabel',name:'Open Babel',category:'cheminformatics',licence:'GPL-2.0',present:false,detail:'not on PATH'},
+        {id:'molstar',name:'Mol*',category:'visualization',licence:'MIT',present:null,note:'bundled viewer in this workbench'}]});
     if(path==='/api/molecular/renders/job-1/scene')return new Response(JSON.stringify({contacts:[{antibody_residue:'A:1',antigen_residue:'C:1'}]}),{status:200,headers:{'Content-Type':'application/json','X-Arc-Scene':'verified'}});
     throw new Error('Unexpected path: '+path);
   }));
@@ -63,6 +69,11 @@ test('loads explicitly and submits coordinates, author chains and reproducible d
   const sent=calls.find(call=>call.path==='/api/molecular/renders'&&call.options.method==='POST');
   expect(sent.options.headers.Authorization).toBe('Bearer operator');
   expect(JSON.parse(sent.options.body)).toEqual({filename:'complex.cif',source_text:'data_complex\n# coordinates',antibody_chains:['A','B'],antigen_chains:['C'],assembly:'asymmetric_unit',model_index:0,cutoff:4,width:1400,samples:96,seed:23});
+  // A chosen preset travels with the request; the default is left to the service.
+  await user.click(screen.getByText('Assembly & render settings'));
+  expect(screen.getByLabelText('Render preset')).toHaveDisplayValue('default (publication_dark)');
+  await user.selectOptions(screen.getByLabelText('Render preset'),'grayscale');
+  expect(screen.getByText('Two greys, for print without colour.')).toBeInTheDocument();
   expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
 });
 
@@ -86,6 +97,20 @@ test('completed render uses an authenticated blob preview and downloads, then cl
   expect(calls.find(call=>call.path==='/api/molecular/renders/job-1/source').options.headers.Authorization).toBe('Bearer operator');
   expect(calls.every(call=>!call.path.includes('/api/examples/'))).toBe(true);
   rendered.unmount();expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:molecular');
+});
+
+test('the package catalogue reports what each probe observed, never more',async()=>{
+  const user=userEvent.setup();render(<Harness/>);await openPanel(user);
+  await user.click(screen.getByText('Packages'));
+  await user.click(screen.getByRole('button',{name:'Check packages'}));
+  const report=within(await screen.findByLabelText('Software catalogue'));
+  expect(report.getByText(/1 present · 1 absent · 1 not probed · 3 known/)).toBeInTheDocument();
+  expect(report.getByText(/present \(import, host python: 2025\.09\.1\)/)).toBeInTheDocument();
+  expect(report.getByText(/absent \(not on PATH\)/)).toBeInTheDocument();
+  expect(report.getByText(/not probed \(bundled viewer in this workbench\)/)).toBeInTheDocument();
+  expect(calls.find(c=>c.path.startsWith('/api/molecular/catalogue')).options.headers.Authorization).toBe('Bearer operator');
+  await user.click(screen.getByRole('button',{name:'Probe again'}));
+  await waitFor(()=>expect(calls.filter(c=>c.path==='/api/molecular/catalogue?refresh=true')).toHaveLength(1));
 });
 
 test('shows unavailable runtime while retained completed renders remain available',async()=>{

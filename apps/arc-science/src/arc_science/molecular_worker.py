@@ -131,7 +131,31 @@ residues, avoiding fictitious links across omitted segments or partner chains.
     return bonds
 
 
-def atomic_envelope(positions, *, spacing=.6):
+DEFAULT_STYLE = {'background': 'transparent', 'world_strength': .7, 'roughness': .72, 'specular': .22,
+                 'antibody_color': '#91AEC5', 'antigen_color': '#C4C9CC', 'isovalue': .45, 'stick_radius': .13}
+WORLD_COLORS = {'transparent': (1, 1, 1), 'white': (1, 1, 1), 'light': (.92, .92, .92), 'dark': (.12, .12, .13), 'black': (0, 0, 0)}
+
+
+def load_style(path):
+    """The preset's style as written by the pipeline, or the reviewed default; every
+    value is bounded here again so a stray file cannot steer the renderer."""
+    style = dict(DEFAULT_STYLE)
+    if path:
+        given = json.loads(Path(path).read_text())
+        for key in DEFAULT_STYLE:
+            if key in given:
+                style[key] = given[key]
+    if style['background'] not in WORLD_COLORS: raise ValueError('Unknown background')
+    for key, low, high in (('world_strength', 0, 3), ('roughness', 0, 1), ('specular', 0, 1), ('isovalue', .2, .8), ('stick_radius', .1, .5)):
+        if not isinstance(style[key], (int, float)) or not low <= style[key] <= high: raise ValueError('Style value out of range: ' + key)
+    for key in ('antibody_color', 'antigen_color'):
+        value = style[key]
+        if not (isinstance(value, str) and len(value) == 7 and value[0] == '#' and all(c in '0123456789abcdefABCDEF' for c in value[1:])):
+            raise ValueError('Style colour is not a hex triplet: ' + key)
+    return style
+
+
+def atomic_envelope(positions, *, spacing=.6, isovalue=.45):
     """A bounded Gaussian density isosurface, preserving deposited coordinates."""
     import numpy as np
     from scipy.ndimage import gaussian_filter
@@ -162,13 +186,13 @@ def atomic_envelope(positions, *, spacing=.6):
     sigma = 1.0
     gaussian_filter(grid,sigma/spacing,output=grid)
     grid *= (math.sqrt(2*math.pi)*sigma/spacing)**3
-    vertices, faces, _, _ = marching_cubes(grid, level=.45, spacing=(spacing,)*3)
+    vertices, faces, _, _ = marching_cubes(grid, level=isovalue, spacing=(spacing,)*3)
     vertices += origin
     return vertices.tolist(),faces.tolist(),dict(grid_voxels=int(math.prod(shape)),spacing=spacing,
-        gaussian_sigma=sigma,isovalue=.45,representation='illustrative atomic envelope')
+        gaussian_sigma=sigma,isovalue=isovalue,representation='illustrative atomic envelope')
 
 
-def _stick_mesh(atoms, bonds):
+def _stick_mesh(atoms, bonds, stick_radius=.13):
     """Batch spheres and cylinders into a single editable residue mesh."""
     import numpy as np
     vertices, faces = [], []
@@ -196,17 +220,18 @@ def _stick_mesh(atoms, bonds):
         for end in (p,q):
             for n in range(8):
                 angle=2*math.pi*n/8
-                vertices.append((end+.13*(u*math.cos(angle)+v*math.sin(angle))).tolist())
+                vertices.append((end+stick_radius*(u*math.cos(angle)+v*math.sin(angle))).tolist())
         for n in range(8):
             faces.append((start+n,start+(n+1)%8,start+(n+1)%8+8,start+n+8))
     return vertices,faces
 
 
-def main(scene_path, output, width, samples, seed):
+def main(scene_path, output, width, samples, seed, style_path=None):
     import bpy
     import numpy as np
     from mathutils import Matrix, Vector
     scene_data=json.loads(Path(scene_path).read_text())
+    style=load_style(style_path)
     output=Path(output)
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene=bpy.context.scene
@@ -216,16 +241,17 @@ def main(scene_path, output, width, samples, seed):
     scene.render.threads_mode='FIXED'; scene.render.threads=4
     scene.render.resolution_x=width; scene.render.resolution_y=round(width*.66)
     scene.render.resolution_percentage=100
-    scene.render.film_transparent=True
+    scene.render.film_transparent=style['background']=='transparent'
     scene.render.image_settings.file_format='PNG'; scene.render.image_settings.color_mode='RGBA'
     scene.render.image_settings.color_depth='8'
     scene.view_settings.view_transform='Standard'
-    scene.world=bpy.data.worlds.new('Soft white environment')
+    scene.world=bpy.data.worlds.new('Preset environment')
     scene.world.use_nodes=True
-    scene.world.node_tree.nodes['Background'].inputs['Color'].default_value=(1,1,1,1)
-    scene.world.node_tree.nodes['Background'].inputs['Strength'].default_value=.7
+    scene.world.node_tree.nodes['Background'].inputs['Color'].default_value=(*WORLD_COLORS[style['background']],1)
+    scene.world.node_tree.nodes['Background'].inputs['Strength'].default_value=style['world_strength']
     materials={}
-    for name,color in scene_data['representation']['colors'].items():
+    partner_colors={'antibody':style['antibody_color'],'antigen':style['antigen_color']}
+    for name,color in partner_colors.items():
         rgb=[int(color[i:i+2],16)/255 for i in (1,3,5)]
         # Material inputs are linear; preserve the specified sRGB partner hues.
         rgb=[v/12.92 if v<=.04045 else ((v+.055)/1.055)**2.4 for v in rgb]
@@ -233,8 +259,8 @@ def main(scene_path, output, width, samples, seed):
         material.use_nodes=True
         shader=material.node_tree.nodes['Principled BSDF']
         shader.inputs['Base Color'].default_value=(*rgb,1)
-        shader.inputs['Roughness'].default_value=.72
-        shader.inputs['Specular IOR Level'].default_value=.22
+        shader.inputs['Roughness'].default_value=style['roughness']
+        shader.inputs['Specular IOR Level'].default_value=style['specular']
         materials[name]=material
     def mesh_object(name,vertices,faces,partner):
         mesh=bpy.data.meshes.new(name); mesh.from_pydata(vertices,[],faces); mesh.update()
@@ -245,7 +271,7 @@ def main(scene_path, output, width, samples, seed):
     all_atoms=scene_data['atoms']
     envelope_objects=[]; envelope_points=[]; geometries=[]
     for chain in scene_data['chains']:
-        vertices,faces,info=atomic_envelope([all_atoms[i]['position'] for i in chain['atom_indices']])
+        vertices,faces,info=atomic_envelope([all_atoms[i]['position'] for i in chain['atom_indices']],isovalue=style['isovalue'])
         obj=mesh_object('Envelope author chain '+chain['id'],vertices,faces,chain['partner'])
         obj['representation']='illustrative atomic envelope; Gaussian density, not SES'
         obj['author_chain']=chain['id']
@@ -259,7 +285,7 @@ def main(scene_path, output, width, samples, seed):
     for residue in scene_data['residues']:
         if residue['id'] not in selected: continue
         atoms=[all_atoms[i] for i in residue['atom_indices']]
-        vertices,faces=_stick_mesh(atoms,bonds)
+        vertices,faces=_stick_mesh(atoms,bonds,style['stick_radius'])
         obj=mesh_object(residue['name']+' '+residue['id'],vertices,faces,residue['partner'])
         obj['residue_id']=residue['id']; obj['model_number']=scene_data['selection']['model_number']
         obj['assembly']=scene_data['selection']['assembly']
@@ -314,7 +340,7 @@ def main(scene_path, output, width, samples, seed):
             residue_ids=sorted(selected if view=='interface' else detail_residues) if detailed else [])
         view_records[view]['annotations']=view_annotations(scene_data,view,view_records[view])
     receipt=dict(format='molecular-worker/v1',blender_version=bpy.app.version_string,
-                 engine='CYCLES',device='CPU',samples=samples,seed=seed,
+                 engine='CYCLES',device='CPU',samples=samples,seed=seed,style=style,
                  envelope_geometry=geometries,covalent_bond_count=len(bonds),views=view_records,
                  geometry_source_sha256=scene_data['source']['sha256'])
     (output/'worker-receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
@@ -322,4 +348,4 @@ def main(scene_path, output, width, samples, seed):
 
 if __name__=='__main__':
     args=sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else sys.argv[1:]
-    main(args[0],args[1],int(args[2]),int(args[3]),int(args[4]))
+    main(args[0],args[1],int(args[2]),int(args[3]),int(args[4]),args[5] if len(args)>5 else None)
