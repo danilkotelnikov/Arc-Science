@@ -351,7 +351,7 @@ a real provider (mock transport only).
 | A product name refuses even an innocent instruction | medium (accepted, non-blocking) | Recorded as a conservative false refusal; the refusal names the phrase |
 | Recorded gates: Claude and Gemini seats unverified live; no real API-key provider exercised | gate | Unverified |
 
-## Loop 13 — open items, Rust roadmap, final qualification (`0317f6b`, `2deb6a9`, `HEAD`)
+## Loop 13 — open items, Rust roadmap, final qualification (`0317f6b`, `2deb6a9`, `8a7f730`)
 
 Secret files. The access token, stored credentials and the prose audit key were created
 with mode 0600, which on Windows only toggles the read-only bit: the live token was
