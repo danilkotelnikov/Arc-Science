@@ -111,8 +111,10 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   no version mark, one boundary sentence per workspace. Loop 3 (settings): a
   supervisor-owned `settings.toml` with seats, providers, MCP/ACP lists and a Settings
   workspace; writes carry the revision that was read. Loop 4 (seats and logins):
-  each seat its own transport — Claude Code, Codex and Gemini CLI logins run tool-less
-  in a private directory, a Gemini API adapter, effort mapped per transport, the whole
+  each seat its own transport — Claude Code, Codex and Gemini CLI logins run with
+  their tools switched off through each CLI's own flags (a version-sensitive contract:
+  Codex's strict config and skills budget are watched) in a private directory, a
+  Gemini API adapter, effort mapped per transport, the whole
   route bound to a mission at its first start, a Codex seat's identity recorded as
   requested-only and never counted as an independent reviewer; live: Codex answered,
   Gemini CLI tier ineligible, Claude credits exhausted. Loops 6–7 (connectors):
@@ -122,7 +124,8 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   viewer as its own chunk, coordinates drawn on upload, pipeline stages streamed as
   observations with the provisional scene overlaid while Blender runs. Loops 10–11
   (catalogue, presets): 101 packages probed for presence with indirect evidence kept
-  apart; nineteen style-only render presets bounded again by the worker. Loop 12
+  apart; nineteen render presets (style, plus two geometry keys whose change is
+  derived as a change of scientific depiction) bounded again by the worker. Loop 12
   (humane prose): a research digest and the behaviour derived from it
   (`arc-humane-prose-2`, also a skill), local diagnostics as observations, a consented
   seat rewrite on either transport that keeps every protected span or returns nothing,

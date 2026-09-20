@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import stat
-import subprocess
 
 _POSIX = os.name != 'nt'
 _DIR_FLAGS = os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0) | getattr(os, 'O_NOFOLLOW', 0)
@@ -241,32 +240,190 @@ def as_path(handle):
     return None if _POSIX else handle
 
 
+def _windows_sid() -> str:
+    """The SID of the account this process runs as, from its own token."""
+    import ctypes
+    from ctypes import wintypes
+    advapi32 = ctypes.WinDLL('advapi32', use_last_error=True)
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    advapi32.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    advapi32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):  # TOKEN_QUERY
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        size = wintypes.DWORD()
+        advapi32.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))  # TokenUser
+        buffer = ctypes.create_string_buffer(size.value)
+        if not advapi32.GetTokenInformation(token, 1, buffer, size, ctypes.byref(size)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        sid = ctypes.c_void_p.from_buffer(buffer).value  # SID_AND_ATTRIBUTES.Sid
+        text = wintypes.LPWSTR()
+        if not advapi32.ConvertSidToStringSidW(sid, ctypes.byref(text)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return text.value
+        finally:
+            kernel32.LocalFree(text)
+    finally:
+        kernel32.CloseHandle(token)
+
+
+_SE_FILE_OBJECT = 1
+_DACL = 0x00000004
+_PROTECTED_DACL = 0x80000000
+
+
+def _windows_dacl(path: str) -> str:
+    """The file's discretionary ACL as an SDDL string, read from the object itself."""
+    import ctypes
+    from ctypes import wintypes
+    advapi32 = ctypes.WinDLL('advapi32', use_last_error=True)
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    advapi32.GetNamedSecurityInfoW.argtypes = [wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p,
+                                               ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+                                                                              ctypes.POINTER(wintypes.LPWSTR), ctypes.POINTER(wintypes.ULONG)]
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    descriptor = ctypes.c_void_p()
+    dacl = ctypes.c_void_p()
+    error = advapi32.GetNamedSecurityInfoW(path, _SE_FILE_OBJECT, _DACL, None, None, ctypes.byref(dacl), None, ctypes.byref(descriptor))
+    if error:
+        raise ctypes.WinError(error)
+    try:
+        text = wintypes.LPWSTR()
+        length = wintypes.ULONG()
+        if not advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, 1, _DACL, ctypes.byref(text), ctypes.byref(length)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return text.value
+        finally:
+            kernel32.LocalFree(text)
+    finally:
+        kernel32.LocalFree(descriptor)
+
+
+def _windows_set_dacl(path: str, sddl: str) -> str:
+    """Replace the object's DACL with the one `sddl` describes, protected from inheritance;
+    returns the canonical SDDL of what was requested (well-known SIDs abbreviated as the
+    API abbreviates them), for an exact comparison with what is read back."""
+    import ctypes
+    from ctypes import wintypes
+    advapi32 = ctypes.WinDLL('advapi32', use_last_error=True)
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p),
+                                                                              ctypes.POINTER(wintypes.ULONG)]
+    advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+                                                                              ctypes.POINTER(wintypes.LPWSTR), ctypes.POINTER(wintypes.ULONG)]
+    advapi32.GetSecurityDescriptorDacl.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.BOOL), ctypes.POINTER(ctypes.c_void_p),
+                                                   ctypes.POINTER(wintypes.BOOL)]
+    advapi32.SetNamedSecurityInfoW.argtypes = [wintypes.LPWSTR, ctypes.c_int, wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p,
+                                               ctypes.c_void_p, ctypes.c_void_p]
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    descriptor = ctypes.c_void_p()
+    size = wintypes.ULONG()
+    if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, ctypes.byref(descriptor), ctypes.byref(size)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        present = wintypes.BOOL()
+        dacl = ctypes.c_void_p()
+        defaulted = wintypes.BOOL()
+        if not advapi32.GetSecurityDescriptorDacl(descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)) or not present.value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        error = advapi32.SetNamedSecurityInfoW(path, _SE_FILE_OBJECT, _DACL | _PROTECTED_DACL, None, None, dacl, None)
+        if error:
+            raise ctypes.WinError(error)
+        text = wintypes.LPWSTR()
+        length = wintypes.ULONG()
+        if not advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, 1, _DACL, ctypes.byref(text), ctypes.byref(length)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return text.value
+        finally:
+            kernel32.LocalFree(text)
+    finally:
+        kernel32.LocalFree(descriptor)
+
+
+def _owner_only_sddl(path: Path) -> str:
+    # One allow entry, full control, for the account this process runs as; a directory's
+    # entry is inherited by what is created inside it, so a secret file is restricted
+    # from its first byte. Nothing for SYSTEM or Administrators: owner-only means that.
+    flags = 'OICI' if path.is_dir() else ''
+    return 'D:P(A;' + flags + ';FA;;;' + _windows_sid() + ')'
+
+
 def owner_only(path) -> str:
-    """Restrict a secret file (token, credential, audit key) to its owner. POSIX: mode
-    0600. Windows: chmod only toggles the read-only bit, so the inherited ACL is replaced
-    by one entry for the current account with `icacls`; the verdict is returned for the
-    record and a failure leaves the file as it was, never raises."""
+    """Restrict a secret file or directory (the data directory, a token, a credential, the
+    audit key) to the account running this process. POSIX: mode 0600 (0700 for a
+    directory). Windows: the mode only toggles the read-only bit, so the object's DACL
+    is replaced by one protected entry for this account and read back; anything else
+    raises PermissionError, and callers refuse to start, store or use the secret."""
     path = Path(path)
     if os.name != 'nt':
-        path.chmod(0o600)
-        return 'mode 0600'
-    account = os.environ.get('USERNAME') or ''
-    if not account:
-        return 'ACL not applied: no account name'
+        path.chmod(0o700 if path.is_dir() else 0o600)
+        if not owner_only_holds(path):
+            raise PermissionError('Cannot restrict ' + str(path) + ' to its owner')
+        return 'mode 0700' if path.is_dir() else 'mode 0600'
     try:
-        done = subprocess.run(['icacls', str(path), '/inheritance:r', '/grant:r', account + ':F'],
-                              capture_output=True, text=True, errors='replace', timeout=30)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return 'ACL not applied: ' + str(error)[:120]
-    return 'owner-only ACL' if done.returncode == 0 else 'ACL not applied: ' + (done.stderr or done.stdout).strip()[:200]
+        wanted = _windows_set_dacl(str(path), _owner_only_sddl(path))
+        actual = _windows_dacl(str(path))
+    except OSError as error:
+        raise PermissionError('Cannot restrict ' + str(path) + ' to its owner: ' + str(error)[:160]) from None
+    if not _dacl_matches(actual, wanted):
+        raise PermissionError('The access entries of ' + str(path) + ' did not take: ' + actual[:200])
+    return 'owner-only DACL'
+
+
+def _dacl_matches(actual: str, wanted: str) -> bool:
+    """The read-back DACL is protected (P) and its entries are exactly the wanted ones; the
+    AI flag the API adds to record how the DACL was written carries no permission."""
+    if not (actual.startswith('D:') and wanted.startswith('D:')):
+        return False
+    flags, _, entries = actual[2:].partition('(')
+    return 'P' in flags and entries == wanted[2:].partition('(')[2]
 
 
 def owner_only_holds(path) -> bool:
-    """Whether the file is readable by its owner alone: mode 0600 on POSIX; on Windows one
-    explicit access entry and nothing inherited (read back from `icacls`)."""
+    """Whether the object is accessible to this account alone: the exact mode on POSIX;
+    on Windows a protected DACL whose only entry is this account's, read back from the
+    object (a different trustee, an extra entry or an inheritable DACL all fail)."""
     path = Path(path)
     if os.name != 'nt':
-        return stat.S_IMODE(path.stat().st_mode) == 0o600
-    done = subprocess.run(['icacls', str(path)], capture_output=True, text=True, errors='replace', timeout=30)
-    entries = [line for line in done.stdout.splitlines() if ':(' in line]
-    return done.returncode == 0 and len(entries) == 1 and '(I)' not in entries[0]
+        return stat.S_IMODE(path.stat().st_mode) == (0o700 if path.is_dir() else 0o600)
+    try:
+        return _dacl_matches(_windows_dacl(str(path)), _canonical_sddl(_owner_only_sddl(path)))
+    except OSError:
+        return False
+
+
+def _canonical_sddl(sddl: str) -> str:
+    """The SDDL as the API writes it (well-known accounts abbreviated), without touching any object."""
+    import ctypes
+    from ctypes import wintypes
+    advapi32 = ctypes.WinDLL('advapi32', use_last_error=True)
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p),
+                                                                              ctypes.POINTER(wintypes.ULONG)]
+    advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+                                                                              ctypes.POINTER(wintypes.LPWSTR), ctypes.POINTER(wintypes.ULONG)]
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    descriptor = ctypes.c_void_p()
+    size = wintypes.ULONG()
+    if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, ctypes.byref(descriptor), ctypes.byref(size)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        text = wintypes.LPWSTR()
+        length = wintypes.ULONG()
+        if not advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, 1, _DACL, ctypes.byref(text), ctypes.byref(length)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return text.value
+        finally:
+            kernel32.LocalFree(text)
+    finally:
+        kernel32.LocalFree(descriptor)

@@ -315,6 +315,9 @@ def combine_trusted_tools(*collections):
 def create_app(*,data_dir:Path|None=None,token:str|None=None):
     root=Path(data_dir or os.environ.get('ARC_DATA_DIR','./data')).resolve()
     root.mkdir(parents=True,exist_ok=True,mode=0o700)
+    # The data directory is the operator's alone before any secret is written into it;
+    # a PermissionError here refuses the start rather than serving with an open token.
+    anchored.owner_only(root)
     if token is None:
         token_path=Path(os.environ.get('ARC_TOKEN_FILE',str(root/'access.token')))
         if not token_path.exists():

@@ -212,11 +212,17 @@ class Detector:
 
     def _key(self) -> bytes:
         """The audit key: created exclusively (never through a link) with mode 0600 and read
-        without following links; a key that is not exactly 32 bytes is refused. Like the
-        service token file it is restricted to its owner once per process (an ACL entry
-        on Windows, where the mode alone does nothing)."""
+        without following links; a key that is not exactly 32 bytes is refused. Its
+        directory and the key itself are restricted to the owner (an exact DACL on
+        Windows, where the mode alone does nothing), verified once per process and
+        refused until they hold."""
         from . import anchored
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not self._key_protected:
+            try:
+                anchored.owner_only(self.root)
+            except PermissionError as error:
+                raise ProseRefused('audit_key', str(error)[:300]) from None
         handle = anchored.open_directory(self.root)
         try:
             try:
@@ -229,7 +235,10 @@ class Detector:
             with os.fdopen(anchored.open_read_fd(handle, 'audit.key'), 'rb') as source:
                 key = source.read(64)
             if not self._key_protected:
-                anchored.owner_only(self.root / 'audit.key')
+                try:
+                    anchored.owner_only(self.root / 'audit.key')
+                except PermissionError as error:
+                    raise ProseRefused('audit_key', str(error)[:300]) from None
                 self._key_protected = True
         finally:
             anchored.close_directory(handle)

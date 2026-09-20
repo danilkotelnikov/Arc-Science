@@ -29,10 +29,20 @@ for the rest, with the boundary each step keeps. Nothing here is a schedule.
 
 ## The order for the rest
 
-Each step moves one module across the existing process boundary and keeps the HTTP
-contract, the tests and the provenance records unchanged; a step is done when the
-Python module is deleted and every suite is green against the Rust replacement.
+Each step moves one module across a process boundary and keeps the HTTP contract,
+the tests and the provenance records unchanged; a step is done when the Python module
+is deleted and every suite is green against the Rust replacement.
 
+0. **The science protocol (prerequisite).** Today the only Rust↔Python boundaries are
+   the supervisor's process control, the settings commands and the memory worker's
+   stdio protocol; nothing lets a Rust service invoke a Python mission or molecular
+   worker as a bounded call. Before step 1 (which needs the service to ask the
+   supervisor for a grant) and step 6 (which needs Rust to drive the Python science),
+   define one local IPC contract: authenticated by the same in-memory token, bounded
+   in request and response size, with cancellation, streamed progress (the stage
+   observations the viewer already consumes), artifact hand-over by digest, and the
+   per-call provenance record in the same fields the seats use. Until it exists, the
+   steps below that cross it are plans, not work in progress.
 1. **Secret files and the credential store** — `credential_path`, `_secret`, the
    token file and the audit key move to the supervisor (`arc-science credential`
    already exists as a Python command; the supervisor owns the settings that name the

@@ -139,7 +139,11 @@ def main(argv=None):
             path=credential_path(args.name,args.data)
             from . import anchored
             path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-            path.write_text(value+'\n');protection=anchored.owner_only(path)
+            anchored.owner_only(path.parent)  # before the secret exists
+            path.write_text(value+'\n')
+            try:protection=anchored.owner_only(path)
+            except PermissionError:
+                path.unlink(missing_ok=True);raise
             print('Stored at '+str(path.resolve())+' ('+protection+')');return 0
         if args.command=='fixture':result=fixture(args.output,args.seed)
         elif args.command=='verify':result=verify_capsule(args.capsule.read_bytes())
