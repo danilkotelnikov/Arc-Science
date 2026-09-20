@@ -27,6 +27,19 @@ enum Action {
         /// Python executable or venv interpreter path; it is not run during init.
         #[arg(long)]
         python: Option<String>,
+        /// Discover Python, the package root and sibling components (runs the
+        /// interpreter once to read its version and import the package).
+        #[arg(long)]
+        auto: bool,
+    },
+    /// Print what a launch would do, as JSON: URL, serve arguments, and each
+    /// readiness check with its result. Runs the interpreter once; starts nothing.
+    StartupPlan,
+    /// Discover the runtime and print it as JSON; with --apply, fill the empty
+    /// fields of an existing arc-science.toml (never overwriting a set one).
+    Discover {
+        #[arg(long)]
+        apply: bool,
     },
     /// Validate and print configuration with resolved project paths.
     Config,
@@ -54,9 +67,44 @@ fn run() -> Result<i32> {
     let cli = Cli::parse();
     let project = config::project_root(&cli.project)?;
     match cli.command {
-        Action::Init { python } => {
-            config::initialize(&project, python.as_deref())?;
+        Action::Init { python, auto } => {
+            if auto {
+                let found = arc_science_native::discover::run();
+                config::initialize_discovered(&project, python.as_deref(), &found)?;
+                for note in &found.notes {
+                    eprintln!("discovery: {note}");
+                }
+            } else {
+                config::initialize(&project, python.as_deref())?;
+            }
             println!("Created {}", project.join(config::CONFIG_FILE).display());
+        }
+        Action::Discover { apply } => {
+            let found = arc_science_native::discover::run();
+            let filled = if apply {
+                config::apply_discovery(&project, &found)?
+            } else {
+                Vec::new()
+            };
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "python": found.python.as_ref().map(|p| p.display().to_string()),
+                    "python_version": found.python_version,
+                    "package_path": found.package_path.as_ref().map(|p| p.display().to_string()),
+                    "memory_worker": found.memory_worker.as_ref().map(|p| p.display().to_string()),
+                    "svg2png": found.svg2png.as_ref().map(|p| p.display().to_string()),
+                    "notes": found.notes,
+                    "applied": filled,
+                }))?
+            );
+        }
+        Action::StartupPlan => {
+            let config = Config::load(&project)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&process::startup_plan(&config, &project))?
+            );
         }
         Action::Config => println!("{}", toml::to_string_pretty(&Config::load(&project)?)?),
         Action::Doctor => return process::doctor(&Config::load(&project)?, &project),

@@ -1,5 +1,15 @@
 # Arc Science native supervisor
 
+Launch without a shell: `init --auto` discovers the interpreter (`py -3.12`,
+`py -3.11`, `py -3`, `python`, `python3`; resolved to `sys.executable`, 3.11+
+required), the package root (`ARC_PACKAGE_PATH`, `lib/python` beside the executable,
+or `apps/arc-science/src` in the development layout) and the sibling components
+(`arc-memory-worker`, `arc-svg2png`); `discover --apply` fills only the empty fields
+of an existing configuration; `startup-plan` prints the URL, the serve arguments and
+each readiness check as JSON. `serve` sets `PYTHONUTF8`, `PYTHONPATH` from
+`worker.package_path` and the `ARC_*` component variables from `[components]`, so no
+launcher environment is needed.
+
 **2026-09-18 desktop integration:** `serve --parent-stdin` opts into parent-owned
 lifetime. Closing the parent's stdin pipe cancels the existing worker process
 group/Windows JobObject; ordinary `serve` and `worker` keep their existing stdin-EOF

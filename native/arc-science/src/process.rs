@@ -240,6 +240,9 @@ pub fn serve(
         .stderr(Stdio::inherit())
         .env("ARC_DATA_DIR", &config.worker.data)
         .env(BRIDGE_KEYS[0], &config.bioart.cache_dir);
+    for (key, value) in config.worker_environment() {
+        command.env(key, value);
+    }
     for (key, value) in BRIDGE_KEYS[1..].iter().zip([
         config.bioart.max_metadata_bytes,
         config.bioart.max_file_bytes,
@@ -300,4 +303,62 @@ pub fn serve(
     };
     guard.0.take();
     Ok(result)
+}
+
+/// Everything a launcher needs, computed once and checked here so the desktop shell
+/// never parses the configuration itself.
+pub fn startup_plan(config: &Config, project: &Path) -> serde_json::Value {
+    let host = if config.worker.host.contains(':') {
+        format!("[{}]", config.worker.host)
+    } else {
+        config.worker.host.clone()
+    };
+    let python = executable(&config.worker.python, project);
+    let mut checks = Vec::new();
+    let mut ok = true;
+    let mut check = |name: &str, passed: bool, detail: String| {
+        ok &= passed;
+        checks.push(serde_json::json!({"name": name, "ok": passed, "detail": detail}));
+    };
+    check(
+        "python",
+        python.is_some(),
+        match &python {
+            Some(path) => path.display().to_string(),
+            None => format!("{} is not an executable file", config.worker.python),
+        },
+    );
+    match (&python, &config.worker.package_path) {
+        (Some(python), Some(package)) => match crate::discover::import_check(python, package) {
+            Ok(detail) => check("package", true, detail),
+            Err(detail) => check("package", false, detail),
+        },
+        (Some(python), None) => match crate::discover::import_check(python, Path::new("")) {
+            Ok(detail) => check("package", true, detail + " (installed in the interpreter)"),
+            Err(_) => check(
+                "package",
+                false,
+                "arc_science is not installed for this interpreter and worker.package_path is not set".into(),
+            ),
+        },
+        (None, _) => check("package", false, "no interpreter to import with".into()),
+    }
+    for (name, path) in [
+        ("memory_worker", &config.components.memory_worker),
+        ("svg2png", &config.components.svg2png),
+        ("blender_python", &config.components.blender_python),
+    ] {
+        checks.push(serde_json::json!({
+            "name": name, "ok": true, "optional": true,
+            "detail": path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "not configured".into())
+        }));
+    }
+    serde_json::json!({
+        "project": project.display().to_string(),
+        "url": format!("http://{host}:{}/", config.worker.port),
+        "serve": ["--project", project.display().to_string(), "serve", "--parent-stdin"],
+        "data": config.worker.data.display().to_string(),
+        "ready": ok,
+        "checks": checks,
+    })
 }

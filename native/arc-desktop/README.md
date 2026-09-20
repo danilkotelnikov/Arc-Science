@@ -1,9 +1,20 @@
 # Arc Science desktop
 
-For a configured Windows checkout, [the PowerShell launcher](../../scripts/start-arc-science.ps1)
-selects the native supervisor and memory worker with literal argument vectors:
-`./scripts/start-arc-science.ps1 -Build` for the first build, then omit `-Build`.
-It supports `-ProjectPath`, `-Python`, optional `-BlenderPython` and headless `-CheckStartup`.
+`Arc Science.exe` starts on its own. Without any `ARC_DESKTOP_*` environment it
+finds the supervisor (`ARC_DESKTOP_SUPERVISOR`, a sibling `arc-science-native.exe`,
+the development layout `native/arc-science/target/release`, then `PATH`), uses the
+workspace `ARC_DESKTOP_PROJECT` or `%LOCALAPPDATA%\ArcScience\workspace`, runs
+`init --auto` when no `arc-science.toml` exists (Python, package root and native
+components are discovered; the interpreter runs once to report its version and
+import the package), reads `startup-plan`, and — if the plan is not ready — lets
+`discover --apply` fill the empty fields of an older configuration. The window opens
+immediately with the plan's checks; the service starts on a thread; the workbench
+loads when `/health` answers with the service identity. A failure is shown in the
+window and in a native dialog with the supervisor's last stderr lines.
+
+[The PowerShell launcher](../../scripts/start-arc-science.ps1) remains for
+`-Build`, `-ProjectPath`, `-Python`, optional `-BlenderPython` and headless
+`-CheckStartup`; it sets the explicit environment below, which always wins.
 It does not install Python dependencies or overwrite an existing project configuration.
 
 A Rust desktop host for the existing local Python service and compiled React

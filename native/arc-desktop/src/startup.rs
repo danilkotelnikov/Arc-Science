@@ -4,8 +4,12 @@ use std::{
     ffi::OsString,
     net::IpAddr,
     process::{Child, Command, Stdio},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+
+/// How much of the supervisor's stderr is kept for a failure report.
+const STDERR_TAIL: usize = 16 * 1024;
 
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
 const POLL: Duration = Duration::from_millis(100);
@@ -90,9 +94,24 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn from_env() -> Result<Self, String> {
-        // Capture once: health, navigation and launch all use the same configuration.
-        Self::parse(&std::env::vars_os().collect())
+    /// Capture once: health, navigation and launch all use the same configuration.
+    /// With no launcher environment at all, the shell configures itself through the
+    /// native supervisor (a plain double-click).
+    pub fn from_env() -> Result<(Self, Option<crate::launch::Plan>), String> {
+        let env: BTreeMap<OsString, OsString> = std::env::vars_os().collect();
+        let explicit = [
+            "ARC_DESKTOP_EXECUTABLE",
+            "ARC_DESKTOP_SERVE",
+            "ARC_DESKTOP_ARG_COUNT",
+        ]
+        .iter()
+        .any(|key| env.contains_key(std::ffi::OsStr::new(key)));
+        if explicit {
+            return Ok((Self::parse(&env)?, None));
+        }
+        let timeout = Self::parse(&env)?.timeout;
+        let (config, plan) = crate::launch::self_configure(timeout)?;
+        Ok((config, Some(plan)))
     }
 
     fn parse(env: &BTreeMap<OsString, OsString>) -> Result<Self, String> {
@@ -161,14 +180,24 @@ impl Config {
 
 /// Closes the supervisor's stdin to request tree shutdown. Arbitrary commands that
 /// do not implement that contract receive only direct-child kill/reap on timeout.
-pub struct ServiceGuard(pub Child);
+pub struct ServiceGuard {
+    pub child: Child,
+    stderr: Arc<Mutex<String>>,
+}
+
+impl ServiceGuard {
+    /// The bounded tail of what the supervisor wrote to stderr so far.
+    pub fn stderr_tail(&self) -> String {
+        self.stderr.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+}
 
 impl Drop for ServiceGuard {
     fn drop(&mut self) {
-        drop(self.0.stdin.take());
+        drop(self.child.stdin.take());
         let started = Instant::now();
         loop {
-            match self.0.try_wait() {
+            match self.child.try_wait() {
                 Ok(Some(_)) => return,
                 Ok(None) if started.elapsed() < SHUTDOWN_GRACE => std::thread::sleep(POLL),
                 _ => break,
@@ -177,9 +206,36 @@ impl Drop for ServiceGuard {
         eprintln!(
             "arc-science-desktop: shutdown grace expired; terminating direct child (descendants require the native supervisor --parent-stdin contract)"
         );
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
+}
+
+fn tail_stderr(stream: Option<impl std::io::Read + Send + 'static>) -> Arc<Mutex<String>> {
+    let tail = Arc::new(Mutex::new(String::new()));
+    if let Some(mut stream) = stream {
+        let sink = Arc::clone(&tail);
+        std::thread::spawn(move || {
+            let mut buffer = [0u8; 4096];
+            loop {
+                let n = match stream.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                if let Ok(mut text) = sink.lock() {
+                    text.push_str(&String::from_utf8_lossy(&buffer[..n]));
+                    if text.len() > STDERR_TAIL {
+                        let cut = text.len() - STDERR_TAIL;
+                        let boundary = (cut..text.len())
+                            .find(|i| text.is_char_boundary(*i))
+                            .unwrap_or(cut);
+                        text.drain(..boundary);
+                    }
+                }
+            }
+        });
+    }
+    tail
 }
 
 pub fn health_agent() -> ureq::Agent {
@@ -232,40 +288,64 @@ pub fn start_service(config: &Config) -> Result<Option<ServiceGuard>, String> {
         ));
     }
     let mut command = Command::new(&config.executable);
-    command.args(&config.args).stdin(Stdio::piped());
+    command
+        .args(&config.args)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW for the background worker.
     }
-    let mut guard = ServiceGuard(command.spawn().map_err(|e| {
+    let mut child = command.spawn().map_err(|e| {
         format!(
             "Cannot start service executable {:?}: {e}",
             config.executable
         )
-    })?);
+    })?;
+    let stderr = tail_stderr(child.stderr.take());
+    let mut guard = ServiceGuard { child, stderr };
+    let with_tail = |message: String, guard: &ServiceGuard| {
+        let tail = guard.stderr_tail();
+        let tail = tail.trim();
+        if tail.is_empty() {
+            message
+        } else {
+            format!("{message}\n{tail}")
+        }
+    };
     loop {
         if let Some(status) = guard
-            .0
+            .child
             .try_wait()
             .map_err(|e| format!("Cannot inspect service process: {e}"))?
         {
-            return Err(format!("Service exited before readiness: {status}"));
+            std::thread::sleep(POLL); // let the stderr reader drain the final lines
+            return Err(with_tail(
+                format!("Service exited before readiness: {status}"),
+                &guard,
+            ));
         }
         let remaining = config.timeout.saturating_sub(started.elapsed());
         if remaining.is_zero() {
-            return Err(format!(
-                "Service readiness timed out after {} seconds",
-                config.timeout.as_secs()
+            return Err(with_tail(
+                format!(
+                    "Service readiness timed out after {} seconds",
+                    config.timeout.as_secs()
+                ),
+                &guard,
             ));
         }
         if is_healthy(&agent, &config.url, remaining)? {
             if let Some(status) = guard
-                .0
+                .child
                 .try_wait()
                 .map_err(|e| format!("Cannot inspect service process: {e}"))?
             {
-                return Err(format!("Service exited during readiness: {status}"));
+                return Err(with_tail(
+                    format!("Service exited during readiness: {status}"),
+                    &guard,
+                ));
             }
             return Ok(Some(guard));
         }

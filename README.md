@@ -25,18 +25,22 @@ Windows launcher, memory reliability, interactive browser flows and scientific a
 
 ## Windows desktop
 
-From this repository in PowerShell, use the supervised launcher:
+Build once, then start `native\arc-desktop\target\release\Arc Science.exe` by
+double-clicking it:
 
 ```powershell
 .\scripts\start-arc-science.ps1 -Build
 ```
 
-Later launches can omit `-Build`. Existing Python application dependencies and Rust
-must be installed; the script does not install packages. It creates a native project
-under `%LOCALAPPDATA%\ArcScience\workspace` only when none exists and preserves its
-configuration. Use `-ProjectPath` for another workspace, `-Python` for initialization
-with a specific interpreter, and `-BlenderPython` for the separate molecular runtime.
-`-CheckStartup` checks readiness and supervised shutdown without opening a window.
+The executable configures itself. It finds the native supervisor beside it or in the
+build layout, keeps its workspace under `%LOCALAPPDATA%\ArcScience\workspace`,
+discovers Python 3.11+ and the `arc_science` package on first use (and completes an
+older configuration that predates discovery), opens its window at once with the
+readiness checks, and loads the workbench when the local service answers. If the
+service cannot start, the window and a native dialog show the reason, including the
+supervisor's last lines. Python application dependencies and Rust are installed by
+you; nothing installs packages. The launcher script remains for `-Build`,
+`-ProjectPath`, `-Python`, `-BlenderPython` and headless `-CheckStartup`.
 See [desktop lifecycle and configuration](native/arc-desktop/README.md).
 
 ## Run locally

@@ -1,7 +1,8 @@
 //! Native Rust host for the local Arc Science workbench. See README for lifecycle limits.
 mod external;
+mod launch;
 mod startup;
-use startup::{Config, start_service};
+use startup::{Config, ServiceGuard, start_service};
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::{Icon, WindowBuilder};
@@ -9,8 +10,13 @@ use wry::WebViewBuilder;
 
 const SNOGGO: &[u8] = include_bytes!("../assets/snoggo-icon.svg");
 
-/// Shell events delivered to the event loop from WebView callbacks.
+/// Shell events delivered to the event loop from WebView callbacks and the
+/// service-start thread.
 enum Shell {
+    /// The local service answered its health check; the workbench can load.
+    Ready(Option<ServiceGuard>),
+    /// The local service could not start; the reason is shown, never swallowed.
+    Failed(String),
     /// A download finished; the page is told so it can show the outcome, because
     /// the WebView hosts no download UI of its own here.
     DownloadFinished {
@@ -92,9 +98,10 @@ fn run() -> Result<(), String> {
     if !args.is_empty() && !check_only {
         return Err("Usage: arc-science-desktop [--check-startup]; configure via ARC_DESKTOP_* environment variables".into());
     }
-    let config = Config::from_env()?;
-    let mut service = start_service(&config)?;
+    let (config, plan) = Config::from_env()?;
     if check_only {
+        // Headless readiness stays service-first: nothing to show, only to verify.
+        let service = start_service(&config)?;
         println!(
             "Arc Science readiness verified; service {}",
             if service.is_some() {
@@ -106,7 +113,9 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    // No event loop, window or WebView is created until local readiness passes.
+    // Window first: the operator sees the starting state at once, the service starts
+    // on its own thread, and a failure lands in the window and a native dialog.
+    let mut service: Option<ServiceGuard> = None;
     let event_loop = EventLoopBuilder::<Shell>::with_user_event().build();
     let shell = event_loop.create_proxy();
     let mut window = WindowBuilder::new()
@@ -119,12 +128,16 @@ fn run() -> Result<(), String> {
         .build(&event_loop)
         .map_err(|e| format!("Cannot create desktop window: {e}"))?;
     let origin = config.url.clone();
+    let origin_url = config.url.display.clone();
     let mut context = wry::WebContext::new(profile_directory());
     // Every downloadable URL is same-origin by construction because navigation is;
     // the download itself is left to the WebView and only its outcome is reported.
+    // The inline starting and failure pages are the only other navigations allowed.
     let webview = WebViewBuilder::new_with_web_context(&mut context)
-        .with_url(&config.url.display)
-        .with_navigation_handler(move |target| origin.allows(&target))
+        .with_html(launch::starting_page(plan.as_ref()))
+        .with_navigation_handler(move |target| {
+            origin.allows(&target) || target == "about:blank" || target.starts_with("data:")
+        })
         .with_download_completed_handler(move |_uri, path, success| {
             let text = |p: Option<&std::path::Path>| p.and_then(|p| p.to_str()).map(str::to_owned);
             let _ = shell.send_event(Shell::DownloadFinished {
@@ -152,6 +165,18 @@ fn run() -> Result<(), String> {
         })
         .build(&window)
         .map_err(|e| format!("Cannot initialize desktop WebView: {e}"))?;
+    {
+        let starter = event_loop.create_proxy();
+        let started = config;
+        std::thread::spawn(move || {
+            let outcome = match start_service(&started) {
+                Ok(guard) => Shell::Ready(guard),
+                Err(reason) => Shell::Failed(reason),
+            };
+            let _ = starter.send_event(outcome);
+        });
+    }
+    let url = origin_url;
     event_loop.run(move |event, _target, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
@@ -161,6 +186,17 @@ fn run() -> Result<(), String> {
             } => {
                 service.take();
                 *control_flow = ControlFlow::Exit;
+            }
+            Event::UserEvent(Shell::Ready(guard)) => {
+                service = guard;
+                if let Err(error) = webview.load_url(&url) {
+                    eprintln!("arc-science-desktop: cannot load the workbench: {error}");
+                }
+            }
+            Event::UserEvent(Shell::Failed(reason)) => {
+                eprintln!("arc-science-desktop: {reason}");
+                let _ = webview.load_html(&launch::failure_page(&reason, plan.as_ref()));
+                launch::message_box(&reason);
             }
             Event::UserEvent(Shell::DownloadFinished {
                 file,

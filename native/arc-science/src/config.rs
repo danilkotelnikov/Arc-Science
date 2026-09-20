@@ -15,6 +15,10 @@ pub struct Config {
     pub schema_version: u32,
     pub worker: Worker,
     pub bioart: BioArt,
+    /// Native components the worker uses when present; each is optional and the
+    /// service degrades explicitly without it.
+    #[serde(default)]
+    pub components: Components,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -24,6 +28,21 @@ pub struct Worker {
     pub data: PathBuf,
     pub host: String,
     pub port: u16,
+    /// Directory that holds the `arc_science` package (put on PYTHONPATH); None means
+    /// the interpreter already has it installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Components {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_worker: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub svg2png: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blender_python: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -47,7 +66,9 @@ impl Default for Config {
                 data: "data".into(),
                 host: "127.0.0.1".into(),
                 port: 8080,
+                package_path: None,
             },
+            components: Components::default(),
             bioart: BioArt {
                 cache_dir: ".arc-science/bioart".into(),
                 max_metadata_bytes: 8 * 1024 * 1024,
@@ -72,8 +93,36 @@ pub fn project_root(project: &Path) -> Result<PathBuf> {
 }
 
 pub fn initialize(project: &Path, python: Option<&str>) -> Result<()> {
+    write_new(project, python, None)
+}
+
+/// Initialise from what discovery found; `python` still wins when given.
+pub fn initialize_discovered(
+    project: &Path,
+    python: Option<&str>,
+    discovered: &crate::discover::Discovery,
+) -> Result<()> {
+    write_new(project, python, Some(discovered))
+}
+
+fn write_new(
+    project: &Path,
+    python: Option<&str>,
+    discovered: Option<&crate::discover::Discovery>,
+) -> Result<()> {
     let path = project.join(CONFIG_FILE);
     let mut config = Config::default();
+    if let Some(found) = discovered {
+        if let Some(interpreter) = &found.python {
+            config.worker.python = interpreter
+                .to_str()
+                .ok_or("Python path must be Unicode")?
+                .into();
+        }
+        config.worker.package_path = found.package_path.clone();
+        config.components.memory_worker = found.memory_worker.clone();
+        config.components.svg2png = found.svg2png.clone();
+    }
     if let Some(python) = python {
         config.worker.python = python.into();
     }
@@ -91,6 +140,50 @@ pub fn initialize(project: &Path, python: Option<&str>) -> Result<()> {
         })?;
     file.write_all(content.as_bytes())?;
     Ok(())
+}
+
+/// Fill the fields a discovery can fill and that the file leaves empty; the file is
+/// rewritten atomically and every other field stays as written.
+pub fn apply_discovery(
+    project: &Path,
+    found: &crate::discover::Discovery,
+) -> Result<Vec<&'static str>> {
+    let path = project.join(CONFIG_FILE);
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Cannot read {}: {e}; run init first", path.display()))?;
+    let mut config: Config = toml::from_str(&content)?;
+    let mut filled = Vec::new();
+    if config.worker.package_path.is_none() && found.package_path.is_some() {
+        config.worker.package_path = found.package_path.clone();
+        filled.push("worker.package_path");
+    }
+    if config.components.memory_worker.is_none() && found.memory_worker.is_some() {
+        config.components.memory_worker = found.memory_worker.clone();
+        filled.push("components.memory_worker");
+    }
+    if config.components.svg2png.is_none() && found.svg2png.is_some() {
+        config.components.svg2png = found.svg2png.clone();
+        filled.push("components.svg2png");
+    }
+    if Path::new(&config.worker.python).components().count() == 1
+        && let Some(python) = &found.python
+    {
+        // A bare name such as "python" depends on the caller's PATH; the discovered
+        // interpreter is the one the probe actually ran.
+        config.worker.python = python.to_str().ok_or("Python path must be Unicode")?.into();
+        filled.push("worker.python");
+    }
+    if filled.is_empty() {
+        return Ok(filled);
+    }
+    config.validate()?;
+    let temporary = project.join(format!("{CONFIG_FILE}.{}.tmp", std::process::id()));
+    fs::write(&temporary, toml::to_string_pretty(&config)?)?;
+    fs::rename(&temporary, &path).map_err(|e| {
+        let _ = fs::remove_file(&temporary);
+        format!("Cannot replace {}: {e}", path.display())
+    })?;
+    Ok(filled)
 }
 
 impl Config {
@@ -125,7 +218,56 @@ impl Config {
                 .ok_or("Python path must be Unicode")?
                 .into();
         }
+        if let Some(package) = &config.worker.package_path {
+            let resolved = project_path(project, package)?;
+            if !crate::discover::is_package_root(&resolved) {
+                return Err(format!(
+                    "worker.package_path {} does not contain arc_science/__init__.py",
+                    resolved.display()
+                )
+                .into());
+            }
+            config.worker.package_path = Some(resolved);
+        }
+        for (name, slot) in [
+            ("memory_worker", &mut config.components.memory_worker),
+            ("svg2png", &mut config.components.svg2png),
+            ("blender_python", &mut config.components.blender_python),
+        ] {
+            if let Some(path) = slot.take() {
+                let resolved = project_path(project, &path)?;
+                if !resolved.is_file() {
+                    return Err(
+                        format!("components.{name} {} is not a file", resolved.display()).into(),
+                    );
+                }
+                *slot = Some(resolved);
+            }
+        }
         Ok(config)
+    }
+
+    /// The environment the worker receives from its configuration: the package on
+    /// PYTHONPATH, UTF-8 everywhere, and each configured native component. Values
+    /// already in the process environment are only used when nothing is configured.
+    pub fn worker_environment(&self) -> Vec<(&'static str, std::ffi::OsString)> {
+        let mut out = vec![("PYTHONUTF8", std::ffi::OsString::from("1"))];
+        if let Some(package) = &self.worker.package_path {
+            out.push(("PYTHONPATH", package.clone().into_os_string()));
+        }
+        for (key, value) in [
+            ("ARC_MEMORY_WORKER", &self.components.memory_worker),
+            ("ARC_SVG2PNG", &self.components.svg2png),
+            (
+                "ARC_MOLECULAR_BLENDER_PYTHON",
+                &self.components.blender_python,
+            ),
+        ] {
+            if let Some(path) = value {
+                out.push((key, path.clone().into_os_string()));
+            }
+        }
+        out
     }
 
     pub fn validate(&self) -> Result<()> {
