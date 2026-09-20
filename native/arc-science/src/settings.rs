@@ -11,7 +11,7 @@ use std::{fs, path::Path};
 
 pub const SETTINGS_FILE: &str = "settings.toml";
 pub const PROVIDERS: [&str; 4] = ["anthropic", "openai", "gemini", "openclaw"];
-pub const EFFORTS: [&str; 5] = ["minimal", "low", "medium", "high", "max"];
+pub const EFFORTS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 pub const AUTH: [&str; 2] = ["api_key", "cli"];
 pub const ROLES: [&str; 5] = ["planner", "reviewer", "falsifier", "vision", "prose"];
 /// Exit status of `settings replace` when the caller's revision is stale.

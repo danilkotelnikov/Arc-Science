@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from .models import ClaimScope, ClaimUncertainty, MissionState, ProposedNextTest, ScopedBranch
 
-DERIVATION_VERSION = 'arc-claim-scope-1'
+DERIVATION_VERSION = 'arc-claim-scope-2'
 ROLES = ('analyst', 'falsifier')
 SCOPE_QUALIFIER = 'on the exploratory validation split of the frozen dataset; not independent data'
 
@@ -36,6 +36,16 @@ def latest_assessments(state: MissionState) -> dict[tuple[str, str], object]:
         elif assessment.round == rounds[key][0].round:
             rounds[key].append(assessment)
     return {key: min(group, key=lambda a: CAUTION.index(a.position)) for key, group in rounds.items()}
+
+
+def identity_verified(state: MissionState, role: str, round: int) -> bool:
+    """False only when the role's record for that round carries transport provenance
+    that says the identity was not observed; records without provenance are the
+    scripted or HTTP seats, whose identity is checked inline."""
+    for record in state.model_records:
+        if record.role == role and record.round == round and record.transport:
+            return record.transport.get('identity_verified', True) is not False
+    return True
 
 
 def scope_branch(branch, state: MissionState, latest) -> ScopedBranch:
@@ -74,9 +84,16 @@ def scope_branch(branch, state: MissionState, latest) -> ScopedBranch:
         uncertainties.append(ClaimUncertainty(reason='shared_identity', role=None,
                                               detail='Both roles ran as the same model identity (' + next(iter(identities))[:120]
                                                      + '); separate invocations are not independent reviewers.'))
+    # A transport that cannot report which model answered (Codex) leaves the identity
+    # requested-only; such a role cannot count as an independent identity.
+    unverified = [role for role in present if not identity_verified(state, role, positions[role].round)]
+    for role in unverified:
+        uncertainties.append(ClaimUncertainty(reason='unverified_identity', role=role,
+                                              detail='The ' + role + ' ran through a transport that does not report the model '
+                                                     'that answered; its identity is requested-only, not observed.'))
     if not successful or not present:
         status = 'unassessed'
-    elif len(present) == 2 and stances == {'support'} and len(identities) == 2:
+    elif len(present) == 2 and stances == {'support'} and len(identities) == 2 and not unverified:
         status = 'provisionally_supported'
     elif len(present) == 2 and stances == {'challenge'}:
         status = 'contradicted'

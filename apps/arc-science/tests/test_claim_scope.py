@@ -42,7 +42,7 @@ def test_the_demo_mission_stops_with_a_scope_per_hypothesis_that_the_reconciliat
     request, state = demo()
     assert state.status == 'completed' and state.claim_scope is not None
     scope = state.claim_scope
-    assert scope.derivation_version == 'arc-claim-scope-1' and scope.basis_round == state.round
+    assert scope.derivation_version == 'arc-claim-scope-2' and scope.basis_round == state.round
     assert {b.branch_id for b in scope.branches} == {b.id for b in state.branches}
     # The linear baseline was challenged by both roles: contradicted, with the findings kept as uncertainty.
     linear = scoped(state, 'linear')
@@ -124,6 +124,20 @@ def test_two_roles_on_one_model_identity_never_reach_provisional_support():
     assert scope.branches[0].status == 'provisionally_supported' and scope.counts['without_next_test'] == 1
     ledger = release.evaluate_release(request, without_tests.model_copy(update={'claim_scope': scope}), None, event_chain_ok=True)
     assert 'proposed for 0 of 1' in next(c.reason for c in ledger.checks if c.name == 'claim_scope')
+
+
+def test_a_requested_only_identity_never_counts_as_an_independent_reviewer():
+    request, state = hand_built([{'role': 'analyst', 'position': 'support'}, {'role': 'falsifier', 'position': 'support'}])
+    record = {'context_digest': 'a' * 64, 'input_context': {}, 'role': 'falsifier', 'round': 0, 'model': 'model-falsifier',
+              'payload': {}, 'transport': {'transport': 'codex', 'identity_source': 'requested_only', 'identity_verified': False}}
+    unverified = MissionState.model_validate({**state.model_dump(), 'model_records': [record]})
+    branch = claim_scope.derive_claim_scope(unverified).branches[0]
+    assert branch.status == 'unresolved' and [u.reason for u in branch.uncertainties] == ['unverified_identity']
+    assert branch.uncertainties[0].role == 'falsifier' and 'requested-only' in branch.uncertainties[0].detail
+    # The same record with an observed identity keeps the provisional support.
+    verified = {**record, 'transport': {**record['transport'], 'identity_verified': True, 'observed_model': 'model-falsifier'}}
+    state = MissionState.model_validate({**state.model_dump(), 'model_records': [verified]})
+    assert claim_scope.derive_claim_scope(state).branches[0].status == 'provisionally_supported'
 
 
 def test_later_rounds_replace_earlier_assessments_and_an_untested_hypothesis_says_so():

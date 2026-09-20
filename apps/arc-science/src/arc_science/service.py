@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .contracts import digest
 from .transport import AccessGrant
-from .exploration.models import MissionRequest, MissionState
+from .exploration.models import Event, MissionRequest, MissionState
 from .exploration.engine import initialize, explore, MissionCancelled
 from .exploration.agents import DemoAgent, DemoVisionAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
@@ -60,42 +60,53 @@ class ProbeReply(BaseModel):
     ok:bool
 
 ENDPOINTS={'openai':'https://api.openai.com/v1/responses',
-           'anthropic':'https://api.anthropic.com/v1/messages'}
+           'anthropic':'https://api.anthropic.com/v1/messages',
+           'gemini':'https://generativelanguage.googleapis.com/v1beta'}
+# The CLI transports: provider -> (environment override, transport name for reports and audit files).
+CLI_TRANSPORTS={'anthropic':('ARC_CLAUDE_CODE_EXE','claude-code'),'openai':(None,'codex'),'gemini':(None,'gemini-cli')}
+# Header style per provider for API credentials.
+AUTH_STYLES={'anthropic':'x-api-key','gemini':'x-goog-api-key'}
+
+
+def cli_command(provider):
+    """The qualified executable for a provider's CLI transport, or None when not configured.
+    The environment may override Claude Code; otherwise the settings name the CLI (a path
+    or an executable name on PATH)."""
+    if provider not in CLI_TRANSPORTS:raise ValueError(f'No CLI transport for provider {provider}')
+    override=CLI_TRANSPORTS[provider][0]
+    path=os.environ.get(override) if override else None
+    if not path:
+        settings=operator_settings.current() or {}
+        name=((settings.get('providers') or {}).get(provider) or {}).get('cli') or ''
+        if not name:return None
+        path=name if Path(name).is_absolute() else shutil.which(name)
+        if not path:raise ValueError(f'providers.{provider}.cli names {name}, which is not on PATH')
+    executable=Path(path)
+    if not executable.is_absolute() or not executable.is_file():
+        raise ValueError(f'The {provider} CLI executable must be an absolute path to an existing file')
+    return [str(executable)]
 
 
 def claude_code_command():
     """The qualified Claude Code executable for the subscription transport, or None."""
-    path=os.environ.get('ARC_CLAUDE_CODE_EXE')
-    if not path:
-        # The settings name the CLI (a path or an executable name on PATH).
-        settings=operator_settings.current() or {}
-        name=((settings.get('providers') or {}).get('anthropic') or {}).get('cli') or ''
-        if not name:return None
-        path=name if Path(name).is_absolute() else shutil.which(name)
-        if not path:raise ValueError(f'providers.anthropic.cli names {name}, which is not on PATH')
-    executable=Path(path)
-    if not executable.is_absolute() or not executable.is_file():
-        raise ValueError('The Claude Code executable must be an absolute path to an existing file')
-    return [str(executable)]
+    return cli_command('anthropic')
 
 
 def _cli_command(settings, provider):
     """The operator's CLI for a provider: the settings name it, or the environment does."""
-    if provider=='anthropic':
-        command=claude_code_command()
-        if not command:
-            raise ValueError('The Claude Code executable is not configured: set providers.anthropic.cli to its path')
-        return command
-    raise ValueError(f'The {provider} CLI seat is not available yet; use an API credential for this seat')
+    if provider not in CLI_TRANSPORTS:
+        raise ValueError(f'The {provider} seat has no CLI login; use an API credential for this seat')
+    command=claude_code_command() if provider=='anthropic' else cli_command(provider)
+    if not command:
+        raise ValueError(f'The {provider} CLI is not configured: set providers.{provider}.cli to its path')
+    return command
 
 
 def _endpoint_from_seat(settings, role, seat):
     provider=seat['provider'];auth=seat.get('auth','api_key');effort=seat.get('effort','medium')
     if auth=='cli':
         command=_cli_command(settings,provider)
-        return ModelEndpoint(provider='claude-code',endpoint=command[0],model=seat['model'],credential_ref=role,effort=effort)
-    if provider=='gemini':
-        raise ValueError('The Gemini API seat is not available yet; choose anthropic, openai or openclaw for now')
+        return ModelEndpoint(provider=provider,transport='cli',endpoint=command[0],model=seat['model'],credential_ref=role,effort=effort)
     providers=settings.get('providers') or {}
     endpoint=(providers.get(provider) or {}).get('endpoint') or ENDPOINTS.get(provider,'')
     if not endpoint:raise ValueError(f'providers.{provider}.endpoint is not set')
@@ -113,13 +124,9 @@ def endpoints_from_settings(settings):
     if planner is None:return None
     reviewer=operator_settings.seat(settings,'reviewer') or planner
     falsifier=operator_settings.seat(settings,'falsifier') or reviewer
-    first=_endpoint_from_seat(settings,'planner',planner)
-    second=_endpoint_from_seat(settings,'reviewer',reviewer)
-    third=_endpoint_from_seat(settings,'falsifier',falsifier)
-    transports={e.provider=='claude-code' for e in (first,second,third)}
-    if len(transports)>1:
-        raise ValueError('Mixed transports are not supported: planner, reviewer and falsifier must all use the CLI login or all use API credentials')
-    return first,second,third
+    # Every seat is its own transport; mixing CLI logins and API credentials is allowed.
+    return (_endpoint_from_seat(settings,'planner',planner),_endpoint_from_seat(settings,'reviewer',reviewer),
+            _endpoint_from_seat(settings,'falsifier',falsifier))
 
 
 def configured_endpoints():
@@ -155,13 +162,22 @@ def configured_falsifier_endpoint(first,second):
 
 
 def live_seats_ready():
-    """Both model seats configured with whatever they need: token files, or the CLI."""
+    """Every model seat configured with whatever it needs: a credential file, or the CLI."""
     first,second=configured_endpoints()
-    if first.provider!='claude-code':
-        third=configured_falsifier_endpoint(first,second)
-        for endpoint in (first,second,third):
-            _secret(endpoint.credential_ref)
+    third=configured_falsifier_endpoint(first,second)
+    for endpoint in (first,second,third):
+        if endpoint.transport=='api':_secret(endpoint.credential_ref)
     return first,second
+
+
+def seat_plan(vision_review=False):
+    """The routing a live mission would use, without secrets: role -> provider, transport,
+    model, effort and credential name. Bound to the mission at its first start so a later
+    settings change cannot redirect the same context elsewhere unnoticed."""
+    first,second=configured_endpoints()
+    seats={'planner':first,'reviewer':second,'falsifier':configured_falsifier_endpoint(first,second)}
+    if vision_review:seats['vision']=configured_vision_endpoint()
+    return {role:':'.join((e.provider,e.transport,e.model,e.effort or 'default',e.credential_ref)) for role,e in seats.items()}
 
 
 def configured_vision_endpoint():
@@ -172,9 +188,9 @@ def configured_vision_endpoint():
             raise ValueError('Visual review is not available through a CLI login; give the vision seat an API credential')
         endpoint=_endpoint_from_seat(operator_settings.current(),'vision',vision)
         if endpoint.provider=='openclaw':
-            raise ValueError('Visual review requires an OpenAI or Anthropic native image endpoint')
+            raise ValueError('Visual review requires an OpenAI, Anthropic or Gemini native image endpoint')
         return endpoint
-    provider=(os.environ.get('ARC_VISION_PROVIDER') or second.provider)
+    provider=(os.environ.get('ARC_VISION_PROVIDER') or ('claude-code' if second.transport=='cli' else second.provider))
     if provider=='claude-code':
         raise ValueError('Visual review is not available through the Claude Code transport; '
                          'set ARC_VISION_PROVIDER to anthropic or openai with its own credential file')
@@ -331,8 +347,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     # snapshot and forwards a whole replacement with the revision the operator saw.
     # What the service consumes today, and what is stored for a later loop; the UI
     # shows both so nothing reads as applied when it is not.
-    APPLIED={'applied_live':['seats','providers','prose'],
-             'stored_pending':['seats.effort','mcp_servers','acp_agents','blender','viewer'],'restart_required':[]}
+    APPLIED={'applied_live':['seats','seats.effort','providers','prose'],
+             'stored_pending':['mcp_servers','acp_agents','blender','viewer'],'restart_required':[]}
     settings_writer=asyncio.Semaphore(1)
     @app.get('/api/settings',dependencies=[Depends(authorized)])
     async def settings_snapshot():
@@ -390,63 +406,91 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     @app.get('/api/missions',dependencies=[Depends(authorized)])
     async def list_missions():return repository.list()
 
-    probes={'claude-code':None}
-    transport_cache={'at':0.0,'value':None}
+    probes={name:None for _,name in CLI_TRANSPORTS.values()}
+    transport_cache={}
 
-    async def claude_code_transport():
+    def cli_seats():
+        """The configured seats that run through a CLI login, by role."""
+        first,second=configured_endpoints()
+        seats={'planner':first,'reviewer':second,'falsifier':configured_falsifier_endpoint(first,second)}
+        return {role:e for role,e in seats.items() if e.transport=='cli'}
+
+    async def cli_transport(provider):
         # Cost-free readiness: executable identity and the CLI's own login state, cached briefly.
-        from .exploration import claude_code
-        command=claude_code_command()
-        if time.monotonic()-transport_cache['at']>30 or transport_cache['value'] is None:
-            transport_cache['value']={'transport':'claude-code','executable':Path(command[0]).name,
-                'executable_sha256':await claude_code.executable_digest(command[0]),
-                'version':await claude_code.version(command),**await claude_code.auth_status(command),
+        from .exploration import cli_seats as seats_module
+        name=CLI_TRANSPORTS[provider][1]
+        command=_cli_command(operator_settings.current() or {},provider)
+        cached=transport_cache.get(provider)
+        if cached is None or time.monotonic()-cached['at']>30:
+            value={'transport':name,'provider':provider,'executable':Path(command[0]).name,
+                'executable_sha256':await seats_module.executable_digest(command[0]),
+                'version':await seats_module.version(command),
+                **await seats_module.auth_status(command,provider=provider),
                 'checked_at':int(time.time()),'tools':'disabled','network_sandboxed':False,
-                'contract':claude_code.CONTRACT_VERSION,
+                'contract':seats_module.FLAVOURS[provider].contract,
+                'identity_reported':provider!='openai',
                 'note':'logged_in reports that a login exists, not that inference will succeed; run the probe for that'}
-            transport_cache['at']=time.monotonic()
-        return {**transport_cache['value'],'last_probe':probes['claude-code']}
+            transport_cache[provider]={'at':time.monotonic(),'value':value}
+        return {**transport_cache[provider]['value'],'last_probe':probes[name]}
 
     probe_lock=asyncio.Lock();probe_last={'at':0.0}
     PROBE_COOLDOWN=30.0
+    PROBE_INSTRUCTIONS='You are Arc Science\'s readiness probe. Return only the JSON object {"ok": true}.'
 
-    @app.post('/api/providers/claude-code/probe',dependencies=[Depends(authorized)])
-    async def probe_claude_code(consent:ProbeRequest=Body(...)):
-        """An explicit, token-spending minimal call through the production adapter, per model:
-        one at a time, with a cooldown, and an audit line in the data directory."""
-        from .exploration.claude_code import ClaudeCodeAgent
+    @app.post('/api/providers/{provider}/probe',dependencies=[Depends(authorized)])
+    async def probe_cli(provider:str,consent:ProbeRequest=Body(...)):
+        """An explicit, token-spending minimal call through the production adapter for every
+        distinct (model, effort) among the provider's CLI seats: one probe at a time, with a
+        cooldown, and an audit line in the data directory. A pass means reachable, schema-valid
+        and the requested selector accepted; identity is verified only where the CLI reports it."""
+        from .exploration.cli_seats import CliAgent
+        provider='anthropic' if provider=='claude-code' else provider
+        if provider not in CLI_TRANSPORTS:raise HTTPException(404,'Unknown CLI transport')
+        name=CLI_TRANSPORTS[provider][1]
         if not consent.spend_tokens:raise HTTPException(422,'Confirm spend_tokens=true; a probe makes a real model call per configured model')
-        try:first,second=configured_endpoints()
+        try:seats={role:e for role,e in cli_seats().items() if e.provider==provider}
         except Exception as error:raise HTTPException(409,str(error)) from None
-        if first.provider!='claude-code':raise HTTPException(409,'The claude-code transport is not configured')
+        if not seats:raise HTTPException(409,f'No seat uses the {name} transport')
         if probe_lock.locked():raise HTTPException(409,'A probe is already running')
         if time.monotonic()-probe_last['at']<PROBE_COOLDOWN:raise HTTPException(429,'Probe cooldown: wait before spending again')
         async with probe_lock:
             probe_last['at']=time.monotonic()
-            results=[]
-            for model in dict.fromkeys((first.model,second.model)):
-                seat=ClaudeCodeAgent(claude_code_command(),model,model)
+            results=[];command=_cli_command(operator_settings.current() or {},provider)
+            distinct={}
+            for role,e in seats.items():distinct.setdefault((e.model,e.effort),[]).append(role)
+            for (model,effort),roles in distinct.items():
+                seat=CliAgent(command,model,model,provider=provider,efforts={'probe':effort} if effort else None)
                 started=time.monotonic()
                 try:
-                    await seat._call(model,'You are Arc Science\'s readiness probe. Return only the JSON object {"ok": true}.',
-                                     {'probe':True},ProbeReply,role='probe')
-                    results.append({'model':model,'ok':True,'observed_model':seat.calls[-1]['observed_model'],
+                    await seat._call(model,PROBE_INSTRUCTIONS,{'probe':True},ProbeReply,role='probe')
+                    call=seat.calls[-1]
+                    results.append({'model':model,'effort':effort,'roles':roles,'ok':True,'observed_model':call['observed_model'],
+                                    'identity_verified':call['identity_verified'],'applied_effort':call['applied_effort'],
                                     'duration_ms':int((time.monotonic()-started)*1000)})
                 except Exception as error:
-                    results.append({'model':model,'ok':False,'error':str(error)[:300],'duration_ms':int((time.monotonic()-started)*1000)})
+                    results.append({'model':model,'effort':effort,'roles':roles,'ok':False,'error':str(error)[:300],
+                                    'duration_ms':int((time.monotonic()-started)*1000)})
                 finally:seat.close()
-            probes['claude-code']={'at':int(time.time()),'results':results}
-            audit=root/'providers'/'claude-code-probes.jsonl'
+            probes[name]={'at':int(time.time()),'transport':name,'provider':provider,'results':results}
+            audit=root/'providers'/(name+'-probes.jsonl')
             audit.parent.mkdir(parents=True,exist_ok=True)
-            with audit.open('a',encoding='utf-8') as log:log.write(json.dumps(probes['claude-code'])+'\n')
-            return probes['claude-code']
+            with audit.open('a',encoding='utf-8') as log:log.write(json.dumps(probes[name])+'\n')
+            return probes[name]
 
     @app.get('/api/capabilities',dependencies=[Depends(authorized)])
     async def capabilities():
         try:
             first,second=live_seats_ready()
-            live={'configured':True,'planner':first.model,'reviewer':second.model,'provider':first.provider}
-            if first.provider=='claude-code':live['transport']=await claude_code_transport()
+            third=configured_falsifier_endpoint(first,second)
+            live={'configured':True,'planner':first.model,'reviewer':second.model,'provider':first.provider,
+                  'auth':'cli' if first.transport=='cli' else 'api_key',
+                  'seats':{role:{'provider':e.provider,'transport':e.transport,'model':e.model,'effort':e.effort}
+                           for role,e in (('planner',first),('reviewer',second),('falsifier',third))}}
+            if first.transport=='cli':live['transport']=await cli_transport(first.provider)
+            transports={}
+            for e in (first,second,third):
+                if e.transport=='cli' and e.provider not in transports:transports[e.provider]=await cli_transport(e.provider)
+            live['transports']=transports
         except Exception:live={'configured':False}
         try:
             vision=configured_vision_endpoint();_secret(vision.credential_ref)
@@ -521,18 +565,24 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                     def resolve(ref,principal,project):
                         cfg={'planner':first,'vision':vision,'falsifier':third}.get(ref,second)
                         if ref not in ('planner','reviewer','vision','falsifier','biorender'):cfg=next((c for c in (first,second,third,vision) if c and c.credential_ref==ref),second)
+                        style=AUTH_STYLES.get(cfg.provider,'bearer')
+                        if cfg.provider=='anthropic' and os.environ.get('ARC_ANTHROPIC_AUTH') in ('oauth','bearer'):style='oauth'
                         return AccessGrant(token=_secret(ref),principal=principal,project_id=project,resource=cfg.endpoint,
-                            credential_ref=ref,expires_at=int(time.time())+60,
-                            auth_style=(('oauth' if os.environ.get('ARC_ANTHROPIC_AUTH') in ('oauth','bearer') else 'x-api-key') if cfg.provider=='anthropic' else 'bearer'))
-                    if first.provider=='claude-code':
-                        from .exploration.claude_code import ClaudeCodeAgent
-                        # The visual seat, when configured, stays a native image endpoint.
-                        visual=HTTPAgent(vision,reviewer_config=vision,vision_config=vision,client=client,
-                                         resolver=resolve,project=mid,principal='local-operator') if vision else None
-                        agent=ClaudeCodeAgent(claude_code_command(),first.model,second.model,vision=visual,falsifier_model=third.model)
-                    else:
-                        agent=HTTPAgent(first,reviewer_config=second,vision_config=vision,falsifier_config=third,
-                                        client=client,resolver=resolve,project=mid,principal='local-operator')
+                            credential_ref=ref,expires_at=int(time.time())+60,auth_style=style)
+                    from .exploration.cli_seats import CliAgent
+                    from .exploration.providers import SeatAgent
+                    # The visual seat, when configured, is always a native image endpoint.
+                    visual=HTTPAgent(vision,reviewer_config=vision,vision_config=vision,client=client,
+                                     resolver=resolve,project=mid,principal='local-operator') if vision else None
+                    def seat_for(role,cfg):
+                        if cfg.transport=='cli':
+                            command=claude_code_command() if cfg.provider=='anthropic' else [cfg.endpoint]
+                            return CliAgent(command,cfg.model,cfg.model,provider=cfg.provider,falsifier_model=cfg.model,
+                                            efforts={role:cfg.effort} if cfg.effort else None)
+                        return HTTPAgent(cfg,reviewer_config=cfg,falsifier_config=cfg,client=client,resolver=resolve,
+                                         project=mid,principal='local-operator')
+                    agent=SeatAgent({role:seat_for(role,cfg) for role,cfg in (('planner',first),('reviewer',second),('falsifier',third))},
+                                    vision=visual)
                     if os.environ.get('ARC_PUBLIC_READS')=='1':
                         from .exploration.public_reads import public_tools
                         tools=combine_trusted_tools(tools,public_tools(client))
@@ -574,6 +624,23 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         except RevisionConflict:raise HTTPException(409,'Mission changed; retry') from None
         return change
 
+    def bind_seats(row):
+        # The seat plan is part of what the operator consented to: it is recorded at the
+        # first start and a resume with different routing is refused, not re-routed.
+        request=MissionRequest.model_validate(row['request'])
+        if request.mode!='live':return
+        try:plan=json.dumps(seat_plan(request.vision_review),separators=(',',':'),sort_keys=True)
+        except Exception as error:raise HTTPException(409,'Configure the model seats before starting: '+str(error)[:300]) from None
+        state=MissionState.model_validate(row['state'])
+        bound=next((e for e in reversed(state.events) if e.kind=='seats_bound'),None)
+        if bound is None:
+            state=state.model_copy(update={'events':state.events+(Event(kind='seats_bound',round=state.round,detail=plan[:1200]),)})
+            try:repository.save(row['id'],state,expected_revision=row['revision'])
+            except RevisionConflict:raise HTTPException(409,'Mission changed; retry') from None
+        elif bound.detail!=plan[:1200]:
+            raise HTTPException(409,'The model seats changed since this mission was first started; a permission change is a '
+                                    'separate authorization: restore the seats or create a new mission')
+
     @app.post('/api/missions/{mid}/start',status_code=202,dependencies=[Depends(authorized)])
     async def start(mid:str):
         row=get(mid)
@@ -581,6 +648,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             raise HTTPException(409,'Only ready or interrupted missions can start or resume')
         if row['state']['status']=='paused':
             record_resume(row,MISSION_CHANGES['resume']['derived'],'Resumed from the workspace.')
+            row=get(mid)
+        bind_seats(row)
         running[mid]=asyncio.create_task(worker(mid))
         return {'id':mid,'status':'scheduled'}
 

@@ -8,7 +8,7 @@ import {checkedFetch} from './http';
 // seats name a credential file or the operator's own CLI login.
 const ROLES = [['planner', 'Planner'], ['reviewer', 'Reviewer (QA)'], ['falsifier', 'Falsifier'], ['vision', 'Vision'], ['prose', 'Prose']];
 const PROVIDERS = [['', '—'], ['anthropic', 'Anthropic'], ['openai', 'OpenAI'], ['gemini', 'Gemini'], ['openclaw', 'OpenClaw']];
-const EFFORTS = ['minimal', 'low', 'medium', 'high', 'max'];
+const EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const AUTH = [['api_key', 'API credential'], ['cli', 'CLI login (OAuth)']];
 const VIEWER = {representation: ['cartoon', 'surface', 'ball_and_stick', 'sticks', 'spacefill', 'backbone'],
   colouring: ['chain', 'element', 'residue', 'secondary_structure', 'bfactor', 'uniform'],
@@ -17,10 +17,11 @@ const VIEWER = {representation: ['cartoon', 'surface', 'ball_and_stick', 'sticks
 export default function SettingsWorkspace({token}) {
   const [snapshot, setSnapshot] = useState(null), [draft, setDraft] = useState(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
+  const [live, setLive] = useState(null), [probes, setProbes] = useState({}), [consent, setConsent] = useState(false);
   const credential = useRef(null);
   useLayoutEffect(() => {
     const controller = new AbortController(); credential.current = controller;
-    setSnapshot(null); setDraft(null); setError(''); setNotice(''); setBusy(false);
+    setSnapshot(null); setDraft(null); setError(''); setNotice(''); setBusy(false); setLive(null); setProbes({}); setConsent(false);
     return () => controller.abort();
   }, [token]);
   const read = useCallback(async (path, signal, method = 'GET', body) => {
@@ -37,13 +38,25 @@ export default function SettingsWorkspace({token}) {
     catch (e) { if (!signal.aborted) setError(e.message); }
     finally { if (!signal.aborted) setBusy(false); }
   }
+  async function connections(signal) {
+    // Cost-free: the CLI's own login state per provider, never an inference.
+    const caps = await read('/capabilities', signal);
+    setLive(caps.live || {configured: false});
+  }
   async function load(signal) {
     const snap = await read('/settings', signal);
     setSnapshot(snap); setDraft(structuredClone(snap.settings));
+    await connections(signal);
+  }
+  async function probe(provider, signal) {
+    // Explicit consent per click: a probe makes one real model call per distinct seat.
+    const result = await read('/providers/' + provider + '/probe', signal, 'POST', {spend_tokens: true});
+    setProbes(current => ({...current, [provider]: result}));
   }
   async function save(signal) {
     const snap = await read('/settings', signal, 'PUT', {settings: draft, if_revision: snapshot.revision});
     setSnapshot(snap); setDraft(structuredClone(snap.settings));
+    await connections(signal);
     setNotice('Saved. Applied live: ' + snap.applied_live.join(', ') + '. Stored for later loops: ' + (snap.stored_pending || []).join(', ') + '.' + (snap.restart_required.length ? ' Restart required for ' + snap.restart_required.join(', ') + '.' : ''));
   }
   const dirty = snapshot && draft && JSON.stringify(draft) !== JSON.stringify(snapshot.settings);
@@ -81,7 +94,28 @@ export default function SettingsWorkspace({token}) {
             <td><input aria-label={label + ' credential'} value={seat.credential} disabled={readOnly || seat.auth !== 'api_key'} onChange={e => set(['seats', role, 'credential'], e.target.value)} placeholder={role}/></td>
           </tr>; })}
         </tbody></table>
-        <p className="field-note">A credential names a file written by <code>arc-science credential --name NAME</code> (data/credentials/NAME.credential); a missing name is refused, never substituted. A CLI login uses the provider's own command with the account already signed in there. Effort is stored now and applied by the transports in the next loop.</p>
+        <p className="field-note">A credential names a file written by <code>arc-science credential --name NAME</code> (data/credentials/NAME.credential); a missing name is refused, never substituted. A CLI login uses the provider's own command with the account already signed in there. Effort per transport: Anthropic low–max; OpenAI minimal–max as the model allows; Gemini API minimal–high; Gemini CLI and OpenClaw keep the provider default (medium). A level a seat cannot express is refused, never rounded.</p>
+        <h2>Connections</h2>
+        {!live ? null : !live.configured ? <p className="muted">No live seats are configured, so nothing to connect.</p> : <>
+          <table className="seats"><thead><tr><th>Seat</th><th>Provider</th><th>Transport</th><th>Model</th><th>Effort</th></tr></thead><tbody>
+            {Object.entries(live.seats || {}).map(([role, seat]) => <tr key={role}><th scope="row">{role}</th><td>{seat.provider}</td><td>{seat.transport === 'cli' ? 'CLI login' : 'API credential'}</td><td>{seat.model}</td><td>{seat.effort || 'default'}</td></tr>)}
+          </tbody></table>
+          {Object.keys(live.transports || {}).length === 0 ? <p className="muted">Every seat uses an API credential.</p> : <>
+            <table className="seats" aria-label="CLI logins"><thead><tr><th>CLI</th><th>Version</th><th>Login</th><th>Identity reported</th><th>Last probe</th></tr></thead><tbody>
+              {Object.entries(live.transports).map(([provider, t]) => { const last = probes[provider] || t.last_probe; return <tr key={provider}>
+                <th scope="row">{t.transport} ({t.executable})</th><td>{t.version}</td>
+                <td>{t.logged_in ? 'signed in (' + t.auth_method + ')' : 'not signed in'}</td>
+                <td>{t.identity_reported ? 'yes' : 'no: requested-only'}</td>
+                <td>{!last ? '—' : last.results.map(r => r.model + (r.effort ? '/' + r.effort : '') + ': ' + (r.ok ? 'reachable, schema-valid' + (r.identity_verified ? ', identity ' + r.observed_model : ', identity unverified') : 'failed — ' + r.error)).join('; ')}</td>
+              </tr>; })}
+            </tbody></table>
+            <div className="actions">
+              <label className="check"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}/>I accept that a probe spends tokens on my account, one call per distinct seat</label>
+              {Object.keys(live.transports).map(provider => <Button key={provider} variant="secondary" size="sm" isDisabled={busy || !consent} onPress={() => task(signal => probe(provider, signal))}>Probe {provider}</Button>)}
+            </div>
+            <p className="field-note">A login reports that a session exists, not that inference will succeed; a probe proves reachability and the requested selector, and identity only where the CLI reports it.</p>
+          </>}
+        </>}
         <h2>Providers</h2>
         <table className="seats"><thead><tr><th>Provider</th><th>Endpoint</th><th>CLI</th><th>OpenClaw agent</th></tr></thead><tbody>
           {['anthropic', 'openai', 'gemini', 'openclaw'].map(name => { const p = draft.providers[name]; return <tr key={name}>

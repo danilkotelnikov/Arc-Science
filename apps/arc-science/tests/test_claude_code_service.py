@@ -43,7 +43,8 @@ def wait_final(client, mid):
 def test_capabilities_report_the_transport_truthfully_without_spending_tokens(configured, tmp_path):
     with TestClient(create_app(data_dir=tmp_path / 'data', token='t' * 40)) as client:
         live = client.get('/api/capabilities', headers=AUTH).json()['live']
-        assert live['configured'] is True and live['provider'] == 'claude-code'
+        assert live['configured'] is True and live['provider'] == 'anthropic' and live['auth'] == 'cli'
+        assert live['seats']['falsifier'] == {'provider': 'anthropic', 'transport': 'cli', 'model': 'claude-sonnet-5', 'effort': None}
         assert live['planner'] == 'claude-opus-5' and live['reviewer'] == 'claude-sonnet-5'
         transport = live['transport']
         assert transport['logged_in'] is True and transport['auth_method'] == 'claude.ai'
@@ -58,7 +59,8 @@ def test_explicit_probe_spends_one_call_per_model_and_is_reported_afterwards(con
         assert client.post('/api/providers/claude-code/probe', headers=AUTH, json={}).status_code == 422
         probe = client.post('/api/providers/claude-code/probe', headers=AUTH, json={'spend_tokens': True}).json()
         assert [r['model'] for r in probe['results']] == ['claude-opus-5', 'claude-sonnet-5']
-        assert all(r['ok'] and r['observed_model'] == r['model'] for r in probe['results'])
+        assert all(r['ok'] and r['observed_model'] == r['model'] and r['identity_verified'] for r in probe['results'])
+        assert probe['results'][1]['roles'] == ['reviewer', 'falsifier']
         assert client.get('/api/capabilities', headers=AUTH).json()['live']['transport']['last_probe'] == probe
         # Durable audit line, cooldown, and no unauthenticated access.
         audit = (tmp_path / 'data' / 'providers' / 'claude-code-probes.jsonl').read_text(encoding='utf-8').splitlines()
@@ -86,6 +88,10 @@ def test_a_live_mission_runs_both_seats_through_the_cli_and_records_their_identi
             assert transport['observed_model'] == record['model'] and transport['role'] == record['role']
             assert transport['identity_source'] == 'claude_code_modelUsage' and transport['network_sandboxed'] is False
             assert 'prompt' not in transport and transport['usage'] == {'input_tokens': 10, 'output_tokens': 20}
+            assert transport['effort_source'] == 'provider_default' and transport['applied_effort'] is None
+        # The seat plan the mission ran with is bound to it at the first start.
+        bound = [e for e in state['events'] if e['kind'] == 'seats_bound']
+        assert len(bound) == 1 and '"planner":"anthropic:cli:claude-opus-5:default:planner"' in bound[0]['detail']
 
 
 def test_egress_consent_and_vision_are_enforced_for_the_cli_transport(configured, tmp_path):

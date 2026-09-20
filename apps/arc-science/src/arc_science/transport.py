@@ -40,6 +40,7 @@ class AccessGrant:
             raise AuthorizationError('Invalid or expired credential')
         if self.auth_style in ('bearer','oauth'):return {'Authorization':'Bearer '+self.token}
         if self.auth_style=='x-api-key':return {'x-api-key':self.token}
+        if self.auth_style=='x-goog-api-key':return {'x-goog-api-key':self.token}
         raise AuthorizationError('Unsupported authentication style')
 
 INSTRUCTIONS = (

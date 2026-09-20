@@ -3,6 +3,7 @@ with the revision the operator saw; seats configured there drive the model seats
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -39,8 +40,8 @@ if cmd == 'replace':
     doc = json.loads(sys.stdin.read())
     if '--if-revision' in args and args[args.index('--if-revision') + 1] != hashlib.sha256(path.read_bytes()).hexdigest():
         print('arc-science-native: settings changed since they were read', file=sys.stderr); sys.exit(3)
-    if doc.get('seats', {}).get('planner', {}).get('effort') not in ('minimal', 'low', 'medium', 'high', 'max'):
-        print('arc-science-native: seats.planner.effort must be one of minimal, low, medium, high, max', file=sys.stderr); sys.exit(1)
+    if doc.get('seats', {}).get('planner', {}).get('effort') not in ('minimal', 'low', 'medium', 'high', 'xhigh', 'max'):
+        print('arc-science-native: seats.planner.effort must be one of minimal, low, medium, high, xhigh, max', file=sys.stderr); sys.exit(1)
     path.write_text(json.dumps(doc)); print(json.dumps(snapshot())); sys.exit(0)
 sys.exit(2)
 '''
@@ -74,7 +75,7 @@ def test_settings_are_read_from_the_supervisor_and_replaced_with_the_revision_se
         assert c.get('/api/settings').status_code == 401
         snap = c.get('/api/settings', headers=AUTH).json()
         assert snap['settings']['seats']['planner']['provider'] == '' and len(snap['revision']) == 64
-        assert 'seats' in snap['applied_live'] and 'seats.effort' in snap['stored_pending'] and snap['restart_required'] == []
+        assert 'seats.effort' in snap['applied_live'] and 'mcp_servers' in snap['stored_pending'] and snap['restart_required'] == []
         # Without the revision that was read, a replacement is not accepted at all.
         assert c.put('/api/settings', headers=AUTH, json={'settings': snap['settings']}).status_code == 422
         edited = snap['settings']
@@ -127,16 +128,37 @@ def test_seats_configured_in_settings_drive_the_endpoints_and_the_falsifier_gets
     assert (first.provider, first.model, first.effort) == ('openai', 'gpt-5.6', 'high')
     assert (second.provider, second.model, second.effort) == ('anthropic', 'claude-sonnet-5', 'low')
     assert (third.provider, third.model, third.credential_ref) == ('openai', 'gpt-5.6-mini', 'falsifier-key')
-    # A CLI seat mixed with API seats is refused; a Gemini API seat says it is not here yet.
+    # A CLI seat needs its CLI configured; a Gemini API seat is a native endpoint.
     doc = settings.snapshot()['settings']
     doc['seats']['planner']['auth'] = 'cli'
     settings.replace(doc, None)
-    with pytest.raises(ValueError, match='Mixed transports|not configured|not available yet'):
+    with pytest.raises(ValueError, match='openai CLI is not configured'):
         service.configured_endpoints()
-    doc['seats']['planner'].update(auth='api_key', provider='gemini', model='gemini-3-pro')
+    doc['seats']['planner'].update(auth='api_key', provider='gemini', model='gemini-3-pro', effort='high')
     settings.replace(doc, None)
-    with pytest.raises(ValueError, match='Gemini API seat is not available yet'):
+    first, _ = service.configured_endpoints()
+    assert (first.provider, first.transport, first.endpoint, first.effort) == ('gemini', 'api', 'https://generativelanguage.googleapis.com/v1beta', 'high')
+    # Each transport refuses an effort it cannot express instead of coercing it.
+    doc['seats']['planner']['effort'] = 'max'
+    settings.replace(doc, None)
+    with pytest.raises(ValueError, match='gemini api seat does not express effort max'):
         service.configured_endpoints()
+    doc['seats']['planner'].update(provider='openclaw', model='agent', effort='high')
+    doc['providers']['openclaw'].update(endpoint='https://openclaw.example/v1/responses', agent_id='iso')
+    settings.replace(doc, None)
+    with pytest.raises(ValueError, match='openclaw api seat has no effort control'):
+        service.configured_endpoints()
+    # Mixed transports: a CLI planner beside API seats, each its own transport.
+    fake = tmp_path / ('codex.cmd' if os.name == 'nt' else 'codex')
+    fake.write_text('')
+    doc['seats']['planner'].update(provider='openai', model='gpt-5.5', effort='xhigh', auth='cli')
+    doc['providers']['openai']['cli'] = str(fake)
+    settings.replace(doc, None)
+    first, second = service.configured_endpoints()
+    assert (first.provider, first.transport, first.endpoint, first.effort) == ('openai', 'cli', str(fake), 'xhigh')
+    assert (second.provider, second.transport) == ('anthropic', 'api')
+    assert service.seat_plan() == {'planner': 'openai:cli:gpt-5.5:xhigh:planner', 'reviewer': 'anthropic:api:claude-sonnet-5:low:reviewer',
+                                   'falsifier': 'openai:api:gpt-5.6-mini:medium:falsifier-key'}
 
 
 def test_a_named_credential_is_read_from_the_store_and_a_missing_name_is_refused(tmp_path, monkeypatch):
@@ -156,6 +178,84 @@ def test_a_named_credential_is_read_from_the_store_and_a_missing_name_is_refused
     for bad in ('../x', 'a b', ''):
         with pytest.raises(ValueError):
             service.credential_path(bad)
+
+
+def launcher(tmp_path, name, fake, mode):
+    """A CLI stand-in on disk: the settings name it, the seat runs it."""
+    if os.name == 'nt':
+        path = tmp_path / (name + '.cmd')
+        path.write_text(f'@"{sys.executable}" "{fake}" {mode} %*\n', encoding='utf-8')
+    else:
+        path = tmp_path / name
+        path.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{fake}" {mode} "$@"\n', encoding='utf-8')
+        path.chmod(0o755)
+    return path
+
+
+def wait_final(client, mid):
+    for _ in range(600):
+        row = client.get(f'/api/missions/{mid}', headers=AUTH).json()
+        if row['state']['status'] not in ('ready', 'running'):
+            return row
+        time.sleep(0.05)
+    raise AssertionError('mission did not finish')
+
+
+def test_a_live_mission_runs_each_seat_through_its_own_cli_and_binds_the_seat_plan(tmp_path, stub, monkeypatch):
+    for key in ('ARC_PROVIDER', 'ARC_MODEL', 'ARC_REVIEWER_MODEL', 'ARC_CLAUDE_CODE_EXE', 'ARC_VISION_PROVIDER', 'ARC_MODEL_TOKEN_FILE'):
+        monkeypatch.delenv(key, raising=False)
+    fixtures = Path(__file__).parent / 'fixtures'
+    codex = launcher(tmp_path, 'codex', fixtures / 'fake_codex.py', 'success')
+    gemini = launcher(tmp_path, 'gemini', fixtures / 'fake_gemini.py', 'success')
+    monkeypatch.setattr(service, 'claude_code_command', lambda: [sys.executable, str(fixtures / 'fake_claude.py'), 'success'])
+    snap = settings.snapshot()
+    doc = snap['settings']
+    doc['seats']['planner'].update(provider='openai', model='gpt-5.5', effort='xhigh', auth='cli')
+    doc['seats']['reviewer'].update(provider='anthropic', model='claude-sonnet-5', effort='high', auth='cli')
+    doc['seats']['falsifier'].update(provider='gemini', model='gemini-3-pro', effort='medium', auth='cli')
+    doc['providers']['openai']['cli'] = str(codex)
+    doc['providers']['gemini']['cli'] = str(gemini)
+    doc['providers']['anthropic']['cli'] = 'claude'
+    settings.replace(doc, snap['revision'])
+    with TestClient(app(tmp_path)) as c:
+        live = c.get('/api/capabilities', headers=AUTH).json()['live']
+        assert live['configured'] and live['auth'] == 'cli' and set(live['transports']) == {'openai', 'anthropic', 'gemini'}
+        assert live['transports']['openai']['logged_in'] is True and live['transports']['openai']['identity_reported'] is False
+        assert live['seats']['planner'] == {'provider': 'openai', 'transport': 'cli', 'model': 'gpt-5.5', 'effort': 'xhigh'}
+        row = c.post('/api/missions', headers=AUTH, json={'goal': 'Mixed seats', 'mode': 'live', 'max_rounds': 1, 'allow_egress': True}).json()
+        assert c.post(f"/api/missions/{row['id']}/start", headers=AUTH).status_code == 202
+        final = wait_final(c, row['id'])
+        state = final['state']
+        assert state['status'] == 'budget_exhausted', state['stop_reason']
+        by_role = {r['role']: r['transport'] for r in state['model_records']}
+        assert by_role['planner']['transport'] == 'codex' and by_role['planner']['identity_verified'] is False
+        assert by_role['planner']['applied_effort'] == 'xhigh' and by_role['planner']['observed_model'] is None
+        assert by_role['analyst']['transport'] == 'claude-code' and by_role['analyst']['observed_model'] == 'claude-sonnet-5'
+        assert by_role['analyst']['applied_effort'] == 'high'
+        assert by_role['falsifier']['transport'] == 'gemini-cli' and by_role['falsifier']['observed_model'] == 'gemini-3-pro'
+        assert by_role['falsifier']['effort_source'] == 'provider_default'
+        bound = [e for e in state['events'] if e['kind'] == 'seats_bound']
+        assert len(bound) == 1 and json.loads(bound[0]['detail']) == {
+            'planner': 'openai:cli:gpt-5.5:xhigh:planner', 'reviewer': 'anthropic:cli:claude-sonnet-5:high:reviewer',
+            'falsifier': 'gemini:cli:gemini-3-pro:medium:falsifier'}
+        # The probe runs the provider's CLI seats once per distinct (model, effort) and says what it verified.
+        probe = c.post('/api/providers/openai/probe', headers=AUTH, json={'spend_tokens': True}).json()
+        assert probe['transport'] == 'codex' and probe['results'] == [{**probe['results'][0], 'model': 'gpt-5.5', 'effort': 'xhigh',
+                                                                        'roles': ['planner'], 'ok': True, 'observed_model': None,
+                                                                        'identity_verified': False, 'applied_effort': 'xhigh'}]
+        assert c.post('/api/providers/openclaw/probe', headers=AUTH, json={'spend_tokens': True}).status_code == 404
+        # A resume after the seats changed is refused; the routing is part of the consent.
+        repo = c.app.state.repository
+        current = repo.get(row['id'])
+        from arc_science.exploration.models import MissionState
+        repo.save(row['id'], MissionState.model_validate({**current['state'], 'status': 'paused'}), expected_revision=current['revision'])
+        doc = settings.snapshot()['settings']
+        doc['seats']['planner']['model'] = 'gpt-5.6-sol'
+        settings.replace(doc, None)
+        refused = c.post(f"/api/missions/{row['id']}/start", headers=AUTH)
+        assert refused.status_code == 409 and 'seats changed' in refused.json()['detail']
+        assert repo.get(row['id'])['state']['status'] == 'paused'
+        assert c.get(f"/api/missions/{row['id']}", headers=AUTH).json()['state']['status'] == 'paused'
 
 
 def test_the_falsifier_seat_reaches_the_agents():

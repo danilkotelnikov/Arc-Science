@@ -148,7 +148,7 @@ def test_cli_supports_separate_biorender_credential_and_discovery(tmp_path,monke
     from arc_science import cli
     monkeypatch.setattr(cli.getpass,'getpass',lambda _: 'connector-secret')
     assert cli.main(['credential','--name','biorender','--data',str(tmp_path)])==0
-    assert (tmp_path/'biorender.token').read_text()=='connector-secret\n'
+    assert (tmp_path/'credentials'/'biorender.credential').read_text()=='connector-secret\n'
     async def discover():return {'schema_digest':'a'*64,'protocol':'2026-07-28','live_qualified':False}
     monkeypatch.setattr(cli,'discover_biorender',discover)
     assert cli.main(['biorender-discover'])==0
