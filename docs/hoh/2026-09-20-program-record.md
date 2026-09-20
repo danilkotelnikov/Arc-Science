@@ -142,3 +142,52 @@ validity claim; the two refusals are operator-side.
 | Gemini id admitted `:` before the method path | low | Removed |
 | Recorded design disagreement: Sol would treat the Codex "skills context budget" error item as a failure; the seat allows exactly that item because every run on a host with many skills emits it and the alternative puts operator skill text into the seat prompt | — | Allowed item is the only one; any other error item fails the call |
 | Watch: `live_seats()` assembles the route from several settings reads; a concurrent replacement could mix revisions, though the assembled route is what is bound and run | low | Recorded for a later loop |
+
+## Loops 6–7 — connectors: MCP servers and ACP agents (`68fbcc9`, `508d25b`, `8768da5`, `6735bc0`)
+
+MCP servers from the settings run through the official `mcp` SDK (1.27.0, MIT,
+modelcontextprotocol/python-sdk; optional extra `mcp`, exact pin; the Linux lock files
+were not regenerated from this workstation). A server with consent opens one session
+per mission — stdio in a private empty directory under the SDK's minimal environment
+(the SDK contains the process tree in a job object on Windows), or streamable HTTP
+without proxies or redirects — and its tools become planner tools `mcp_<server>_<tool>`.
+A tool's input schema is tightened into the closed catalogue form: annotations are
+dropped, every property is required, any assertion the catalogue cannot express or a
+non-object top level withholds the tool with the reason listed. ACP agents are spoken
+to over stdio with newline JSON-RPC (`initialize`, `session/new`, `session/prompt`); a
+consented agent is one consultation tool. Arc grants no permission (the agent's own
+reject option, else cancelled), serves no file or terminal, runs the agent under the
+allowlisted environment and the kill-on-close job, serialises consultations per agent,
+discards an agent whose prompt timed out, and says it cannot see the agent's own tools.
+Every connector call is an external connector under the mission's egress consent,
+bounded (blocks, text, structured content, image size, uri length, time), and its
+observation is `claim_eligible: false`: the engine refuses a supporting assessment that
+rests on it and the claim scope counts it as no test (derivation `arc-claim-scope-3`;
+an earlier version is reported stale and derived again on verification; observations
+recorded before the field existed read back as ineligible by their reserved prefix).
+The consented connectors' identities join the seats in the route bound at a mission's
+first start. The operator checks connections from the Settings workspace (`POST
+/api/mcp/servers/check`, `/api/acp/agents/check`) without sending mission data.
+
+Checks: Python 783 passed / 65 skipped (a FastMCP fake server and a fake ACP agent
+with the invocation contracts; a live mission through the stub supervisor consulting
+both; bounds; concurrency; the stale-scope path through `/verify`); vitest 56;
+Playwright 19; Rust clean. Live on this workstation: PubMed (7 tools) and Context7
+(2 tools) listed over streamable HTTP through the adapter; `arxiv-mcp-server` failed
+inside its own package (an environment fault, not Arc's); `gemini --acp` answered
+`initialize` (protocol 1, four auth methods). None of these is a validity claim.
+
+## Evaluation of loops 6–7 (Sol): changes required ×3 → addressed → accept
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| "Not evidence" was a label: connector observations could support an assessment and counted as successful tests | high | `Observation.claim_eligible`; the engine rejects support resting on it; the claim scope excludes it; derivation version 3 with stale handling and re-derivation on verify; legacy read-back by prefix |
+| Connector authority was not mission-bound | high | Consented connector identities join the route digest; the worker runs on the bound snapshot; the whole route comes from one settings read |
+| ACP inherited the service environment and killed only the leader | high | Allowlisted environment; kill-on-close job on Windows; own session group and `killpg` on POSIX (unverified on Linux here) |
+| Concurrent consultations could cross-bind replies or start duplicate agents; a failed start leaked | high | Per-agent lock; start-once lock; failed starts closed; a timed-out prompt discards the agent |
+| Dropped schema assertions widened tool inputs; a top-level union crashed | medium | Only annotations dropped; assertions withhold; non-object top level withheld |
+| Structured content and images escaped the result bound | medium | Bounds on blocks, structured content, image size and uri length |
+| Normalised ACP names could overwrite tools | medium | Collisions refused |
+| Connection checks as GET; SDK range not reproducible | low | POST checks; `mcp==1.27.0` |
+| `/verify` did not re-derive a stale scope | medium | Re-derived when absent or of an earlier version; API regression |
+| Recorded gate: Linux process-group containment of ACP agents and the Linux lock files | gate | Unverified from this workstation |

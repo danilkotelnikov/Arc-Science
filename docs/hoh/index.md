@@ -115,5 +115,7 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   in a private directory, a Gemini API adapter, effort mapped per transport, the whole
   route bound to a mission at its first start, a Codex seat's identity recorded as
   requested-only and never counted as an independent reviewer; live: Codex answered,
-  Gemini CLI tier ineligible, Claude credits exhausted. Sol: changes required → accept
-  on each.
+  Gemini CLI tier ineligible, Claude credits exhausted. Loops 6–7 (connectors):
+  consented MCP servers (official SDK) and ACP agents as bounded mission tools whose
+  content is never evidence, bound with the route; live: PubMed and Context7 listed,
+  `gemini --acp` answered initialize. Sol: changes required → accept on each.
