@@ -25,7 +25,7 @@ from .exploration.providers import HTTPAgent, ModelEndpoint
 from .exploration.cli_seats import redact
 from . import settings as operator_settings
 from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, declare_resume, mission_change, obligation_states
-from .exploration.claim_scope import derive_claim_scope
+from .exploration.claim_scope import DERIVATION_VERSION as CLAIM_DERIVATION_VERSION, derive_claim_scope
 from .exploration.repository import MissionRepository, MissionFinished, RevisionConflict
 from .exploration.capsule import export_capsule, verify_capsule
 from .exploration import release as release_ledger
@@ -798,9 +798,11 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         chain=repository.verify(mid)
         if not chain:raise HTTPException(409,'Mission integrity check failed')
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
-        if state.status in ('completed','budget_exhausted','needs_input') and state.claim_scope is None:
-            # A mission that stopped before claim scopes existed gets its derived scope here,
-            # the only bounded write verification makes besides the ledger itself.
+        if state.status in ('completed','budget_exhausted','needs_input') and (
+                state.claim_scope is None or state.claim_scope.derivation_version!=CLAIM_DERIVATION_VERSION):
+            # A mission that stopped before claim scopes existed, or under an earlier
+            # derivation rule, gets its scope derived here under the current rule: the only
+            # bounded write verification makes besides the ledger itself.
             state=state.model_copy(update={'claim_scope':derive_claim_scope(state)})
         report=await asyncio.to_thread(verify_capsule,export_capsule(request,state))
         # Persist what was observed and the decision it yields; a later change stales it.

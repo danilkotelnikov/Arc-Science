@@ -188,6 +188,16 @@ def test_verification_derives_the_claim_scope_for_a_mission_that_stopped_before_
         verified=c.post(f'/api/missions/{mid}/verify',headers=auth()).json()
         assert verified['release']['status']=='eligible_for_human_review'
         assert c.get(f'/api/missions/{mid}',headers=auth()).json()['state']['claim_scope']['derivation_version']=='arc-claim-scope-3'
+        # A scope derived under an earlier rule is stale until verification derives it again.
+        row=repo.get(mid)
+        older={**row['state']['claim_scope'],'derivation_version':'arc-claim-scope-2'}
+        repo.save(mid,MissionState.model_validate({**row['state'],'claim_scope':older}),expected_revision=row['revision'])
+        states={ch['name']:ch['state'] for ch in c.get(f'/api/missions/{mid}/release',headers=auth()).json()['checks']}
+        assert states['claim_scope']=='stale'
+        verified=c.post(f'/api/missions/{mid}/verify',headers=auth()).json()
+        assert verified['release']['status']=='eligible_for_human_review'
+        after=c.get(f'/api/missions/{mid}',headers=auth()).json()['state']['claim_scope']
+        assert after['derivation_version']=='arc-claim-scope-3' and after['counts']==older['counts']
 
 
 def test_verification_refuses_to_run_beside_an_active_worker(tmp_path):
