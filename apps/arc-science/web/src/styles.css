@@ -146,3 +146,4 @@ footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e9ebed; fon
 .release-checks { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; font-size: 12px; }
 .check-state { font-weight: 600; }
 .check-satisfied { color: #2e6b3f; } .check-not_applicable { color: #68727a; } .check-unknown, .check-stale { color: #8a6d1d; } .check-failed, .check-error { color: #a23d3d; }
+.check-report p { margin: 2px 0; font-size: 13px; overflow-wrap: anywhere; }

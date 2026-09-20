@@ -75,7 +75,7 @@ def test_settings_are_read_from_the_supervisor_and_replaced_with_the_revision_se
         assert c.get('/api/settings').status_code == 401
         snap = c.get('/api/settings', headers=AUTH).json()
         assert snap['settings']['seats']['planner']['provider'] == '' and len(snap['revision']) == 64
-        assert 'seats.effort' in snap['applied_live'] and 'mcp_servers' in snap['stored_pending'] and snap['restart_required'] == []
+        assert 'seats.effort' in snap['applied_live'] and 'mcp_servers' in snap['applied_live'] and snap['stored_pending'] == ['blender', 'viewer']
         # Without the revision that was read, a replacement is not accepted at all.
         assert c.put('/api/settings', headers=AUTH, json={'settings': snap['settings']}).status_code == 422
         edited = snap['settings']
@@ -274,6 +274,71 @@ def test_a_live_mission_runs_each_seat_through_its_own_cli_and_binds_the_seat_pl
         assert declared.status_code == 202
         resumed = wait_final(c, row['id'])['state']
         assert resumed['status'] in ('budget_exhausted', 'completed') and len([e for e in resumed['events'] if e['kind'] == 'seats_bound']) == 1
+
+
+def test_connectors_are_checked_by_the_operator_and_reach_a_live_mission_only_with_consent(tmp_path, stub, monkeypatch):
+    pytest.importorskip('mcp')
+    for key in ('ARC_PROVIDER', 'ARC_MODEL', 'ARC_REVIEWER_MODEL', 'ARC_CLAUDE_CODE_EXE', 'ARC_VISION_PROVIDER', 'ARC_MODEL_TOKEN_FILE'):
+        monkeypatch.delenv(key, raising=False)
+    fixtures = Path(__file__).parent / 'fixtures'
+    # The planner asks the MCP echo tool and the ACP agent once each, then stops.
+    planner = tmp_path / 'planner.py'
+    planner.write_text(r'''
+import json, sys
+args = sys.argv[1:]
+if args[:2] == ['auth', 'status']:
+    print(json.dumps({'loggedIn': True, 'authMethod': 'claude.ai'})); sys.exit(0)
+if args == ['--version']:
+    print('9.9.9'); sys.exit(0)
+model = args[args.index('--model') + 1]
+request = json.loads(sys.stdin.read())
+ctx = request['context']
+if request['response_schema'].get('title') == 'Reconciliation':
+    text = json.dumps({'assessments': [], 'summary': 'nothing'})
+elif ctx['observations']:
+    text = json.dumps({'branches': [], 'actions': [], 'stop': True, 'reason': 'consulted'})
+else:
+    assert 'mcp_fake_echo' in ctx['tools'] and 'acp_fake_consult' in ctx['tools'], sorted(ctx['tools'])
+    text = json.dumps({'branches': [{'id': 'b', 'title': 'Connectors', 'hypothesis': 'They answer', 'falsifier': 'They do not', 'parents': []}],
+                       'actions': [{'id': 'm', 'branch_id': 'b', 'tool': 'mcp_fake_echo', 'arguments': {'text': 'ping', 'times': 1}},
+                                   {'id': 'a', 'branch_id': 'b', 'tool': 'acp_fake_consult', 'arguments': {'prompt': 'hello'}}],
+                       'stop': False, 'reason': 'ask'})
+print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'result': text, 'modelUsage': {model: {}},
+                  'usage': {'input_tokens': 1, 'output_tokens': 1}, 'permission_denials': []}))
+''', encoding='utf-8')
+    monkeypatch.setattr(service, 'claude_code_command', lambda: [sys.executable, str(planner)])
+    snap = settings.snapshot()
+    doc = snap['settings']
+    for role in ('planner', 'reviewer', 'falsifier'):
+        doc['seats'][role].update(provider='anthropic', model='claude-opus-5', auth='cli')
+    doc['providers']['anthropic']['cli'] = 'claude'
+    doc['mcp_servers'] = [{'name': 'fake', 'transport': 'stdio', 'command': sys.executable, 'args': [str(fixtures / 'fake_mcp_server.py')],
+                           'url': '', 'consent': True, 'enabled': True},
+                          {'name': 'quiet', 'transport': 'stdio', 'command': sys.executable, 'args': [str(fixtures / 'fake_mcp_server.py')],
+                           'url': '', 'consent': False, 'enabled': True}]
+    doc['acp_agents'] = [{'name': 'fake', 'command': sys.executable, 'args': [str(fixtures / 'fake_acp_agent.py'), 'permission'],
+                          'consent': True, 'enabled': True}]
+    settings.replace(doc, snap['revision'])
+    with TestClient(app(tmp_path)) as c:
+        caps = c.get('/api/capabilities', headers=AUTH).json()
+        assert caps['connectors'] == {'mcp': {'configured': 2, 'consented': 1, 'sdk': caps['connectors']['mcp']['sdk']}, 'acp': {'configured': 1, 'consented': 1}}
+        assert caps['connectors']['mcp']['sdk']
+        # Operator checks: every enabled server is listed (consent or not), nothing is called.
+        listed = c.get('/api/mcp/servers', headers=AUTH).json()
+        assert listed['consented'] == ['fake'] and [srv['server'] for srv in listed['servers']] == ['fake', 'quiet']
+        assert {t['name']: t['offered'] for t in listed['servers'][0]['tools']} == {'echo': True, 'where': True, 'fail': True}
+        agents = c.get('/api/acp/agents', headers=AUTH).json()
+        assert agents['agents'][0]['ok'] and agents['agents'][0]['agent_info']['name'] == 'fake-acp' and agents['consented'] == ['fake']
+        assert c.get('/api/mcp/servers').status_code == 401
+        row = c.post('/api/missions', headers=AUTH, json={'goal': 'Ask the connectors', 'mode': 'live', 'max_rounds': 2, 'allow_egress': True}).json()
+        assert c.post(f"/api/missions/{row['id']}/start", headers=AUTH).status_code == 202
+        state = wait_final(c, row['id'])['state']
+        assert state['status'] == 'completed', state['stop_reason']
+        by_tool = {o['tool']: o for o in state['observations']}
+        assert by_tool['mcp_fake_echo']['status'] == 'ok' and by_tool['mcp_fake_echo']['data']['content'][0]['text'] == 'ping '
+        assert by_tool['acp_fake_consult']['status'] == 'ok' and by_tool['acp_fake_consult']['data']['text'].startswith('Echo: hello')
+        assert by_tool['acp_fake_consult']['data']['refused_requests'] == ['Run rm -rf', 'fs/read_text_file']
+        assert 'mcp_quiet_echo' not in json.dumps(state['model_records'][0]['input_context']['tools'])
 
 
 def test_the_falsifier_seat_reaches_the_agents():

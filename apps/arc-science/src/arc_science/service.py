@@ -358,8 +358,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     # snapshot and forwards a whole replacement with the revision the operator saw.
     # What the service consumes today, and what is stored for a later loop; the UI
     # shows both so nothing reads as applied when it is not.
-    APPLIED={'applied_live':['seats','seats.effort','providers','prose'],
-             'stored_pending':['mcp_servers','acp_agents','blender','viewer'],'restart_required':[]}
+    APPLIED={'applied_live':['seats','seats.effort','providers','prose','mcp_servers','acp_agents'],
+             'stored_pending':['blender','viewer'],'restart_required':[]}
     settings_writer=asyncio.Semaphore(1)
     @app.get('/api/settings',dependencies=[Depends(authorized)])
     async def settings_snapshot():
@@ -377,6 +377,30 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             except operator_settings.SettingsRejected as why:raise HTTPException(422,str(why)) from None
             except (ValueError,OSError,subprocess.SubprocessError) as why:raise HTTPException(500,str(why)[:700]) from None
         return {**snap,**APPLIED}
+
+    # Connectors: the operator's connection checks. Listing an MCP server's tools and
+    # exchanging `initialize` with an ACP agent send no mission data; consent to send
+    # data is a per-entry setting, and every mission call still needs egress consent.
+    def connector_entries(key):
+        current=operator_settings.current()
+        if current is None:raise HTTPException(503,'Settings are not available to this service')
+        return [dict(entry) for entry in (current.get(key) or [])]
+
+    @app.get('/api/mcp/servers',dependencies=[Depends(authorized)])
+    async def mcp_servers():
+        from .exploration import mcp_tools
+        entries=connector_entries('mcp_servers')
+        try:report=await mcp_tools.inspect_servers(entries)
+        except RuntimeError as why:raise HTTPException(503,str(why)) from None
+        return {'sdk':mcp_tools.sdk_version(),'servers':report,
+                'consented':[e['name'] for e in entries if e.get('enabled',True) and e.get('consent')]}
+
+    @app.get('/api/acp/agents',dependencies=[Depends(authorized)])
+    async def acp_agents():
+        from .exploration import acp_client
+        entries=connector_entries('acp_agents')
+        return {'protocol_version':acp_client.PROTOCOL_VERSION,'agents':await acp_client.inspect_agents(entries),
+                'consented':[e['name'] for e in entries if e.get('enabled',True) and e.get('consent')]}
 
     from .memory.web import MemoryRoutes
     worker_path=os.environ.get('ARC_MEMORY_WORKER')
@@ -510,7 +534,13 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         try:biorender=biorender_configuration()
         except Exception:biorender={'enabled':os.environ.get('ARC_BIORENDER_READS')=='1',
                                    'configured':False,'live_qualified':False}
+        from .exploration import mcp_tools
+        current=operator_settings.current() or {}
+        def summary(key):
+            entries=current.get(key) or []
+            return {'configured':len(entries),'consented':len([e for e in entries if e.get('enabled',True) and e.get('consent')])}
         return {'version':VERSION,'live':live,'vision':visual,
+                'connectors':{'mcp':{**summary('mcp_servers'),'sdk':mcp_tools.sdk_version()},'acp':summary('acp_agents')},
                 'numeric_tools':['describe_data','polynomial_fit','permutation_control'],
                 'public_network_tools_enabled':os.environ.get('ARC_PUBLIC_READS')=='1',
                 'biorender':biorender,
@@ -564,7 +594,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             # stall mission progress, status polling or cancellation.
             memory_routes.schedule_capture(mid,state)
         def cancelled():return repository.get(mid)['state']['status']=='cancelled'
-        agent=None
+        agent=None;consultations=None;mcp=None
         try:
             async with httpx.AsyncClient(trust_env=False) as client:
                 tools=TrustedPublicTools()
@@ -610,7 +640,25 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                             protocol=biorender['protocol'])
                         adapter=await biorender_tools(provider,schema_digest=biorender['schema_digest'])
                         tools=combine_trusted_tools(tools,adapter)
-                await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools)
+                    # Consented connectors, for this mission only: MCP sessions open now and
+                    # close with the mission; ACP agents start on first consultation.
+                    current=operator_settings.current() or {}
+                    from .exploration.acp_client import AcpConsultations
+                    from .exploration.mcp_tools import McpToolset
+                    consultations=AcpConsultations(current.get('acp_agents') or [])
+                    servers=[srv for srv in (current.get('mcp_servers') or []) if srv.get('enabled',True) and srv.get('consent')]
+                    mcp=McpToolset(servers) if servers else None
+                    for name,binding in consultations.tools.items():
+                        if name in tools:raise ValueError('Connector tool name collides: '+name)
+                        tools[name]=binding
+                if mcp is not None:
+                    async with mcp:
+                        for name,binding in mcp.tools.items():
+                            if name in tools:raise ValueError('Connector tool name collides: '+name)
+                            tools[name]=binding
+                        await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools)
+                else:
+                    await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools)
         except (MissionCancelled,RevisionConflict):pass
         except asyncio.CancelledError:raise
         except Exception:
@@ -620,6 +668,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 with suppress(RevisionConflict):repository.save(mid,error,expected_revision=fresh['revision'])
         finally:
             if hasattr(agent,'close'):agent.close()
+            if consultations is not None:await consultations.close()
             fresh=repository.get(mid)
             memory_routes.schedule_capture(mid,MissionState.model_validate(fresh['state']))
             running.pop(mid,None)

@@ -20,6 +20,11 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (path, options = {}) => {
     calls.push({path, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null, auth: options.headers?.Authorization});
     if (path === '/api/capabilities') return json({live});
+    if (path === '/api/mcp/servers') return json({sdk: '1.27.0', consented: ['pubmed'], servers: [
+      {server: 'pubmed', ok: true, tools: [{name: 'search_articles', offered: true, as: 'mcp_pubmed_search_articles'}, {name: 'nested', offered: false, reason: 'schema uses $ref, which the catalogue cannot represent'}]},
+      {server: 'arxiv', ok: false, error: 'McpError: Connection closed', tools: []}]});
+    if (path === '/api/acp/agents') return json({protocol_version: 1, consented: [], agents: [
+      {agent: 'gemini', ok: true, protocol_version: 1, agent_info: {name: 'gemini-cli', version: '0.56.0'}, capabilities: {}, auth_methods: ['oauth-personal', 'gemini-api-key']}]});
     if (path === '/api/providers/openai/probe' && options.method === 'POST') return json({transport: 'codex', provider: 'openai', results: [{model: 'gpt-5.5', effort: 'xhigh', roles: ['planner'], ok: true, observed_model: null, identity_verified: false}]});
     if (path === '/api/settings' && (options.method || 'GET') === 'GET') return json({settings: stored, revision, path: 'C:/ws/settings.toml', applied_live: ['seats'], restart_required: []});
     if (path === '/api/settings' && options.method === 'PUT') {
@@ -106,5 +111,19 @@ test('MCP servers and ACP agents are edited as rows', async () => {
   await screen.findByRole('status');
   const put = calls.find(c => c.method === 'PUT');
   expect(put.body.settings.mcp_servers).toEqual([{name: 'tools', transport: 'http', command: '', args: [], url: 'http://127.0.0.1:9000/mcp', consent: true, enabled: true}]);
-  expect(put.body.settings.acp_agents).toEqual([{name: 'gemini', command: 'gemini', args: ['--acp'], enabled: true}]);
+  expect(put.body.settings.acp_agents).toEqual([{name: 'gemini', command: 'gemini', args: ['--acp'], consent: false, enabled: true}]);
+});
+
+test('connection checks list MCP tools and ACP agents as the service reports them', async () => {
+  const user = userEvent.setup(); render(<SettingsWorkspace token="operator"/>);
+  await user.click(screen.getByRole('button', {name: 'Load settings'}));
+  await user.click(await screen.findByRole('button', {name: 'List MCP tools'}));
+  const mcp = within(await screen.findByLabelText('MCP servers checked'));
+  expect(mcp.getByText(/SDK 1\.27\.0/)).toBeInTheDocument();
+  expect(mcp.getByText(/search_articles, nested \(not offered: schema uses \$ref/)).toBeInTheDocument();
+  expect(mcp.getByText(/failed — McpError: Connection closed/)).toBeInTheDocument();
+  await user.click(screen.getByRole('button', {name: 'Check ACP agents'}));
+  const acp = within(await screen.findByLabelText('ACP agents checked'));
+  expect(acp.getByText(/gemini-cli 0\.56\.0 · auth: oauth-personal, gemini-api-key/)).toBeInTheDocument();
+  expect(calls.filter(c => c.path === '/api/mcp/servers' || c.path === '/api/acp/agents').every(c => c.method === 'GET' && c.auth === 'Bearer operator')).toBe(true);
 });

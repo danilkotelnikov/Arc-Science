@@ -120,6 +120,9 @@ pub struct AcpAgent {
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
+    /// Missions may send data to this agent (a consultation leaves the process).
+    #[serde(default)]
+    pub consent: bool,
     #[serde(default = "default_true")]
     pub enabled: bool,
 }

@@ -13,7 +13,9 @@ dependencies = ["pydantic>=2.8,<3", "httpx>=0.27,<1", "Pillow>=10,<13", "jsonsch
 structure = ["gemmi>=0.7,<0.8", "numpy>=1.26,<3", "scipy>=1.13,<2", "scikit-image>=0.24,<1", "CairoSVG>=2.8,<3"]
 raster = ["pypdfium2>=4,<6"]
 vector = ["CairoSVG>=2.8,<3", "defusedxml>=0.7,<1", "pypdfium2>=4,<6"]
-test = ["pytest>=8,<10", "gemmi>=0.7,<0.8", "numpy>=1.26,<3", "scipy>=1.13,<2", "scikit-image>=0.24,<1", "CairoSVG>=2.8,<3", "defusedxml>=0.7,<1", "pypdfium2>=4,<6", "reportlab>=4,<5"]
+# MCP servers as mission connectors: the official SDK, below its 2.0 line.
+mcp = ["mcp>=1.27,<2"]
+test = ["pytest>=8,<10", "gemmi>=0.7,<0.8", "numpy>=1.26,<3", "scipy>=1.13,<2", "scikit-image>=0.24,<1", "CairoSVG>=2.8,<3", "defusedxml>=0.7,<1", "pypdfium2>=4,<6", "reportlab>=4,<5", "mcp>=1.27,<2"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

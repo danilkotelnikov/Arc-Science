@@ -18,10 +18,11 @@ export default function SettingsWorkspace({token}) {
   const [snapshot, setSnapshot] = useState(null), [draft, setDraft] = useState(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const [live, setLive] = useState(null), [probes, setProbes] = useState({}), [consent, setConsent] = useState(false);
+  const [checks, setChecks] = useState({});
   const credential = useRef(null);
   useLayoutEffect(() => {
     const controller = new AbortController(); credential.current = controller;
-    setSnapshot(null); setDraft(null); setError(''); setNotice(''); setBusy(false); setLive(null); setProbes({}); setConsent(false);
+    setSnapshot(null); setDraft(null); setError(''); setNotice(''); setBusy(false); setLive(null); setProbes({}); setConsent(false); setChecks({});
     return () => controller.abort();
   }, [token]);
   const read = useCallback(async (path, signal, method = 'GET', body) => {
@@ -47,6 +48,11 @@ export default function SettingsWorkspace({token}) {
     const snap = await read('/settings', signal);
     setSnapshot(snap); setDraft(structuredClone(snap.settings));
     await connections(signal);
+  }
+  async function check(kind, signal) {
+    // Cost-free and data-free: an MCP server lists its tools, an ACP agent answers initialize.
+    const result = await read(kind === 'mcp' ? '/mcp/servers' : '/acp/agents', signal);
+    setChecks(current => ({...current, [kind]: result}));
   }
   async function probe(provider, signal) {
     // Explicit consent per click: a probe makes one real model call per distinct seat.
@@ -127,8 +133,20 @@ export default function SettingsWorkspace({token}) {
         </tbody></table>
         <h2>MCP servers</h2>
         <ListEditor rows={draft.mcp_servers} readOnly={readOnly} kind="mcp" onChange={rows => set(['mcp_servers'], rows)}/>
+        <div className="actions"><Button variant="secondary" size="sm" isDisabled={busy || !snapshot} onPress={() => task(signal => check('mcp', signal))}>List MCP tools</Button></div>
+        {checks.mcp && <div className="check-report" aria-label="MCP servers checked">
+          <p className="field-note">SDK {checks.mcp.sdk || 'not installed'} · consented: {checks.mcp.consented.join(', ') || 'none'}</p>
+          {checks.mcp.servers.map(srv => <p key={srv.server}><strong>{srv.server}</strong>: {srv.ok ? srv.tools.map(t => t.name + (t.offered ? '' : ' (not offered: ' + t.reason + ')')).join(', ') || 'no tools' : 'failed — ' + srv.error}</p>)}
+        </div>}
+        <p className="field-note">Only a server with consent is offered to missions, every call still needs the mission's egress consent, and a tool whose schema the catalogue cannot represent is listed as not offered. Results are untrusted content, never evidence.</p>
         <h2>ACP agents</h2>
         <ListEditor rows={draft.acp_agents} readOnly={readOnly} kind="acp" onChange={rows => set(['acp_agents'], rows)}/>
+        <div className="actions"><Button variant="secondary" size="sm" isDisabled={busy || !snapshot} onPress={() => task(signal => check('acp', signal))}>Check ACP agents</Button></div>
+        {checks.acp && <div className="check-report" aria-label="ACP agents checked">
+          <p className="field-note">Protocol {checks.acp.protocol_version} · consented: {checks.acp.consented.join(', ') || 'none'}</p>
+          {checks.acp.agents.map(a => <p key={a.agent}><strong>{a.agent}</strong>: {a.ok ? (a.agent_info?.name || 'agent') + ' ' + (a.agent_info?.version || '') + (a.auth_methods?.length ? ' · auth: ' + a.auth_methods.join(', ') : '') : 'failed — ' + a.error}</p>)}
+        </div>}
+        <p className="field-note">A consented agent is one consultation tool for missions; Arc grants it no permission and serves it no file or terminal, and cannot see what tools the agent runs on its own. Its reply is untrusted text, never evidence.</p>
         <h2>Prose, Blender, viewer</h2>
         <label className="check"><input type="checkbox" checked={draft.prose.detection} disabled={readOnly} onChange={e => set(['prose', 'detection'], e.target.checked)}/>Third-party AI detection may run (each request still needs its own consent).</label>
         <div className="formrow">
@@ -142,7 +160,7 @@ export default function SettingsWorkspace({token}) {
 }
 
 function ListEditor({rows, readOnly, kind, onChange}) {
-  const blank = kind === 'mcp' ? {name: '', transport: 'stdio', command: '', args: [], url: '', consent: false, enabled: true} : {name: '', command: '', args: [], enabled: true};
+  const blank = kind === 'mcp' ? {name: '', transport: 'stdio', command: '', args: [], url: '', consent: false, enabled: true} : {name: '', command: '', args: [], consent: false, enabled: true};
   const update = (index, patch) => onChange(rows.map((row, i) => i === index ? {...row, ...patch} : row));
   return <div className="list-editor">
     {rows.length === 0 && <p className="muted">None.</p>}
@@ -156,7 +174,7 @@ function ListEditor({rows, readOnly, kind, onChange}) {
       </div>
       <div className="actions">
         <label className="check"><input type="checkbox" checked={row.enabled} disabled={readOnly} onChange={e => update(i, {enabled: e.target.checked})}/>enabled</label>
-        {kind === 'mcp' && <label className="check"><input type="checkbox" checked={row.consent} disabled={readOnly} onChange={e => update(i, {consent: e.target.checked})}/>missions may send data to it</label>}
+        <label className="check"><input type="checkbox" checked={!!row.consent} disabled={readOnly} onChange={e => update(i, {consent: e.target.checked})}/>missions may send data to it</label>
         <Button variant="ghost" size="sm" isDisabled={readOnly} onPress={() => onChange(rows.filter((_, j) => j !== i))}>Remove</Button>
       </div>
     </div>)}
