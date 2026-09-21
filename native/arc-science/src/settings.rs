@@ -14,6 +14,26 @@ pub const PROVIDERS: [&str; 4] = ["anthropic", "openai", "gemini", "openclaw"];
 pub const EFFORTS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 pub const AUTH: [&str; 2] = ["api_key", "cli"];
 pub const ROLES: [&str; 5] = ["planner", "reviewer", "falsifier", "vision", "prose"];
+/// (provider, transport) -> the efforts that transport can express; the same table as
+/// `exploration/effort.py` SUPPORTED. An empty list means no control: only "medium"
+/// is accepted and the provider default applies.
+pub const EFFORTS_BY_TRANSPORT: [(&str, &str, &[&str]); 7] = [
+    (
+        "anthropic",
+        "api",
+        &["low", "medium", "high", "xhigh", "max"],
+    ),
+    (
+        "anthropic",
+        "cli",
+        &["low", "medium", "high", "xhigh", "max"],
+    ),
+    ("openai", "api", &EFFORTS),
+    ("openai", "cli", &EFFORTS),
+    ("gemini", "api", &["minimal", "low", "medium", "high"]),
+    ("gemini", "cli", &[]),
+    ("openclaw", "api", &[]),
+];
 /// Exit status of `settings replace` when the caller's revision is stale.
 pub const STALE_REVISION_STATUS: i32 = 3;
 
@@ -277,7 +297,16 @@ fn is_loopback_http(value: &str) -> bool {
 }
 
 impl Settings {
+    /// Everything a document must satisfy to be written.
     pub fn validate(&self) -> Result<()> {
+        self.validate_schema()?;
+        self.validate_transports()
+    }
+
+    /// Shape and enumerations: what a file must satisfy to be read at all. A file
+    /// written before a transport rule existed still loads; readiness reports the
+    /// offending seat and the workbench refuses to save it unchanged.
+    pub fn validate_schema(&self) -> Result<()> {
         if self.schema_version != 1 {
             return Err("Unsupported settings schema_version; expected 1".into());
         }
@@ -323,6 +352,61 @@ impl Settings {
                 }
             }
         }
+        self.validate_providers_and_connectors()
+    }
+
+    /// What each seat's transport can express: the effort levels it carries and the
+    /// seats it can serve at all. Enforced when a document is written.
+    pub fn validate_transports(&self) -> Result<()> {
+        for (role, seat) in [
+            ("planner", &self.seats.planner),
+            ("reviewer", &self.seats.reviewer),
+            ("falsifier", &self.seats.falsifier),
+            ("vision", &self.seats.vision),
+            ("prose", &self.seats.prose),
+        ] {
+            if !seat.provider.is_empty() {
+                if role == "vision" && seat.auth == "cli" {
+                    return Err(
+                        "seats.vision.auth must be api_key: visual review is not available \
+                                through a CLI login"
+                            .into(),
+                    );
+                }
+                let transport = if seat.auth == "cli" { "cli" } else { "api" };
+                let login = if seat.auth == "cli" {
+                    "cli login"
+                } else {
+                    "API credential"
+                };
+                let accepted = EFFORTS_BY_TRANSPORT
+                    .iter()
+                    .find(|(p, t, _)| *p == seat.provider && *t == transport)
+                    .map(|(_, _, e)| *e)
+                    .unwrap_or(&[]);
+                if accepted.is_empty() && seat.effort != "medium" {
+                    return Err(format!(
+                        "seats.{role}.effort must stay medium: {} {login} has no effort control \
+                         (the provider default applies)",
+                        seat.provider
+                    )
+                    .into());
+                }
+                if !accepted.is_empty() && !accepted.contains(&seat.effort.as_str()) {
+                    return Err(format!(
+                        "seats.{role}.effort {} is not accepted for {} {login}; accepted: {}",
+                        seat.effort,
+                        seat.provider,
+                        accepted.join(", ")
+                    )
+                    .into());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_providers_and_connectors(&self) -> Result<()> {
         for (name, provider) in [
             ("anthropic", &self.providers.anthropic),
             ("openai", &self.providers.openai),
@@ -448,7 +532,7 @@ impl Settings {
         let bytes = fs::read(&path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
         let text = String::from_utf8(bytes.clone()).map_err(|_| "settings.toml is not UTF-8")?;
         let settings: Settings = toml::from_str(&text)?;
-        settings.validate()?;
+        settings.validate_schema()?;
         Ok((settings, bytes))
     }
 
@@ -627,7 +711,16 @@ pub fn snapshot(settings: &Settings, bytes: &[u8], project: &Path) -> serde_json
         "settings": settings,
         "revision": revision(bytes),
         "path": project.join(SETTINGS_FILE).display().to_string(),
-        "schema": {"providers": PROVIDERS, "efforts": EFFORTS, "auth": AUTH, "roles": ROLES},
+        "schema": {
+            "providers": PROVIDERS,
+            "efforts": EFFORTS,
+            "auth": AUTH,
+            "roles": ROLES,
+            "efforts_by_transport": EFFORTS_BY_TRANSPORT
+                .iter()
+                .map(|(p, t, e)| (format!("{p}:{t}"), serde_json::json!(e)))
+                .collect::<serde_json::Map<_, _>>(),
+        },
     })
 }
 
@@ -747,6 +840,93 @@ mod tests {
     }
 
     #[test]
+    fn effort_is_checked_per_provider_and_transport() {
+        let mut s = Settings::default();
+        s.seats.planner.model = "m".into();
+        for (provider, auth, effort, expected) in [
+            (
+                "gemini",
+                "cli",
+                "high",
+                "seats.planner.effort must stay medium: gemini cli login has no effort control \
+                 (the provider default applies)",
+            ),
+            (
+                "openclaw",
+                "api_key",
+                "low",
+                "seats.planner.effort must stay medium: openclaw API credential has no effort \
+                 control (the provider default applies)",
+            ),
+            (
+                "anthropic",
+                "api_key",
+                "minimal",
+                "seats.planner.effort minimal is not accepted for anthropic API credential; \
+                 accepted: low, medium, high, xhigh, max",
+            ),
+            (
+                "gemini",
+                "api_key",
+                "max",
+                "seats.planner.effort max is not accepted for gemini API credential; accepted: \
+                 minimal, low, medium, high",
+            ),
+        ] {
+            s.seats.planner.provider = provider.into();
+            s.seats.planner.auth = auth.into();
+            s.seats.planner.effort = effort.into();
+            assert_eq!(s.validate().unwrap_err().to_string(), expected);
+        }
+        for (provider, auth, effort) in [
+            ("gemini", "cli", "medium"),
+            ("openclaw", "api_key", "medium"),
+            ("anthropic", "api_key", "xhigh"),
+            ("openai", "cli", "minimal"),
+            ("gemini", "api_key", "minimal"),
+        ] {
+            s.seats.planner.provider = provider.into();
+            s.seats.planner.auth = auth.into();
+            s.seats.planner.effort = effort.into();
+            s.validate()
+                .unwrap_or_else(|e| panic!("{provider} {auth} {effort}: {e}"));
+        }
+        // An unconfigured seat only needs a known effort word.
+        s.seats.planner.provider = String::new();
+        s.seats.planner.effort = "max".into();
+        s.validate().unwrap();
+        s.seats.planner.effort = "turbo".into();
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn schema_lists_efforts_by_transport() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, bytes) = Settings::load_or_create(dir.path()).unwrap();
+        let schema = snapshot(&settings, &bytes, dir.path())["schema"].clone();
+        let table = schema["efforts_by_transport"].as_object().unwrap();
+        let keys: Vec<_> = table.keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            [
+                "anthropic:api",
+                "anthropic:cli",
+                "gemini:api",
+                "gemini:cli",
+                "openai:api",
+                "openai:cli",
+                "openclaw:api",
+            ]
+        );
+        assert_eq!(table["gemini:cli"], serde_json::json!([]));
+        assert_eq!(
+            table["anthropic:api"],
+            serde_json::json!(["low", "medium", "high", "xhigh", "max"])
+        );
+        assert_eq!(table["openai:api"], serde_json::json!(EFFORTS));
+    }
+
+    #[test]
     fn concurrent_replacements_on_one_revision_let_exactly_one_through() {
         let dir = tempfile::tempdir().unwrap();
         let (base, bytes) = Settings::load_or_create(dir.path()).unwrap();
@@ -796,5 +976,49 @@ mod tests {
         let bad = document.replace("\"gpt-5.6\"", "\"\"");
         assert!(Settings::replace(dir.path(), &bad, None).is_err());
         assert_eq!(Settings::load_or_create(dir.path()).unwrap().0, written);
+    }
+
+    #[test]
+    fn a_file_written_before_a_transport_rule_still_loads_but_cannot_be_saved_unchanged() {
+        // gemini + cli + high predates the per-transport effort rule: the owner reads it
+        // (readiness reports the seat) and refuses to write it back until it is fixed.
+        let dir = tempfile::tempdir().unwrap();
+        let mut old = Settings::default();
+        old.seats.planner.provider = "gemini".into();
+        old.seats.planner.model = "gemini-2.5-pro".into();
+        old.seats.planner.auth = "cli".into();
+        old.seats.planner.effort = "high".into();
+        let content = toml::to_string_pretty(&old).unwrap();
+        write_atomically(dir.path(), content.as_bytes()).unwrap();
+        let (loaded, bytes) = Settings::load_or_create(dir.path()).unwrap();
+        assert_eq!(loaded, old);
+        let document = serde_json::to_string(&loaded).unwrap();
+        let error = Settings::replace(dir.path(), &document, Some(&revision(&bytes))).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("seats.planner.effort must stay medium")
+        );
+        let mut fixed = loaded.clone();
+        fixed.seats.planner.effort = "medium".into();
+        Settings::replace(
+            dir.path(),
+            &serde_json::to_string(&fixed).unwrap(),
+            Some(&revision(&bytes)),
+        )
+        .unwrap();
+        // A vision seat over a CLI login is refused on write, as the service refuses it at run time.
+        let mut vision = Settings::default();
+        vision.seats.vision.provider = "anthropic".into();
+        vision.seats.vision.model = "claude-opus-5".into();
+        vision.seats.vision.auth = "cli".into();
+        assert!(vision.validate_schema().is_ok());
+        assert!(
+            vision
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("seats.vision.auth must be api_key")
+        );
     }
 }

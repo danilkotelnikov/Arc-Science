@@ -1,6 +1,6 @@
 // Shell, identity and navigation against the real service and compiled bundle.
 import {test, expect} from '@playwright/test';
-import {openWorkspace, watchForTokenLeaks} from './fixtures.js';
+import {E2E_TOKEN, openWorkspace, watchForTokenLeaks} from './fixtures.js';
 
 test('the workbench opens on a blank Research question in the requested order', async ({page}) => {
   const requested = [];
@@ -58,4 +58,27 @@ test('Diagnostics shares the shell and the API refuses unauthenticated private r
   await expect(page.getByRole('status')).toContainText('Operator token required');
   await page.getByRole('button', {name: 'Research', exact: true}).last().click();
   await expect(page.getByRole('heading', {name: 'Start with a question.'})).toBeVisible();
+});
+
+test('at 700×800 Research and Diagnostics fit the viewport and every Diagnostics button is reachable by Tab', async ({page}) => {
+  await page.setViewportSize({width: 700, height: 800});
+  const fitsViewport = async () => expect(await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= document.documentElement.clientWidth)).toBe(true);
+  await page.goto('/');
+  await expect(page.getByRole('heading', {name: 'Start with a question.'})).toBeVisible();
+  await fitsViewport();
+  await openWorkspace(page, 'Diagnostics', 'Diagnostics');
+  await page.getByLabel('Operator token').fill(E2E_TOKEN); // the operator checks enable with a token
+  await fitsViewport();
+  // Labels belong to the Diagnostics workspace; here only the count and the Tab order matter.
+  const buttons = page.getByRole('main').getByRole('button', {disabled: false});
+  await expect(buttons).toHaveCount(4);
+  const labels = await buttons.allTextContents();
+  const reached = new Set();
+  await page.getByLabel('Operator token').focus();
+  for (let i = 0; i < 60 && reached.size < labels.length; i++) {
+    await page.keyboard.press('Tab');
+    const focused = await page.evaluate(() => { const el = document.activeElement; return el?.tagName === 'BUTTON' && el.closest('main') ? el.textContent : null; });
+    if (focused !== null && labels.includes(focused)) reached.add(focused);
+  }
+  expect([...reached].sort()).toEqual([...labels].sort());
 });

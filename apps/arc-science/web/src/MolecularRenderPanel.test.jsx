@@ -245,7 +245,7 @@ test('locked controls say what unlocks them, next to the control',async()=>{
   expect(controls.getByText('Operator token required')).toBeVisible();
   expect(controls.getByRole('button',{name:'Load renders'})).toBeDisabled();
   // The chain fields name their first blocker: the token comes before Load renders.
-  expect(controls.getByText('Paste an operator token, then press Load renders.')).toBeVisible();
+  expect(controls.getByText('Needs a desktop session or an operator token, then press Load renders.')).toBeVisible();
   expect(controls.queryByText(/Locked until Load renders/)).not.toBeInTheDocument();
   await user.click(controls.getByRole('button',{name:'Go to token field'}));
   await waitFor(()=>expect(screen.getByLabelText('Operator token')).toHaveFocus());

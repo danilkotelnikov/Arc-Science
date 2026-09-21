@@ -2,6 +2,7 @@ import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from '
 import {Button} from '@heroui/react/button';
 import {NATIVE_SESSION, SESSION_COPY, apiFetch, downloadResponse, sessionState} from './http';
 import {LockNotice, focusTokenField, unlockLabel} from './LockNotice';
+import {STATE_LABEL, releaseWord, sentence, stateOf} from './readiness';
 
 const EXAMPLE_GOAL='Compare competing explanations of the nonlinear response and challenge the preferred fit.';
 const MAX_ROUNDS=12;
@@ -13,19 +14,22 @@ const cardLine=card=>card.title+'. '+card.text;
 /** The analyst role is served by the Reviewer (QA) seat set in Settings. */
 const ROLE_LABEL={analyst:'Reviewer (QA)'};
 const role=value=>ROLE_LABEL[value]||value;
+/** The model source a mission was created with (request.mode). */
+const MODE_LABEL={demo:'Offline fixture',live:'Live models'};
+const modeLabel=value=>MODE_LABEL[value]||words(value);
 
 const RELEASE_LABEL={eligible_for_human_review:'Eligible for human review',blocked:'Blocked'};
-// The current decision defined where it appears; states follow release.py (BLOCKING = failed, unknown, error, stale).
+// The current decision defined where it appears; states follow release.py (BLOCKING = failed, unknown, error, stale) and are shown with releaseWord.
 const RELEASE_MEANING={
-  eligible_for_human_review:'Eligible for human review: every check below is satisfied or not applicable; ready for a human reviewer, not validated.',
-  blocked:'Blocked: at least one check below failed, is unknown, errored or is stale; not validated.',
+  eligible_for_human_review:'Eligible for human review: every check below passed or is n/a; ready for a human reviewer, not validated.',
+  blocked:'Blocked: at least one check below failed, is unverified, blocked or stale; not validated.',
 };
 function ReleaseLedger({release}) {
   if(!release)return null;
   return <section className="record release-ledger" aria-label="Release decision">
     <h3>Release decision: {RELEASE_LABEL[release.status]||words(release.status)}</h3>
     <p className="muted">{RELEASE_MEANING[release.status]||'Not validated.'}</p>
-    <ul className="release-checks">{release.checks.map(check=><li key={check.name} data-state={check.state}><strong>{words(check.name)}</strong> · <span className={'check-state check-'+check.state}>{words(check.state)}</span> — {check.reason}</li>)}</ul>
+    <ul className="release-checks">{release.checks.map(check=><li key={check.name} data-state={check.state}><strong>{words(check.name)}</strong> · <span className={'check-state check-'+check.state}>{releaseWord(check.state)}</span> — {check.reason}</li>)}</ul>
     {release.blocking_reasons.length>0&&<p role="status">Blocked by: {release.blocking_reasons.map(words).join(', ')}.</p>}
   </section>;
 }
@@ -99,6 +103,27 @@ function Changes({changes,obligations}) {
     </li>)}</ol>:<p className="muted">No declared change.</p>}</section>;
 }
 
+/** The seats a blocked live mission waits on, as GET /api/readiness names them; nothing here is recomputed. */
+const blockingSeats=readiness=>(readiness?.live_mission?.blocking||[]).map(role=>readiness.seats?.[role]).filter(Boolean);
+const seatAction=seat=>seat.label+' — '+sentence(seat.next_action||seat.meaning);
+function LiveRoute({readiness,error,locked,onNavigate,onCheck,token}) {
+  let body;
+  if(locked)body=<p className="muted">Seats are read once the session is unlocked.</p>;
+  else if(error)body=<><p role="alert">{friendlyError(error,token)}</p><Button variant="secondary" size="sm" onPress={onCheck}>Check seats again</Button></>;
+  else if(!readiness)body=<><p role="status" className="muted">Seats not read yet.</p><Button variant="secondary" size="sm" onPress={onCheck}>Check seats</Button></>;
+  else{
+    const seats=(readiness.roles||[]).map(r=>readiness.seats?.[r.role]).filter(seat=>seat?.facts?.provider);
+    const live=readiness.live_mission,liveState=stateOf(live),blocking=blockingSeats(readiness);
+    body=<>
+      {seats.length?<ul className="live-seats">{seats.map(seat=><li key={seat.role} data-state={seat.state}>{seat.label} · {seat.facts.provider} · {seat.facts.model||'no model'} · {seat.facts.effort||'default effort'} · {STATE_LABEL[seat.state]||seat.state}</li>)}</ul>:<p className="muted">No seat is configured.</p>}
+      {liveState==='blocked'?<><p role="status">{sentence(live.meaning)}{blocking.length?' Blocked by: '+blocking.map(seatAction).join(' '):live.next_action?' '+sentence(live.next_action):''}</p><Button variant="secondary" size="sm" onPress={()=>onNavigate?.('settings')}>Open Settings</Button></>
+      :liveState==='not_tested'?<p className="muted">Seats are configured but not tested; a probe is available in Settings → Connections.</p>
+      :<p className="muted">{STATE_LABEL[liveState]||liveState} — {sentence(live?.meaning||'Readiness could not be determined')}{liveState!=='ready'&&live?.next_action?' '+sentence(live.next_action):''}</p>}
+    </>;
+  }
+  return <section className="live-route" aria-label="Live route"><h3>Live route</h3>{body}</section>;
+}
+
 function RepairCycles({repairs}) {
   // Each cycle re-rendered the reviewed images under a presentation preset and had
   // them reviewed again as a new candidate; the outcome is that fresh review's own
@@ -106,7 +131,7 @@ function RepairCycles({repairs}) {
   return <section aria-label="Figure repair cycles"><h2>Figure repair cycles</h2>{repairs.length?<ol className="repairs">{repairs.map((cycle,i)=><li key={i} data-outcome={cycle.outcome}>Cycle {cycle.cycle} · round {cycle.round} · render preset {words(cycle.preset)} · addressed {cycle.addressed.map(words).join(', ')||'nothing'} · review verdict: <strong>{words(cycle.outcome)}</strong>{cycle.reason?<span className="muted"> — {cycle.reason}</span>:null}</li>)}</ol>:<p className="muted">No repair cycles.</p>}</section>;
 }
 
-export default function ResearchWorkspace({token,setToken}) {
+export default function ResearchWorkspace({token,setToken,readiness=null,readinessError=null,refreshReadiness,onNavigate}) {
   const [goal,setGoal]=useState('');
   const [mode,setMode]=useState('demo'),[egress,setEgress]=useState(false),[vision,setVision]=useState(false),[rounds,setRounds]=useState(5),[points,setPoints]=useState('');
   const [mission,setMission]=useState(null),[missions,setMissions]=useState(null),[verification,setVerification]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
@@ -188,9 +213,18 @@ export default function ResearchWorkspace({token,setToken}) {
   const state=mission?.state;
   const locked=!token||authExpired;
   const card=sessionState(token,authExpired);
-  // The service refuses a live mission without consent at creation; the mode note is the adjacent reason.
+  // Live mode reads the seats from GET /api/readiness; main.jsx caches the call, so repeats are free.
+  // The read is tied to selecting Live, not to the token: a token typed afterwards resets the reading
+  // (main.jsx), and until Check seats is pressed the seats count as not read, which blocks the start.
+  const checkSeats=()=>Promise.resolve(refreshReadiness?.()).catch(()=>{/* readinessError carries the reason */});
+  useEffect(()=>{if(mode==='live'&&!locked)checkSeats();},[mode,locked]);
+  // The service refuses a live mission without consent at creation, and refuses one whose seats are blocked
+  // or unread; each is stated beside Create and start instead of being sent.
   const consentMissing=mode==='live'&&!egress;
+  const liveBlocked=mode==='live'&&(!readiness||stateOf(readiness?.live_mission)==='blocked');
   const modeNote=mode==='demo'?'Offline fixture: the model roles are scripted; the numerical fits are computed for real.'
+    :liveBlocked&&!readiness?'Live models: the seats have not been read yet. Press Check seats under Execution settings.'
+    :liveBlocked?'Live models are blocked. '+(blockingSeats(readiness).map(seatAction).join(' ')||readiness.live_mission.next_action||readiness.live_mission.meaning)+' See Live route under Execution settings.'
     :'Live models: the seats set in Settings (a seat is one model assigned to one role). '+(egress?'This mission\'s goal and data will be sent to them.':'A live mission is refused until you tick the consent box in Execution settings; the goal and data then leave this machine.');
   return <div className="research-workspace guided-research">
     <section className="research-composer" aria-label="Research mission composer">
@@ -201,15 +235,16 @@ export default function ResearchWorkspace({token,setToken}) {
           <div className="example-row"><Button variant="ghost" size="sm" onPress={()=>setGoal(EXAMPLE_GOAL)}>Use example</Button><span className="field-note">Replaces the draft with a sample question. It does not start a mission.</span></div>
         </div>
         <div className="composer-action-panel">
-          <Button isDisabled={busy||locked||!goal.trim()||consentMissing} onPress={()=>task(start,'start')}>Create and start</Button>
+          <Button isDisabled={busy||locked||!goal.trim()||consentMissing||liveBlocked} onPress={()=>task(start,'start')}>Create and start</Button>
           {notice('start')}
           {card?<LockNotice card={card} tone={authExpired?'error':'info'} onUnlock={()=>focusTokenField(token,setToken)} unlockLabel={unlockLabel(token)} compact/>
             :!goal.trim()?<p className="muted">Enter a research goal to enable Create and start.</p>
             :<p className="muted">{modeNote}</p>}
         </div>
       </div>
-      <details className="research-options"><summary><span>Execution settings</span><span className="muted"> · {mode==='demo'?'offline fixture (nothing is sent)':'live models · sending data '+(egress?'permitted':'not permitted')}</span></summary>
-        <div className="formrow"><div><label htmlFor="mode">Model source</label><select id="mode" value={mode} onChange={e=>setMode(e.target.value)}><option value="demo">Offline fixture (scripted roles)</option><option value="live">Live models (seats set in Settings)</option></select></div><div><label htmlFor="rounds">Round limit (1–{MAX_ROUNDS})</label><input id="rounds" type="number" min="1" max={MAX_ROUNDS} value={rounds} onChange={e=>setRounds(e.target.value)} onBlur={()=>setRounds(clampRounds(rounds))}/></div></div>
+      <details className="research-options"><summary><span>Execution settings</span><span className="muted"> · {mode==='demo'?'offline fixture (nothing is sent)':'live models · sending data '+(egress?'permitted':'not permitted')+(readiness?' · seats: '+STATE_LABEL[stateOf(readiness.live_mission)]:'')}</span></summary>
+        <div className="formrow"><div><label htmlFor="mode">Model source</label><select id="mode" value={mode} onChange={e=>setMode(e.target.value)}><option value="demo">Offline fixture (scripted roles; nothing is sent)</option><option value="live">Live models (seats set in Settings)</option></select></div><div><label htmlFor="rounds">Round limit (1–{MAX_ROUNDS})</label><input id="rounds" type="number" min="1" max={MAX_ROUNDS} value={rounds} onChange={e=>setRounds(e.target.value)} onBlur={()=>setRounds(clampRounds(rounds))}/></div></div>
+        {mode==='live'&&<LiveRoute readiness={readiness} error={readinessError} locked={locked} onNavigate={onNavigate} onCheck={checkSeats} token={token}/>}
         <label className="check"><input type="checkbox" checked={egress} onChange={e=>setEgress(e.target.checked)}/>Permit sending this mission's goal and data to the configured models (the text leaves this machine).</label>
         <label className="check"><input type="checkbox" checked={vision} onChange={e=>setVision(e.target.checked)}/>Require configured visual review of each new fit image (plot).</label>
         <details><summary>Optional x/y measurements</summary><label htmlFor="points">Measurement JSON</label><textarea id="points" rows={4} value={points} onChange={e=>setPoints(e.target.value)}/><p className="muted">Paste a JSON list of 8–2000 points, each {'{"x": number, "y": number}'}, with x within ±1,000,000 and y within ±1e12. Leave it empty and a live mission starts with no dataset; it can read public data only when the service has public reads enabled.</p></details>
@@ -219,11 +254,11 @@ export default function ResearchWorkspace({token,setToken}) {
       <aside className="saved-missions" aria-label="Saved missions">
         <div className="saved-missions-heading"><h2>Saved missions</h2><Button variant="secondary" isDisabled={busy||locked} onPress={()=>task(async signal=>setMissions(await read('/missions',signal)),'list')}>Load missions</Button></div>
         {notice('list')}
-        {missions===null?<p className="muted">{locked?'Enter an operator token to load saved missions.':'Press Load missions to list your saved missions.'}</p>:missions.length?missions.map(row=><Button className="mission-choice" variant="ghost" key={row.id} isDisabled={busy||locked} onPress={()=>task(signal=>select(row.id,signal),'list')}>{words(row.status)} · {row.goal}</Button>):<p>No saved missions. Create a mission to begin.</p>}
+        {missions===null?<p className="muted">{locked?'Enter an operator token to load saved missions.':'Press Load missions to list your saved missions.'}</p>:missions.length?missions.map(row=><Button className="mission-choice" variant="ghost" key={row.id} isDisabled={busy||locked} onPress={()=>task(signal=>select(row.id,signal),'list')}>{words(row.status)} · {row.goal}{row.mode?' · '+modeLabel(row.mode):''}</Button>):<p>No saved missions. Create a mission to begin.</p>}
       </aside>
       <section className="research-results" aria-label="Research results" ref={results}>
       {!state?<>{notice('results')}<div className="empty-state"><h2>No mission selected.</h2><p>Create one above or load a saved mission.</p></div></>:<>
-        <div className="results-heading"><div><p className="eyebrow">Selected mission: {mission.id}</p><h2>Mission overview</h2></div><div className="status-stack"><span className="status-label">{words(state.status)}</span>{mission.release&&<span className={'release-chip release-'+mission.release.status}>Release: {RELEASE_LABEL[mission.release.status]||words(mission.release.status)}</span>}</div></div>
+        <div className="results-heading"><div><p className="eyebrow">Selected mission: {mission.id}</p><h2>Mission overview</h2></div><div className="status-stack"><span className="status-label">{words(state.status)}</span>{mission.request?.mode&&<span className="mode-chip">{modeLabel(mission.request.mode)}</span>}{mission.release&&<span className={'release-chip release-'+mission.release.status}>Release: {RELEASE_LABEL[mission.release.status]||words(mission.release.status)}</span>}</div></div>
         <p className="muted">Round {state.round} · {plural(state.actions_used,'action')} · {plural(state.model_calls_used,'model call')} · data source: {words(state.data_origin)}</p>
         <div className="actions"><Button isDisabled={busy||locked} onPress={()=>task(async signal=>{setVerification(await (await request('/missions/'+mission.id+'/verify','POST',undefined,signal)).json());await refresh(mission.id,signal);})}>Replay and verify</Button><Button variant="secondary" isDisabled={busy||locked||!mission.release?.eligible_for_human_review} onPress={()=>task(exportCapsule)}>Export replay archive (.zip)</Button><Button variant="ghost" isDisabled={busy||locked||!['ready','paused'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/start','POST',undefined,signal);await refresh(mission.id,signal);})}>{state.status==='paused'?'Resume (recorded as an analysis change)':state.status==='ready'?'Start':'Resume'}</Button><Button variant="danger" isDisabled={busy||locked||['cancelled','completed','budget_exhausted','error','needs_input'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/cancel','POST',undefined,signal);await refresh(mission.id,signal);})}>Cancel</Button></div>
         {!mission.release?.eligible_for_human_review&&<p className="muted">Export opens when the release decision is Eligible for human review.</p>}

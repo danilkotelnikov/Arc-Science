@@ -1,0 +1,86 @@
+{
+  "catalog_version": "2026-09-21.1",
+  "retrieved": "2026-09-21",
+  "retrieved_by": "Claude Code (claude-opus-5) via WebFetch of the official pages named per entry; a listing here means the provider published the id on that date, not that this machine can reach it",
+  "efforts": ["minimal", "low", "medium", "high", "xhigh", "max"],
+  "efforts_by_transport": {
+    "anthropic:api": ["low", "medium", "high", "xhigh", "max"],
+    "anthropic:cli": ["low", "medium", "high", "xhigh", "max"],
+    "openai:api": ["minimal", "low", "medium", "high", "xhigh", "max"],
+    "openai:cli": ["minimal", "low", "medium", "high", "xhigh", "max"],
+    "gemini:api": ["minimal", "low", "medium", "high"],
+    "gemini:cli": [],
+    "openclaw:api": []
+  },
+  "providers": {
+    "anthropic": {
+      "label": "Anthropic",
+      "official_origin": "https://api.anthropic.com",
+      "source": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort",
+      "models": [
+        {"id": "claude-opus-5", "label": "Claude Opus 5", "capabilities": {"text": true, "vision": true, "tool_use": true, "context_tokens": 1000000, "max_output_tokens": 128000, "thinking": "adaptive"}, "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high", "transports": ["api", "cli"], "note": "Recommended starting point per the overview page."},
+        {"id": "claude-fable-5-1", "label": "Claude Fable 5.1", "capabilities": {"text": true, "vision": true, "tool_use": true, "context_tokens": 1000000, "max_output_tokens": 128000, "thinking": "adaptive (always on)"}, "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high", "transports": ["api", "cli"]},
+        {"id": "claude-sonnet-5", "label": "Claude Sonnet 5", "capabilities": {"text": true, "vision": true, "tool_use": true, "context_tokens": 1000000, "max_output_tokens": 128000, "thinking": "adaptive"}, "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high", "transports": ["api", "cli"]},
+        {"id": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5", "capabilities": {"text": true, "vision": true, "tool_use": true, "context_tokens": 200000, "max_output_tokens": 64000, "thinking": "extended"}, "efforts": [], "default_effort": null, "transports": ["api", "cli"], "note": "The effort parameter is not supported on this model; a seat on it keeps the provider default (stored as medium)."}
+      ]
+    },
+    "openai": {
+      "label": "OpenAI",
+      "official_origin": "https://api.openai.com",
+      "source": "https://developers.openai.com/api/docs/models",
+      "effort_source": "https://developers.openai.com/api/docs/guides/reasoning",
+      "models": [
+        {"id": "gpt-6-astra", "label": "GPT-6 Astra", "capabilities": {"text": true, "vision": true, "tool_use": true, "context_tokens": 1050000, "max_output_tokens": 128000}, "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "medium", "transports": ["api", "cli"], "note": "reasoning.effort none returns HTTP 400 on this model; minimal is not listed for it."},
+        {"id": "gpt-5.6-sol", "label": "GPT-5.6 Sol", "capabilities": {"text": true, "vision": true, "tool_use": true, "context_tokens": 1050000, "max_output_tokens": 128000}, "efforts": ["minimal", "low", "medium", "high", "xhigh", "max"], "default_effort": "medium", "transports": ["api", "cli"]},
+        {"id": "gpt-5.6-terra", "label": "GPT-5.6 Terra", "capabilities": {"text": true, "vision": true, "tool_use": true, "context_tokens": 1050000, "max_output_tokens": 128000}, "efforts": ["minimal", "low", "medium", "high", "xhigh", "max"], "default_effort": "medium", "transports": ["api", "cli"]},
+        {"id": "gpt-5.6-luna", "label": "GPT-5.6 Luna", "capabilities": {"text": true, "vision": true, "tool_use": true, "context_tokens": 1050000, "max_output_tokens": 128000}, "efforts": ["minimal", "low", "medium", "high", "xhigh", "max"], "default_effort": "medium", "transports": ["api", "cli"]}
+      ]
+    },
+    "gemini": {
+      "label": "Gemini",
+      "official_origin": "https://generativelanguage.googleapis.com",
+      "source": "https://ai.google.dev/gemini-api/docs/models",
+      "effort_source": "https://ai.google.dev/gemini-api/docs/thinking",
+      "models": [
+        {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash", "capabilities": {"text": true, "vision": true, "tool_use": true}, "efforts": ["low", "medium", "high"], "default_effort": null, "transports": ["api", "cli"], "note": "thinking_level low/medium/high per the thinking page; token limits were not on the fetched page."},
+        {"id": "gemini-3.7-flash", "label": "Gemini 3.7 Flash", "capabilities": {"text": true, "vision": true, "tool_use": true}, "efforts": ["low", "medium", "high"], "default_effort": null, "transports": ["api", "cli"]},
+        {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash", "capabilities": {"text": true, "vision": true, "tool_use": true}, "efforts": ["minimal", "low", "medium", "high"], "default_effort": null, "transports": ["api", "cli"]},
+        {"id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash-Lite", "capabilities": {"text": true, "vision": true, "tool_use": true}, "efforts": ["minimal", "low", "medium", "high"], "default_effort": null, "transports": ["api", "cli"]},
+        {"id": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro (preview)", "capabilities": {"text": true, "vision": true, "tool_use": true}, "efforts": [], "default_effort": null, "transports": ["api", "cli"], "note": "Listed as a preview; thinking levels were not stated for it, so a seat on it keeps the provider default."},
+        {"id": "gemini-2.5-pro", "label": "Gemini 2.5 Pro", "capabilities": {"text": true, "vision": true, "tool_use": true}, "efforts": ["low", "medium", "high"], "default_effort": null, "transports": ["api", "cli"]},
+        {"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash", "capabilities": {"text": true, "vision": true, "tool_use": true}, "efforts": ["low", "medium", "high"], "default_effort": null, "transports": ["api", "cli"]}
+      ]
+    },
+    "openclaw": {
+      "label": "OpenClaw",
+      "official_origin": null,
+      "source": "apps/arc-science/docs/architecture.md (project contract; no external provider page)",
+      "effort_source": null,
+      "models": []
+    }
+  },
+  "auth_modes": {
+    "anthropic": [
+      {"mode": "cli", "label": "CLI login (Claude Code)", "support": "supported", "how": "Sign in inside Claude Code (`claude`); Arc drives `claude -p` and reads `claude auth status --json`. Arc never reads Claude Code's credential file.", "source": "https://code.claude.com/docs/en/authentication"},
+      {"mode": "api_key", "label": "API credential (Console key)", "support": "supported", "how": "A Console API key stored under a name; sent as x-api-key to the official origin only.", "source": "https://platform.claude.com/docs/en/manage-claude/authentication"},
+      {"mode": "console_profile", "label": "Console profile via the external `ant` CLI", "support": "detected only", "how": "`ant auth login` writes a profile Arc can detect; Arc does not use its token in this build.", "source": "https://platform.claude.com/docs/en/cli-sdks-libraries/cli/authentication"},
+      {"mode": "oauth", "label": "In-app provider OAuth", "support": "unavailable", "how": "No third-party desktop OAuth flow is documented for the Claude API (documented methods: API key, Workload Identity Federation, App Attest).", "source": "https://platform.claude.com/docs/en/manage-claude/authentication"}
+    ],
+    "openai": [
+      {"mode": "cli", "label": "CLI login (Codex)", "support": "supported", "how": "Sign in inside Codex (`codex login`); Arc drives `codex exec` and reads `codex login status`. Arc never reads Codex's auth file.", "source": "https://learn.chatgpt.com/docs/auth"},
+      {"mode": "api_key", "label": "API credential", "support": "supported", "how": "An API key stored under a name; sent as a Bearer to the official origin only.", "source": "https://developers.openai.com/api/reference/overview"},
+      {"mode": "oauth", "label": "In-app provider OAuth", "support": "unavailable", "how": "No third-party 'Sign in with ChatGPT' flow is documented.", "source": "https://learn.chatgpt.com/docs/auth"}
+    ],
+    "gemini": [
+      {"mode": "cli", "label": "CLI login (Gemini CLI)", "support": "supported", "how": "Sign in inside Gemini CLI; Arc drives `gemini -p`. A login is inferred from the CLI's cached credential file existing; Arc never reads it.", "source": "https://geminicli.com/docs/get-started/authentication/"},
+      {"mode": "api_key", "label": "API credential (AI Studio key)", "support": "supported", "how": "An API key stored under a name; sent as x-goog-api-key to the official origin only.", "source": "https://ai.google.dev/gemini-api/docs/api-key"},
+      {"mode": "oauth", "label": "OAuth desktop client (your own Cloud project)", "support": "not in this build", "how": "Google documents an installed-app OAuth flow that needs the operator's own Cloud project and client_secret.json; Arc ships no client.", "source": "https://ai.google.dev/gemini-api/docs/oauth"}
+    ],
+    "openclaw": [
+      {"mode": "api_key", "label": "API credential (Gateway token)", "support": "supported", "how": "A Gateway token stored under a name; sent as a Bearer to the configured loopback or HTTPS endpoint.", "source": "apps/arc-science/docs/architecture.md"},
+      {"mode": "cli", "label": "CLI login", "support": "unavailable", "how": "OpenClaw has no CLI login transport in Arc.", "source": "native/arc-science/src/settings.rs"},
+      {"mode": "oauth", "label": "In-app provider OAuth", "support": "unavailable", "how": "Not offered.", "source": "apps/arc-science/docs/architecture.md"}
+    ]
+  }
+}

@@ -53,6 +53,10 @@
   font-size: var(--text-xs);
 }
 
+.settings-workspace .settings-state-card .button {
+  margin-top: var(--s2);
+}
+
 .settings-workspace .settings-state-card.unconfigured,
 .settings-workspace .settings-state-card.offline {
   border-color: var(--warn-line);
@@ -102,9 +106,9 @@
 .settings-section > summary {
   list-style: none;
   display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
-  gap: 18px;
-  padding: 16px 0;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  padding: var(--s3) 0;
   align-items: baseline;
 }
 
@@ -136,18 +140,135 @@
 }
 
 .settings-section > summary small {
-  grid-column: 2;
+  grid-column: 1;
+  padding-left: 24px;
   font-size: var(--text-xs);
   color: var(--ink-2);
   line-height: 1.5;
 }
 
 .settings-section-body {
-  padding: 0 0 20px 204px;
+  padding: 0 0 var(--s4) 24px;
 }
 
 .settings-section-body h3 {
   margin: 20px 0 10px;
+}
+
+/* Readiness words come from the service; the colour is the only thing decided here. */
+.badge {
+  width: max-content;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+/* The same colour mapping as .readiness-badge in styles.css: ready ok, failed danger, blocked warn. */
+.badge[data-state="ready"] { color: var(--ok); border-color: var(--ok-line); background: var(--ok-soft); }
+.badge[data-state="failed"] { color: var(--danger); border-color: var(--danger-line); background: var(--danger-soft); }
+.badge[data-state="blocked"], .badge[data-state="unsaved"] { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
+
+.seat-live {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin: var(--s3) 0;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.seat-cards {
+  display: grid;
+  gap: var(--s3);
+  margin: var(--s3) 0;
+}
+
+.seat-card {
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+}
+
+.seat-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+
+.seat-card-head h3 {
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+/* Five controls: two columns from 900 px, one column below (700 px has no horizontal scroll). */
+.seat-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s2) var(--s4);
+}
+
+.seat-field {
+  min-width: 0;
+}
+
+.seat-field-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+}
+
+.seat-field select,
+.seat-field input {
+  min-width: 0;
+}
+
+.seat-field select + input {
+  margin-top: 6px;
+}
+
+.seat-field select[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.seat-note,
+.seat-meaning,
+.seat-next {
+  margin-top: 4px;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.seat-meaning {
+  margin-top: var(--s2);
+  color: var(--ink-2);
+}
+
+.seat-auth-modes {
+  margin-top: var(--s2);
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.seat-auth-modes summary {
+  cursor: pointer;
+  color: var(--ink-2);
+}
+
+.seat-auth-modes ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
 }
 
 .settings-table-wrap {
@@ -166,60 +287,7 @@
   z-index: 1;
 }
 
-.settings-table .seat-invalid select[aria-invalid="true"] {
-  border-color: var(--danger);
-}
-
-/* Selects are 100% of their cell; a floor keeps "OpenAI", "Anthropic" and
-   "API credential" from being cut when the table shares a narrow column. */
-.settings-table select {
-  min-width: 9em;
-}
-
-.settings-table select[aria-label$=" sign-in"] {
-  min-width: 11em;
-}
-
-.seat-guidance {
-  margin-top: 4px;
-  color: var(--ink-3);
-  font-size: var(--text-sm);
-  line-height: 1.4;
-}
-
-.seat-readiness {
-  display: grid;
-  gap: 3px;
-  max-width: 170px;
-}
-
-.seat-readiness strong {
-  width: max-content;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  color: var(--ink-2);
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-
-.seat-readiness span {
-  color: var(--ink-3);
-  font-size: var(--text-sm);
-  line-height: 1.4;
-}
-
-.seat-readiness.ok strong {
-  color: var(--ok);
-  border-color: var(--ok-line);
-  background: var(--ok-soft);
-}
-
-.seat-readiness.warn strong {
-  color: var(--warn);
-  border-color: var(--warn-line);
-  background: var(--warn-soft);
-}
+.settings-table .seats th, .settings-table .seats td, .seats th, .seats td { vertical-align: top; }
 
 .settings-workspace .research-results {
   overflow-x: auto;
@@ -248,24 +316,7 @@
   margin-top: 5px;
 }
 
-@media(max-width: 900px) {
-  .settings-section > summary {
-    grid-template-columns: 1fr;
-    gap: 6px;
-  }
-
-  .settings-section > summary small {
-    grid-column: 1;
-    padding-left: 24px;
-  }
-
-  .settings-section-body {
-    padding-left: 0;
-  }
-}
-
-/* One column: heading, status and actions sit in a bar above the sections, so the seats
-   table gets the width it needs at 1280 px and readiness stays beside each seat. */
+/* One column: heading, status and actions sit in a bar above the sections. */
 .research-workspace.settings-workspace { display: block; }
 .settings-workspace .research-form.settings-sidebar { border-right: 0; border-bottom: 1px solid var(--line); padding: var(--s4) var(--s6); display: grid; grid-template-columns: minmax(240px, 1.1fr) minmax(280px, 1fr) auto; gap: var(--s3) var(--s5); align-items: start; }
 .settings-workspace .settings-heading h1 { margin: 4px 0 6px; }
@@ -273,13 +324,19 @@
 .settings-workspace .settings-sidebar .actions { margin: 0; }
 .settings-workspace .settings-sidebar .field-note, .settings-workspace .settings-sidebar [role="status"], .settings-workspace .settings-sidebar [role="alert"], .settings-workspace .settings-sidebar .settings-state-card, .settings-workspace .settings-sidebar .unlock-card { grid-column: 1 / -1; margin: 0; }
 .settings-workspace .research-results.settings { padding: var(--s4) var(--s6) var(--s6); overflow-x: visible; }
-.settings-section > summary { grid-template-columns: 1fr; gap: 4px; padding: var(--s3) 0; }
-.settings-section > summary small { grid-column: 1; padding-left: 24px; }
-.settings-section-body { padding: 0 0 var(--s4) 24px; }
-.settings-table { min-width: 880px; }
-.settings-table .seats th, .settings-table .seats td, .seats th, .seats td { vertical-align: top; }
-@media(max-width: 900px) {
+
+@media(max-width: 899px) {
   .settings-workspace .research-form.settings-sidebar { grid-template-columns: 1fr; padding: var(--s4); }
   .settings-workspace .research-results.settings { padding: var(--s4); }
   .settings-section-body { padding-left: 0; }
+  .seat-controls { grid-template-columns: 1fr; }
+}
+
+/* The providers table stacks one provider per block; the other tables scroll inside their wrap. */
+@media(max-width: 700px) {
+  .providers-table { min-width: 0; width: 100%; }
+  .providers-table thead { display: none; }
+  .providers-table tr { display: grid; gap: 6px; padding: var(--s2) 0; border-bottom: 1px solid var(--line); }
+  .providers-table th, .providers-table td { display: block; position: static; padding: 0; }
+  .providers-table td::before { content: attr(data-label); display: block; margin-bottom: 4px; font-size: var(--text-xs); color: var(--ink-2); }
 }

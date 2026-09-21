@@ -1,17 +1,31 @@
 import React from 'react';
 import {afterEach, beforeEach, expect, test, vi} from 'vitest';
-import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ResearchWorkspace from './ResearchWorkspace';
 import {SESSION_COPY} from './http';
 
 const json = data => new Response(JSON.stringify(data), {headers: {'Content-Type': 'application/json'}});
-const mission = {id: 'private-mission', release: {policy_digest: 'p'.repeat(64), subject_digest: 's'.repeat(64), status: 'eligible_for_human_review', eligible_for_human_review: true, blocking_reasons: [], decided_at: 1, verification: null, checks: []}, state: {status: 'paused', round: 1, actions_used: 3, model_calls_used: 2, data_origin: 'fixture', branches: [], assessments: [], observations: [], events: [], visual_reports: [], artifacts: [], stop_reason: 'Private stop reason'}};
+const mission = {id: 'private-mission', request: {mode: 'demo'}, release: {policy_digest: 'p'.repeat(64), subject_digest: 's'.repeat(64), status: 'eligible_for_human_review', eligible_for_human_review: true, blocking_reasons: [], decided_at: 1, verification: null, checks: []}, state: {status: 'paused', round: 1, actions_used: 3, model_calls_used: 2, data_origin: 'fixture', branches: [], assessments: [], observations: [], events: [], visual_reports: [], artifacts: [], stop_reason: 'Private stop reason'}};
 const report = {integrity: true, reproduction_passed: true, reproduced: 3, artifacts_reproduced: 2, evidence_graph_valid: true, scientific_validity_established: false, failures: []};
+// GET /api/readiness as the shared contract shapes it; the server is the only authority on seat states.
+const ROLES = [['planner', 'Planner'], ['reviewer', 'Reviewer (QA)'], ['falsifier', 'Falsifier'], ['vision', 'Vision'], ['prose', 'Prose']];
+const facts = {provider: 'anthropic', model: 'claude-sonnet-4-5', effort: 'medium', auth: 'api_key', transport: 'api'};
+const seat = (role, label, over = {}) => ({role, label, state: 'blocked', code: 'seat.unconfigured', facts: {...facts, provider: '', model: ''}, verification: {status: 'not_applicable'}, meaning: label + ' is not set.', next_action: 'Set a ' + label + ' seat in Settings.', source: 'settings revision abcdef012345', ...over});
+const readinessOf = (live, seats = {}) => ({checked_at: 1, roles: ROLES.map(([role, label]) => ({role, label})), seats: Object.fromEntries(ROLES.map(([role, label]) => [role, seats[role] || seat(role, label)])), live_mission: live});
+const blockedReadiness = readinessOf({state: 'blocked', code: 'live.blocked', blocking: ['planner'], meaning: 'A live mission cannot start.', next_action: 'Fix the blocked seats in Settings.'},
+  {planner: seat('planner', 'Planner', {state: 'blocked', code: 'seat.credential_missing', facts, meaning: 'No API key is stored for the planner seat.', next_action: 'Store the anthropic API key in Settings → Connections.'})});
+const untestedReadiness = readinessOf({state: 'not_tested', code: 'live.not_tested', blocking: [], meaning: 'Seats are set but not tested.', next_action: 'Probe the seats in Settings.'},
+  {planner: seat('planner', 'Planner', {state: 'not_tested', code: 'seat.not_tested', facts, meaning: 'Set, never tested.', next_action: 'Run a probe.'})});
+const renderLive = (readiness, extra = {}) => {
+  const refreshReadiness = vi.fn(async () => {}), onNavigate = vi.fn();
+  const view = render(<ResearchWorkspace token="operator" setToken={vi.fn()} readiness={readiness} readinessError={null} refreshReadiness={refreshReadiness} onNavigate={onNavigate} {...extra}/>);
+  return {...view, refreshReadiness, onNavigate};
+};
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (path, options = {}) => {
-    if (path === '/api/missions') return json(options.method === 'POST' ? mission : [{id: mission.id, status: 'paused', goal: 'Private saved question'}]);
+    if (path === '/api/missions') return json(options.method === 'POST' ? mission : [{id: mission.id, status: 'paused', goal: 'Private saved question', mode: 'demo'}]);
     if (path.endsWith('/verify')) return json(report);
     if (path.endsWith('/capsule')) return new Response('private archive');
     return json(mission);
@@ -41,7 +55,7 @@ test('switching away from a validated credential clears private drafts and conse
   rerender(<ResearchWorkspace token="new-token" setToken={setToken}/>);
   expect(screen.queryByText('Selected mission: private-mission')).not.toBeInTheDocument();
   expect(screen.queryByText(/Private stop reason/)).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', {name: 'paused · Private saved question'})).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', {name: /Private saved question/})).not.toBeInTheDocument();
   expect(screen.queryByText(/3 computations/)).not.toBeInTheDocument();
   expect(screen.getByLabelText('Research goal')).toHaveValue('');
   await user.click(screen.getByText('Execution settings'));
@@ -284,7 +298,8 @@ test('invalid measurement JSON is reported beside Create and start before any re
 });
 
 test('a live mission without consent cannot be created, and the mode note beside Create and start says why', async () => {
-  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  // Seats read and configured (not tested): consent is then the only thing in the way.
+  const user = userEvent.setup(); renderLive(readinessOf({state: 'not_tested', code: 'live.not_tested', blocking: [], meaning: 'The seats are configured; not every one is verified', next_action: null}));
   await user.type(screen.getByLabelText('Research goal'), 'Live question');
   const button = screen.getByRole('button', {name: 'Create and start'});
   expect(button).toBeEnabled();
@@ -309,4 +324,89 @@ test('Create and start brings the results into view and keeps the composer as it
     expect(scrollIntoView.mock.contexts[0]).toBe(screen.getByRole('region', {name: 'Research results'}));
     expect(screen.getByLabelText('Research goal')).toHaveValue('Scroll question');
   } finally { delete Element.prototype.scrollIntoView; }
+});
+
+test('live mode with blocked seats disables Create and start, names the seat and offers Settings', async () => {
+  const user = userEvent.setup(); const {refreshReadiness, onNavigate} = renderLive(blockedReadiness);
+  await user.type(screen.getByLabelText('Research goal'), 'Live question');
+  await user.click(screen.getByText('Execution settings'));
+  expect(refreshReadiness).not.toHaveBeenCalled();
+  expect(screen.queryByRole('region', {name: 'Live route'})).not.toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText('Model source'), 'live');
+  await user.click(screen.getByLabelText(/Permit sending/));
+  expect(refreshReadiness).toHaveBeenCalledTimes(1);
+  const button = screen.getByRole('button', {name: 'Create and start'});
+  expect(button).toBeDisabled();
+  expect(button.parentElement).toHaveTextContent('Live models are blocked. Planner — Store the anthropic API key in Settings → Connections.');
+  const route = screen.getByRole('region', {name: 'Live route'});
+  expect(route).toHaveTextContent('Planner · anthropic · claude-sonnet-4-5 · medium · Blocked');
+  expect(route).not.toHaveTextContent('Vision');
+  expect(within(route).getByRole('status')).toHaveTextContent('Blocked by: Planner — Store the anthropic API key in Settings → Connections.');
+  await user.click(within(route).getByRole('button', {name: 'Open Settings'}));
+  expect(onNavigate).toHaveBeenCalledWith('settings');
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+test('seats that are set but not tested keep Create and start enabled and point to the probe', async () => {
+  const user = userEvent.setup(); renderLive(untestedReadiness);
+  await user.type(screen.getByLabelText('Research goal'), 'Live question');
+  await user.click(screen.getByText('Execution settings'));
+  await user.selectOptions(screen.getByLabelText('Model source'), 'live');
+  await user.click(screen.getByLabelText(/Permit sending/));
+  const route = screen.getByRole('region', {name: 'Live route'});
+  expect(route).toHaveTextContent('Planner · anthropic · claude-sonnet-4-5 · medium · Not tested');
+  expect(route).toHaveTextContent('Seats are configured but not tested; a probe is available in Settings → Connections.');
+  expect(within(route).queryByRole('button', {name: 'Open Settings'})).not.toBeInTheDocument();
+  expect(screen.getByRole('button', {name: 'Create and start'})).toBeEnabled();
+  expect(screen.getByText('Execution settings').parentElement).toHaveTextContent('seats: Not tested');
+});
+
+test('the live route says when seats are still being read or could not be read', async () => {
+  const user = userEvent.setup(); const {rerender, refreshReadiness, onNavigate} = renderLive(null);
+  await user.type(screen.getByLabelText('Research goal'), 'Live question');
+  await user.click(screen.getByText('Execution settings'));
+  await user.selectOptions(screen.getByLabelText('Model source'), 'live');
+  const route = screen.getByRole('region', {name: 'Live route'});
+  expect(within(route).getByRole('status')).toHaveTextContent('Seats not read yet.');
+  // Unread seats block the start rather than letting the composer send a request the panel meant to prevent.
+  expect(screen.getByRole('button', {name: 'Create and start'})).toBeDisabled();
+  expect(refreshReadiness).toHaveBeenCalledTimes(1);
+  await user.click(within(route).getByRole('button', {name: 'Check seats'}));
+  expect(refreshReadiness).toHaveBeenCalledTimes(2);
+  rerender(<ResearchWorkspace token="operator" setToken={vi.fn()} readiness={null} readinessError="Readiness could not be read: the service is not reachable." refreshReadiness={refreshReadiness} onNavigate={onNavigate}/>);
+  expect(within(route).getByRole('alert')).toHaveTextContent('Readiness could not be read');
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+test('the offline fixture ignores seat readiness and never asks for it', async () => {
+  const user = userEvent.setup(); const {refreshReadiness} = renderLive(blockedReadiness);
+  await user.type(screen.getByLabelText('Research goal'), 'Offline question');
+  expect(screen.getByRole('button', {name: 'Create and start'})).toBeEnabled();
+  await user.click(screen.getByText('Execution settings'));
+  expect(screen.getByRole('option', {name: 'Offline fixture (scripted roles; nothing is sent)'}).selected).toBe(true);
+  expect(screen.queryByRole('region', {name: 'Live route'})).not.toBeInTheDocument();
+  expect(refreshReadiness).not.toHaveBeenCalled();
+});
+
+test('the mission overview and the saved list show the model source from the mission request', async () => {
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  const heading = screen.getByRole('heading', {name: 'Mission overview'}).closest('.results-heading');
+  expect(heading).toHaveTextContent('paused');
+  expect(heading).toHaveTextContent('Offline fixture');
+  expect(screen.getByRole('button', {name: 'paused · Private saved question · Offline fixture'})).toBeInTheDocument();
+});
+
+test('release checks read in the shared readiness words', async () => {
+  const checked = structuredClone(mission);
+  checked.request.mode = 'live';
+  checked.release = {...checked.release, status: 'blocked', eligible_for_human_review: false, blocking_reasons: ['replay_integrity:unknown'], checks: [{name: 'replay_integrity', state: 'unknown', reason: 'Not verified yet.'}, {name: 'visual_review', state: 'not_applicable', reason: 'No review requested.'}]};
+  fetch.mockImplementation(async path => path === '/api/missions' ? json([{id: checked.id, status: 'paused', goal: 'Private saved question'}]) : json(checked));
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  const ledger = screen.getByRole('region', {name: 'Release decision'});
+  expect(ledger).toHaveTextContent('replay integrity · unverified — Not verified yet.');
+  expect(ledger).toHaveTextContent('visual review · n/a — No review requested.');
+  expect(ledger).not.toHaveTextContent('not applicable');
+  expect(screen.getByRole('heading', {name: 'Mission overview'}).closest('.results-heading')).toHaveTextContent('Live models');
 });

@@ -138,7 +138,7 @@ test('without a token every action is locked and the card says what unlocks it',
   expect(screen.getByRole('button', {name: 'Go to token field'})).toBeEnabled();
   // The reason and the card sit right under the local action row, not above the Text field.
   const actions = screen.getByRole('button', {name: 'Rewrite locally'}).closest('.actions');
-  expect(actions.nextElementSibling).toHaveTextContent('Paste an operator token to use these.');
+  expect(actions.nextElementSibling).toHaveTextContent('Enter an operator token in the header to use these.');
   expect(actions.nextElementSibling.nextElementSibling).toBe(card);
   expect(screen.getByLabelText('Text').compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });

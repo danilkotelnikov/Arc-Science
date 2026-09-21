@@ -169,6 +169,14 @@ class MemoryRoutes:
                 with self._state_lock:
                     self._inflight = None
 
+    def passive_health(self) -> Any:
+        """The worker's health when it is already running; never starts it."""
+        with self._client_lock:
+            client = self._client
+        if client is None or not client.is_alive():
+            return None
+        return client.health()
+
     def _client_or_503(self) -> MemoryClient:
         if self._worker_path is None or not self._worker_path.exists():
             raise HTTPException(503, "Native memory worker is not configured")

@@ -75,7 +75,8 @@ def test_settings_are_read_from_the_supervisor_and_replaced_with_the_revision_se
         assert c.get('/api/settings').status_code == 401
         snap = c.get('/api/settings', headers=AUTH).json()
         assert snap['settings']['seats']['planner']['provider'] == '' and len(snap['revision']) == 64
-        assert 'seats.effort' in snap['applied_live'] and 'blender' in snap['applied_live'] and snap['stored_pending'] == []
+        assert snap['changed'] == [] and snap['effects'] == [] and snap['applied_live'] == [] and 'stored_pending' not in snap
+        assert snap['restart_required'] == [] and snap['restart_note'] == 'No setting in this build needs a restart.' and snap['bound_missions'] == 0
         # Without the revision that was read, a replacement is not accepted at all.
         assert c.put('/api/settings', headers=AUTH, json={'settings': snap['settings']}).status_code == 422
         edited = snap['settings']
@@ -90,9 +91,25 @@ def test_settings_are_read_from_the_supervisor_and_replaced_with_the_revision_se
         assert written.json()['settings']['seats']['planner']['model'] == 'gpt-5.6'
         assert written.json()['revision'] != snap['revision']
         assert json.loads((stub / 'settings.toml').read_text())['seats']['planner']['effort'] == 'high'
+        # The save names what changed and when it applies; nothing needs a restart.
+        assert written.json()['changed'] == ['seats.planner'] and written.json()['applied_live'] == ['seats.planner']
+        assert written.json()['effects'] == [{'section': 'seats.planner', 'applies': 'next live mission start',
+                                              'note': 'Missions already bound to a route keep it; a changed route blocks their resume until it is restored.'}]
+        edited['viewer']['background'] = 'black'
+        viewer = c.put('/api/settings', headers=AUTH, json={'settings': edited, 'if_revision': written.json()['revision']}).json()
+        assert viewer['changed'] == ['viewer'] and viewer['effects'][0]['applies'] == 'next Molecules session' and 'session token' in viewer['effects'][0]['note']
+        edited['prose']['detection'] = False
+        edited['blender']['default_preset'] = 'other'
+        edited['providers']['openai']['endpoint'] = 'https://api.openai.com/v1/responses'
+        edited['mcp_servers'] = [{'name': 'x', 'transport': 'stdio', 'command': 'x', 'args': [], 'url': '', 'consent': False, 'enabled': True}]
+        several = c.put('/api/settings', headers=AUTH, json={'settings': edited, 'if_revision': viewer['revision']}).json()
+        assert several['changed'] == ['providers.openai', 'mcp_servers', 'prose', 'blender']
+        assert [e['applies'] for e in several['effects']] == ['next live mission start', 'next live mission start', 'next prose request', 'next render submission']
+        unchanged = c.put('/api/settings', headers=AUTH, json={'settings': edited, 'if_revision': several['revision']}).json()
+        assert unchanged['changed'] == [] and unchanged['effects'] == [] and unchanged['restart_required'] == []
         # The owner's validation error is the operator's error message.
         edited['seats']['planner']['effort'] = 'turbo'
-        rejected = c.put('/api/settings', headers=AUTH, json={'settings': edited, 'if_revision': written.json()['revision']})
+        rejected = c.put('/api/settings', headers=AUTH, json={'settings': edited, 'if_revision': unchanged['revision']})
         assert rejected.status_code == 422 and 'effort must be one of' in rejected.json()['detail']
 
 
@@ -197,6 +214,35 @@ def test_seats_configured_in_settings_drive_the_endpoints_and_the_falsifier_gets
     assert service.seat_plan(service.live_route())[0] != route_digest
 
 
+def test_a_planner_only_api_route_reads_and_starts_on_the_planner_credential(tmp_path, stub, monkeypatch):
+    """A reviewer or falsifier without a seat of its own is the planner's seat, credential
+    included: readiness and the live gate agree, and neither demands a credential named
+    after the inheriting role."""
+    for key in ('ARC_PROVIDER', 'ARC_MODEL', 'ARC_REVIEWER_MODEL', 'ARC_CLAUDE_CODE_EXE'):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv('ARC_DATA_DIR', str(tmp_path / 'data'))
+    snap = settings.snapshot()
+    doc = snap['settings']
+    doc['seats']['planner'].update(provider='openai', model='gpt-5.6-sol', effort='high', credential='')
+    settings.replace(doc, snap['revision'])
+    first, second = service.configured_endpoints()
+    third = service.configured_falsifier_endpoint(first, second)
+    assert (first.credential_ref, second.credential_ref, third.credential_ref) == ('planner', 'planner', 'planner')
+    with pytest.raises(ValueError, match='token file is not configured'):  # planner is a legacy name: env fallback, then refusal
+        service.live_seats_ready()
+    with TestClient(app(tmp_path)) as c:
+        blocked = c.get('/api/readiness', headers=AUTH).json()
+        assert blocked['seats']['planner']['code'] == 'seat.credential_missing'
+        assert blocked['seats']['reviewer']['code'] == 'seat.inherits' and blocked['live_mission']['blocking'] == ['planner']
+        store = tmp_path / 'data' / 'credentials'
+        store.mkdir(parents=True)
+        (store / 'planner.credential').write_text('planner-secret')
+        assert service.live_seats_ready()[0].credential_ref == 'planner'
+        ready = c.get('/api/readiness', headers=AUTH).json()
+        assert ready['live_mission']['state'] == 'not_tested' and ready['live_mission']['blocking'] == []
+        assert c.post('/api/missions', headers=AUTH, json={'goal': 'planner-only route', 'mode': 'live', 'allow_egress': True}).status_code == 201
+
+
 def test_a_named_credential_is_read_from_the_store_and_a_missing_name_is_refused(tmp_path, monkeypatch):
     monkeypatch.setenv('ARC_DATA_DIR', str(tmp_path))
     monkeypatch.setenv('ARC_MODEL_TOKEN_FILE', str(tmp_path / 'legacy.token'))
@@ -274,6 +320,9 @@ def test_a_live_mission_runs_each_seat_through_its_own_cli_and_binds_the_seat_pl
         assert len(bound) == 1 and bound[0]['detail'].startswith('sha256:') and json.loads(bound[0]['detail'].split(' ', 1)[1]) == {
             'planner': 'openai:cli:gpt-5.5:xhigh:planner', 'reviewer': 'anthropic:cli:claude-sonnet-5:high:reviewer',
             'falsifier': 'gemini:cli:gemini-3-pro:medium:falsifier'}
+        # A finished mission is not counted as bound; a paused one is (below, after the pause).
+        assert c.get('/api/settings', headers=AUTH).json()['bound_missions'] == 0
+        assert c.get('/api/missions', headers=AUTH).json()[0]['mode'] == 'live'
         # The probe runs the provider's CLI seats once per distinct (model, effort) and says what it verified.
         probe = c.post('/api/providers/openai/probe', headers=AUTH, json={'spend_tokens': True}).json()
         assert probe['transport'] == 'codex' and probe['results'] == [{**probe['results'][0], 'model': 'gpt-5.5', 'effort': 'xhigh',
@@ -285,6 +334,7 @@ def test_a_live_mission_runs_each_seat_through_its_own_cli_and_binds_the_seat_pl
         current = repo.get(row['id'])
         from arc_science.exploration.models import MissionState
         repo.save(row['id'], MissionState.model_validate({**current['state'], 'status': 'paused'}), expected_revision=current['revision'])
+        assert repo.count_bound_live() == 1 and repo.count_bound_live(('running',)) == 0
         doc = settings.snapshot()['settings']
         doc['seats']['planner']['model'] = 'gpt-5.6-sol'
         settings.replace(doc, None)

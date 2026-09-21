@@ -7,6 +7,9 @@ because they vary per model (the CLI's model catalogue on this machine lists low
 for the 5.6 family and low..xhigh for 5.5): the provider's refusal is surfaced as is.
 """
 from __future__ import annotations
+from functools import lru_cache
+import json
+from pathlib import Path
 
 EFFORTS = ('minimal', 'low', 'medium', 'high', 'xhigh', 'max')
 DEFAULT = 'medium'
@@ -41,3 +44,27 @@ def applied_effort(provider: str, transport: str, effort: str) -> tuple[str | No
         raise ValueError(f'The {provider} {transport} seat does not express effort {effort}; use one of '
                          + ', '.join(supported))
     return effort, 'seat'
+
+
+@lru_cache(maxsize=1)
+def load_catalog():
+    """The published model catalogue shipped with the package (ids, efforts per model,
+    efforts per transport); a listing means the provider published the id, not that
+    this machine can reach it."""
+    return json.loads((Path(__file__).with_name('model_catalog.json')).read_text(encoding='utf-8'))
+
+
+def model_entry(provider: str, model: str):
+    """The catalogue entry for a model under a provider, or None (a custom model)."""
+    models=(load_catalog()['providers'].get(provider) or {}).get('models') or []
+    return next((entry for entry in models if entry['id']==model),None)
+
+
+def accepted_efforts(provider: str, transport: str, model: str) -> tuple:
+    """The levels a seat on this model may name: the transport's levels, narrowed by the
+    catalogue entry when the model has one. Empty means no control: only DEFAULT is
+    accepted and the provider's own default applies."""
+    supported=SUPPORTED.get((provider,transport)) or ()
+    entry=model_entry(provider,model)
+    if entry is None:return tuple(supported)
+    return tuple(level for level in supported if level in entry.get('efforts',()))

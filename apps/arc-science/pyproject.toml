@@ -27,4 +27,4 @@ testpaths = ["tests"]
 arc-science = "arc_science.cli:main"
 
 [tool.setuptools.package-data]
-arc_science = ["static/*", "static/web/*", "static/web/assets/*", "static/*.md"]
+arc_science = ["static/*", "static/web/*", "static/web/assets/*", "static/*.md", "exploration/model_catalog.json"]

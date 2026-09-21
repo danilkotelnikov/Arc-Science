@@ -152,11 +152,13 @@ def endpoints_from_settings(settings):
     the planner seat is not configured there."""
     planner=operator_settings.seat(settings,'planner')
     if planner is None:return None
-    reviewer=operator_settings.seat(settings,'reviewer') or planner
-    falsifier=operator_settings.seat(settings,'falsifier') or reviewer
+    # A role without a seat of its own uses another role's seat, credential included:
+    # the seat is built under the owning role so its credential reference stays the owner's.
+    reviewer=('reviewer',operator_settings.seat(settings,'reviewer')) if operator_settings.seat(settings,'reviewer') else ('planner',planner)
+    falsifier=('falsifier',operator_settings.seat(settings,'falsifier')) if operator_settings.seat(settings,'falsifier') else reviewer
     # Every seat is its own transport; mixing CLI logins and API credentials is allowed.
-    return (_endpoint_from_seat(settings,'planner',planner),_endpoint_from_seat(settings,'reviewer',reviewer),
-            _endpoint_from_seat(settings,'falsifier',falsifier))
+    return (_endpoint_from_seat(settings,'planner',planner),_endpoint_from_seat(settings,*reviewer),
+            _endpoint_from_seat(settings,*falsifier))
 
 
 def configured_endpoints(settings=None):
@@ -297,6 +299,13 @@ def _secret(ref):
     return value
 
 
+def credential_stored(ref):
+    """Whether a credential is stored under the name; nothing about its validity, and
+    the value never leaves this function."""
+    try:_secret(ref);return True
+    except (ValueError,OSError):return False
+
+
 def biorender_configuration():
     """Report static readiness without claiming endpoint or credential qualification."""
     enabled=os.environ.get('ARC_BIORENDER_READS')=='1'
@@ -368,11 +377,12 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
 
     async def authorized(authorization:str|None=Header(default=None),
                          x_arc_native_session:str|None=Header(default=None)):
+        # 'token' (Operator token) or 'native' (Desktop session); dependencies=[...] callers ignore it.
         expected='Bearer '+token
-        if authorization and secrets.compare_digest(authorization,expected):return
+        if authorization and secrets.compare_digest(authorization,expected):return 'token'
         if (native_session_secret and x_arc_native_session and
                 secrets.compare_digest(x_arc_native_session,native_session_secret)):
-            return
+            return 'native'
         raise HTTPException(401,'Authentication required',headers={'WWW-Authenticate':'Bearer'})
 
     @app.get('/api/session/status',dependencies=[Depends(authorized)])
@@ -497,27 +507,45 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
 
     # Operator settings: the native supervisor owns the file; the service reads the
     # snapshot and forwards a whole replacement with the revision the operator saw.
-    # What the service consumes today, and what is stored for a later loop; the UI
-    # shows both so nothing reads as applied when it is not.
-    APPLIED={'applied_live':['seats','seats.effort','providers','prose','mcp_servers','acp_agents','viewer','blender'],
-             'stored_pending':[],'restart_required':[]}
+    # Every section is consumed when it is next read, so a save reports which sections
+    # changed and when each takes effect; nothing in this build needs a restart.
+    ROUTE_NOTE='Missions already bound to a route keep it; a changed route blocks their resume until it is restored.'
+    EFFECTS={'seats':('next live mission start',ROUTE_NOTE),'providers':('next live mission start',ROUTE_NOTE),
+             'mcp_servers':('next live mission start',ROUTE_NOTE),'acp_agents':('next live mission start',ROUTE_NOTE),
+             'prose':('next prose request','Detection and the prose seat read the settings on each request.'),
+             'blender':('next render submission','The default preset is read when a render is submitted.'),
+             'viewer':('next Molecules session','The Molecules workspace reads viewer defaults when its session token changes; this build does not reload them on save.')}
+    APPLIED={'restart_required':[],'restart_note':'No setting in this build needs a restart.'}
+    def settings_changed(before,after):
+        changed=[]
+        for section in ('seats','providers'):
+            old=before.get(section) or {};new=after.get(section) or {}
+            changed+=[section+'.'+name for name in sorted(set(old)|set(new)) if old.get(name)!=new.get(name)]
+        changed+=[section for section in ('mcp_servers','acp_agents','prose','blender','viewer') if before.get(section)!=after.get(section)]
+        return changed
+    async def settings_report(snap,changed):
+        effects=[{'section':section,'applies':EFFECTS[section.split('.')[0]][0],'note':EFFECTS[section.split('.')[0]][1]} for section in changed]
+        return {**snap,**APPLIED,'changed':changed,'effects':effects,'applied_live':changed,
+                'bound_missions':await asyncio.to_thread(repository.count_bound_live)}
     settings_writer=asyncio.Semaphore(1)
     @app.get('/api/settings',dependencies=[Depends(authorized)])
     async def settings_snapshot():
         try:snap=await asyncio.to_thread(operator_settings.snapshot)
         except operator_settings.SettingsUnavailable as why:raise HTTPException(503,str(why)) from None
         except (operator_settings.SettingsRejected,ValueError,OSError,subprocess.SubprocessError) as why:raise HTTPException(500,str(why)[:700]) from None
-        return {**snap,**APPLIED}
+        return await settings_report(snap,[])
 
     @app.put('/api/settings',dependencies=[Depends(authorized)])
     async def settings_replace(body:SettingsReplace):
         async with settings_writer:
-            try:snap=await asyncio.to_thread(operator_settings.replace,body.settings,body.if_revision)
+            try:
+                before=(await asyncio.to_thread(operator_settings.snapshot))['settings']
+                snap=await asyncio.to_thread(operator_settings.replace,body.settings,body.if_revision)
             except operator_settings.SettingsUnavailable as why:raise HTTPException(503,str(why)) from None
             except operator_settings.SettingsStale as why:raise HTTPException(409,str(why)) from None
             except operator_settings.SettingsRejected as why:raise HTTPException(422,str(why)) from None
             except (ValueError,OSError,subprocess.SubprocessError) as why:raise HTTPException(500,str(why)[:700]) from None
-        return {**snap,**APPLIED}
+        return await settings_report(snap,settings_changed(before,snap['settings']))
 
     # Connectors: the operator's connection checks. Listing an MCP server's tools and
     # exchanging `initialize` with an ACP agent send no mission data; consent to send
@@ -629,22 +657,28 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if not seats:raise HTTPException(409,f'No seat uses the {name} transport')
         if probe_lock.locked():raise HTTPException(409,'A probe is already running')
         if time.monotonic()-probe_last['at']<PROBE_COOLDOWN:raise HTTPException(429,'Probe cooldown: wait before spending again')
+        from .exploration.cli_seats import executable_digest
+        from .readiness import subject as probe_subject, subject_digest
         async with probe_lock:
             probe_last['at']=time.monotonic()
             results=[];command=_cli_command(operator_settings.current() or {},provider)
+            executable_sha256=await executable_digest(command[0])
             distinct={}
             for role,e in seats.items():distinct.setdefault((e.model,e.effort),[]).append(role)
             for (model,effort),roles in distinct.items():
                 seat=CliAgent(command,model,model,provider=provider,efforts={'probe':effort} if effort else None)
                 started=time.monotonic()
+                # The subject names what this result verifies; readiness matches a seat to it by digest.
+                verified=probe_subject(provider,'cli',model,effort,executable_sha256=executable_sha256)
+                record={'model':model,'effort':effort,'roles':roles,'subject':verified,'subject_digest':subject_digest(verified)}
                 try:
                     await seat._call(model,PROBE_INSTRUCTIONS,{'probe':True},ProbeReply,role='probe')
                     call=seat.calls[-1]
-                    results.append({'model':model,'effort':effort,'roles':roles,'ok':True,'observed_model':call['observed_model'],
+                    results.append({**record,'ok':True,'observed_model':call['observed_model'],
                                     'identity_verified':call['identity_verified'],'applied_effort':call['applied_effort'],
                                     'duration_ms':int((time.monotonic()-started)*1000)})
                 except Exception as error:
-                    results.append({'model':model,'effort':effort,'roles':roles,'ok':False,'error':redact(str(error))[:300],
+                    results.append({**record,'ok':False,'error':redact(str(error))[:300],
                                     'duration_ms':int((time.monotonic()-started)*1000)})
                 finally:seat.close()
             probes[name]={'at':int(time.time()),'transport':name,'provider':provider,'results':results}
@@ -652,6 +686,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             audit.parent.mkdir(parents=True,exist_ok=True)
             with audit.open('a',encoding='utf-8') as log:log.write(json.dumps(probes[name])+'\n')
             return probes[name]
+
+    from .readiness import create_router as readiness_router
+    app.include_router(readiness_router(authorized=authorized,root=root,repository=repository,cli_transport=cli_transport,cli_transports=CLI_TRANSPORTS,
+                                        probes=probes,credential_stored=credential_stored,memory_routes=memory_routes,molecular_jobs=molecular_jobs))
 
     @app.get('/api/capabilities',dependencies=[Depends(authorized)])
     async def capabilities():

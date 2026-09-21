@@ -3,7 +3,7 @@ export const NATIVE_SESSION = '__ARC_NATIVE_SESSION__';
 // One voice for every locked, expired and offline state. Each workspace shows one
 // card (title + text) beside the action it gates, and the same short alert line.
 export const SESSION_COPY = {
-  locked: {title: 'Operator token required', text: 'Paste your operator token in the header. It comes from `arc-science token --data <data directory>` (an owner-only file in the data directory).'},
+  locked: {title: 'Operator token required', text: 'Enter your operator token in the header. It comes from `arc-science token --data <data directory>` (an owner-only file in the data directory).'},
   expired: {title: 'Token not accepted', text: 'Enter a current operator token in the header and retry.'},
   nativeExpired: {title: 'Desktop session not accepted', text: 'Switch to an operator token in the header and retry.'},
   offline: {title: 'Arc Science is not reachable', text: 'Start the local service, then retry.'},

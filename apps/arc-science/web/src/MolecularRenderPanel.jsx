@@ -140,7 +140,7 @@ function RenderControls({token,setToken,onJobChange,onShowJob,onSource,showRende
   const alertAt=at=>error?.at===at?<p role="alert">{error.text}</p>:null;
   const fileIssue=!file?'':file.size>maxBytes?'This file is '+file.size.toLocaleString()+' bytes; the limit is '+maxBytes.toLocaleString()+' bytes.':!/\.(cif|mmcif|pdb)$/i.test(file.name)?'Choose a .cif, .mmcif or .pdb file.':'';
   // The chain fields name their first blocker: the token before Load renders, then the renderer.
-  const unlock=capabilities?.configured?'':!token?'Paste an operator token, then press Load renders.':'Locked until Load renders reports the local renderer is configured.';
+  const unlock=capabilities?.configured?'':!token?'Needs a desktop session or an operator token, then press Load renders.':'Locked until Load renders reports the local renderer is configured.';
   const blocker=busy||!token||unlock?'':!file?'Choose a coordinate file first.':!antibody.trim()||!antigen.trim()?'Enter antibody and antigen chains first.':pending(job?.status)?'Locked while the selected render runs. Cancel it or wait for it to finish.':'';
   return <div className="molecular-render-controls" aria-busy={!!busy}>
     <Button variant="secondary" isDisabled={!token||!!busy} onPress={()=>run('load',load)}>{jobs===null?'Load renders':'Refresh renders'}</Button>

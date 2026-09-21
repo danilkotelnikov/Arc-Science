@@ -14,6 +14,17 @@ const eligibleRelease={policy_digest:'p'.repeat(64),subject_digest:'s'.repeat(64
 const blockedRelease={...eligibleRelease,status:'blocked',eligible_for_human_review:false,blocking_reasons:['replay_integrity:unknown'],
   checks:[check('operational_status','satisfied','Mission finished as completed.'),check('replay_integrity','unknown','Replay verification has not been run for this mission.'),check('visual_review','not_applicable','Visual review was not requested for this mission.')]};
 const row = {id:'mission-1',release:eligibleRelease,state:{status:'paused',round:1,actions_used:3,model_calls_used:2,data_origin:'fixture',branches:[],assessments:[],observations:[],events:[],visual_reports:[],artifacts:[],stop_reason:'Review needed'}};
+const readinessNode=(state,meaning,next_action=null)=>({state,meaning,next_action});
+const readiness={checked_at:1700000000,session:{kind:'native',state:'ready',code:'session.native',label:'Desktop session',meaning:'The desktop shell signed this request.',next_action:null,source:'request header'},
+  settings:{...readinessNode('ready','Settings can be read and saved.'),code:'settings.available',revision:'abcdef1234567890',path:'C:/data/settings.json',read_only:false,source:'supervisor'},
+  roles:[{role:'planner',label:'Planner',purpose:'proposes branches and actions'},{role:'reviewer',label:'Reviewer (QA)',purpose:'assesses'},{role:'falsifier',label:'Falsifier',purpose:'assesses with the brief to refute'},{role:'vision',label:'Vision',purpose:'reviews images'},{role:'prose',label:'Prose',purpose:'edits text'}],
+  seats:{planner:{role:'planner',label:'Planner',...readinessNode('not_tested','Configured, never probed.','Probe the planner seat in Settings.'),code:'seat.not_tested',facts:{provider:'anthropic',model:'claude-sonnet-5'},verification:{status:'not_tested'},source:'settings revision abcdef123456'}},
+  live_mission:{...readinessNode('not_tested','The planner seat has not been probed.','Probe the planner seat in Settings.'),code:'live.not_tested',blocking:[]},
+  connectors:{mcp:[],acp:[],mcp_sdk:null,acp_protocol:'1'},
+  renderer:{...readinessNode('blocked','No renderer is configured.','Set the Blender path in Settings.'),code:'renderer.not_configured',facts:{configured:false,exists:null,default_preset:null},source:'settings'},
+  memory:{...readinessNode('ready','The memory engine answers.'),code:'memory.available',facts:{protocol:'arc-memory/1',sqlite:'3.53.2'}},
+  storage:{...readinessNode('not_tested','The missions database is present.','Integrity is checked on demand in Diagnostics (not in this build).'),code:'storage.present',facts:{missions_db:true,missions:1}},
+  catalog:{},public_reads:{enabled:false}};
 let requests, downloadClick, selectedRow;
 const json = (data,init={}) => new Response(JSON.stringify(data),{...init,headers:{'Content-Type':'application/json',...(init.headers||{})}});
 
@@ -22,6 +33,7 @@ beforeEach(()=>{
   vi.stubGlobal('fetch',vi.fn(async(path,options={})=>{
     requests.push({path,options});
     if(path==='/api/session/status')return json({detail:'Authentication required'},{status:401});
+    if(path==='/api/readiness')return json(readiness);
     if(path==='/api/bioart/search')return json({hits:[{entry_id:18,title:'Antibody'}]});
     if(path==='/api/bioart/inspect')return json(bioartEntry);
     if(path==='/api/bioart/fetch')return json(JSON.parse(options.body).format==='EPS'?bioartDownloadReceipt:bioartReceipt);
@@ -103,7 +115,7 @@ test('a blocked release ledger explains itself and withholds the capsule until v
   await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
   const ledger=await screen.findByRole('region',{name:'Release decision'});
   expect(ledger).toHaveTextContent('Release decision: Blocked');
-  expect(ledger).toHaveTextContent('replay integrity · unknown — Replay verification has not been run for this mission.');
+  expect(ledger).toHaveTextContent('replay integrity · unverified — Replay verification has not been run for this mission.');
   expect(ledger).toHaveTextContent('Blocked by: replay integrity:unknown.');
   expect(ledger).toHaveTextContent('not validated');
   expect(screen.getByRole('button',{name:'Export replay archive (.zip)'})).toBeDisabled();
@@ -233,9 +245,42 @@ test('an owned native session unlocks without a page bearer and has a manual fal
   await user.click(screen.getByRole('button',{name:'Create and start'}));
   await waitFor(()=>expect(requests.some(r=>r.path==='/api/missions'&&r.options.method==='POST')).toBe(true));
   expect(requests.find(r=>r.path==='/api/missions'&&r.options.method==='POST').options.headers.Authorization).toBeUndefined();
+  // The shell reads readiness on its own for a desktop session, once, with the native header auth only.
+  await waitFor(()=>expect(requests.filter(r=>r.path==='/api/readiness')).toHaveLength(1));
+  expect(requests.find(r=>r.path==='/api/readiness').options.headers.Authorization).toBeUndefined();
+  await user.click(screen.getByRole('button',{name:'Diagnostics'}));
+  const session=screen.getByRole('heading',{name:'Session',level:3}).closest('article');
+  expect(session).toHaveAttribute('data-state','ready');
+  expect(session).toHaveTextContent('Desktop session');
+  expect(session).toHaveTextContent('The desktop shell signed this request.');
+  expect(screen.getByRole('heading',{name:'Seats',level:3}).closest('article')).toHaveTextContent('Next: Probe the planner seat in Settings.');
+  expect(screen.getByRole('region',{name:'Diagnostics'}).textContent).not.toMatch(/paste/i);
+  // Switching to a manual token drops the desktop answer; nothing is read until a workspace asks.
   await user.click(screen.getByRole('button',{name:'Use operator token'}));
   expect(screen.getByLabelText('Operator token')).toHaveValue('');
+  expect(screen.getByLabelText('Operator token')).toHaveAttribute('placeholder','Operator token');
+  expect(session).toHaveAttribute('data-state','blocked');
+  // The Research data field still says "Paste a JSON list"; only token copy is banned.
+  expect(document.body.textContent).not.toMatch(/paste[^.]*token|paste to unlock/i);
+  expect(requests.filter(r=>r.path==='/api/readiness')).toHaveLength(1);
+  await user.click(screen.getByRole('button',{name:'Research'}));
   expect(screen.getByLabelText('Research goal')).toHaveValue('A local native-session question');
+});
+
+test('a manual token reads readiness only when a workspace asks, with the bearer header and one shared request',async()=>{
+  const user=userEvent.setup();render(<App/>);
+  await user.type(screen.getByLabelText('Operator token'),'operator');
+  expect(requests.some(r=>r.path==='/api/readiness')).toBe(false);
+  await user.click(screen.getByRole('button',{name:'Diagnostics'}));
+  expect(requests.some(r=>r.path==='/api/readiness')).toBe(false);
+  await user.click(screen.getByRole('button',{name:'Refresh readiness'}));
+  await waitFor(()=>expect(screen.getByRole('heading',{name:'Session',level:3}).closest('article')).toHaveAttribute('data-state','ready'));
+  const read=requests.filter(r=>r.path==='/api/readiness');
+  expect(read).toHaveLength(1);
+  expect(read[0].options.headers.Authorization).toBe('Bearer operator');
+  expect(read[0].options.signal).toEqual(expect.any(AbortSignal));
+  expect(screen.getByText('arc-memory/1 · SQLite 3.53.2')).toBeInTheDocument();
+  expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
 });
 
 test('empty saved missions have an actionable state',async()=>{

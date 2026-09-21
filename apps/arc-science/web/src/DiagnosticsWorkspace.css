@@ -1,6 +1,7 @@
 .diagnostics-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  /* Wide enough for a label column plus a path or a revision without wrapping per character. */
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
   gap: var(--s3);
   margin: var(--s4) 0 var(--s5);
 }
@@ -28,12 +29,9 @@
   color: var(--ink);
 }
 
-/* State is spoken in text, not only by the border colour. */
-.diagnostics-state {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--ink-3);
-  white-space: nowrap;
+/* Seat and connector rows need the width; the other cards share the grid. */
+.diagnostics-card.wide {
+  grid-column: 1 / -1;
 }
 
 .diagnostics-card p {
@@ -45,22 +43,24 @@
   color: var(--ink);
 }
 
-.diagnostics-card[data-state="ok"] {
+/* The card border follows the shared readiness state; the badge in its head says the word. */
+.diagnostics-card[data-state="ready"] {
   border-color: var(--ok-line);
   background: var(--ok-soft);
 }
 
-.diagnostics-card[data-state="ok"] .diagnostics-state {
-  color: var(--ok);
-}
-
-.diagnostics-card[data-state="unavailable"] {
+.diagnostics-card[data-state="failed"] {
   border-color: var(--danger-line);
   background: var(--danger-soft);
 }
 
-.diagnostics-card[data-state="unavailable"] .diagnostics-state {
-  color: var(--danger);
+.diagnostics-card[data-state="blocked"] {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+}
+
+.diagnostics-table td .readiness-badge {
+  margin-right: 4px;
 }
 
 .diagnostics-workspace .unlock-card p,
@@ -91,7 +91,7 @@
 
 .diagnostics-kv {
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
+  grid-template-columns: minmax(84px, max-content) minmax(0, 1fr);
   align-items: baseline;
   gap: 6px 10px;
   margin: var(--s2) 0;

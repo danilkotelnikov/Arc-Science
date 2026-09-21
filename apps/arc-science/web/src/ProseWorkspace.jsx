@@ -96,7 +96,7 @@ export default function ProseWorkspace({token, setToken}) {
         <Button variant="secondary" isDisabled={!!busy || !token || !text.trim()} onPress={() => task(diagnose, ACTION.diagnose)}>Diagnose locally</Button>
         <Button variant="secondary" isDisabled={!!busy || !token} onPress={() => task(loadRules, ACTION.rules)}>{rules ? 'Reload rules' : 'Load rules and detection details'}</Button>
       </div>
-      {!token && <p className="field-note">Paste an operator token to use these.</p>}
+      {!token && <p className="field-note">Enter an operator token in the header to use these.</p>}
       <LockNotice card={sessionState(token, authExpired)} tone={authExpired ? 'error' : 'info'} onUnlock={() => focusTokenField(token, setToken)} unlockLabel={unlockLabel(token)}/>
       {rules && <p className="field-note">Rules loaded; the list is at the end of the results.</p>}
       {feedback('local')}

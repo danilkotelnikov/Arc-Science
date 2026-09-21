@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Button} from '@heroui/react/button';
 import BioArtWorkspace from './BioArtWorkspace';
@@ -8,7 +8,7 @@ import MemoryWorkspace from './MemoryWorkspace';
 import ProseWorkspace from './ProseWorkspace';
 import SettingsWorkspace from './SettingsWorkspace';
 import DiagnosticsWorkspace from './DiagnosticsWorkspace';
-import {NATIVE_SESSION} from './http';
+import {NATIVE_SESSION, apiFetch} from './http';
 import {Icon} from './icons';
 import './styles.css';
 
@@ -50,6 +50,32 @@ export function App() {
     window.addEventListener('popstate',restored);
     return()=>window.removeEventListener('popstate',restored);
   },[]);
+  // Readiness is read once per session: on its own for a desktop session, on a
+  // workspace's request for a manual token. Concurrent requests share one fetch; a
+  // token change discards the previous answer and any request still in flight.
+  const [readiness,setReadiness]=useState(null),[readinessError,setReadinessError]=useState(null);
+  const pending=useRef(null);
+  const refreshReadiness=useCallback(()=>{
+    if(!token)return Promise.resolve(null);
+    if(pending.current?.token===token)return pending.current.promise;
+    pending.current?.controller.abort();
+    const controller=new AbortController();
+    const promise=apiFetch('/api/readiness',{token,signal:controller.signal}).then(response=>response.json()).then(data=>{
+      if(controller.signal.aborted)return null;
+      setReadiness(data);setReadinessError(null);return data;
+    }).catch(error=>{
+      if(controller.signal.aborted)return null;
+      setReadiness(null);setReadinessError(error?.message||String(error));return null;
+    }).finally(()=>{if(pending.current?.controller===controller)pending.current=null;});
+    pending.current={token,controller,promise};
+    return promise;
+  },[token]);
+  useEffect(()=>{
+    if(pending.current&&pending.current.token!==token){pending.current.controller.abort();pending.current=null;}
+    setReadiness(null);setReadinessError(null);
+    if(token===NATIVE_SESSION)refreshReadiness();
+  },[token,refreshReadiness]);
+  useEffect(()=>()=>pending.current?.controller.abort(),[]);
   const navigate=next=>{
     const path=next==='diagnostics'?'/diagnostics':'/';
     if(next!==workspace||window.location.pathname!==path)window.history.pushState({arcWorkspace:next},'',path);
@@ -62,7 +88,7 @@ export function App() {
       <DownloadNotice/>
       {token===NATIVE_SESSION
         ?<div className="session-control native-session" role="status">Desktop session ready <Button variant="ghost" size="sm" onPress={()=>setToken('')}>Use operator token</Button></div>
-        :<div className="session-control token-field"><label htmlFor="operator-token">Operator token</label><input id="operator-token" type="password" value={token} onChange={e=>setToken(e.target.value)} autoComplete="off" placeholder="Paste to unlock" aria-describedby="operator-token-note"/><span id="operator-token-note" className="visually-hidden">The owner-only token printed by arc-science token --data your-project. It stays in this window.</span></div>}
+        :<div className="session-control token-field"><label htmlFor="operator-token">Operator token</label><input id="operator-token" type="password" value={token} onChange={e=>setToken(e.target.value)} autoComplete="off" placeholder="Operator token" aria-describedby="operator-token-note"/><span id="operator-token-note" className="visually-hidden">The owner-only token printed by arc-science token --data your-project. It stays in this window.</span></div>}
     </header>
     <div className="app-body">
       <nav className="workspace-nav" aria-label="Workspaces">
@@ -74,11 +100,11 @@ export function App() {
         {/* Keep every workspace mounted: credentials, drafts and selections stay in memory. */}
         <div hidden={workspace!=='molecules'}><MolecularWorkspace token={token} setToken={setToken}/></div>
         <div hidden={workspace!=='bioart'}><BioArtWorkspace token={token} setToken={setToken}/></div>
-        <div hidden={workspace!=='research'}><ResearchWorkspace token={token} setToken={setToken}/></div>
+        <div hidden={workspace!=='research'}><ResearchWorkspace token={token} setToken={setToken} readiness={readiness} readinessError={readinessError} refreshReadiness={refreshReadiness} onNavigate={navigate}/></div>
         <div hidden={workspace!=='memory'}><MemoryWorkspace token={token} setToken={setToken}/></div>
         <div hidden={workspace!=='prose'}><ProseWorkspace token={token} setToken={setToken}/></div>
-        <div hidden={workspace!=='settings'}><SettingsWorkspace token={token} setToken={setToken}/></div>
-        <div hidden={workspace!=='diagnostics'}><DiagnosticsWorkspace token={token} setToken={setToken} active={workspace==='diagnostics'}/></div>
+        <div hidden={workspace!=='settings'}><SettingsWorkspace token={token} setToken={setToken} active={workspace==='settings'} readiness={readiness} readinessError={readinessError} refreshReadiness={refreshReadiness} onNavigate={navigate}/></div>
+        <div hidden={workspace!=='diagnostics'}><DiagnosticsWorkspace token={token} setToken={setToken} active={workspace==='diagnostics'} readiness={readiness} readinessError={readinessError} refreshReadiness={refreshReadiness} onNavigate={navigate}/></div>
       </main>
     </div>
   </div>;

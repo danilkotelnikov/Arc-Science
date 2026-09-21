@@ -65,7 +65,17 @@ class MissionRepository:
     def list(self,limit=100):
         with self._connect() as db:
             rows=db.execute('SELECT id,request,state,revision FROM missions ORDER BY rowid DESC LIMIT ?',(limit,)).fetchall()
-        return [{'id':i,'goal':json.loads(q)['goal'],'status':json.loads(s)['status'],'revision':r} for i,q,s,r in rows]
+        return [{'id':i,'goal':(req:=json.loads(q))['goal'],'mode':req.get('mode','demo'),'status':json.loads(s)['status'],'revision':r} for i,q,s,r in rows]
+
+    def count(self):
+        with self._connect() as db:return db.execute('SELECT COUNT(*) FROM missions').fetchone()[0]
+
+    def count_bound_live(self,statuses=('ready','running','paused')):
+        """Live missions already bound to a route (a seats_bound event) in one of the statuses."""
+        marks=','.join('?'*len(statuses))
+        with self._connect() as db:
+            return db.execute("SELECT COUNT(*) FROM missions WHERE json_extract(request,'$.mode')='live' AND json_extract(state,'$.status') IN ("+marks+") "
+                              "AND EXISTS (SELECT 1 FROM json_each(state,'$.events') WHERE json_extract(value,'$.kind')='seats_bound')",tuple(statuses)).fetchone()[0]
 
     def save(self,mid,state:MissionState,*,expected_revision:int):
         encoded=canonical(state).decode()

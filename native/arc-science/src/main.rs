@@ -137,7 +137,10 @@ fn run() -> Result<i32> {
                     );
                 }
                 SettingsCommand::Check => {
-                    let (_, bytes) = Settings::load_or_create(&project)?;
+                    // The full check, not only the schema a read accepts: a file that
+                    // could not be written back unchanged is reported here.
+                    let (current, bytes) = Settings::load_or_create(&project)?;
+                    current.validate()?;
                     println!(
                         "settings.toml valid; revision {}",
                         settings::revision(&bytes)

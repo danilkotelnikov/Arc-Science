@@ -10,6 +10,8 @@ test('an offline mission explores competing branches, reconciles them and verifi
   await expect(status).toHaveText('completed');
   const results = page.getByRole('region', {name: 'Research results'});
   await expect(results.getByRole('heading', {name: 'Mission overview'})).toBeVisible();
+  // The model source the mission was created with is read from its request, beside the status.
+  await expect(results.locator('.mode-chip')).toHaveText('Offline fixture');
   // Decision tree: the fixture opens a linear route, then quadratic and shuffled-control alternatives.
   const branches = results.locator('.branch');
   await expect(branches).toHaveCount(3);
@@ -66,7 +68,7 @@ test('the release ledger withholds the capsule until the mission is verified', a
   const results = page.getByRole('region', {name: 'Research results'});
   const ledger = page.getByRole('region', {name: 'Release decision'});
   await expect(ledger).toContainText('Release decision: Blocked');
-  await expect(ledger).toContainText('replay integrity · unknown');
+  await expect(ledger).toContainText('replay integrity · unverified');
   await expect(results.getByRole('button', {name: 'Export replay archive (.zip)'})).toBeDisabled();
   const missionId = (await page.locator('.eyebrow').filter({hasText: 'Selected mission:'}).textContent()).split(': ')[1].trim();
   const refused = await request.get(`/api/missions/${missionId}/capsule`, {headers: {Authorization: `Bearer ${E2E_TOKEN}`}});
@@ -175,5 +177,32 @@ test('a presentation finding is repaired, reviewed again as a new candidate, and
   await expect(ledger.getByRole('heading', {name: 'Release decision: Eligible for human review'})).toBeVisible();
   await expect(ledger.locator('li[data-state="satisfied"]').filter({hasText: 'visual review'})).toHaveText(/Repair cycles: 1 \(spacious\) -> adequate/);
   await expect(results.getByRole('link', {name: 'Download PNG'})).toHaveCount(4);
+  check();
+});
+
+test('live mode on a service without seats is blocked in the composer; nothing is sent and no 409 appears', async ({page}) => {
+  const check = watchForTokenLeaks(page);
+  const missionPosts = [], conflicts = [];
+  page.on('request', (request) => { if (request.method() === 'POST' && request.url().includes('/api/missions')) missionPosts.push(request.url()); });
+  page.on('response', (response) => { if (response.status() === 409) conflicts.push(response.url()); });
+  await page.goto('/');
+  await openWorkspace(page, 'Research', 'Research results');
+  await page.getByLabel('Operator token').fill(E2E_TOKEN);
+  await page.getByLabel('Research goal').fill('E2E: live route without seats.');
+  await page.getByText('Execution settings', {exact: true}).click();
+  await page.getByLabel('Model source').selectOption('live');
+  await page.getByLabel(/Permit sending/).check();
+  // The e2e data directory has no seat set, so the planner blocks the live route; the server names it.
+  const route = page.getByRole('region', {name: 'Live route'});
+  await expect(route).toContainText('No seat is configured.');
+  await expect(route.getByRole('status')).toContainText('Planner');
+  const create = page.getByRole('button', {name: 'Create and start'});
+  await expect(create).toBeDisabled();
+  await expect(create.locator('..')).toContainText('Live models are blocked.');
+  await expect(page.getByText('Execution settings', {exact: true}).locator('..')).toContainText('seats: Blocked');
+  await route.getByRole('button', {name: 'Open Settings'}).click();
+  await expect(page.getByRole('navigation', {name: 'Workspaces'}).getByRole('button', {name: 'Settings'})).toHaveAttribute('aria-pressed', 'true');
+  expect(missionPosts).toEqual([]);
+  expect(conflicts).toEqual([]);
   check();
 });

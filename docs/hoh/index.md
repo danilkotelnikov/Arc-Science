@@ -225,3 +225,22 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   specifies model/auth/permission setup, an agentic mission and claim cockpit,
   native visible-control acceptance and honest production gates. New acceptance
   IDs A1–A8 are in the [specification](specification.md).
+
+## Agentic product increment — 2026-09-21, Claude (slice 1: readiness and first run)
+
+- Model `claude-opus-5`, effort `xhigh`, ultracode orchestration. The
+  [specification and acceptance matrix](2026-09-21-agentic-product-spec.md) records the
+  read-only audit (eight readers, a synthesis and an adversarial critique), the provider
+  contracts read from the official pages that day, the design decisions Sol (GPT-5.6)
+  challenged, six slices and the A1–A8 / J1–J8 matrix.
+- [Slice 1 record](2026-09-21-slice1-readiness-record.md): a server-owned
+  `GET /api/readiness` with one vocabulary (ready / not tested / failed / blocked /
+  unknown), Settings that load by themselves and pick models from a source-attributed
+  catalog (custom ids stay unverified), a save notice that says when each section
+  applies, Rust effort-per-transport validation that still loads older files,
+  Diagnostics and Research on the same reading, live mode that names the blocking seat
+  and leads to Settings, stacked seat cards at 700 px. Verified on the real EXE through
+  the diagnostic attach and by a before/after task comparison; a harness incident that
+  attempted planner calls through the operator's Gemini CLI is recorded there.
+- Blocked: the Claude Science comparison baseline (unreachable) and a second Sol review
+  (usage limit until 25 September).
