@@ -170,6 +170,8 @@
 .badge[data-state="ready"] { color: var(--ok); border-color: var(--ok-line); background: var(--ok-soft); }
 .badge[data-state="failed"] { color: var(--danger); border-color: var(--danger-line); background: var(--danger-soft); }
 .badge[data-state="blocked"], .badge[data-state="unsaved"] { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
+/* A grant still in force; revoked, expired and exhausted stay in the plain badge. */
+.badge[data-state="active"] { color: var(--ok); border-color: var(--ok-line); background: var(--ok-soft); }
 
 .seat-live {
   display: flex;
@@ -324,6 +326,15 @@
 }
 
 .settings-table .seats th, .settings-table .seats td, .seats th, .seats td { vertical-align: top; }
+
+/* The permission center: the filter sits beside Refresh; a Revoke waiting for its reason
+   keeps the input and its two buttons on one line inside the cell. */
+.grants-table { min-width: 960px; }
+.grants-table code { overflow-wrap: anywhere; }
+.grants-filter { display: flex; align-items: center; gap: var(--s2); font-size: var(--text-sm); color: var(--ink-2); }
+.grants-filter select { width: auto; margin: 0; }
+.grant-revoke { margin: 0; align-items: center; flex-wrap: nowrap; }
+.grant-revoke input { width: 160px; }
 
 .settings-workspace .research-results {
   overflow-x: auto;

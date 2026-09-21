@@ -251,4 +251,12 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   Test / Remove / Re-check per seat; the sign-in modes with their official basis and
   the `ant` Console profile reported only. Verified on the rebuilt EXE except the typed
   half of the prompt, which accepts no automated input and needs a person once.
-
+- [Slice 3 record](2026-09-21-slice3-grants-record.md): an append-only grant ledger
+  beside the missions; a live mission shows every destination of its route (seats,
+  consented MCP and ACP connectors by full command line or URL, public reads,
+  BioRender) with data category, purpose and scope, starts only against an approved
+  route digest, and every external call passes the ledger first and leaves a receipt;
+  revoking refuses the next call; prose, detector and BioArt requests get a once grant;
+  a Permissions section lists and revokes. Verified on the real EXE with a local
+  stand-in planner and a logging fake MCP server (nothing left the machine); a guarded
+  ACP call and expiry remain open; two pre-existing e2e test defects corrected.

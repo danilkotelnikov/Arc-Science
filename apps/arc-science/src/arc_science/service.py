@@ -2,9 +2,11 @@
 from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager, suppress
+import functools
 import os
 from pathlib import Path
 import secrets
+import shlex
 import shutil
 import subprocess
 import time
@@ -18,7 +20,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .contracts import digest
-from .transport import AccessGrant
+from .transport import AccessGrant, ProviderError
+from .grants import GrantLedger
 from .exploration.models import Event, MissionRequest, MissionState
 from .exploration.engine import initialize, explore, MissionCancelled
 from .exploration.agents import DemoAgent, DemoVisionAgent
@@ -69,6 +72,21 @@ class ProbeRequest(BaseModel):
 class ProbeReply(BaseModel):
     """The smallest schema-valid answer: a probe proves reachability and identity, nothing more."""
     ok:bool
+
+class GrantRequest(BaseModel):
+    destination:str=Field(min_length=1,max_length=400)
+    destination_kind:str=Field(min_length=1,max_length=20)
+    data_category:str=Field(default='',max_length=200)
+    purpose:str=Field(default='',max_length=200)
+    scope:str='mission'
+
+class StartRequest(BaseModel):
+    """The operator's approval of the previewed route: its digest and one grant per destination."""
+    approved_route_digest:str=Field(min_length=64,max_length=64,pattern=r'^[0-9a-f]{64}$')
+    grants:list[GrantRequest]=Field(default_factory=list,max_length=64)
+
+class RevokeRequest(BaseModel):
+    reason:str=Field(default='',max_length=400)
 
 
 def _configured_native_session_secret():
@@ -239,6 +257,74 @@ def seat_plan(route):
     return route_digest,'sha256:'+route_digest+' '+json.dumps(summary,separators=(',',':'),sort_keys=True)
 
 
+# What each kind of destination receives under a mission grant, in the operator's words.
+SEAT_CATEGORY='mission goal, dataset points, prior observations and assessments';SEAT_PURPOSE='planning, review and refutation'
+CONNECTOR_CATEGORY='tool arguments the planner chooses';PUBLIC_READ_CATEGORY='query text the planner chooses'
+BIORENDER_CATEGORY='template search terms the planner chooses'
+# The origin each shipped public-read tool reaches (public_reads.py fixes the URLs).
+PUBLIC_READ_ORIGINS={'literature_search':'https://www.ebi.ac.uk','pdb_metadata':'https://data.rcsb.org'}
+
+
+def seat_destination(cfg):
+    """Where a seat call goes: the endpoint origin of an API seat, the executable of a CLI login."""
+    return cfg.endpoint if cfg.transport=='cli' else origin(cfg.endpoint)
+
+
+def connector_destination(entry):
+    """Where a connector call goes: the url of an HTTP server, else the whole command line.
+    The launcher alone (npx, uvx, python) is shared by unrelated servers, so the arguments
+    are part of the identity a grant names."""
+    if entry.get('transport')=='http':return entry['url']
+    return (entry.get('command','')+' '+shlex.join(entry.get('args') or [])).strip()
+
+
+def route_preview(route,settings_revision=None):
+    """The grants a live route needs before its first start, one per destination, from the
+    same snapshot `seat_plan` digests: seats, consented connectors, public reads and
+    BioRender when enabled. Passive: nothing is called and no secret is read."""
+    route_digest,_=seat_plan(route)
+    seats=[{'role':role,'provider':e.provider,'transport':e.transport,'model':e.model,'effort':e.effort,'destination':seat_destination(e),
+            'destination_kind':'seat','data_category':SEAT_CATEGORY,'purpose':SEAT_PURPOSE} for role,e in route['seats'].items()]
+    connectors=[{'name':s['name'],'kind':'mcp','destination':connector_destination(s),'destination_kind':'mcp',
+                 'data_category':CONNECTOR_CATEGORY,'purpose':'tool call'} for s in route['mcp_servers']]
+    connectors+=[{'name':a['name'],'kind':'acp','destination':connector_destination(a),'destination_kind':'acp',
+                  'data_category':CONNECTOR_CATEGORY,'purpose':'consultation'} for a in route['acp_agents']]
+    public_reads=[{'destination':o,'destination_kind':'public_read','data_category':PUBLIC_READ_CATEGORY,'purpose':'public metadata read'}
+                  for o in dict.fromkeys(PUBLIC_READ_ORIGINS.values())] if os.environ.get('ARC_PUBLIC_READS')=='1' else []
+    biorender=None
+    if os.environ.get('ARC_BIORENDER_READS')=='1':
+        from .biorender import BIORENDER_ENDPOINT
+        biorender={'destination':BIORENDER_ENDPOINT,'destination_kind':'biorender','data_category':BIORENDER_CATEGORY,'purpose':'template search'}
+    required={}
+    for entry in seats+connectors+public_reads+([biorender] if biorender else []):
+        required.setdefault((entry['destination'],entry['destination_kind']),
+                            {**{k:entry[k] for k in ('destination','destination_kind','data_category','purpose')},'scope':'mission'})
+    return {'settings_revision':settings_revision,'route_digest':route_digest,'seats':seats,'connectors':connectors,
+            'public_reads':public_reads,'biorender':biorender,'required_grants':list(required.values())}
+
+
+def request_grant(ledger,destination,destination_kind,data_category,purpose,request_digest=None):
+    """One consented request outside a mission (prose seat, detector, BioArt): a 'once'
+    grant reserved now, and a receipt when the returned finish(outcome, reason) is called."""
+    grant=ledger.create(subject_kind='request',subject_id=uuid.uuid4().hex,destination=destination,destination_kind=destination_kind,
+                        data_category=data_category,purpose=purpose,scope='once',route_digest='',settings_revision='',source='operator-ui',max_uses=1)
+    ledger.reserve(grant['id'])
+    def finish(outcome,reason=''):
+        ledger.receipt(grant_id=grant['id'],mission_id=None,destination=destination,destination_kind=destination_kind,data_category=data_category,
+                       outcome=outcome,reason=str(reason)[:300],request_digest=request_digest,observation_id=None,role=None)
+    return finish
+
+
+class GuardedSeatAgent:
+    """A SeatAgent whose every call passes the grant ledger first: guard(role, call, *args)
+    refuses or records; everything else is the inner agent's."""
+    def __init__(self,inner,guard):self.inner=inner;self.guard=guard
+    def __getattr__(self,name):return getattr(self.inner,name)
+    async def propose(self,context):return await self.guard('planner',self.inner.propose,context)
+    async def assess(self,role,context):return await self.guard(role,self.inner.assess,role,context)
+    async def review_visual(self,context,artifacts):return await self.guard('vision',self.inner.review_visual,context,artifacts)
+
+
 def configured_prose_endpoint(settings=None):
     """The prose seat from the settings, or None when it is not configured."""
     if settings is None:settings=operator_settings.current()
@@ -362,6 +448,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     if len(token)<32:raise ValueError('Use a randomly generated API token of at least 32 characters')
     native_session_secret=_configured_native_session_secret()
     repository=MissionRepository(root/'missions.db');running={}
+    # The grant ledger is operational and append-only, apart from the mission state and its chain.
+    ledger=GrantLedger(root/'grants.db');consented=functools.partial(request_grant,ledger)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -381,6 +469,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     app=FastAPI(title='Arc Science',version=VERSION,lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
     app.state.repository=repository
     app.state.running=running
+    app.state.grants=ledger
 
     async def authorized(authorization:str|None=Header(default=None),
                          x_arc_native_session:str|None=Header(default=None)):
@@ -401,7 +490,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     # project is the workspace (ARC_PROJECT) and the cache path it passes is absolute
     # under that workspace, not under the data directory.
     bioart_project=Path(os.environ.get('ARC_PROJECT') or root)
-    app.include_router(create_bioart_router(bioart_project if bioart_project.is_dir() else root,authorized))
+    app.include_router(create_bioart_router(bioart_project if bioart_project.is_dir() else root,authorized,egress=consented))
 
     from .molecular_jobs import MolecularJobs
     def default_preset():
@@ -411,7 +500,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     app.include_router(molecular_jobs.router)
 
     from . import prose as prose_module
-    detector=prose_module.Detector(root)
+    detector=prose_module.Detector(root);detector.egress=consented
     app.state.detector=detector
 
     # Prose control: a rule-based local rewrite that never touches scientific content,
@@ -479,6 +568,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if humanise_lock.locked():prose_error(prose_module.ProseRefused('busy','A seat rewrite is already in flight'))
         async with humanise_lock:
             line({'status':'attempted','provider':cfg.provider,'transport':cfg.transport,'model':cfg.model,'chars':len(body.text)})
+            # The consent is also a once-scoped grant in the ledger, with its receipt.
+            finish=consented(seat_destination(cfg),'prose','the submitted text and instructions','a reader-facing edit by the prose seat',keyed)
             seat=None
             try:
                 async with httpx.AsyncClient(trust_env=False) as client:
@@ -490,13 +581,13 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                                        resolver=lambda ref,principal,project:access_grant(cfg,ref,principal,project))
                     result=await prose_humane.humanise(seat,body.text,body.instructions)
             except prose_module.ProseRefused as refused:
-                line({'status':refused.code});prose_error(refused)
+                finish('failed',refused.code);line({'status':refused.code});prose_error(refused)
             except Exception as error:
-                line({'status':'provider_rejected'})
+                finish('failed','provider_rejected');line({'status':'provider_rejected'})
                 raise HTTPException(502,{'code':'provider_rejected','detail':'The prose seat did not return a usable edit: '+str(error)[:200],'spans':[]}) from None
             finally:
                 if seat is not None and hasattr(seat,'close'):seat.close()
-            line({'status':result['status'],'rewritten_sha256':result['rewritten_sha256']})
+            finish('ok');line({'status':result['status'],'rewritten_sha256':result['rewritten_sha256']})
             return result
 
     @app.post('/api/prose/detect',dependencies=[Depends(authorized)])
@@ -612,6 +703,35 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
 
     @app.get('/api/missions',dependencies=[Depends(authorized)])
     async def list_missions():return repository.list()
+
+    def settings_revision():
+        try:return operator_settings.snapshot().get('revision')
+        except Exception:return None
+
+    # Registered before /api/missions/{mid}: the route a live mission would bind now and
+    # the grants it needs, for the operator to approve; passive.
+    @app.get('/api/missions/preview',dependencies=[Depends(authorized)])
+    async def mission_preview(vision_review:int=0):
+        try:route=live_route(bool(vision_review))
+        except Exception as error:raise HTTPException(409,'Configure the model seats before starting: '+str(error)[:300]) from None
+        return route_preview(route,settings_revision())
+
+    @app.get('/api/missions/{mid}/grants',dependencies=[Depends(authorized)])
+    async def mission_grants(mid:str):
+        get(mid)
+        # The ledger clamps at 1000 receipts; a longer mission says so instead of dropping silently.
+        receipts=ledger.receipts(mission_id=mid,limit=1000)
+        return {'grants':ledger.list('mission',mid),'receipts':receipts,'receipts_truncated':len(receipts)>=1000}
+
+    @app.get('/api/grants',dependencies=[Depends(authorized)])
+    async def list_grants(subject_kind:str|None=None,subject_id:str|None=None):
+        return ledger.list(subject_kind or None,subject_id or None)
+
+    @app.post('/api/grants/{grant_id}/revoke',dependencies=[Depends(authorized)])
+    async def revoke_grant(grant_id:str,body:RevokeRequest=Body(default=RevokeRequest())):
+        # Idempotent: the next call of a running mission under this grant is refused and recorded.
+        try:return ledger.revoke(grant_id,body.reason)
+        except KeyError:raise HTTPException(404,'Unknown grant') from None
 
     # The last probe record per CLI transport name and, for API subjects, per provider.
     PROVIDERS=('anthropic','openai','gemini','openclaw')
@@ -815,6 +935,26 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             # stall mission progress, status polling or cancellation.
             memory_routes.schedule_capture(mid,state)
         def cancelled():return repository.get(mid)['state']['status']=='cancelled'
+        def guard(kind,destination,category,call,*,role=None,error=ValueError,request_digest=None):
+            """The ledger check before one external call of this mission and the receipt
+            after it: a refusal never reaches the destination and is recorded as denied,
+            raised as the error the engine already records for that call."""
+            async def run(*args):
+                verdict=ledger.authorize('mission',mid,destination,kind)
+                fields={'grant_id':verdict['grant_id'],'mission_id':mid,'destination':destination,'destination_kind':kind,'data_category':category,
+                        'role':role,'request_digest':request_digest(*args) if request_digest else None,'observation_id':None}
+                if not verdict['allowed']:
+                    ledger.receipt(**fields,outcome='denied',reason=verdict['reason'])
+                    raise error('Refused by the grant ledger: '+verdict['reason'])
+                try:result=await call(*args)
+                except Exception as why:
+                    ledger.receipt(**fields,outcome='failed',reason=redact(str(why))[:300]);raise
+                ledger.receipt(**fields,outcome='ok',reason='')
+                return result
+            return run
+        def guard_tool(binding,destination,kind,category=CONNECTOR_CATEGORY):
+            spec,function=binding
+            return spec,guard(kind,destination,category,function,request_digest=lambda arguments:digest(arguments))
         agent=None;consultations=None;mcp=None
         try:
             async with httpx.AsyncClient(trust_env=False) as client:
@@ -843,9 +983,18 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                                          project=mid,principal='local-operator')
                     agent=SeatAgent({role:seat_for(role,cfg) for role,cfg in (('planner',first),('reviewer',second),('falsifier',third))},
                                     vision=visual)
+                    # Every seat call passes the ledger under the seat's own destination
+                    # (the engine's analyst role is the reviewer seat).
+                    cfgs={'planner':first,'reviewer':second,'falsifier':third,'vision':vision}
+                    def guard_seat(role,call,*args):
+                        cfg=cfgs.get(role) or second
+                        return guard('seat',seat_destination(cfg),SEAT_CATEGORY,call,role=role,error=ProviderError)(*args)
+                    agent=GuardedSeatAgent(agent,guard_seat)
                     if os.environ.get('ARC_PUBLIC_READS')=='1':
                         from .exploration.public_reads import public_tools
                         tools=combine_trusted_tools(tools,public_tools(client))
+                        for name,origin_ in PUBLIC_READ_ORIGINS.items():
+                            if name in tools:tools[name]=guard_tool(tools[name],origin_,'public_read',PUBLIC_READ_CATEGORY)
                     if os.environ.get('ARC_BIORENDER_READS')=='1':
                         from .biorender import BIORENDER_ENDPOINT, BioRenderClient
                         from .exploration.biorender_read import biorender_tools
@@ -859,6 +1008,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                             protocol=biorender['protocol'])
                         adapter=await biorender_tools(provider,schema_digest=biorender['schema_digest'])
                         tools=combine_trusted_tools(tools,adapter)
+                        for name in adapter:tools[name]=guard_tool(tools[name],BIORENDER_ENDPOINT,'biorender',BIORENDER_CATEGORY)
                     # The consented connectors bound with the route, for this mission only: MCP
                     # sessions open now and close with the mission; ACP agents start on first use.
                     from .exploration.acp_client import AcpConsultations
@@ -866,14 +1016,18 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                     consultations=AcpConsultations([{**a,'consent':True} for a in route['acp_agents']])
                     servers=[{**s,'consent':True} for s in route['mcp_servers']]
                     mcp=McpToolset(servers) if servers else None
-                    for name,binding in consultations.tools.items():
+                    # One consultation tool per agent, in the agents' order.
+                    for (name,binding),acp_agent in zip(consultations.tools.items(),consultations.agents):
                         if name in tools:raise ValueError('Connector tool name collides: '+name)
-                        tools[name]=binding
+                        tools[name]=guard_tool(binding,connector_destination(acp_agent),'acp')
                 if mcp is not None:
                     async with mcp:
+                        # The toolset's report says which server offered each tool.
+                        by_server={s['name']:s for s in mcp.servers}
+                        server_of={t['as']:by_server[entry['server']] for entry in mcp.report for t in entry['tools'] if t.get('offered')}
                         for name,binding in mcp.tools.items():
                             if name in tools:raise ValueError('Connector tool name collides: '+name)
-                            tools[name]=binding
+                            tools[name]=guard_tool(binding,connector_destination(server_of[name]),'mcp')
                         await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools)
                 else:
                     await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools)
@@ -902,11 +1056,12 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         except RevisionConflict:raise HTTPException(409,'Mission changed; retry') from None
         return change
 
-    def schedule(row,declared=None,note=''):
+    def schedule(row,declared=None,note='',approval=None):
         """The one path that starts or resumes a mission: the live route is checked against
         the plan bound at the first start before anything is written; then the resume is
         recorded, the plan bound if this is the first start, and the worker scheduled with
-        the same immutable snapshot of the seats."""
+        the same immutable snapshot of the seats. A first start needs the operator's
+        approval of the previewed route: the grants are written once the plan is bound."""
         request=MissionRequest.model_validate(row['request']);route=None
         if request.mode=='live':
             try:route=live_route(request.vision_review)
@@ -917,10 +1072,27 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             if bound is not None and not bound.detail.startswith('sha256:'+route_digest+' '):
                 raise HTTPException(409,'The model seats or connectors changed since this mission was first started; a permission change is a '
                                         'separate authorization: restore the seats or create a new mission')
+            granted=ledger.list('mission',row['id'])
+            if bound is None or not granted:
+                if approval is None:
+                    raise HTTPException(409,'Review the route and approve its grants before the first start' if bound is None else
+                                        'This mission was bound before its grants were recorded; review the route and approve its grants to start it')
+                revision=settings_revision()
+                if approval.approved_route_digest!=route_digest:
+                    raise HTTPException(409,'The route changed since it was previewed; review it again'+(f'; settings revision {revision[:12]}' if revision else ''))
+                preview=route_preview(route,revision)
+                approved={(g.destination,g.destination_kind) for g in approval.grants if g.scope=='mission'}
+                missing=[g for g in preview['required_grants'] if (g['destination'],g['destination_kind']) not in approved]
+                if missing:raise HTTPException(409,'No grant approved for the '+missing[0]['destination_kind']+' destination '+missing[0]['destination'])
         change=None
         if row['state']['status']=='paused':
             change=record_resume(row,declared if declared is not None else MISSION_CHANGES['resume']['derived'],note or 'Resumed from the workspace.')
             row=get(row['id'])
+        if route is not None and (bound is None or not granted):
+            # The ledger records what the operator approved, in the service's own words,
+            # before the plan is bound: a bound mission without grants asks again.
+            for grant in preview['required_grants']:
+                ledger.create(subject_kind='mission',subject_id=row['id'],**grant,route_digest=route_digest,settings_revision=revision or '',source='operator-ui')
         if route is not None and bound is None:
             state=MissionState.model_validate(row['state'])
             state=state.model_copy(update={'events':state.events+(Event(kind='seats_bound',round=state.round,detail=detail[:1200]),)})
@@ -930,11 +1102,11 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         return change
 
     @app.post('/api/missions/{mid}/start',status_code=202,dependencies=[Depends(authorized)])
-    async def start(mid:str):
+    async def start(mid:str,approval:StartRequest|None=Body(default=None)):
         row=get(mid)
         if mid in running or row['state']['status'] not in ('ready','paused'):
             raise HTTPException(409,'Only ready or interrupted missions can start or resume')
-        schedule(row)
+        schedule(row,approval=approval)
         return {'id':mid,'status':'scheduled'}
 
     @app.get('/api/changes',dependencies=[Depends(authorized)])

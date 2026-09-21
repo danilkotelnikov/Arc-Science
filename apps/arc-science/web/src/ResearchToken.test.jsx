@@ -17,6 +17,22 @@ const blockedReadiness = readinessOf({state: 'blocked', code: 'live.blocked', bl
   {planner: seat('planner', 'Planner', {state: 'blocked', code: 'seat.credential_missing', facts, meaning: 'No API key is stored for the planner seat.', next_action: 'Store the anthropic API key in Settings → Connections.'})});
 const untestedReadiness = readinessOf({state: 'not_tested', code: 'live.not_tested', blocking: [], meaning: 'Seats are set but not tested.', next_action: 'Probe the seats in Settings.'},
   {planner: seat('planner', 'Planner', {state: 'not_tested', code: 'seat.not_tested', facts, meaning: 'Set, never tested.', next_action: 'Run a probe.'})});
+// GET /api/missions/preview and GET /api/missions/{mid}/grants as the slice 3 contract shapes them; the ledger is operational, never evidence.
+const SEAT_DATA = 'mission goal, dataset points, prior observations and assessments', TOOL_DATA = 'tool arguments the planner chooses';
+const preview = {settings_revision: 'rev-7', route_digest: 'd'.repeat(64),
+  seats: [{role: 'planner', provider: 'anthropic', transport: 'api', model: 'claude-sonnet-4-5', effort: 'medium', destination: 'https://api.anthropic.com', destination_kind: 'seat', data_category: SEAT_DATA, purpose: 'planning, review and refutation'}],
+  connectors: [{name: 'pubmed', kind: 'mcp', destination: 'npx pubmed-mcp', destination_kind: 'mcp', data_category: TOOL_DATA, purpose: 'consultation or tool call'}], public_reads: [],
+  required_grants: [{destination: 'https://api.anthropic.com', destination_kind: 'seat', data_category: SEAT_DATA, purpose: 'planning, review and refutation', scope: 'mission'}, {destination: 'npx pubmed-mcp', destination_kind: 'mcp', data_category: TOOL_DATA, purpose: 'consultation or tool call', scope: 'mission'}]};
+const GRANT = 'g'.repeat(32);
+const ledger = {grants: [
+  {id: GRANT, subject_kind: 'mission', subject_id: mission.id, destination: 'https://api.anthropic.com', destination_kind: 'seat', data_category: SEAT_DATA, purpose: 'planning, review and refutation', scope: 'mission', state: 'active', uses: 2, max_uses: null, last_used_at: 1700000000, revoked_at: null},
+  {id: 'h'.repeat(32), subject_kind: 'mission', subject_id: mission.id, destination: 'npx pubmed-mcp', destination_kind: 'mcp', data_category: TOOL_DATA, purpose: 'consultation or tool call', scope: 'mission', state: 'revoked', uses: 0, max_uses: null, last_used_at: null, revoked_at: 1700000100},
+], receipts: [
+  {id: 'r1', grant_id: GRANT, mission_id: mission.id, destination: 'https://api.anthropic.com', destination_kind: 'seat', data_category: SEAT_DATA, at: 1700000000, outcome: 'ok', reason: '', request_digest: null, observation_id: 'obs-3', role: 'planner'},
+  {id: 'r2', grant_id: null, mission_id: mission.id, destination: 'npx pubmed-mcp', destination_kind: 'mcp', data_category: TOOL_DATA, at: 1700000200, outcome: 'denied', reason: 'grant revoked', request_digest: 'q'.repeat(64), observation_id: null, role: null},
+]};
+const empty = {grants: [], receipts: []};
+const conflict = detail => new Response(JSON.stringify({detail}), {status: 409, headers: {'Content-Type': 'application/json'}});
 const renderLive = (readiness, extra = {}) => {
   const refreshReadiness = vi.fn(async () => {}), onNavigate = vi.fn();
   const view = render(<ResearchWorkspace token="operator" setToken={vi.fn()} readiness={readiness} readinessError={null} refreshReadiness={refreshReadiness} onNavigate={onNavigate} {...extra}/>);
@@ -26,6 +42,8 @@ const renderLive = (readiness, extra = {}) => {
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (path, options = {}) => {
     if (path === '/api/missions') return json(options.method === 'POST' ? mission : [{id: mission.id, status: 'paused', goal: 'Private saved question', mode: 'demo'}]);
+    if (path.startsWith('/api/missions/preview')) return json(preview);
+    if (path.endsWith('/grants')) return json(empty);
     if (path.endsWith('/verify')) return json(report);
     if (path.endsWith('/capsule')) return new Response('private archive');
     return json(mission);
@@ -295,6 +313,10 @@ test('invalid measurement JSON is reported beside Create and start before any re
   await screen.findByText('Selected mission: private-mission');
   const sent = fetch.mock.calls.find(([path, options]) => path === '/api/missions' && options.method === 'POST');
   expect(JSON.parse(sent[1].body)).toMatchObject({max_rounds: 12, points: {x: [1], y: [2]}});
+  // An offline mission's start carries no route approval; its ledger is read and says so.
+  expect(fetch.mock.calls.find(([path]) => path.endsWith('/start'))[1].body).toBeUndefined();
+  expect(fetch.mock.calls.some(([path]) => path.startsWith('/api/missions/preview'))).toBe(false);
+  expect(await screen.findByRole('region', {name: 'Grants and receipts'})).toHaveTextContent('No grants. An offline fixture makes no external calls');
 });
 
 test('a live mission without consent cannot be created, and the mode note beside Create and start says why', async () => {
@@ -308,9 +330,13 @@ test('a live mission without consent cannot be created, and the mode note beside
   expect(button).toBeDisabled();
   expect(button.parentElement).toHaveTextContent('A live mission is refused until you tick the consent box');
   await user.click(screen.getByLabelText(/Permit sending/));
+  expect(button).toBeDisabled();
+  expect(button.parentElement).toHaveTextContent('Tick Approve route under Execution settings');
+  await user.click(await screen.findByLabelText('Approve route'));
   expect(button).toBeEnabled();
   expect(button.parentElement).toHaveTextContent("This mission's goal and data will be sent to them.");
-  expect(fetch).not.toHaveBeenCalled();
+  // Only the passive route preview was read; nothing was created or started.
+  expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/missions/preview?vision_review=0']);
 });
 
 test('Create and start brings the results into view and keeps the composer as it is', async () => {
@@ -357,6 +383,7 @@ test('seats that are set but not tested keep Create and start enabled and point 
   expect(route).toHaveTextContent('Planner · anthropic · claude-sonnet-4-5 · medium · Not tested');
   expect(route).toHaveTextContent('Seats are configured but not tested; a probe is available in Settings → Connections.');
   expect(within(route).queryByRole('button', {name: 'Open Settings'})).not.toBeInTheDocument();
+  await user.click(await screen.findByLabelText('Approve route'));
   expect(screen.getByRole('button', {name: 'Create and start'})).toBeEnabled();
   expect(screen.getByText('Execution settings').parentElement).toHaveTextContent('seats: Not tested');
 });
@@ -385,7 +412,9 @@ test('the offline fixture ignores seat readiness and never asks for it', async (
   await user.click(screen.getByText('Execution settings'));
   expect(screen.getByRole('option', {name: 'Offline fixture (scripted roles; nothing is sent)'}).selected).toBe(true);
   expect(screen.queryByRole('region', {name: 'Live route'})).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', {name: 'Route and grants'})).not.toBeInTheDocument();
   expect(refreshReadiness).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
 });
 
 test('the mission overview and the saved list show the model source from the mission request', async () => {
@@ -409,4 +438,146 @@ test('release checks read in the shared readiness words', async () => {
   expect(ledger).toHaveTextContent('visual review · n/a — No review requested.');
   expect(ledger).not.toHaveTextContent('not applicable');
   expect(screen.getByRole('heading', {name: 'Mission overview'}).closest('.results-heading')).toHaveTextContent('Live models');
+});
+
+async function liveComposer(user) {
+  await user.type(screen.getByLabelText('Research goal'), 'Live question');
+  await user.click(screen.getByText('Execution settings'));
+  await user.selectOptions(screen.getByLabelText('Model source'), 'live');
+  await user.click(screen.getByLabelText(/Permit sending/));
+  return screen.getByRole('region', {name: 'Route and grants'});
+}
+const previewReads = () => fetch.mock.calls.filter(([path]) => path.startsWith('/api/missions/preview')).length;
+
+test('live mode previews the route, gates Create and start on Approve route, and starts with the digest and grants', async () => {
+  const user = userEvent.setup(); renderLive(untestedReadiness);
+  const panel = await liveComposer(user);
+  const rows = (await within(panel).findAllByRole('row')).slice(1);
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toHaveTextContent('seat');
+  expect(rows[0]).toHaveTextContent('planner · anthropic claude-sonnet-4-5');
+  expect(rows[0]).toHaveTextContent('https://api.anthropic.com');
+  expect(rows[0]).toHaveTextContent(SEAT_DATA);
+  expect(rows[0]).toHaveTextContent('planning, review and refutation');
+  expect(rows[1]).toHaveTextContent('mcp');
+  expect(rows[1]).toHaveTextContent('pubmed');
+  expect(rows[1]).toHaveTextContent('npx pubmed-mcp');
+  expect(panel).toHaveTextContent('Route digest dddddddddddd · settings revision rev-7');
+  expect(panel).toHaveTextContent('Settings consent only makes a destination eligible');
+  const button = screen.getByRole('button', {name: 'Create and start'});
+  expect(button).toBeDisabled();
+  const approve = within(panel).getByLabelText('Approve route');
+  expect(approve).not.toBeChecked();
+  await user.click(approve);
+  expect(button).toBeEnabled();
+  await user.click(button);
+  await screen.findByText('Selected mission: private-mission');
+  const started = fetch.mock.calls.find(([path]) => path.endsWith('/start'));
+  expect(started[1].method).toBe('POST');
+  expect(JSON.parse(started[1].body)).toEqual({approved_route_digest: 'd'.repeat(64), grants: preview.required_grants});
+  // The ledger of the new mission is read beside it.
+  expect(fetch.mock.calls.some(([path]) => path === '/api/missions/private-mission/grants')).toBe(true);
+});
+
+test('the visual-review flag re-reads the preview and drops the earlier approval', async () => {
+  const user = userEvent.setup(); renderLive(untestedReadiness);
+  const panel = await liveComposer(user);
+  await user.click(await within(panel).findByLabelText('Approve route'));
+  expect(previewReads()).toBe(1);
+  await user.click(screen.getByLabelText(/Require configured visual review/));
+  await waitFor(() => expect(previewReads()).toBe(2));
+  expect(fetch.mock.calls.at(-1)[0]).toBe('/api/missions/preview?vision_review=1');
+  expect(await within(panel).findByLabelText('Approve route')).not.toBeChecked();
+  expect(screen.getByRole('button', {name: 'Create and start'})).toBeDisabled();
+});
+
+test('a 409 from start is shown beside the button and Review the route again re-reads the preview and unticks', async () => {
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path.endsWith('/start') ? conflict('The route changed since it was previewed; review it again') : original(path, options));
+  const user = userEvent.setup(); renderLive(untestedReadiness);
+  const panel = await liveComposer(user);
+  await user.click(await within(panel).findByLabelText('Approve route'));
+  const button = screen.getByRole('button', {name: 'Create and start'});
+  await user.click(button);
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('The route changed since it was previewed; review it again');
+  expect(alert.previousElementSibling).toBe(button);
+  const review = screen.getByRole('button', {name: 'Review the route again'});
+  expect(review).toBe(alert.nextElementSibling);
+  expect(previewReads()).toBe(1);
+  await user.click(review);
+  await waitFor(() => expect(previewReads()).toBe(2));
+  expect(await within(panel).findByLabelText('Approve route')).not.toBeChecked();
+  expect(screen.queryByRole('button', {name: 'Review the route again'})).not.toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(button).toBeDisabled();
+  // The created mission stays selected; its Start waits for an approved route.
+  expect(screen.getByText('Selected mission: private-mission')).toBeVisible();
+});
+
+test('a preview without a route digest is an error line with a retry, never a route to approve', async () => {
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path.startsWith('/api/missions/preview') ? json({id: 'not-a-preview'}) : original(path, options));
+  const user = userEvent.setup(); renderLive(untestedReadiness);
+  const panel = await liveComposer(user);
+  expect(await within(panel).findByRole('alert')).toHaveTextContent('The route preview did not include a route digest');
+  expect(within(panel).queryByLabelText('Approve route')).not.toBeInTheDocument();
+  expect(within(panel).queryByRole('table')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', {name: 'Create and start'})).toBeDisabled();
+  // The retry reads the preview again; a well-formed answer then renders the route.
+  fetch.mockImplementation(original);
+  await user.click(within(panel).getByRole('button', {name: 'Preview the route again'}));
+  expect(await within(panel).findByLabelText('Approve route')).not.toBeChecked();
+  expect(previewReads()).toBe(2);
+});
+
+test('the mission view lists grants and receipts, and Revoke posts the reason then re-reads the ledger', async () => {
+  const original = fetch.getMockImplementation();
+  const revoked = [];
+  fetch.mockImplementation(async (path, options = {}) => {
+    if (path.endsWith('/revoke')) { revoked.push([path, options.method, JSON.parse(options.body)]); return json({seq: 3, grant_id: GRANT, kind: 'revoked', at: 1700000300, detail: 'Operator changed course'}); }
+    if (path.endsWith('/grants')) return json(revoked.length ? {...ledger, grants: [{...ledger.grants[0], state: 'revoked', revoked_at: 1700000300}, ledger.grants[1]], receipts_truncated: true} : ledger);
+    return original(path, options);
+  });
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  const section = await screen.findByRole('region', {name: 'Grants and receipts'});
+  expect(section).toHaveTextContent('not scientific evidence');
+  const [grantsTable, receiptsTable] = await within(section).findAllByRole('table');
+  const grantRows = within(grantsTable).getAllByRole('row').slice(1);
+  expect(grantRows).toHaveLength(2);
+  expect(grantRows[0]).toHaveTextContent('https://api.anthropic.com');
+  expect(grantRows[0]).toHaveTextContent('seat');
+  expect(grantRows[0]).toHaveTextContent(SEAT_DATA);
+  expect(grantRows[0]).toHaveTextContent('mission');
+  expect(grantRows[0]).toHaveTextContent('Active');
+  expect(grantRows[0]).toHaveTextContent(new Date(1700000000 * 1000).toLocaleString());
+  expect(grantRows[0]).toHaveAttribute('data-state', 'active');
+  expect(grantRows[1]).toHaveTextContent('Revoked');
+  expect(grantRows[1]).toHaveTextContent('never');
+  expect(within(grantRows[1]).queryByRole('button')).not.toBeInTheDocument();
+  const receiptRows = within(receiptsTable).getAllByRole('row').slice(1);
+  expect(receiptRows).toHaveLength(2);
+  expect(receiptRows[0]).toHaveTextContent('ok');
+  expect(receiptRows[0]).toHaveTextContent('obs-3');
+  expect(receiptRows[1]).toHaveTextContent('denied');
+  expect(receiptRows[1]).toHaveTextContent('grant revoked');
+  expect(section).not.toHaveTextContent('q'.repeat(64));
+  await user.type(within(grantRows[0]).getByLabelText('Revoke reason'), 'Operator changed course');
+  await user.click(within(grantRows[0]).getByRole('button', {name: 'Revoke grant https://api.anthropic.com'}));
+  await waitFor(() => expect(revoked).toEqual([['/api/grants/' + GRANT + '/revoke', 'POST', {reason: 'Operator changed course'}]]));
+  await waitFor(() => expect(within(section).queryByRole('button', {name: /^Revoke grant/})).not.toBeInTheDocument());
+  expect(within(within(section).getAllByRole('table')[0]).getAllByRole('row')[1]).toHaveTextContent('Revoked');
+  expect(section).toHaveTextContent('Only the newest 2 receipts are shown');
+});
+
+test('a ledger that cannot be read is stated in its own section and leaves the mission usable', async () => {
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path.endsWith('/grants') ? new Response(JSON.stringify({detail: 'Not Found'}), {status: 404, headers: {'Content-Type': 'application/json'}}) : original(path, options));
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  const section = await screen.findByRole('region', {name: 'Grants and receipts'});
+  expect(await within(section).findByRole('alert')).toHaveTextContent('Grants could not be read: Request failed (404): Not Found');
+  expect(screen.getByText(/Private stop reason/)).toBeVisible();
+  expect(screen.getByRole('button', {name: 'Replay and verify'})).toBeEnabled();
 });

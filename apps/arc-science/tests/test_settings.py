@@ -279,6 +279,12 @@ def launcher(tmp_path, name, fake, mode):
     return path
 
 
+def approve(client, vision_review=False):
+    """What a live first start posts: the previewed route's digest and one grant per destination."""
+    preview = client.get('/api/missions/preview', headers=AUTH, params={'vision_review': int(vision_review)}).json()
+    return {'approved_route_digest': preview['route_digest'], 'grants': preview['required_grants']}
+
+
 def wait_final(client, mid):
     for _ in range(600):
         row = client.get(f'/api/missions/{mid}', headers=AUTH).json()
@@ -310,7 +316,7 @@ def test_a_live_mission_runs_each_seat_through_its_own_cli_and_binds_the_seat_pl
         assert live['transports']['openai']['logged_in'] is True and live['transports']['openai']['identity_reported'] is False
         assert live['seats']['planner'] == {'provider': 'openai', 'transport': 'cli', 'model': 'gpt-5.5', 'effort': 'xhigh'}
         row = c.post('/api/missions', headers=AUTH, json={'goal': 'Mixed seats', 'mode': 'live', 'max_rounds': 1, 'allow_egress': True}).json()
-        assert c.post(f"/api/missions/{row['id']}/start", headers=AUTH).status_code == 202
+        assert c.post(f"/api/missions/{row['id']}/start", headers=AUTH, json=approve(c)).status_code == 202
         final = wait_final(c, row['id'])
         state = final['state']
         assert state['status'] == 'budget_exhausted', state['stop_reason']
@@ -419,7 +425,7 @@ print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 're
         assert agents['agents'][0]['ok'] and agents['agents'][0]['agent_info']['name'] == 'fake-acp' and agents['consented'] == ['fake']
         assert c.post('/api/mcp/servers/check').status_code == 401 and c.get('/api/mcp/servers/check', headers=AUTH).status_code in (404, 405)
         row = c.post('/api/missions', headers=AUTH, json={'goal': 'Ask the connectors', 'mode': 'live', 'max_rounds': 2, 'allow_egress': True}).json()
-        assert c.post(f"/api/missions/{row['id']}/start", headers=AUTH).status_code == 202
+        assert c.post(f"/api/missions/{row['id']}/start", headers=AUTH, json=approve(c)).status_code == 202
         state = wait_final(c, row['id'])['state']
         assert state['status'] == 'completed', state['stop_reason']
         by_tool = {o['tool']: o for o in state['observations']}

@@ -199,6 +199,9 @@ class Detector:
         self.transport = transport
         self.busy = False
         self._key_protected = False
+        # egress(destination, kind, category, purpose, digest) -> finish(outcome, reason): the
+        # service's grant ledger, when it is attached; the consent above stays per request.
+        self.egress = None
 
     def capabilities(self) -> dict:
         return {'detection': {'enabled': self.enabled, 'recipient': DETECTION_HOST, 'endpoint': DETECTION_ENDPOINT,
@@ -261,10 +264,19 @@ class Detector:
         if self.busy:
             raise ProseRefused('busy', 'A detection request is already in flight')
         self.busy = True
+        finish = self.egress(DETECTION_HOST, 'detector', 'the submitted text', 'third-party AI-text detection',
+                             hashlib.sha256(text.encode('utf-8')).hexdigest()) if self.egress else None
         try:
-            return await self._detect(text)
+            result = await self._detect(text)
+        except Exception as error:
+            if finish:
+                finish('failed', getattr(error, 'code', type(error).__name__))
+            raise
         finally:
             self.busy = False
+        if finish:
+            finish('ok')
+        return result
 
     async def _detect(self, text: str) -> dict:
         digest = hashlib.sha256(text.encode('utf-8')).hexdigest()

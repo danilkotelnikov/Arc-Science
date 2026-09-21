@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {STATES, STATE_LABEL, loginLine, probeLine, releaseWord, seatSummary, stateOf} from './readiness';
+import {GRANT_STATES, GRANT_STATE_LABEL, STATES, STATE_LABEL, grantState, loginLine, probeLine, releaseWord, seatSummary, stateOf} from './readiness';
 
 describe('readiness vocabulary', () => {
   it('names every state once and labels each of them', () => {
@@ -18,6 +18,17 @@ describe('readiness vocabulary', () => {
     expect(stateOf(undefined)).toBe('unknown');
     expect(stateOf({state: 'ok'})).toBe('unknown');
     expect(stateOf({state: 'blocked'})).toBe('blocked');
+  });
+
+  it('names a grant state from the ledger and labels each of them', () => {
+    expect(GRANT_STATES).toEqual(['active', 'revoked', 'expired', 'exhausted']);
+    expect(GRANT_STATES.map(state => GRANT_STATE_LABEL[state])).toEqual(['Active', 'Revoked', 'Expired', 'Exhausted']);
+    expect(grantState({state: 'revoked', revoked_at: 1})).toBe('revoked');
+    expect(grantState({state: 'exhausted', uses: 1, max_uses: 1})).toBe('exhausted');
+    // Nothing is recomputed from the fields: a missing or foreign state is unknown.
+    expect(grantState({uses: 1, max_uses: 1})).toBe('unknown');
+    expect(grantState({state: 'ok'})).toBe('unknown');
+    expect(grantState(null)).toBe('unknown');
   });
 
   it('summarises a seat on one line', () => {

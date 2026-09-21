@@ -73,7 +73,10 @@ def test_a_live_mission_runs_both_seats_through_the_cli_and_records_their_identi
     with TestClient(create_app(data_dir=tmp_path / 'data', token='t' * 40)) as client:
         row = client.post('/api/missions', headers=AUTH, json={'goal': 'Explore live', 'mode': 'live',
                                                                 'max_rounds': 1, 'allow_egress': True}).json()
-        assert client.post(f"/api/missions/{row['id']}/start", headers=AUTH).status_code == 202
+        # A live first start binds the previewed route and its grants.
+        preview = client.get('/api/missions/preview', headers=AUTH).json()
+        assert client.post(f"/api/missions/{row['id']}/start", headers=AUTH,
+                           json={'approved_route_digest': preview['route_digest'], 'grants': preview['required_grants']}).status_code == 202
         final = wait_final(client, row['id'])
         state = final['state']
         assert state['status'] == 'budget_exhausted', state['stop_reason']

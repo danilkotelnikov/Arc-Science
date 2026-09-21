@@ -647,3 +647,102 @@ test('a refused probe is reported under its seat and the locked card can reach t
   expect(setToken).toHaveBeenCalledWith('');
   await vi.waitFor(() => expect(document.getElementById('operator-token')).toHaveFocus());
 });
+
+// The ledger as GET /api/grants lists it: fields as stored plus the derived state, uses and last use.
+const ROUTE = 'c'.repeat(64), MISSION = 'd'.repeat(32), NIH = 'https://eutils.ncbi.nlm.nih.gov';
+const grant = (id, patch) => ({id, subject_kind: 'mission', subject_id: MISSION, destination: 'https://api.openai.com', destination_kind: 'seat', data_category: 'mission goal, dataset points, prior observations and assessments',
+  purpose: 'planning, review and refutation', scope: 'mission', route_digest: ROUTE, settings_revision: revision, source: 'operator-ui', granted_at: PROBED_AT, expires_at: null, max_uses: null,
+  state: 'active', uses: 0, last_used_at: null, revoked_at: null, ...patch});
+const ledger = () => [
+  grant('1'.repeat(32), {uses: 3, last_used_at: PROBED_AT + 60}),
+  grant('2'.repeat(32), {destination: 'pubmed-mcp --stdio', destination_kind: 'mcp', data_category: 'tool arguments the planner chooses', purpose: 'consultation or tool call', state: 'revoked', uses: 1, last_used_at: PROBED_AT + 30, revoked_at: PROBED_AT + 90}),
+  grant('3'.repeat(32), {subject_kind: 'request', subject_id: 'r'.repeat(32), destination_kind: 'prose', data_category: 'the text being edited', purpose: 'prose editing', scope: 'once', max_uses: 1, state: 'exhausted', uses: 1, last_used_at: PROBED_AT + 5}),
+  grant('4'.repeat(32), {subject_kind: 'persistent', subject_id: '', destination: NIH, destination_kind: 'public_read', data_category: 'query text the planner chooses', purpose: 'public read', scope: 'persistent'})
+];
+const grantReads = () => fetch.mock.calls.filter(([path, options]) => path === '/api/grants' && options?.method !== 'POST');
+const revokes = () => fetch.mock.calls.filter(([, options]) => options?.method === 'POST');
+const withLedger = rows => fetch.mockImplementation(async (path, options = {}) => {
+  if (path === '/api/settings') return json(snapshot);
+  if (path === '/api/grants') return json({grants: rows});
+  const revoke = /^\/api\/grants\/([0-9a-f]{32})\/revoke$/.exec(path);
+  if (revoke && options.method === 'POST') {
+    const row = rows.find(item => item.id === revoke[1]); Object.assign(row, {state: 'revoked', revoked_at: PROBED_AT + 120});
+    return json({seq: 9, grant_id: row.id, kind: 'revoked', at: PROBED_AT + 120, detail: JSON.parse(options.body).reason});
+  }
+  throw new Error('Unexpected request ' + path);
+});
+const openPermissions = async user => { const permissions = screen.getByLabelText('Permissions'); await user.click(within(permissions).getByText('Permissions')); return permissions; };
+const grantsTable = () => screen.getByRole('table', {name: 'Grants'});
+
+test('Permissions reads the ledger only when the section opens, lists each grant with its state and filters them', async () => {
+  const user = userEvent.setup();
+  withLedger(ledger());
+  mount();
+  await screen.findByLabelText('Planner model');
+  const permissions = screen.getByLabelText('Permissions');
+  expect(permissions).toHaveTextContent('Consent under Connections makes a connector eligible for a route; a mission is granted access only when you approve its route in Research.');
+  expect(permissions).toHaveTextContent('Permissions load when this section opens.');
+  expect(grantReads()).toHaveLength(0);
+  await openPermissions(user);
+  const table = await within(permissions).findByRole('table', {name: 'Grants'});
+  expect(grantReads()).toHaveLength(1);
+  const last = at => new Date(at * 1000).toLocaleString();
+  expect(within(table).getAllByRole('row').slice(1).map(row => row.textContent)).toEqual([
+    'seathttps://api.openai.commission goal, dataset points, prior observations and assessmentsmissionActive3' + last(PROBED_AT + 60) + 'mission ' + MISSION + 'Revoke',
+    'mcppubmed-mcp --stdiotool arguments the planner choosesmissionRevoked1' + last(PROBED_AT + 30) + 'mission ' + MISSION + 'Revoke',
+    'prosehttps://api.openai.comthe text being editedonceExhausted1 of 1' + last(PROBED_AT + 5) + 'requestRevoke',
+    'public read' + NIH + 'query text the planner choosespersistentActive0neverpersistentRevoke'
+  ]);
+  // Only an active grant can be revoked; the others are already refused.
+  expect(within(table).getAllByRole('button', {name: /^Revoke grant /}).map(button => button.disabled)).toEqual([false, true, true, false]);
+  await user.selectOptions(screen.getByLabelText('Show'), 'revoked');
+  expect(within(grantsTable()).getAllByRole('row')).toHaveLength(2);
+  expect(grantsTable()).toHaveTextContent('pubmed-mcp --stdio');
+  await user.selectOptions(screen.getByLabelText('Show'), 'active');
+  expect(within(grantsTable()).getAllByRole('row')).toHaveLength(3);
+  // Refresh re-reads without the filter as a parameter; an empty ledger says so.
+  withLedger([]);
+  await user.click(screen.getByRole('button', {name: 'Refresh permissions'}));
+  expect(await within(permissions).findByText('No grants yet.')).toBeInTheDocument();
+  expect(grantReads().map(([path]) => path)).toEqual(['/api/grants', '/api/grants']);
+  expect(fetch.mock.calls.filter(([path]) => path === '/api/settings')).toHaveLength(1);
+});
+
+test('Revoke asks for a reason inline, posts it to the grant and re-reads the ledger', async () => {
+  const user = userEvent.setup();
+  withLedger(ledger());
+  mount();
+  await screen.findByLabelText('Planner model');
+  const permissions = await openPermissions(user);
+  const table = await within(permissions).findByRole('table', {name: 'Grants'});
+  await user.click(within(table).getByRole('button', {name: 'Revoke grant ' + NIH}));
+  const confirm = within(table).getByRole('button', {name: 'Confirm revoke ' + NIH});
+  expect(confirm).toBeDisabled();
+  await user.type(within(table).getByLabelText('Revoke reason ' + NIH), '  wrong host  ');
+  expect(confirm).toBeEnabled();
+  // Keep it withdraws without a request.
+  await user.click(within(table).getByRole('button', {name: 'Keep it'}));
+  expect(within(table).queryByLabelText('Revoke reason ' + NIH)).not.toBeInTheDocument();
+  expect(revokes()).toHaveLength(0);
+  await user.click(within(table).getByRole('button', {name: 'Revoke grant ' + NIH}));
+  await user.type(within(table).getByLabelText('Revoke reason ' + NIH), '  wrong host  ');
+  await user.click(within(table).getByRole('button', {name: 'Confirm revoke ' + NIH}));
+  expect(await screen.findByText('Revoked the grant for ' + NIH + '; its next call is refused.')).toBeInTheDocument();
+  expect(revokes().map(([path]) => path)).toEqual(['/api/grants/' + '4'.repeat(32) + '/revoke']);
+  expect(JSON.parse(revokes()[0][1].body)).toEqual({reason: 'wrong host'});
+  expect(grantReads()).toHaveLength(2);
+  const row = within(grantsTable()).getAllByRole('row').at(-1);
+  expect(row).toHaveTextContent('Revoked');
+  expect(within(row).getByRole('button', {name: 'Revoke grant ' + NIH})).toBeDisabled();
+  expect(within(row).queryByLabelText(/Revoke reason/)).not.toBeInTheDocument();
+  // A refused revoke is the card under this section; the ledger on screen is unchanged.
+  // Two grants name the seat origin (mission and prose request), so the row scopes the lookup.
+  const seat = () => within(grantsTable()).getAllByRole('row')[1];
+  await user.click(within(seat()).getByRole('button', {name: 'Revoke grant https://api.openai.com'}));
+  await user.type(within(seat()).getByLabelText('Revoke reason https://api.openai.com'), 'done with it');
+  fetch.mockImplementationOnce(async () => json({detail: 'Unknown grant'}, {status: 404}));
+  await user.click(within(seat()).getByRole('button', {name: 'Confirm revoke https://api.openai.com'}));
+  expect(await within(permissions).findByRole('alert')).toHaveTextContent('Revoke grant did not complete: Unknown grant. Your draft was kept.');
+  expect(seat()).toHaveTextContent('Active');
+  expect(grantReads()).toHaveLength(2);
+});

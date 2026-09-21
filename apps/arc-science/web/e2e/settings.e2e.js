@@ -7,7 +7,11 @@ import {E2E_TOKEN, openWorkspace, watchForTokenLeaks} from './fixtures.js';
 const headers = {Authorization: `Bearer ${E2E_TOKEN}`};
 const sidebarStatus = page => page.locator('.settings-sidebar [role="status"]');
 const settingsRegion = page => page.getByRole('region', {name: 'Settings'});
-const openSection = (page, title) => settingsRegion(page).getByText(title, {exact: true}).click();
+// Opens a section that is closed; a section left open (Reload keeps the form mounted) is not toggled shut.
+const openSection = async (page, title) => {
+  const section = settingsRegion(page).locator('details.settings-section', {has: page.getByText(title, {exact: true})}).first();
+  if (!(await section.evaluate(el => el.open))) await section.getByText(title, {exact: true}).click();
+};
 
 async function openSettings(page) {
   await page.goto('/');
@@ -37,7 +41,7 @@ test('seats load by themselves, are edited in the workspace and persisted by the
   expect(readinessReads).toEqual([`Bearer ${E2E_TOKEN}`]);
   await expect(page.getByRole('button', {name: 'Reload', exact: true})).toBeVisible();
   await expect(page.getByRole('button', {name: 'Load settings'})).toHaveCount(0);
-  for (const title of ['Research Models', 'Connections', 'Rendering', 'Viewer', 'Advanced']) await expect(settingsRegion(page).getByText(title, {exact: true})).toBeVisible();
+  for (const title of ['Research Models', 'Connections', 'Rendering', 'Viewer', 'Advanced', 'Permissions']) await expect(settingsRegion(page).getByText(title, {exact: true})).toBeVisible();
   await page.getByLabel('Planner provider').selectOption('openai');
   await page.getByLabel('Planner model').selectOption('gpt-5.6-sol');
   await expect(page.getByRole('article', {name: 'Planner seat'})).toContainText('In catalog');
@@ -223,4 +227,30 @@ test('settings recovery copy hides the raw missing-supervisor error and offers R
   await expect(page.getByText('Settings file not configured')).toBeVisible();
   await expect(page.getByRole('alert')).not.toContainText('Request failed (503)');
   await expect(page.getByRole('alert').getByRole('button', {name: 'Retry'})).toBeVisible();
+});
+
+test('Permissions reads the grant ledger when it opens and shows it empty on a fresh service', async ({page, request}) => {
+  const probe = await request.get('/api/settings', {headers});
+  test.skip(probe.status() === 503, 'native supervisor not built; settings unavailable');
+  const ledger = await request.get('/api/grants', {headers});
+  test.skip(ledger.status() === 404, 'grant ledger route not in this service build');
+  expect(ledger.status()).toBe(200);
+  const body = await ledger.json();
+  const rows = Array.isArray(body) ? body : body.grants;
+  const reads = [];
+  page.on('request', r => { if (r.url().endsWith('/api/grants')) reads.push(r.method()); });
+  await openSettings(page);
+  await expect(page.getByLabel('Planner provider')).toBeVisible();
+  const permissions = page.getByLabel('Permissions');
+  await expect(permissions).toContainText('Consent under Connections makes a connector eligible for a route; a mission is granted access only when you approve its route in Research.');
+  // Nothing was asked of the ledger until the section opened; then one read.
+  expect(reads).toEqual([]);
+  await openSection(page, 'Permissions');
+  if (rows.length === 0) await expect(permissions).toContainText('No grants yet');
+  else await expect(permissions.getByRole('table', {name: 'Grants'}).getByRole('row')).toHaveCount(rows.length + 1);
+  await expect(page.getByLabel('Show')).toHaveValue('all');
+  expect(reads).toEqual(['GET']);
+  await page.getByRole('button', {name: 'Refresh permissions'}).click();
+  await expect.poll(() => reads.length).toBe(2);
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });

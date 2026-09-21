@@ -2,7 +2,7 @@ import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from '
 import {Button} from '@heroui/react/button';
 import {NATIVE_SESSION, SESSION_COPY, apiFetch, downloadResponse, sessionState} from './http';
 import {LockNotice, focusTokenField, unlockLabel} from './LockNotice';
-import {STATE_LABEL, releaseWord, sentence, stateOf} from './readiness';
+import {GRANT_STATE_LABEL, STATE_LABEL, grantState, releaseWord, sentence, stateOf} from './readiness';
 
 const EXAMPLE_GOAL='Compare competing explanations of the nonlinear response and challenge the preferred fit.';
 const MAX_ROUNDS=12;
@@ -124,6 +124,56 @@ function LiveRoute({readiness,error,locked,onNavigate,onCheck,token}) {
   return <section className="live-route" aria-label="Live route"><h3>Live route</h3>{body}</section>;
 }
 
+/** The destinations a live mission would send data to, as GET /api/missions/preview lists them; the grants posted at start are the preview's own required_grants. */
+const routeRows=preview=>[
+  ...(preview.seats||[]).map(seat=>({...seat,name:role(seat.role)+' · '+seat.provider+' '+(seat.model||'no model')})),
+  ...(preview.connectors||[]),
+  ...(preview.public_reads||[]).map(read=>({...read,name:'public read',purpose:read.purpose||'planner query'})),
+  ...(preview.biorender?[{name:'BioRender',...preview.biorender}]:[]),
+];
+const when=at=>at>0?new Date(at*1000).toLocaleString():'never';
+const isConflict=error=>/Request failed \(409\)/.test(error?.message||String(error));
+function RouteGrants({preview,error,blocked,locked,approved,onApprove,onRetry}) {
+  let body;
+  if(locked)body=<p className="muted">The route is read once the session is unlocked.</p>;
+  else if(blocked)body=<p className="muted">The route cannot be previewed while the live route is blocked; see Live route above.</p>;
+  else if(error)body=<><p role="alert">{error}</p><Button variant="secondary" size="sm" onPress={onRetry}>Preview the route again</Button></>;
+  else if(!preview)body=<p role="status" className="muted">Reading the route…</p>;
+  else{
+    const rows=routeRows(preview);
+    body=<>
+      <table className="grants"><thead><tr><th>Kind</th><th>Name</th><th>Destination</th><th>Data category</th><th>Purpose</th></tr></thead>
+        <tbody>{rows.map((row,i)=><tr key={i}><td>{row.destination_kind}</td><td>{row.name}</td><td>{row.destination}</td><td>{row.data_category}</td><td>{row.purpose}</td></tr>)}</tbody></table>
+      <p className="muted">Route digest {preview.route_digest.slice(0,12)} · settings revision {preview.settings_revision}. Settings consent only makes a destination eligible; this approval is the grant, recorded per destination for this mission.</p>
+      <label className="check"><input type="checkbox" aria-label="Approve route" checked={approved} onChange={e=>onApprove(e.target.checked)}/>Approve this route for this mission: each destination above may receive its data category for its purpose until the mission stops.</label>
+    </>;
+  }
+  return <section className="route-grants" aria-label="Route and grants"><h3>Route and grants</h3>{body}</section>;
+}
+
+function GrantsLedger({ledger,error,busy,locked,onRevoke}) {
+  // Operational record, never evidence: which destinations this mission may send data to
+  // (grants) and each attempted dispatch (receipts). Revoking refuses the mission's next call.
+  const [reasons,setReasons]=useState({});
+  const grants=ledger?.grants||[],receipts=ledger?.receipts||[];
+  let body;
+  if(error)body=<p role="alert">Grants could not be read: {error}</p>;
+  else if(!ledger)body=<p className="muted">Grants not read yet.</p>;
+  else body=<>
+    {grants.length?<table className="grants"><thead><tr><th>Destination</th><th>Kind</th><th>Data category</th><th>Scope</th><th>State</th><th>Uses</th><th>Last use</th><th></th></tr></thead>
+      <tbody>{grants.map(grant=><tr key={grant.id} data-state={grantState(grant)}><td>{grant.destination}</td><td>{grant.destination_kind}</td><td>{grant.data_category}</td><td>{grant.scope}</td><td>{GRANT_STATE_LABEL[grantState(grant)]}{grant.revoked_at?' '+when(grant.revoked_at):''}</td><td>{grant.uses}{grant.max_uses?' of '+grant.max_uses:''}</td><td>{when(grant.last_used_at)}</td>
+        <td>{grantState(grant)==='active'&&<span className="revoke"><input type="text" aria-label="Revoke reason" placeholder="Reason" value={reasons[grant.id]||''} onChange={e=>setReasons({...reasons,[grant.id]:e.target.value})}/><Button variant="danger" size="sm" aria-label={'Revoke grant '+grant.destination} isDisabled={busy||locked} onPress={()=>onRevoke(grant.id,reasons[grant.id]||'')}>Revoke</Button></span>}</td></tr>)}</tbody></table>
+    :<p className="muted">No grants. An offline fixture makes no external calls; a live mission's grants are recorded when it is first started.</p>}
+    <h3>Receipts</h3>
+    {receipts.length?<table className="grants"><thead><tr><th>Time</th><th>Destination</th><th>Data category</th><th>Outcome</th><th>Reason</th><th>Observation</th></tr></thead>
+      <tbody>{receipts.map(receipt=><tr key={receipt.id} data-outcome={receipt.outcome}><td>{when(receipt.at)}</td><td>{receipt.destination}</td><td>{receipt.data_category}</td><td>{receipt.outcome}</td><td>{receipt.reason}</td><td>{receipt.observation_id||''}</td></tr>)}</tbody></table>
+    :<p className="muted">No receipts: nothing has been dispatched under a grant.</p>}
+    {ledger.receipts_truncated&&<p className="muted">Only the newest {receipts.length} receipts are shown; older dispatches are in the ledger.</p>}
+  </>;
+  return <section className="grants-ledger" aria-label="Grants and receipts"><h2>Grants and receipts</h2>
+    <p className="muted">Which destinations this mission may send data to, and each attempted dispatch. Operational record, not scientific evidence; revoking a grant refuses the mission's next call to that destination.</p>{body}</section>;
+}
+
 function RepairCycles({repairs}) {
   // Each cycle re-rendered the reviewed images under a presentation preset and had
   // them reviewed again as a new candidate; the outcome is that fresh review's own
@@ -135,6 +185,9 @@ export default function ResearchWorkspace({token,setToken,readiness=null,readine
   const [goal,setGoal]=useState('');
   const [mode,setMode]=useState('demo'),[egress,setEgress]=useState(false),[vision,setVision]=useState(false),[rounds,setRounds]=useState(5),[points,setPoints]=useState('');
   const [mission,setMission]=useState(null),[missions,setMissions]=useState(null),[verification,setVerification]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+  // The route preview (GET /api/missions/preview) and the operator's approval of it; the ledger of the selected mission.
+  const [preview,setPreview]=useState(null),[previewError,setPreviewError]=useState(''),[previewEpoch,setPreviewEpoch]=useState(0),[approved,setApproved]=useState(false),[routeConflict,setRouteConflict]=useState(false);
+  const [grants,setGrants]=useState(null),[grantsError,setGrantsError]=useState('');
   // Which action the alert or progress line belongs to: 'start', 'list' or 'results'.
   const [slot,setSlot]=useState('results');
   const [authExpired,setAuthExpired]=useState(false);
@@ -150,6 +203,7 @@ export default function ResearchWorkspace({token,setToken,readiness=null,readine
     const controller=new AbortController();credential.current=controller;
     generation.current++;selected.current=null;
     setMission(null);setMissions(null);setVerification(null);setError('');setBusy(false);setAuthExpired(false);
+    setPreview(null);setPreviewError('');setApproved(false);setRouteConflict(false);setGrants(null);setGrantsError('');
     if(token&&previous!==token){setEgress(false);setVision(false);}
     if(provenSwitch){setGoal('');setPoints('');}
     lastToken.current=token;
@@ -168,7 +222,7 @@ export default function ResearchWorkspace({token,setToken,readiness=null,readine
   },[request]);
   async function task(action,where='results'){
     const signal=credential.current.signal;
-    setSlot(where);setBusy(true);setError('');
+    setSlot(where);setBusy(true);setError('');setRouteConflict(false);
     try{
       // A missing or rejected token is stated once, by the LockNotice beside Create and start.
       if(sessionState(token,authExpired))return;
@@ -179,10 +233,14 @@ export default function ResearchWorkspace({token,setToken,readiness=null,readine
   const refresh=useCallback(async(id,signal)=>{
     const epoch=generation.current;
     const row=await read('/missions/'+id,signal);
-    if(epoch===generation.current&&selected.current===id&&!signal.aborted)setMission(row);
+    const current=()=>epoch===generation.current&&selected.current===id&&!signal.aborted;
+    if(current())setMission(row);
+    // The ledger is read beside the mission on every refresh (selection, each poll, after an action); it never blocks the mission itself.
+    try{const ledger=await read('/missions/'+id+'/grants',signal);if(current()){setGrants(ledger);setGrantsError('');}}
+    catch(e){if(isAuthError(e)||signal.aborted)throw e;if(current())setGrantsError(friendlyError(e,token));}
     return row;
-  },[read]);
-  async function select(id,signal){generation.current++;selected.current=id;setMission(null);setVerification(null);await refresh(id,signal);}
+  },[read,token]);
+  async function select(id,signal){generation.current++;selected.current=id;setMission(null);setVerification(null);setGrants(null);setGrantsError('');await refresh(id,signal);}
   useEffect(()=>{
     if(!mission||!['ready','running'].includes(mission.state.status))return;
     const controller=new AbortController();let timer;
@@ -196,14 +254,23 @@ export default function ResearchWorkspace({token,setToken,readiness=null,readine
     if(!points.trim())return null;
     try{return JSON.parse(points);}catch(e){throw new Error('Measurement JSON is not valid JSON: '+e.message+'. Fix it under Execution settings, then retry.');}
   }
+  // A live mission's first start carries the approved route digest and the grants the preview asked for; an offline one sends no body.
+  const startBody=()=>mode==='live'&&approved&&preview?{approved_route_digest:preview.route_digest,grants:preview.required_grants}:undefined;
+  async function startMission(id,body,signal){
+    try{await request('/missions/'+id+'/start','POST',body,signal);}
+    catch(e){if(isConflict(e))setRouteConflict(true);throw e;}
+    await refresh(id,signal);
+  }
   async function start(signal){
     const parsed=parsePoints();
+    const body=startBody();
     const row=await read('/missions',signal,'POST',{goal,mode,max_rounds:clampRounds(rounds),allow_egress:egress,vision_review:vision,points:parsed});
-    generation.current++;selected.current=row.id;setMission(row);setVerification(null);
+    generation.current++;selected.current=row.id;setMission(row);setVerification(null);setGrants(null);setGrantsError('');
     // The composer stays as it is (your draft stays in this window); the result is brought into view.
     results.current?.scrollIntoView?.({block:'start'});
-    await request('/missions/'+row.id+'/start','POST',undefined,signal);await refresh(row.id,signal);
+    await startMission(row.id,body,signal);
   }
+  function reviewRoute(){setRouteConflict(false);setError('');setApproved(false);setPreviewEpoch(n=>n+1);}
   async function exportCapsule(signal){
     const response=await request('/missions/'+mission.id+'/capsule','GET',undefined,signal);
     await downloadResponse({blob:async()=>{
@@ -222,10 +289,24 @@ export default function ResearchWorkspace({token,setToken,readiness=null,readine
   // or unread; each is stated beside Create and start instead of being sent.
   const consentMissing=mode==='live'&&!egress;
   const liveBlocked=mode==='live'&&(!readiness||stateOf(readiness?.live_mission)==='blocked');
+  // The route preview is read once the seats are read and not blocked, and again when the visual-review flag, the
+  // readiness reading or a 409 review changes it; every fresh preview needs a fresh approval.
+  useEffect(()=>{
+    if(mode!=='live'||locked||liveBlocked)return;
+    const controller=new AbortController();
+    const owner=credential.current,abort=()=>controller.abort();owner.signal.addEventListener('abort',abort,{once:true});
+    setPreview(null);setPreviewError('');setApproved(false);
+    // An answer without the digest and the grant requests cannot be approved or posted; it is shown as an error line, never rendered as a route.
+    read('/missions/preview?vision_review='+(vision?1:0),controller.signal).then(data=>{if(controller.signal.aborted)return;if(typeof data?.route_digest==='string'&&Array.isArray(data.required_grants))setPreview(data);else setPreviewError('The route preview did not include a route digest and its grant requests; the service may be out of date.');})
+      .catch(e=>{if(controller.signal.aborted)return;if(isAuthError(e))setAuthExpired(true);else setPreviewError(friendlyError(e,token));});
+    return ()=>{controller.abort();owner.signal.removeEventListener('abort',abort);};
+  },[mode,locked,liveBlocked,vision,readiness,previewEpoch,read,token]);
+  const approvalMissing=mode==='live'&&!liveBlocked&&!(approved&&preview);
   const modeNote=mode==='demo'?'Offline fixture: the model roles are scripted; the numerical fits are computed for real.'
     :liveBlocked&&!readiness?'Live models: the seats have not been read yet. Press Check seats under Execution settings.'
     :liveBlocked?'Live models are blocked. '+(blockingSeats(readiness).map(seatAction).join(' ')||readiness.live_mission.next_action||readiness.live_mission.meaning)+' See Live route under Execution settings.'
-    :'Live models: the seats set in Settings (a seat is one model assigned to one role). '+(egress?'This mission\'s goal and data will be sent to them.':'A live mission is refused until you tick the consent box in Execution settings; the goal and data then leave this machine.');
+    :'Live models: the seats set in Settings (a seat is one model assigned to one role). '+(!egress?'A live mission is refused until you tick the consent box in Execution settings; the goal and data then leave this machine.'
+      :approvalMissing?'Tick Approve route under Execution settings, Route and grants: each destination there is granted its data category for this mission.':'This mission\'s goal and data will be sent to them.');
   return <div className="research-workspace guided-research">
     <section className="research-composer" aria-label="Research mission composer">
       <div className="composer-heading"><p className="eyebrow">RESEARCH</p><h1>Start with a question.</h1><p className="muted">Keep alternatives, evidence and uncertainty visible.</p></div>
@@ -235,8 +316,9 @@ export default function ResearchWorkspace({token,setToken,readiness=null,readine
           <div className="example-row"><Button variant="ghost" size="sm" onPress={()=>setGoal(EXAMPLE_GOAL)}>Use example</Button><span className="field-note">Replaces the draft with a sample question. It does not start a mission.</span></div>
         </div>
         <div className="composer-action-panel">
-          <Button isDisabled={busy||locked||!goal.trim()||consentMissing||liveBlocked} onPress={()=>task(start,'start')}>Create and start</Button>
+          <Button isDisabled={busy||locked||!goal.trim()||consentMissing||liveBlocked||approvalMissing} onPress={()=>task(start,'start')}>Create and start</Button>
           {notice('start')}
+          {routeConflict&&slot==='start'&&error&&<Button variant="secondary" size="sm" onPress={reviewRoute}>Review the route again</Button>}
           {card?<LockNotice card={card} tone={authExpired?'error':'info'} onUnlock={()=>focusTokenField(token,setToken)} unlockLabel={unlockLabel(token)} compact/>
             :!goal.trim()?<p className="muted">Enter a research goal to enable Create and start.</p>
             :<p className="muted">{modeNote}</p>}
@@ -245,6 +327,7 @@ export default function ResearchWorkspace({token,setToken,readiness=null,readine
       <details className="research-options"><summary><span>Execution settings</span><span className="muted"> · {mode==='demo'?'offline fixture (nothing is sent)':'live models · sending data '+(egress?'permitted':'not permitted')+(readiness?' · seats: '+STATE_LABEL[stateOf(readiness.live_mission)]:'')}</span></summary>
         <div className="formrow"><div><label htmlFor="mode">Model source</label><select id="mode" value={mode} onChange={e=>setMode(e.target.value)}><option value="demo">Offline fixture (scripted roles; nothing is sent)</option><option value="live">Live models (seats set in Settings)</option></select></div><div><label htmlFor="rounds">Round limit (1–{MAX_ROUNDS})</label><input id="rounds" type="number" min="1" max={MAX_ROUNDS} value={rounds} onChange={e=>setRounds(e.target.value)} onBlur={()=>setRounds(clampRounds(rounds))}/></div></div>
         {mode==='live'&&<LiveRoute readiness={readiness} error={readinessError} locked={locked} onNavigate={onNavigate} onCheck={checkSeats} token={token}/>}
+        {mode==='live'&&<RouteGrants preview={preview} error={previewError} blocked={liveBlocked} locked={locked} approved={approved} onApprove={setApproved} onRetry={reviewRoute}/>}
         <label className="check"><input type="checkbox" checked={egress} onChange={e=>setEgress(e.target.checked)}/>Permit sending this mission's goal and data to the configured models (the text leaves this machine).</label>
         <label className="check"><input type="checkbox" checked={vision} onChange={e=>setVision(e.target.checked)}/>Require configured visual review of each new fit image (plot).</label>
         <details><summary>Optional x/y measurements</summary><label htmlFor="points">Measurement JSON</label><textarea id="points" rows={4} value={points} onChange={e=>setPoints(e.target.value)}/><p className="muted">Paste a JSON list of 8–2000 points, each {'{"x": number, "y": number}'}, with x within ±1,000,000 and y within ±1e12. Leave it empty and a live mission starts with no dataset; it can read public data only when the service has public reads enabled.</p></details>
@@ -260,9 +343,11 @@ export default function ResearchWorkspace({token,setToken,readiness=null,readine
       {!state?<>{notice('results')}<div className="empty-state"><h2>No mission selected.</h2><p>Create one above or load a saved mission.</p></div></>:<>
         <div className="results-heading"><div><p className="eyebrow">Selected mission: {mission.id}</p><h2>Mission overview</h2></div><div className="status-stack"><span className="status-label">{words(state.status)}</span>{mission.request?.mode&&<span className="mode-chip">{modeLabel(mission.request.mode)}</span>}{mission.release&&<span className={'release-chip release-'+mission.release.status}>Release: {RELEASE_LABEL[mission.release.status]||words(mission.release.status)}</span>}</div></div>
         <p className="muted">Round {state.round} · {plural(state.actions_used,'action')} · {plural(state.model_calls_used,'model call')} · data source: {words(state.data_origin)}</p>
-        <div className="actions"><Button isDisabled={busy||locked} onPress={()=>task(async signal=>{setVerification(await (await request('/missions/'+mission.id+'/verify','POST',undefined,signal)).json());await refresh(mission.id,signal);})}>Replay and verify</Button><Button variant="secondary" isDisabled={busy||locked||!mission.release?.eligible_for_human_review} onPress={()=>task(exportCapsule)}>Export replay archive (.zip)</Button><Button variant="ghost" isDisabled={busy||locked||!['ready','paused'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/start','POST',undefined,signal);await refresh(mission.id,signal);})}>{state.status==='paused'?'Resume (recorded as an analysis change)':state.status==='ready'?'Start':'Resume'}</Button><Button variant="danger" isDisabled={busy||locked||['cancelled','completed','budget_exhausted','error','needs_input'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/cancel','POST',undefined,signal);await refresh(mission.id,signal);})}>Cancel</Button></div>
+        <div className="actions"><Button isDisabled={busy||locked} onPress={()=>task(async signal=>{setVerification(await (await request('/missions/'+mission.id+'/verify','POST',undefined,signal)).json());await refresh(mission.id,signal);})}>Replay and verify</Button><Button variant="secondary" isDisabled={busy||locked||!mission.release?.eligible_for_human_review} onPress={()=>task(exportCapsule)}>Export replay archive (.zip)</Button><Button variant="ghost" isDisabled={busy||locked||!['ready','paused'].includes(state.status)||(state.status==='ready'&&mission.request?.mode==='live'&&!startBody())} onPress={()=>task(signal=>startMission(mission.id,state.status==='ready'?startBody():undefined,signal))}>{state.status==='paused'?'Resume (recorded as an analysis change)':state.status==='ready'?'Start':'Resume'}</Button><Button variant="danger" isDisabled={busy||locked||['cancelled','completed','budget_exhausted','error','needs_input'].includes(state.status)} onPress={()=>task(async signal=>{await request('/missions/'+mission.id+'/cancel','POST',undefined,signal);await refresh(mission.id,signal);})}>Cancel</Button></div>
         {!mission.release?.eligible_for_human_review&&<p className="muted">Export opens when the release decision is Eligible for human review.</p>}
+        {state.status==='ready'&&mission.request?.mode==='live'&&!startBody()&&<p className="muted">Start opens once the route is approved under Execution settings, Route and grants (live mode).</p>}
         {notice('results')}
+        {routeConflict&&slot==='results'&&error&&<Button variant="secondary" size="sm" onPress={reviewRoute}>Review the route again</Button>}
         {state.stop_reason&&<p role="status">Stop reason: {state.stop_reason}</p>}<ReleaseLedger release={mission.release}/>{verification&&<VerificationReport report={verification}/>}
         <ClaimScopeView scope={state.claim_scope}/>
         <div className="branches">{state.branches.map(branch=><article key={branch.id} className={'branch'+(state.focus===branch.id?' focus':'')}><h3>{branch.title}</h3><p>{branch.hypothesis}</p><p>Would be refuted by: {branch.falsifier}</p><p className="muted">Opened round {branch.created_round} · parents: {branch.parents.join(', ')||'root'}</p></article>)}</div>
@@ -270,6 +355,7 @@ export default function ResearchWorkspace({token,setToken,readiness=null,readine
         <h2>Visual review</h2>{state.visual_reports.length?state.visual_reports.map((report,i)=><div className="record" key={i}><h3>{report.model} · round {report.round} · {words(report.verdict)}</h3>{report.findings.map((finding,j)=><p key={j}>{words(finding.category)}: {finding.detail}</p>)}</div>):<p className="muted">No visual review.</p>}
         <RepairCycles repairs={state.repairs||[]}/>
         <Changes changes={state.changes||[]} obligations={mission.change_obligations}/>
+        <GrantsLedger ledger={grants} error={grantsError} busy={busy} locked={locked} onRevoke={(id,reason)=>task(async signal=>{await request('/grants/'+id+'/revoke','POST',{reason},signal);await refresh(mission.id,signal);})}/>
         <details className="result-disclosure"><summary>Reconciliation ({state.assessments.length>12?'last 12 of '+state.assessments.length+' assessments':plural(state.assessments.length,'assessment')})</summary>{state.assessments.slice(-12).map((assessment,i)=><div className="record" key={i}><h3>{role(assessment.role)} · {assessment.branch_id} · {words(assessment.position)}</h3><p>{assessment.finding}</p><p className="muted">Evidence: {assessment.evidence_ids.join(', ')} · Model: {assessment.model}</p></div>)}</details>
         <details className="result-disclosure"><summary>Execution evidence</summary>{state.observations.map(observation=><details className="record" key={observation.id}><summary>{observation.id} · {observation.tool} · {words(observation.status)}</summary><pre>{JSON.stringify(observation.data,null,2)}</pre></details>)}</details>
         <details className="result-disclosure"><summary>Event history ({state.events.length>15?'last 15 of '+state.events.length+' events':plural(state.events.length,'event')})</summary>{state.events.slice(-15).reverse().map((event,i)=><p className="muted" key={i}>[{event.round}] {words(event.kind)}: {event.detail}</p>)}</details>

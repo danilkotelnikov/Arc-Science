@@ -69,9 +69,10 @@ test('at 700×800 Research and Diagnostics fit the viewport and every Diagnostic
   await openWorkspace(page, 'Diagnostics', 'Diagnostics');
   await page.getByLabel('Operator token').fill(E2E_TOKEN); // the operator checks enable with a token
   await fitsViewport();
-  // Labels belong to the Diagnostics workspace; here only the count and the Tab order matter.
+  // Labels belong to the Diagnostics workspace; here only the count and the Tab order matter:
+  // Refresh service, Refresh readiness, Refresh readiness (re-read logins), Check MCP, Check ACP.
   const buttons = page.getByRole('main').getByRole('button', {disabled: false});
-  await expect(buttons).toHaveCount(4);
+  await expect(buttons).toHaveCount(5);
   const labels = await buttons.allTextContents();
   const reached = new Set();
   await page.getByLabel('Operator token').focus();

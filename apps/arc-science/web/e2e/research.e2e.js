@@ -59,6 +59,12 @@ test('an offline mission explores competing branches, reconciles them and verifi
   await expect(results.getByRole('button', {name: /^Resume/})).toBeDisabled();
   await expect(ledger.locator('li[data-state="satisfied"]').filter({hasText: 'claim scope'})).toHaveText(/contradicted 2, unresolved 1\); a next discriminating test is proposed for 3 of 3/);
   await expect(ledger).toContainText('not validated');
+  // The grant ledger is read beside the mission: an offline fixture makes no external call, so it holds no grant and no receipt.
+  const grants = page.getByRole('region', {name: 'Grants and receipts'});
+  await expect(grants).toContainText('No grants. An offline fixture makes no external calls');
+  await expect(grants).toContainText('No receipts');
+  await expect(grants.getByRole('table')).toHaveCount(0);
+  await expect(grants.getByRole('button', {name: /^Revoke grant/})).toHaveCount(0);
   check();
 });
 
@@ -182,8 +188,8 @@ test('a presentation finding is repaired, reviewed again as a new candidate, and
 
 test('live mode on a service without seats is blocked in the composer; nothing is sent and no 409 appears', async ({page}) => {
   const check = watchForTokenLeaks(page);
-  const missionPosts = [], conflicts = [];
-  page.on('request', (request) => { if (request.method() === 'POST' && request.url().includes('/api/missions')) missionPosts.push(request.url()); });
+  const missionPosts = [], conflicts = [], previews = [];
+  page.on('request', (request) => { if (request.method() === 'POST' && request.url().includes('/api/missions')) missionPosts.push(request.url()); if (request.url().includes('/api/missions/preview')) previews.push(request.url()); });
   page.on('response', (response) => { if (response.status() === 409) conflicts.push(response.url()); });
   await page.goto('/');
   await openWorkspace(page, 'Research', 'Research results');
@@ -196,6 +202,11 @@ test('live mode on a service without seats is blocked in the composer; nothing i
   const route = page.getByRole('region', {name: 'Live route'});
   await expect(route).toContainText('No seat is configured.');
   await expect(route.getByRole('status')).toContainText('Planner');
+  // A blocked route is not previewed: the grants panel says so and lists no destination.
+  const grants = page.getByRole('region', {name: 'Route and grants'});
+  await expect(grants).toContainText('The route cannot be previewed while the live route is blocked');
+  await expect(grants.getByRole('row')).toHaveCount(0);
+  await expect(grants.getByLabel('Approve route')).toHaveCount(0);
   const create = page.getByRole('button', {name: 'Create and start'});
   await expect(create).toBeDisabled();
   await expect(create.locator('..')).toContainText('Live models are blocked.');
@@ -204,5 +215,6 @@ test('live mode on a service without seats is blocked in the composer; nothing i
   await expect(page.getByRole('navigation', {name: 'Workspaces'}).getByRole('button', {name: 'Settings'})).toHaveAttribute('aria-pressed', 'true');
   expect(missionPosts).toEqual([]);
   expect(conflicts).toEqual([]);
+  expect(previews).toEqual([]);
   check();
 });

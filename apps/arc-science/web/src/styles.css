@@ -166,6 +166,19 @@ input[type="checkbox"] { margin-top: 3px; accent-color: var(--accent); }
 .live-route { margin: var(--s3) 0; max-width: 840px; }
 .live-route h3 { margin-bottom: 4px; font-size: var(--text-sm); }
 .live-seats { margin: 0 0 var(--s2); padding-left: 1.2em; font-size: var(--text-sm); }
+/* Route and grants (composer) and Grants and receipts (mission): one table style; the word carries the state. */
+.route-grants { margin: var(--s3) 0; max-width: 840px; }
+.route-grants h3 { margin-bottom: 4px; font-size: var(--text-sm); }
+.route-grants .check { margin-top: var(--s2); }
+.grants { width: 100%; border-collapse: collapse; font-size: var(--text-sm); margin: var(--s2) 0; }
+.grants th, .grants td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+.grants th { color: var(--ink-3); font-weight: 500; font-size: var(--text-xs); }
+.grants tr[data-state="revoked"] td, .grants tr[data-state="expired"] td, .grants tr[data-state="exhausted"] td { color: var(--ink-3); }
+.grants tr[data-outcome="denied"] td:nth-child(4), .grants tr[data-outcome="failed"] td:nth-child(4) { color: var(--danger); font-weight: 600; }
+.grants tr[data-outcome="ok"] td:nth-child(4) { color: var(--ok); font-weight: 600; }
+.grants .revoke { display: flex; gap: 6px; align-items: center; }
+.grants .revoke input { width: 140px; margin: 0; padding: 4px 6px; font-size: var(--text-xs); }
+.grants-ledger h3 { margin: var(--s3) 0 0; }
 .release-chip.release-eligible_for_human_review { color: var(--ok); border-color: var(--ok-line); background: var(--ok-soft); }
 .release-chip.release-blocked { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
 .empty-state { padding: 56px 0; max-width: 420px; color: var(--ink-2); }

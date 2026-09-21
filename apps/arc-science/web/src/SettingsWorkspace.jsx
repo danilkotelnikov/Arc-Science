@@ -2,7 +2,7 @@ import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from '
 import {Button} from '@heroui/react/button';
 import {NATIVE_SESSION, SESSION_COPY, apiFetch, sessionState} from './http';
 import {LockNotice, focusTokenField, unlockLabel} from './LockNotice';
-import {STATE_LABEL, loginLine, probeLine, sentence, stateOf} from './readiness';
+import {GRANT_STATE_LABEL, STATE_LABEL, grantState, loginLine, probeLine, sentence, stateOf} from './readiness';
 import './SettingsWorkspace.css';
 
 // Settings are owned by the native supervisor: the service reads a snapshot with a
@@ -39,6 +39,9 @@ const VIEWER = {representation: ['cartoon', 'surface', 'ball_and_stick', 'sticks
   colouring: ['chain', 'element', 'residue', 'secondary_structure', 'bfactor', 'uniform'],
   assembly: ['asymmetric_unit', 'assembly_1', 'assembly_2'], background: ['white', 'black', 'transparent']};
 const pretty = value => value === 'bfactor' ? 'B-factor' : String(value).charAt(0).toUpperCase() + String(value).slice(1).replace(/_/g, ' ');
+const when = at => at > 0 ? new Date(at * 1000).toLocaleString() : 'never';
+// Who a grant was given for: the mission it is bound to, one consented request, or nobody in particular.
+const grantSubject = grant => grant.subject_kind === 'mission' ? <>mission <code>{grant.subject_id}</code></> : grant.subject_kind === 'request' ? 'request' : 'persistent';
 const roleLabel = role => ROLES.find(([key]) => key === role)?.[1] || role;
 const transportFor = seat => seat.auth === 'cli' ? 'cli' : 'api';
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -139,11 +142,14 @@ export default function SettingsWorkspace({token, setToken, active = false, read
   const [checks, setChecks] = useState({}), [authExpired, setAuthExpired] = useState(false);
   // Roles whose model picker is on "Custom id…" although the typed id may be in the catalog.
   const [customRoles, setCustomRoles] = useState({});
+  // The grant ledger as last read (null until the Permissions section asks), its filter, and
+  // the grant whose Revoke is waiting for a reason.
+  const [grants, setGrants] = useState(null), [grantFilter, setGrantFilter] = useState('all'), [revoking, setRevoking] = useState(null);
   const credential = useRef(null), autoloaded = useRef(false), running = useRef(false), waitCancel = useRef(null);
   const catalog = readiness?.catalog || FALLBACK_CATALOG, catalogLoaded = Boolean(readiness?.catalog);
   useLayoutEffect(() => {
     const controller = new AbortController(); credential.current = controller;
-    setSnapshot(null); setDraft(null); setError(null); setNotice(''); setBusy(false); setConsent({}); setWaiting(null); setConfirming(null); setChecks({}); setAuthExpired(false); setCustomRoles({});
+    setSnapshot(null); setDraft(null); setError(null); setNotice(''); setBusy(false); setConsent({}); setWaiting(null); setConfirming(null); setChecks({}); setAuthExpired(false); setCustomRoles({}); setGrants(null); setRevoking(null);
     autoloaded.current = false; running.current = false;
     return () => controller.abort();
   }, [token]);
@@ -242,6 +248,20 @@ export default function SettingsWorkspace({token, setToken, active = false, read
     if (answer.error) throw new Error(answer.error);
     setNotice(answer.stopped ? STOPPED : 'Credential ' + seat.credential + ' was removed from the Windows Credential Manager.');
     if (!answer.stopped) askReadiness({fresh: true});
+  }
+  // The ledger derives each grant's state, uses and last use; the page only lists them.
+  // Settings consent (Connections) creates no grant, so nothing here comes from the draft.
+  async function loadGrants(signal) {
+    const data = await read('/grants', signal);
+    setGrants(Array.isArray(data) ? data : data.grants || []);
+  }
+  const grantsTask = () => task(loadGrants, 'Load permissions', 'grants', () => ({label: 'Retry', run: grantsTask}));
+  async function revoke(grant, reason, signal) {
+    // Append-only: the ledger records the event, and the grant's next use is refused.
+    await read('/grants/' + grant.id + '/revoke', signal, 'POST', {reason});
+    setRevoking(null);
+    await loadGrants(signal);
+    setNotice('Revoked the grant for ' + grant.destination + '; its next call is refused.');
   }
   async function save(signal) {
     const snap = await read('/settings', signal, 'PUT', {settings: draft, if_revision: snapshot.revision});
@@ -392,6 +412,11 @@ export default function SettingsWorkspace({token, setToken, active = false, read
           </tbody></table></div>
           <label className="check"><input type="checkbox" checked={draft.prose.detection} disabled={readOnly} onChange={e => set(['prose', 'detection'], e.target.checked)}/>Allow third-party AI-text detection. Arc asks again before each request, and the text leaves this machine only when you agree.</label>
         </SettingsSection>
+
+        <SettingsSection title="Permissions" summary="Every grant this service has recorded: what a mission or a request may send where, and whether it still applies. Revoke refuses the next call." onToggle={open => open && grantsTask()}>
+          <Permissions grants={grants} filter={grantFilter} setFilter={setGrantFilter} revoking={revoking} setRevoking={setRevoking} busy={busy}
+            onRefresh={grantsTask} onRevoke={(grant, reason) => task(signal => revoke(grant, reason, signal), 'Revoke grant', 'grants')} error={errorAt('grants')}/>
+        </SettingsSection>
       </>}
     </section>
   </div>;
@@ -519,8 +544,9 @@ function StateCard({state}) {
   </div>;
 }
 
-function SettingsSection({title, summary, open = false, children}) {
-  return <details className="settings-section" open={open}>
+function SettingsSection({title, summary, open = false, onToggle, children}) {
+  // toggle does not bubble, so the handler sees this section only; it reports the new state.
+  return <details className="settings-section" open={open} aria-label={title} onToggle={onToggle ? e => onToggle(e.currentTarget.open) : undefined}>
     <summary><span>{title}</span><small>{summary}</small></summary>
     <div className="settings-section-body">{children}</div>
   </details>;
@@ -545,6 +571,36 @@ function Connections({readiness, readinessError, catalog}) {
       {cli.map(([role, label, node]) => <tr key={role}><th scope="row">{label}</th><td>{node.facts.executable || 'not found'}</td><td>{loginLine(node)}</td><td>{probeLine(node)}</td></tr>)}
     </tbody></table></div>}
     <p className="field-note">Signed in only means a login exists. Test seat on a card makes one real call per distinct seat of that provider; the answering model is confirmed only when the provider reports it.</p>
+  </>;
+}
+
+// The permission center: the ledger's grants (mission, request and persistent) with the state
+// the ledger derived, a filter, and Revoke behind an inline reason. Nothing here is consent:
+// a connector ticked under Connections is eligible for a route, which is not a grant.
+function Permissions({grants, filter, setFilter, revoking, setRevoking, busy, onRefresh, onRevoke, error}) {
+  const shown = (grants || []).filter(grant => filter === 'all' || grantState(grant) === filter);
+  return <>
+    <p className="field-note">Consent under Connections makes a connector eligible for a route; a mission is granted access only when you approve its route in Research.</p>
+    <div className="actions">
+      <label className="grants-filter">Show<select aria-label="Show" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All</option><option value="active">Active</option><option value="revoked">Revoked</option></select></label>
+      <Button variant="secondary" size="sm" isDisabled={busy} onPress={onRefresh}>Refresh permissions</Button>
+    </div>
+    {error}
+    {!grants ? <p className="muted">Permissions load when this section opens.</p>
+    : grants.length === 0 ? <p className="muted">No grants yet.</p>
+    : shown.length === 0 ? <p className="muted">No {filter} grants.</p>
+    : <div className="settings-table-wrap"><table className="seats settings-table grants-table" aria-label="Grants"><thead><tr><th>Kind</th><th>Destination</th><th>Data category</th><th>Scope</th><th>State</th><th>Uses</th><th>Last use</th><th>Source</th><th>Revoke</th></tr></thead><tbody>
+      {shown.map(grant => { const state = grantState(grant), name = grant.destination; return <tr key={grant.id}>
+        <td>{String(grant.destination_kind || '').replace(/_/g, ' ')}</td><td><code>{name}</code></td><td>{grant.data_category}</td><td>{grant.scope}</td>
+        <td><span className="badge" data-state={state}>{GRANT_STATE_LABEL[state]}</span></td>
+        <td>{Number(grant.uses) || 0}{grant.max_uses ? ' of ' + grant.max_uses : ''}</td><td>{when(grant.last_used_at)}</td><td>{grantSubject(grant)}</td>
+        <td>{revoking?.id === grant.id ? <div className="actions grant-revoke">
+          <input aria-label={'Revoke reason ' + name} value={revoking.reason} placeholder="reason (recorded)" onChange={e => setRevoking({id: grant.id, reason: e.target.value})}/>
+          <Button size="sm" aria-label={'Confirm revoke ' + name} isDisabled={busy || !revoking.reason.trim()} onPress={() => onRevoke(grant, revoking.reason.trim())}>Revoke</Button>
+          <Button variant="ghost" size="sm" onPress={() => setRevoking(null)}>Keep it</Button>
+        </div> : <Button variant="ghost" size="sm" aria-label={'Revoke grant ' + name} isDisabled={busy || state !== 'active'} onPress={() => setRevoking({id: grant.id, reason: ''})}>Revoke</Button>}</td>
+      </tr>; })}
+    </tbody></table></div>}
   </>;
 }
 

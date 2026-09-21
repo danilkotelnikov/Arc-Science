@@ -25,6 +25,9 @@ const readiness={checked_at:1700000000,session:{kind:'native',state:'ready',code
   memory:{...readinessNode('ready','The memory engine answers.'),code:'memory.available',facts:{protocol:'arc-memory/1',sqlite:'3.53.2'}},
   storage:{...readinessNode('not_tested','The missions database is present.','Integrity is checked on demand in Diagnostics (not in this build).'),code:'storage.present',facts:{missions_db:true,missions:1}},
   catalog:{},public_reads:{enabled:false}};
+// GET /api/missions/preview for the seat above: the route a live mission would use and the grants its first start must carry.
+const routePreview={settings_revision:'abcdef1234567890',route_digest:'r'.repeat(64),seats:[{role:'planner',provider:'anthropic',transport:'api',model:'claude-sonnet-5',effort:'medium',destination:'https://api.anthropic.com',destination_kind:'seat',data_category:'mission goal, dataset points, prior observations and assessments',purpose:'planning, review and refutation'}],connectors:[],public_reads:[],
+  required_grants:[{destination:'https://api.anthropic.com',destination_kind:'seat',data_category:'mission goal, dataset points, prior observations and assessments',purpose:'planning, review and refutation',scope:'mission'}]};
 let requests, downloadClick, selectedRow;
 const json = (data,init={}) => new Response(JSON.stringify(data),{...init,headers:{'Content-Type':'application/json',...(init.headers||{})}});
 
@@ -42,6 +45,8 @@ beforeEach(()=>{
     if(path===bioartDownloadReceipt.download_url)return new Response('verified source',{headers:{'Content-Type':'application/postscript'}});
     if(path==='/api/bioart/import')return json({asset_id:'nih-bioart-antibody',asset_manifest:'assets/nih-bioart-antibody/asset.json'});
     if(path==='/api/missions')return json(options.method==='POST'?selectedRow:[{id:'mission-1',status:'paused',goal:'Saved experiment'}]);
+    if(path.startsWith('/api/missions/preview'))return json(routePreview);
+    if(path.endsWith('/grants'))return json({grants:[],receipts:[]});
     if(path.endsWith('/verify'))return json({reproduction_passed:true});
     if(path.endsWith('/capsule'))return new Response('capsule');
     if(path.includes('/artifacts/'))return new Response('authenticated image',{headers:{'Content-Type':'image/png'}});
@@ -81,11 +86,17 @@ test('mission creation sends actual egress and visual-review consent and executi
   await user.type(screen.getByLabelText('Research goal'),'Live nonlinear response check');
   await user.selectOptions(screen.getByLabelText('Model source'),'live');
   await user.click(screen.getByLabelText(/Permit sending/));await user.click(screen.getByLabelText(/Require configured visual review/));
+  // The route is previewed for the visual-review flag as set; the start is refused until that route is approved.
+  await waitFor(()=>expect(requests.some(r=>r.path==='/api/missions/preview?vision_review=1')).toBe(true));
+  expect(screen.getByRole('button',{name:'Create and start'})).toBeDisabled();
+  await user.click(await screen.findByLabelText('Approve route'));
   await user.click(screen.getByRole('button',{name:'Create and start'}));
   await waitFor(()=>expect(requests.some(r=>r.path==='/api/missions/mission-1/start')).toBe(true));
   const sent=requests.find(r=>r.path==='/api/missions'&&r.options.method==='POST');
   expect(JSON.parse(sent.options.body)).toMatchObject({mode:'live',max_rounds:5,allow_egress:true,vision_review:true});
   expect(sent.options.headers.Authorization).toBe('Bearer operator');
+  const started=requests.find(r=>r.path==='/api/missions/mission-1/start');
+  expect(JSON.parse(started.options.body)).toEqual({approved_route_digest:routePreview.route_digest,grants:routePreview.required_grants});
 });
 
 test('selected mission exposes authenticated artifacts, visual reports, verify, capsule, resume and cancel',async()=>{

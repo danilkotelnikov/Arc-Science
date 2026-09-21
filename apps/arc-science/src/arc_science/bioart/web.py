@@ -180,7 +180,9 @@ async def _run_bioart_cli(project: Path, arguments: tuple[str, ...], timeout: in
         raise ValueError('BioArt CLI could not start or complete') from None
 
 
-def create_router(project: Path, authorized):
+def create_router(project: Path, authorized, egress=None):
+    # egress(destination, kind, category, purpose, digest) -> finish(outcome, reason): the
+    # service's grant ledger for each consented live read; consent itself stays per request.
     root = Path(project).absolute()
     router = APIRouter(prefix='/api/bioart', dependencies=[Depends(authorized)])
     population = None
@@ -267,10 +269,19 @@ def create_router(project: Path, authorized):
                 raise _problem(error) from None
         except ValueError as error:
             raise _problem(error) from None
+        finish = egress(ORIGIN, 'bioart', 'the search query' if arguments[0] == 'search' else 'a BioArt entry id',
+                        'public-domain artwork retrieval', hashlib.sha256(' '.join(arguments).encode('utf-8')).hexdigest()) if egress else None
         try:
-            return await populate_once(arguments, operation)
-        except ValueError as error:
-            raise _problem(error) from None
+            result = await populate_once(arguments, operation)
+        except Exception as error:
+            if finish:
+                finish('failed', str(error)[:200])
+            if isinstance(error, ValueError):
+                raise _problem(error) from None
+            raise
+        if finish:
+            finish('ok')
+        return result
 
     @router.post('/search')
     async def search(request: SearchRequest):

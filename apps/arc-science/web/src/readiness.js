@@ -13,6 +13,12 @@ export const sentence = text => (text ? (/[.!?]$/.test(text) ? text : text + '.'
 /** The vocabulary state of a readiness node; anything missing or unrecognised is unknown. */
 export const stateOf = node => STATES.includes(node?.state) ? node.state : 'unknown';
 
+// A grant's state is derived by the ledger (revoked, expired or used up beats active); the
+// page names it the same way in Settings, the mission view and the route preview.
+export const GRANT_STATES = ['active', 'revoked', 'expired', 'exhausted'];
+export const GRANT_STATE_LABEL = {active: 'Active', revoked: 'Revoked', expired: 'Expired', exhausted: 'Exhausted', unknown: 'Unknown'};
+export const grantState = grant => GRANT_STATES.includes(grant?.state) ? grant.state : 'unknown';
+
 /** One line per seat: "<label>: <state> — <meaning>". */
 export function seatSummary(seat) {
   const label = seat?.label || seat?.role || 'Seat';
