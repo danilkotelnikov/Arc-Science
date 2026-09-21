@@ -8,14 +8,20 @@ session when present, performs a
 real download into the user's Downloads folder when a download control is present
 (a render of the operator's own must exist; otherwise the step is reported as skipped),
 optionally activates the BioArt workspace's external NIH search link (opens the system
-browser), then closes the window and checks that the supervisor,
-service and port are released. Evidence is written to -Out.
+browser), then closes the window and asserts that the supervisor, service and memory
+worker exit and that nothing listens on -Port any more (the script fails otherwise).
+The window is the plain 'Arc Science' title or the diagnostic attach title; with
+-ProcessId only that process is considered (always pass it when another Arc Science
+instance is open). -InjectListener binds a loopback listener on -Port after the tree
+exited so the port assertion can be seen failing (self-test). Evidence is written to -Out.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Out,
     [string]$Downloads = (Join-Path $env:USERPROFILE 'Downloads'),
     [int]$Port = 8080,
+    [int]$ProcessId,
+    [switch]$InjectListener,
     [switch]$SkipExternal,
     [switch]$SkipDownload,
     [switch]$NoClose
@@ -59,8 +65,10 @@ function Log([string]$m) { $line = ('{0:HH:mm:ss.fff} {1}' -f (Get-Date), $m); $
 
 # ---- 1. locate the native window ---------------------------------------------------
 $deadline = (Get-Date).AddSeconds(90); $proc = $null
+$titlePattern = '^Arc Science( (\u2014|-) diagnostic attach on 127\.0\.0\.1:\d+)?$'
 while ((Get-Date) -lt $deadline) {
-    $proc = Get-Process -Name 'Arc Science', 'arc-science-desktop' -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -eq 'Arc Science' } | Select-Object -First 1
+    $candidates = if ($ProcessId) { Get-Process -Id $ProcessId -ErrorAction SilentlyContinue } else { Get-Process -Name 'Arc Science', 'arc-science-desktop' -ErrorAction SilentlyContinue }
+    $proc = $candidates | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -match $titlePattern } | Select-Object -First 1
     if ($proc) { break }
     Start-Sleep -Milliseconds 250
 }
@@ -204,11 +212,21 @@ if (-not $NoClose) {
     Log 'WindowPattern.Close sent'
     $exited = $proc.WaitForExit(20000)
     Log "desktop exited=$exited code=$(if ($exited) { $proc.ExitCode } else { 'n/a' })"
-    Start-Sleep -Seconds 2
     foreach ($p in @($supervisor, $service, $memory)) {
-        if ($p) { $alive = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue; Log ("{0} pid {1}: {2}" -f $p.Name, $p.ProcessId, $(if ($alive) { 'STILL RUNNING' } else { 'exited' })) }
+        if (-not $p) { continue }
+        $until = (Get-Date).AddSeconds(10)
+        while ((Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue) -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 250 }
+        if (Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue) { throw "$($p.Name) pid $($p.ProcessId) still running after close" }
+        Log ("{0} pid {1}: exited" -f $p.Name, $p.ProcessId)
+    }
+    $injected = $null
+    if ($InjectListener) {
+        $injected = [System.Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $Port); $injected.Start()
+        Log "injected listener on port $Port (self-test)"
     }
     $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-    Log ("port ${Port} listener after close: " + $(if ($listener) { 'PRESENT pid ' + ($listener.OwningProcess -join ',') } else { 'none' }))
+    if ($injected) { $injected.Stop() }
+    if ($listener) { $leak = "port $Port listener after close: PRESENT pid $($listener.OwningProcess -join ',')"; Log $leak; throw $leak }
+    Log "port $Port listener after close: none"
 }
 Log 'done'

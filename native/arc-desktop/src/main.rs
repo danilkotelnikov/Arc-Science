@@ -6,6 +6,7 @@ mod credential;
 mod external;
 mod launch;
 mod startup;
+use launch::app_data_directory;
 use startup::{Config, LocalUrl, ServiceGuard, start_service, start_service_with_native_session};
 use std::sync::{
     Arc, Mutex,
@@ -45,8 +46,9 @@ enum Shell {
     Failed(String, Option<launch::Plan>),
     /// Failure-page retry: spawn this executable once as a fresh process, then exit.
     RetryStartup,
-    /// Failure-page recovery: open the app-owned redacted startup log.
-    OpenStartupLog,
+    /// Open the app-owned redacted startup log: from the failure page (recovery) or,
+    /// over IPC, from the loaded workbench page (diagnostics).
+    OpenStartupLog { from_page: bool },
     /// A download finished; the page is told so it can show the outcome, because
     /// the WebView hosts no download UI of its own here.
     DownloadFinished {
@@ -246,6 +248,36 @@ fn failure_recovery_action(target: &str, enabled: bool) -> Option<RecoveryAction
         "arc-science://startup/retry" => Some(RecoveryAction::Retry),
         "arc-science://startup/open-log" => Some(RecoveryAction::OpenLog),
         _ => None,
+    }
+}
+
+/// What a page at the service origin may ask over IPC (after the origin check):
+/// opening the startup log, or a credential request validated by `credential::parse`.
+/// There is no retry over IPC; that stays a failure-page navigation.
+enum PageRequest {
+    OpenStartupLog,
+    Credential(Result<credential::Request, String>),
+}
+
+fn page_request(body: &str) -> PageRequest {
+    match serde_json::from_str::<serde_json::Value>(body) {
+        Ok(value)
+            if value.get("kind").and_then(serde_json::Value::as_str)
+                == Some("open-startup-log") =>
+        {
+            PageRequest::OpenStartupLog
+        }
+        _ => PageRequest::Credential(credential::parse(body)),
+    }
+}
+
+/// The page may open the log once the workbench is loaded; the failure page only
+/// while recovery is offered. A refused request is ignored silently, like Retry.
+fn open_log_allowed(from_page: bool, workbench_loaded: bool, recovery_available: bool) -> bool {
+    if from_page {
+        workbench_loaded
+    } else {
+        recovery_available
     }
 }
 
@@ -499,29 +531,8 @@ fn snoggo_icon() -> Option<Icon> {
     Icon::from_rgba(render_icon_rgba(size)?, size, size).ok()
 }
 
-fn app_data_directory() -> Result<PathBuf, String> {
-    let base = std::env::var_os(if cfg!(windows) {
-        "LOCALAPPDATA"
-    } else {
-        "HOME"
-    })
-    .ok_or("The local application data directory is not available")?;
-    let directory = PathBuf::from(base).join(if cfg!(windows) {
-        "ArcScience"
-    } else {
-        ".arc-science"
-    });
-    create_dir_all(&directory).map_err(|error| {
-        format!(
-            "Cannot create application data directory {}: {error}",
-            directory.display()
-        )
-    })?;
-    Ok(directory)
-}
-
-/// Browser profile (cache, storage) under the user's local application data, so it
-/// is never written beside the executable, which an installed copy cannot write.
+/// Browser profile (cache, storage) under the application data directory, so it is
+/// never written beside the executable, which an installed copy cannot write.
 fn profile_directory() -> Option<std::path::PathBuf> {
     let directory = app_data_directory().ok()?.join("webview");
     match std::fs::create_dir_all(&directory) {
@@ -758,7 +769,8 @@ fn run() -> Result<(), String> {
                         return false;
                     }
                     RecoveryAction::OpenLog => {
-                        let _ = recovery_shell.send_event(Shell::OpenStartupLog);
+                        let _ =
+                            recovery_shell.send_event(Shell::OpenStartupLog { from_page: false });
                         return false;
                     }
                 }
@@ -792,7 +804,10 @@ fn run() -> Result<(), String> {
                 append_startup_log(ipc_log.as_deref(), &line);
                 return;
             }
-            let _ = ipc_shell.send_event(Shell::Credential(credential::parse(request.body())));
+            let _ = ipc_shell.send_event(match page_request(request.body()) {
+                PageRequest::OpenStartupLog => Shell::OpenStartupLog { from_page: true },
+                PageRequest::Credential(request) => Shell::Credential(request),
+            });
         })
         .with_download_completed_handler(move |_uri, path, success| {
             let text = |p: Option<&std::path::Path>| p.and_then(|p| p.to_str()).map(str::to_owned);
@@ -1039,16 +1054,24 @@ fn run() -> Result<(), String> {
                     }
                 }
             }
-            Event::UserEvent(Shell::OpenStartupLog) => {
-                if recovery_available.load(Ordering::SeqCst)
-                    && let Some(path) = startup_log.as_deref()
+            Event::UserEvent(Shell::OpenStartupLog { from_page }) => {
+                if open_log_allowed(
+                    from_page,
+                    workbench_loaded.load(Ordering::SeqCst),
+                    recovery_available.load(Ordering::SeqCst),
+                ) && let Some(path) = startup_log.as_deref()
                 {
-                    append_startup_log(startup_log.as_deref(), "Recovery: open log requested");
+                    let (requested, failed) = if from_page {
+                        (
+                            "Diagnostics: open log requested by the workbench page",
+                            "Diagnostics open log failed",
+                        )
+                    } else {
+                        ("Recovery: open log requested", "Recovery open log failed")
+                    };
+                    append_startup_log(startup_log.as_deref(), requested);
                     if let Err(error) = open_owned_path(path) {
-                        append_startup_log(
-                            startup_log.as_deref(),
-                            &format!("Recovery open log failed: {error}"),
-                        );
+                        append_startup_log(startup_log.as_deref(), &format!("{failed}: {error}"));
                         let (owner, text) = (window_handle, error);
                         std::thread::spawn(move || launch::message_box(owner, &text));
                     }
@@ -1326,6 +1349,37 @@ mod tests {
             failure_recovery_action("arc-science://startup/open-log?x=1", true),
             None
         );
+    }
+
+    #[test]
+    fn page_requests_recognise_only_open_startup_log() {
+        assert!(matches!(
+            page_request("{\"kind\":\"open-startup-log\"}"),
+            PageRequest::OpenStartupLog
+        ));
+        assert!(matches!(
+            page_request("{\"kind\":\"store-credential\",\"name\":\"planner-key\",\"provider\":\"anthropic\"}"),
+            PageRequest::Credential(Ok(credential::Request::Store { name, provider }))
+                if name == "planner-key" && provider == "anthropic"
+        ));
+        // No retry over IPC and no echo of an unknown body in the reason.
+        for body in ["{\"kind\":\"retry-startup\"}", "not json {{{ retry-startup"] {
+            match page_request(body) {
+                PageRequest::Credential(Err(reason)) => {
+                    assert!(!reason.contains("retry-startup"), "{reason}");
+                }
+                _ => panic!("{body} must be a refused credential request"),
+            }
+        }
+    }
+
+    #[test]
+    fn open_log_is_allowed_from_the_loaded_workbench_or_the_failure_page() {
+        // (from_page, workbench_loaded, recovery_available) -> allowed
+        assert!(open_log_allowed(true, true, false));
+        assert!(!open_log_allowed(true, false, true));
+        assert!(open_log_allowed(false, false, true));
+        assert!(!open_log_allowed(false, true, false));
     }
 
     #[test]

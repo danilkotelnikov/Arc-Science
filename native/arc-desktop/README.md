@@ -75,6 +75,7 @@ existing session-memory worker; no embedding model is installed automatically.
 | `ARC_DESKTOP_TIMEOUT` | `30` | Readiness deadline in seconds, 1–300. |
 | `ARC_DESKTOP_SERVE` | unset | Only the exact legacy value `arc-science serve` is accepted. Other command strings fail with migration instructions. Cannot be combined with an explicit executable. |
 | `ARC_DESKTOP_DIAGNOSTIC_ATTACH` | unset | Development only. The literal `1` opens the WebView2 DevTools protocol on an ephemeral loopback port for one run (see below); any other value is an error. |
+| `ARC_DESKTOP_APPDATA` | unset | Absolute folder replacing `%LOCALAPPDATA%\ArcScience` for the startup log, the WebView2 profiles and the diagnostic attach record; the default workspace becomes `<folder>\workspace`. Relative or empty values are refused. |
 
 Configuration is captured once. Missing argv entries and invalid settings fail
 before network access or process creation. Stale entries beyond `ARG_COUNT` are
@@ -91,8 +92,8 @@ visible controls. One attached window at a time: a record whose process is still
 running refuses a second attach. Once the DevTools endpoint answers `/json/version`
 (polled for up to ten seconds after the WebView is created; an endpoint that never
 answers fails the start), the host
-records `{"port","pid","endpoint"}` in `%LOCALAPPDATA%\ArcScience\diagnostic-attach.json`
-for the window's lifetime, writes the same fact to the startup log, and puts
+records `{"port","pid","endpoint"}` in `<app data>\diagnostic-attach.json`
+(`%LOCALAPPDATA%\ArcScience` or `ARC_DESKTOP_APPDATA`) for the window's lifetime, writes the same fact to the startup log, and puts
 `diagnostic attach on 127.0.0.1:<port>` in the window title so the mode is never
 silent; the record is removed when the window closes. The attached window uses its
 own WebView2 profile (`webview-diagnostic`), so it never shares a browser process with
@@ -144,8 +145,8 @@ Downloads are performed by the WebView itself. On this Windows runtime the WebVi
 showed no download dialog of its own, so the host reports each finished download to
 the page as an `arc-download` window event (`file`, `folder`, `success`), which the
 workbench header announces. The browser profile (cache, storage) lives under
-`%LOCALAPPDATA%\ArcScience\webview` (`~/.arc-science/webview` elsewhere), never beside
-the executable.
+`%LOCALAPPDATA%\ArcScience\webview` (`~/.arc-science/webview` elsewhere, or under
+`ARC_DESKTOP_APPDATA` when set), never beside the executable.
 
 ## Credential boundary
 
@@ -183,6 +184,15 @@ log records `Credential: <kind> <name> stored|removed|cancelled|failed: <reason>
 reasons carry Win32 error codes, not values. On other operating systems both
 requests answer `credential prompt is available on Windows only`.
 
+The same channel carries one non-credential request: the loaded workbench may post
+`{kind: 'open-startup-log'}` to open the redacted startup log in the operating
+system's text viewer (the Diagnostics page's `Open startup log` button). It is
+honoured only from the service origin and only once the workbench is loaded; the
+startup log records `Diagnostics: open log requested by the workbench page` (or
+`Diagnostics open log failed: <reason>`). Retry stays a failure-page action reached
+by its `arc-science://startup/retry` navigation; no IPC message triggers it, and an
+unknown `kind` is answered like any refused credential message.
+
 The desktop closes its private child-stdin pipe on normal close or startup/WebView
 failure. `arc-science-native serve --parent-stdin` treats EOF as cancellation and
 terminates its worker process group/job, including ordinary descendants. Standalone
@@ -218,12 +228,14 @@ early exits, timeout cleanup, local navigation, external-target filtering, the
 download-report script literal, icon transparency and white puddles, and the
 credential boundary (message parsing and validation, the `ArcScience/<name>` target,
 the prompt caption and its length limit, the `arc-credential` script literal, buffer
-wiping; the Windows prompt itself is never shown by a test), and the native and
-host session markers reaching only an owned child. The two ignored tests are
-intentional subprocess fixtures executed by their owning regressions (the timeout
+wiping; the Windows prompt itself is never shown by a test), the native and
+host session markers reaching only an owned child, the `ARC_DESKTOP_APPDATA`
+override (absolute only, default workspace beneath it) and the open-log gate (the
+IPC kind, the loaded-workbench and failure-page conditions). The two ignored tests
+are intentional subprocess fixtures executed by their owning regressions (the timeout
 cleanup and the session-environment checks).
 
-Developer verification on Windows, 2026-09-21: 40 desktop tests passed and 2 were
+Developer verification on Windows, 2026-09-21: 44 desktop tests passed and 2 were
 ignored (the fixtures above). Earlier, on 2026-09-18: 12 desktop tests passed, 24 supervisor
 tests passed, and 9 Python service tests passed. Both crates passed format checks,
 strict clippy and release builds. A real `--check-startup` launched the Python service

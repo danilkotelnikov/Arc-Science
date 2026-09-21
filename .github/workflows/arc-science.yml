@@ -1,9 +1,9 @@
 name: Arc Science development
 on:
   push:
-    paths: ['apps/arc-science/**', 'native/arc-memory/**', '.github/workflows/arc-science.yml']
+    paths: ['apps/arc-science/**', 'native/arc-memory/**', 'native/arc-science/**', '.github/workflows/arc-science.yml']
   pull_request:
-    paths: ['apps/arc-science/**', 'native/arc-memory/**', '.github/workflows/arc-science.yml']
+    paths: ['apps/arc-science/**', 'native/arc-memory/**', 'native/arc-science/**', '.github/workflows/arc-science.yml']
 permissions:
   contents: read
 jobs:
@@ -29,6 +29,10 @@ jobs:
         working-directory: apps/arc-science/web
       - run: npm run build
         working-directory: apps/arc-science/web
+      # The supervisor owns settings.toml; tests/test_settings.py:17,466 and web/e2e/serve.mjs:27 look for
+      # native/arc-science/target/release/arc-science-native, so the real-supervisor case and settings.e2e.js (:25 skips on 503) run instead of skipping.
+      - run: cargo build --release --locked --manifest-path native/arc-science/Cargo.toml
+        working-directory: ${{ github.workspace }}
       - run: python -m pytest -q -rs
       # End-to-end: the real service on an isolated data directory driven by Playwright.
       # The memory worker is built with the runner's preinstalled Rust so the recall

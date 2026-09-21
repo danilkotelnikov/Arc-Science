@@ -11,7 +11,8 @@ const LOCKED_LINE = 'Unlocks when the header holds an accepted desktop session o
 const NO_SETTINGS = 'missing its settings or the MCP package';
 const BUSY = {health: 'Refreshing service status…', readiness: 'Reading readiness…', mcp: 'Checking MCP servers…', acp: 'Checking ACP agents…', diagnostics: 'Reading diagnostics…', report: 'Preparing the redacted report…', retry: 'Resubmitting the render…'};
 const READ_DIAGNOSTICS = 'Select Read diagnostics to read it.';
-const STARTUP_LOG_NOTE = 'The startup log is kept by the desktop app in its own app-data folder; opening it from this page is not available in this build.';
+const STARTUP_LOG_NOTE = 'The startup log is kept by the desktop app in its own app-data folder; this page can open it only inside the desktop window.';
+const hostIpc = () => typeof window.ipc?.postMessage === 'function';
 
 const isAuthError = error => /Request failed \((401|403)\)/.test(error?.message || String(error));
 const words = value => typeof value === 'string' ? value.replace(/_/g, ' ') : value;
@@ -238,6 +239,12 @@ export default function DiagnosticsWorkspace({token, setToken, active = true, re
   const connectorNode = readiness && {state: stateOf(readiness.connectors), meaning: readiness.connectors?.meaning, next_action: readiness.connectors?.next_action};
   const sections = diagnostics?.locked || diagnostics?.available === false ? null : diagnostics;
   const diagnosticsPlaceholder = !token ? NEEDS_SESSION : busy === 'diagnostics' ? BUSY.diagnostics : rejected ? 'Not read: the session was rejected.' : READ_DIAGNOSTICS;
+  // Host-only: the desktop shell opens its own redacted log; no fetch, no token, not a busy task.
+  const openStartupLog = () => {
+    window.ipc.postMessage(JSON.stringify({kind: 'open-startup-log'}));
+    setNotice({kind: 'startup-log', text: 'Asked the desktop app to open the startup log.'});
+  };
+
   const feedback = (...kinds) => <>
     {kinds.includes(busy) && <p role="status">{BUSY[busy]}</p>}
     {notice && kinds.includes(notice.kind) && busy !== notice.kind && <p role="status">{notice.text}</p>}
@@ -379,7 +386,11 @@ export default function DiagnosticsWorkspace({token, setToken, active = true, re
           {sections?.probes?.records?.length > 0 ? <ul className="muted">{sections.probes.records.map(record => <li key={record.name + record.at}>{record.name} ({record.provider}) · {record.ok} of {record.results} ok · {at(record.at)}</li>)}</ul> : <p className="muted">No probe recorded.</p>}
         </SectionCard>
       </div>
-      <p className="field-note">{STARTUP_LOG_NOTE}</p>
+      {hostIpc() ? <>
+        <div className="actions"><Button variant="secondary" onPress={openStartupLog}>Open startup log</Button></div>
+        <p className="field-note">Opens the desktop app's redacted startup log in your text viewer; credential-like values are replaced with [redacted].</p>
+        {feedback('startup-log')}
+      </> : <p className="field-note">{STARTUP_LOG_NOTE}</p>}
       <h2>Connection checks (run on demand)</h2>
       <p className="field-note">Consented means you approved that connector.</p>
       <div className="actions">

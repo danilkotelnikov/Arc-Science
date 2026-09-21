@@ -395,7 +395,7 @@ describe('DiagnosticsWorkspace', () => {
       expect(card(title)).toHaveTextContent('Read at ' + new Date(READ_AT * 1000).toLocaleString());
     }
     expect(screen.queryByRole('button', {name: /startup log/i})).toBeNull();
-    expect(screen.getByText(/opening it from this page is not available in this build/)).toBeInTheDocument();
+    expect(screen.getByText(/this page can open it only inside the desktop window/)).toBeInTheDocument();
     expect(screen.queryByText(/"storage"/)).not.toBeInTheDocument();
   });
 
@@ -473,5 +473,25 @@ describe('DiagnosticsWorkspace', () => {
     }
     expect(screen.queryByLabelText('Redacted report')).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers Open startup log only inside the desktop window and asks the host over IPC', async () => {
+    const fetch = vi.fn(async path => path === '/health' ? health() : Promise.reject(new Error('unexpected ' + path)));
+    vi.stubGlobal('fetch', fetch);
+    const postMessage = vi.fn();
+    window.ipc = {postMessage};
+    try {
+      const user = userEvent.setup();
+      render(<DiagnosticsWorkspace token={NATIVE_SESSION} readiness={readiness('native')} refreshReadiness={vi.fn(async () => null)}/>);
+      await screen.findByText('single-trust-domain');
+      expect(screen.queryByText(/this page can open it only inside the desktop window/)).toBeNull();
+      await user.click(screen.getByRole('button', {name: 'Open startup log'}));
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      expect(postMessage).toHaveBeenCalledWith('{"kind":"open-startup-log"}');
+      expect(await screen.findByText('Asked the desktop app to open the startup log.')).toHaveAttribute('role', 'status');
+      expect(fetch.mock.calls.filter(([path]) => path === '/api/diagnostics')).toHaveLength(0);
+    } finally {
+      delete window.ipc;
+    }
   });
 });

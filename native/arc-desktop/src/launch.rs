@@ -5,7 +5,7 @@
 //! asks it for the startup plan. The desktop never parses the configuration itself.
 use crate::startup::{Config, LocalUrl};
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::Duration,
@@ -91,31 +91,56 @@ pub fn find_supervisor() -> Result<PathBuf, String> {
         })
 }
 
-/// The workspace that holds the configuration and data: an explicit override or the
-/// user's local application data. It is created when missing and never lives beside
-/// the executable.
+/// The folder for the startup log, the WebView2 profiles, the diagnostic attach
+/// record and the default workspace: `ARC_DESKTOP_APPDATA` when set (an absolute
+/// path, used as is), otherwise `%LOCALAPPDATA%\ArcScience` (`~/.arc-science`
+/// elsewhere). It is created when missing.
+pub fn app_data_directory() -> Result<PathBuf, String> {
+    let directory = resolve_app_data(
+        std::env::var_os("ARC_DESKTOP_APPDATA").as_deref(),
+        std::env::var_os(if cfg!(windows) {
+            "LOCALAPPDATA"
+        } else {
+            "HOME"
+        })
+        .as_deref(),
+    )?;
+    std::fs::create_dir_all(&directory).map_err(|error| {
+        format!(
+            "Cannot create application data directory {}: {error}",
+            directory.display()
+        )
+    })?;
+    Ok(directory)
+}
+
+fn resolve_app_data(override_: Option<&OsStr>, base: Option<&OsStr>) -> Result<PathBuf, String> {
+    if let Some(explicit) = override_ {
+        // Empty or relative is refused, never resolved against a working directory.
+        if !Path::new(explicit).is_absolute() {
+            return Err("ARC_DESKTOP_APPDATA must be an absolute directory path".into());
+        }
+        return Ok(PathBuf::from(explicit));
+    }
+    let base = base.ok_or("The local application data directory is not available")?;
+    Ok(PathBuf::from(base).join(if cfg!(windows) {
+        "ArcScience"
+    } else {
+        ".arc-science"
+    }))
+}
+
+fn default_workspace(app_data: &Path) -> PathBuf {
+    app_data.join("workspace")
+}
+
+/// The workspace that holds the configuration and data: an explicit override or a
+/// folder under the application data directory. It is created when missing and never
+/// lives beside the executable.
 pub fn workspace() -> Result<PathBuf, String> {
     let project = match std::env::var_os("ARC_DESKTOP_PROJECT") {
         Some(explicit) => PathBuf::from(explicit),
-        None => {
-            let variable = if cfg!(windows) {
-                "LOCALAPPDATA"
-            } else {
-                "HOME"
-            };
-            let base = std::env::var_os(variable).ok_or_else(|| {
-                format!(
-                    "Cannot choose a workspace folder: ARC_DESKTOP_PROJECT is not set and the local application data folder ({variable}) is not available"
-                )
-            })?;
-            PathBuf::from(base)
-                .join(if cfg!(windows) {
-                    "ArcScience"
-                } else {
-                    ".arc-science"
-                })
-                .join("workspace")
-        }
+        None => default_workspace(&app_data_directory()?),
     };
     std::fs::create_dir_all(&project)
         .map_err(|e| format!("Cannot create the workspace {}: {e}", project.display()))?;
@@ -531,6 +556,40 @@ mod tests {
                 .join("release")
                 .join(&name)
         );
+    }
+
+    #[test]
+    fn app_data_directory_prefers_the_override_and_requires_an_absolute_path() {
+        let absolute = std::env::temp_dir().join("arc-appdata-test");
+        let base = std::env::temp_dir().join("arc-appdata-base");
+        assert_eq!(
+            resolve_app_data(Some(absolute.as_os_str()), Some(base.as_os_str())).as_deref(),
+            Ok(absolute.as_path())
+        );
+        for refused in ["", "relative/appdata", "."] {
+            let error = resolve_app_data(Some(OsStr::new(refused)), Some(base.as_os_str()))
+                .expect_err("relative and empty overrides are refused");
+            assert!(
+                error.contains("ARC_DESKTOP_APPDATA"),
+                "{refused:?}: {error}"
+            );
+        }
+        assert_eq!(
+            resolve_app_data(None, Some(base.as_os_str())),
+            Ok(base.join(if cfg!(windows) {
+                "ArcScience"
+            } else {
+                ".arc-science"
+            }))
+        );
+        assert!(resolve_app_data(None, None).is_err());
+    }
+
+    #[test]
+    fn workspace_default_lives_under_the_app_data_directory() {
+        let app_data = std::env::temp_dir().join("arc-appdata-test");
+        let resolved = resolve_app_data(Some(app_data.as_os_str()), None).unwrap();
+        assert_eq!(default_workspace(&resolved), app_data.join("workspace"));
     }
 
     #[test]

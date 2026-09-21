@@ -279,3 +279,12 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   starts and Diagnostics shows the host session. Verified on the rebuilt desktop binary
   (downloads driven through UI Automation, the archive verified from disk) and by the
   reviewer's black-box run including a format-2 archive from the previous commit.
+- [Slice 6 record](2026-09-21-native-evidence.md): native evidence and portable install —
+  versioned drivers for the real desktop binary (an isolated launch with its own project,
+  app-data folder and port, eleven named journeys over the diagnostic attach with the
+  interrupted-service reopen, the UI Automation download driver, the failure page's
+  `Open startup log` and `Retry` driven once), `ARC_DESKTOP_APPDATA` so a run never touches
+  the operator's profile, `Open startup log` from the Diagnostics page over the host IPC,
+  the acceptance script asserting the release of processes and port, a portable check of
+  the bundled layout, and CI building the supervisor. Reports stay under `.omx/artifacts/`
+  with user paths redacted.
