@@ -21,6 +21,23 @@ reason to replace validated numerical code merely to claim a language rewrite.
 | U1 | Interactive browser testing exercises visible controls; no-code acceptance is not replaced by generated browser scripts or direct API calls. |
 | P1 | Appropriate automated checks, independent review, packaging and recoverability pass; unresolved live-provider, platform and deployment gates are recorded. |
 
+## Agentic-product gates — added 21 September 2026
+
+The existing routes and fields are a starting point, not evidence that an operator can
+configure, understand or govern a live scientific run. The detailed continuation
+contract is the [Claude agentic UX and production prompt](2026-09-21-claude-agentic-ux-and-production-prompt.md).
+
+| ID | Observable acceptance |
+| --- | --- |
+| A1 | On a fresh native profile, settings/readiness load without a manual ritual; offline fixture and live-provider states are distinct, actionable and consistent across Research, Settings and Diagnostics. |
+| A2 | Each scientific role has selectable, validated provider/model/effort/auth, capability fit and live readiness; a mission freezes the route actually used and never silently substitutes a model. |
+| A3 | Supported CLI login, API credential and officially supported desktop OAuth paths are distinct, secure, testable and revocable; unavailable provider paths remain visibly blocked. |
+| A4 | Per-tool and per-egress grants show destination, data category, scope, expiry and receipt; denied or revoked calls do not execute, and memory/connector text cannot grant authority. |
+| A5 | A mission cockpit reconstructs persisted role/tool/decision events, budgets, interventions and failure/recovery across restart without exposing private chain-of-thought or inventing telemetry. |
+| A6 | Each claim exposes requested versus supported scope, support/refutation, source and artifact provenance, uncertainty, reviewer/falsifier findings, next test and release-ledger blockers. |
+| A7 | The actual EXE passes visible-control Playwright/WebView2 journeys for setup, permission, mission, claim and export flows at desktop and narrow sizes; UI Automation and service-browser tests are complementary evidence. |
+| A8 | A clean-profile package, security/failure paths, performance measurements and live provider/connector probes pass before any global production-readiness claim. |
+
 Signed installers, cross-platform distribution, third-party scientific validation,
 paid live models and future embedding provisioning need their own evidence and any
 applicable credentials/authority. Until then the product is not globally production

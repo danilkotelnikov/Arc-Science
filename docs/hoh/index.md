@@ -212,3 +212,16 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   failure-page clicks, trajectory frames, live provider and connector routes,
   portable install.
 
+## Next product increment — 2026-09-21, Codex handoff
+
+- The user reports that model choice, OAuth, efforts, agentic sessions, settings and
+  permissions remain absent or unusable as a coherent experience. The source has
+  some corresponding fields/routes, so the next gate is a complete visible and
+  testable path rather than another presence-only checklist.
+- A [current native EXE observation](2026-09-21-native-agentic-ui-observations.md)
+  captures Settings before/after loading, Research, Diagnostics and the other
+  workspaces without changing saved settings or starting a mission.
+- The [new Claude prompt](2026-09-21-claude-agentic-ux-and-production-prompt.md)
+  specifies model/auth/permission setup, an agentic mission and claim cockpit,
+  native visible-control acceptance and honest production gates. New acceptance
+  IDs A1–A8 are in the [specification](specification.md).
