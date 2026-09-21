@@ -122,6 +122,96 @@ test('a custom model id is marked unverified until the service has checked it', 
   await expect(vision).not.toContainText('In catalog');
 });
 
+test('a browser session stores a credential from a terminal; Test seat needs consent, and a probe with no stored credential spends nothing', async ({page, request}) => {
+  const probe = await request.get('/api/settings', {headers});
+  test.skip(probe.status() === 503, 'native supervisor not built; settings unavailable');
+  const check = watchForTokenLeaks(page);
+  await openSettings(page);
+  await page.getByLabel('Planner provider').selectOption('openai');
+  await page.getByLabel('Planner model').selectOption('gpt-5.6-sol');
+  await page.getByLabel('Planner sign-in').selectOption('api_key');
+  await page.getByLabel('Planner effort').selectOption('medium');
+  await page.getByLabel('Planner credential').fill('e2e-missing');
+  const planner = page.getByRole('article', {name: 'Planner seat'});
+  // No desktop host here: the terminal command instead of Store/Remove, and Test seat
+  // waits for the save (it probes the saved seat) and then for the consent tick.
+  await expect(planner).toContainText('Store it from a terminal: arc-science credential --name e2e-missing --data <data dir>');
+  await expect(planner.getByRole('button', {name: 'Planner store credential'})).toHaveCount(0);
+  await expect(planner.getByRole('button', {name: 'Planner remove credential'})).toHaveCount(0);
+  const testSeat = planner.getByRole('button', {name: 'Planner test seat'});
+  await expect(testSeat).toBeDisabled();
+  await page.getByRole('button', {name: 'Save', exact: true}).click();
+  await expect(sidebarStatus(page)).toHaveText(/^Saved \(revision [0-9a-f]{12}\)\./);
+  await expect(planner).toContainText('No credential is stored under the name e2e-missing');
+  await expect(planner).toContainText('Never probed');
+  await expect(testSeat).toBeDisabled();
+  await expect(planner).toContainText('Tick the consent box to enable Test seat.');
+  await page.getByLabel('Planner probe consent').check();
+  await expect(testSeat).toBeEnabled();
+  // The probe resolves the credential before any request: with none stored under the name,
+  // every subject fails at that step, nothing is sent to the provider and no token is spent.
+  const [reply] = await Promise.all([page.waitForResponse(r => r.url().endsWith('/api/providers/openai/probe')), testSeat.click()]);
+  expect(reply.status()).toBe(200);
+  const results = (await reply.json()).results;
+  expect(results.length).toBeGreaterThan(0);
+  for (const result of results) {
+    expect(result).toMatchObject({transport: 'api', ok: false});
+    expect(result.error).toContain('No credential named e2e-missing');
+    expect(result).not.toHaveProperty('observed_model');
+  }
+  // Readiness keeps the same cause; the tick is spent; no request-failure card appears.
+  await expect(planner).toContainText('No credential is stored under the name e2e-missing');
+  await expect(planner).toContainText('Never probed');
+  await expect(page.getByLabel('Planner probe consent')).not.toBeChecked();
+  await expect(testSeat).toBeDisabled();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  check();
+});
+
+test('a custom endpoint is confirmed under Advanced and the confirmation round-trips through save', async ({page, request}) => {
+  const probe = await request.get('/api/settings', {headers});
+  test.skip(probe.status() === 503, 'native supervisor not built; settings unavailable');
+  const official = (await probe.json()).settings.providers.openai.endpoint;
+  await openSettings(page);
+  await expect(page.getByLabel('Planner provider')).toBeVisible();
+  await openSection(page, 'Advanced');
+  await expect(page.getByLabel('OpenAI endpoint')).toBeVisible();
+  // On the official origin there is nothing to confirm; off it, the box appears unticked.
+  await expect(page.getByLabel('OpenAI custom endpoint confirmed')).toHaveCount(0);
+  await page.getByLabel('OpenAI endpoint').fill('https://relay.e2e.invalid/v1/responses');
+  const confirm = page.getByLabel('OpenAI custom endpoint confirmed');
+  await expect(confirm).not.toBeChecked();
+  await expect(page.getByLabel('Anthropic custom endpoint confirmed')).toHaveCount(0);
+  await confirm.check();
+  await page.getByRole('button', {name: 'Save', exact: true}).click();
+  await expect(sidebarStatus(page)).toHaveText(/^Saved \(revision [0-9a-f]{12}\)\. OpenAI provider: applies at next live mission start\./);
+  let snap = await (await request.get('/api/settings', {headers})).json();
+  expect(snap.settings.providers.openai).toMatchObject({endpoint: 'https://relay.e2e.invalid/v1/responses', custom_endpoint_confirmed: true});
+  // Reload reads the confirmation back from the owner.
+  await page.getByRole('button', {name: 'Reload', exact: true}).click();
+  await expect(sidebarStatus(page)).toHaveCount(0);
+  await openSection(page, 'Advanced');
+  await expect(page.getByLabel('OpenAI custom endpoint confirmed')).toBeChecked();
+  // Withdrawing the confirmation blocks any OpenAI API seat until it is confirmed again or cleared.
+  await page.getByLabel('OpenAI custom endpoint confirmed').uncheck();
+  await page.getByRole('button', {name: 'Save', exact: true}).click();
+  await expect(sidebarStatus(page)).toHaveText(/^Saved/);
+  snap = await (await request.get('/api/settings', {headers})).json();
+  expect(snap.settings.providers.openai.custom_endpoint_confirmed).toBe(false);
+  if (snap.settings.seats.planner.provider === 'openai' && snap.settings.seats.planner.auth === 'api_key') {
+    const planner = page.getByRole('article', {name: 'Planner seat'});
+    await expect(planner).toContainText('https://relay.e2e.invalid is not the official origin; the credential is not sent there until it is confirmed');
+    await expect(planner).toContainText('Next: Confirm the custom endpoint under Settings → Advanced, or clear it');
+  }
+  // Back on the official origin the box is gone and the stored flag stays off.
+  await page.getByLabel('OpenAI endpoint').fill(official);
+  await expect(page.getByLabel('OpenAI custom endpoint confirmed')).toHaveCount(0);
+  await page.getByRole('button', {name: 'Save', exact: true}).click();
+  await expect(sidebarStatus(page)).toHaveText(/^Saved/);
+  snap = await (await request.get('/api/settings', {headers})).json();
+  expect(snap.settings.providers.openai).toMatchObject({endpoint: official, custom_endpoint_confirmed: false});
+});
+
 test('settings recovery copy hides the raw missing-supervisor error and offers Retry', async ({page}) => {
   await page.route('**/api/settings', route => route.fulfill({
     status: 503,

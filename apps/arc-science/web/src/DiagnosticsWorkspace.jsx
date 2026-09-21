@@ -2,7 +2,7 @@ import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from '
 import {Button} from '@heroui/react/button';
 import {NATIVE_SESSION, SESSION_COPY, apiFetch, checkedFetch, sessionState} from './http';
 import {LockNotice, focusTokenField, unlockLabel} from './LockNotice';
-import {STATE_LABEL, stateOf} from './readiness';
+import {STATE_LABEL, loginLine, probeLine, stateOf} from './readiness';
 import './DiagnosticsWorkspace.css';
 
 const OFFLINE = SESSION_COPY.offline.title + '. Start the local service, then retry.';
@@ -62,12 +62,19 @@ function ReadinessCard({title, node, placeholder, wide, children}) {
   return <StatusCard title={title} state={stateOf(node)} wide={wide}>{children}<Meaning node={node}/></StatusCard>;
 }
 
-function NodeRow({name, node}) {
+function NodeRow({name, node, children}) {
   const state = stateOf(node);
   return <tr data-state={state}>
     <th scope="row">{name}</th>
     <td><span className="readiness-badge" data-state={state}>{STATE_LABEL[state]}</span> {node?.meaning}{state !== 'ready' && node?.next_action && <span className="field-note"> Next: {node.next_action}</span>}</td>
+    {children}
   </tr>;
+}
+
+// The last probe is what readiness verified; a CLI seat's login is a fact beside it, not a verification.
+function SeatRow({name, node}) {
+  const login = loginLine(node);
+  return <NodeRow name={name} node={node}><td>{probeLine(node)}{login && <span className="field-note"> {login}</span>}</td></NodeRow>;
 }
 
 function McpReport({report}) {
@@ -183,11 +190,12 @@ export default function DiagnosticsWorkspace({token, setToken, active = true, re
   return <div className="research-workspace diagnostics-workspace">
     <aside className="research-form">
       <p className="eyebrow">Diagnostics</p><h1>Check the local system.</h1>
-      <p className="muted">Service status is public. Everything else comes from one readiness read, which needs a desktop session or an operator token: it reads settings and cached facts, spends no model tokens and starts nothing.</p>
+      <p className="muted">Service status is public. Everything else comes from one readiness read, which needs a desktop session or an operator token: it reads settings and cached facts, spends no model tokens and starts nothing. Re-read logins asks each CLI for its login state again instead of the 30 s cache.</p>
       <LockNotice card={lock} tone={rejected ? 'error' : 'info'} onUnlock={() => focusTokenField(token, setToken)} unlockLabel={unlockLabel(token)}/>
       <div className="actions">
         <Button isDisabled={!!busy} onPress={() => loadHealth()}>Refresh service</Button>
         <Button variant="secondary" isDisabled={!!busy || !token} onPress={() => run('readiness', () => refreshReadiness?.())}>Refresh readiness</Button>
+        <Button variant="secondary" isDisabled={!!busy || !token} onPress={() => run('readiness', () => refreshReadiness?.({fresh: true}))}>Refresh readiness (re-read logins)</Button>
       </div>
       {!token && <p className="field-note">{NEEDS_SESSION}</p>}
       {feedback('health', 'readiness')}
@@ -230,7 +238,8 @@ export default function DiagnosticsWorkspace({token, setToken, active = true, re
         <ReadinessCard title="Seats" node={readiness?.live_mission} placeholder={placeholder} wide>
           {readiness && <>
             <table className="diagnostics-table" aria-label="Seat readiness">
-              <tbody>{(readiness.roles || []).map(role => <NodeRow key={role.role} name={role.label} node={readiness.seats?.[role.role]}/>)}</tbody>
+              <thead className="visually-hidden"><tr><th scope="col">Seat</th><th scope="col">Readiness</th><th scope="col">Last probe</th></tr></thead>
+              <tbody>{(readiness.roles || []).map(role => <SeatRow key={role.role} name={role.label} node={readiness.seats?.[role.role]}/>)}</tbody>
             </table>
             {onNavigate && <Button variant="secondary" size="sm" onPress={() => onNavigate('settings')}>Open Settings</Button>}
           </>}

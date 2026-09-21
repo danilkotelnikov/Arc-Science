@@ -33,7 +33,7 @@ beforeEach(()=>{
   vi.stubGlobal('fetch',vi.fn(async(path,options={})=>{
     requests.push({path,options});
     if(path==='/api/session/status')return json({detail:'Authentication required'},{status:401});
-    if(path==='/api/readiness')return json(readiness);
+    if(path==='/api/readiness'||path==='/api/readiness?fresh=1')return json(readiness);
     if(path==='/api/bioart/search')return json({hits:[{entry_id:18,title:'Antibody'}]});
     if(path==='/api/bioart/inspect')return json(bioartEntry);
     if(path==='/api/bioart/fetch')return json(JSON.parse(options.body).format==='EPS'?bioartDownloadReceipt:bioartReceipt);
@@ -281,6 +281,33 @@ test('a manual token reads readiness only when a workspace asks, with the bearer
   expect(read[0].options.signal).toEqual(expect.any(AbortSignal));
   expect(screen.getByText('arc-memory/1 · SQLite 3.53.2')).toBeInTheDocument();
   expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
+});
+
+test('re-reading logins is the same readiness read with fresh=1 in the query, and a cached read in flight joins it',async()=>{
+  const normalFetch=fetch.getMockImplementation();
+  let answer;
+  fetch.mockImplementation((path,options)=>path==='/api/readiness?fresh=1'
+    ? (requests.push({path,options}),new Promise(resolve=>{answer=()=>resolve(json(readiness));})) : normalFetch(path,options));
+  const user=userEvent.setup();render(<App/>);
+  await user.type(screen.getByLabelText('Operator token'),'operator');
+  await user.click(screen.getByRole('button',{name:'Diagnostics'}));
+  await user.click(screen.getByRole('button',{name:'Refresh readiness (re-read logins)'}));
+  const read=()=>requests.filter(r=>r.path.startsWith('/api/readiness'));
+  await waitFor(()=>expect(read().map(r=>r.path)).toEqual(['/api/readiness?fresh=1']));
+  expect(read()[0].options.headers.Authorization).toBe('Bearer operator');
+  expect(read()[0].options.method).toBeUndefined();
+  // Research asks for a cached read while the fresh one is still out: it shares that fetch.
+  await user.click(screen.getByRole('button',{name:'Research'}));
+  await user.selectOptions(screen.getByLabelText('Model source'),'live');
+  expect(read().map(r=>r.path)).toEqual(['/api/readiness?fresh=1']);
+  await act(async()=>{answer();});
+  await user.click(screen.getByRole('button',{name:'Diagnostics'}));
+  await waitFor(()=>expect(screen.getByRole('heading',{name:'Session',level:3}).closest('article')).toHaveAttribute('data-state','ready'));
+  expect(screen.getByRole('heading',{name:'Seats',level:3}).closest('article')).toHaveTextContent('Never probed');
+  // A cached read after the fresh one settled is its own request.
+  await user.click(screen.getByRole('button',{name:'Refresh readiness'}));
+  await waitFor(()=>expect(read().map(r=>r.path)).toEqual(['/api/readiness?fresh=1','/api/readiness']));
+  expect(read()[0].options.signal.aborted).toBe(false);
 });
 
 test('empty saved missions have an actionable state',async()=>{

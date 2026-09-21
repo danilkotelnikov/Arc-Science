@@ -51,23 +51,27 @@ export function App() {
     return()=>window.removeEventListener('popstate',restored);
   },[]);
   // Readiness is read once per session: on its own for a desktop session, on a
-  // workspace's request for a manual token. Concurrent requests share one fetch; a
-  // token change discards the previous answer and any request still in flight.
+  // workspace's request for a manual token. Concurrent requests share one fetch per
+  // options; a token change discards the previous answer and any request still in
+  // flight. {fresh:true} makes the service re-read CLI logins and the credential store
+  // instead of its 30 s cache: it never joins a cached read in flight (that one is
+  // dropped), while a cached read arriving during a fresh one joins it.
   const [readiness,setReadiness]=useState(null),[readinessError,setReadinessError]=useState(null);
   const pending=useRef(null);
-  const refreshReadiness=useCallback(()=>{
+  const refreshReadiness=useCallback(({fresh=false}={})=>{
     if(!token)return Promise.resolve(null);
-    if(pending.current?.token===token)return pending.current.promise;
+    const path='/api/readiness'+(fresh?'?fresh=1':'');
+    if(pending.current?.token===token&&(pending.current.path===path||!fresh))return pending.current.promise;
     pending.current?.controller.abort();
     const controller=new AbortController();
-    const promise=apiFetch('/api/readiness',{token,signal:controller.signal}).then(response=>response.json()).then(data=>{
+    const promise=apiFetch(path,{token,signal:controller.signal}).then(response=>response.json()).then(data=>{
       if(controller.signal.aborted)return null;
       setReadiness(data);setReadinessError(null);return data;
     }).catch(error=>{
       if(controller.signal.aborted)return null;
       setReadiness(null);setReadinessError(error?.message||String(error));return null;
     }).finally(()=>{if(pending.current?.controller===controller)pending.current=null;});
-    pending.current={token,controller,promise};
+    pending.current={token,path,controller,promise};
     return promise;
   },[token]);
   useEffect(()=>{

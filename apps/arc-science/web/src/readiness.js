@@ -19,3 +19,21 @@ export function seatSummary(seat) {
   const meaning = seat?.meaning ? ' — ' + seat.meaning : '';
   return label + ': ' + STATE_LABEL[stateOf(seat)] + meaning;
 }
+
+const probedAt = at => at > 0 ? new Date(at * 1000).toLocaleString() : 'unknown time';
+
+/** A seat's verification on one line, the same under a Settings card and in Diagnostics. */
+export function probeLine(seat) {
+  const v = seat?.verification || {};
+  if (v.status === 'ok') return 'Last probe ' + probedAt(v.checked_at) + ' · answering model ' + (v.observed_model || 'not reported') + ' · identity ' + (v.identity_verified ? 'verified' : 'not verified');
+  if (v.status === 'failed') return 'Probe failed: ' + (v.error || 'no detail');
+  if (v.status === 'stale') return 'Last probe ' + probedAt(v.checked_at) + ' · for an earlier configuration of this seat';
+  return 'Never probed';
+}
+
+/** A CLI seat's login as readiness reports it (a fact, not a verification); null for an API seat. */
+export function loginLine(seat) {
+  const f = seat?.facts || {};
+  if (f.transport !== 'cli') return null;
+  return f.cli_logged_in ? 'Signed in via ' + (f.executable || 'the CLI') + (f.cli_auth_method ? ' (' + f.cli_auth_method + ')' : '') : 'Not signed in';
+}

@@ -143,6 +143,42 @@ workbench header announces. The browser profile (cache, storage) lives under
 `%LOCALAPPDATA%\ArcScience\webview` (`~/.arc-science/webview` elsewhere), never beside
 the executable.
 
+## Credential boundary
+
+A provider key never crosses the WebView. The page asks the host by name over
+`window.ipc.postMessage(JSON.stringify({kind: 'store-credential', name, provider}))`
+or `{kind: 'remove-credential', name}`; `name` is 1–80 characters of
+`[A-Za-z0-9._-]` (the same rule as the service and the supervisor) and `provider` is
+`anthropic`, `openai`, `gemini` or `openclaw`. The host accepts a message only from a
+page at the configured service origin (the origin the navigation handler enforces);
+anything else is refused with a line on stderr and in the startup log that names the
+source origin and never the body. A message from the right origin that fails
+validation is answered with the reason and is not acted on.
+
+For `store-credential` the host shows the Windows credential prompt
+(`CredUIPromptForWindowsCredentialsW`, generic credentials, owned by the window)
+with the caption `Arc Science — credential <name> for <provider>` (ending in
+`(diagnostic attach is on)` when that mode is on; a name too long for the 128-character
+caption limit is elided) and the message that the key goes into the Password field.
+The answer is unpacked (`CredUnPackAuthenticationBufferW`), the password converted
+to UTF-8 and written with `CredWriteW` as a generic credential: target
+`ArcScience/<name>`, user name = the provider, blob = the secret bytes, persistence
+`CRED_PERSIST_LOCAL_MACHINE` (the current user's Windows Credential Manager, DPAPI).
+An empty password, a key above the 2560-byte Credential Manager limit and a failed
+write are reported as errors. Every buffer that held the secret (the prompt's
+authentication buffer, the UTF-16 password and the UTF-8 copy) is overwritten
+before it is freed. `remove-credential` calls `CredDeleteW` on the same target; a
+credential that is already absent counts as removed.
+
+The page receives one `arc-credential` window event per request with
+`{kind, name, provider, stored, cancelled, error}` — the outcome only, never the
+secret; `kind` and `name` are null when the message itself was refused. The service
+resolves the credential by name (`CredReadW` on `ArcScience/<name>`) after its own
+credential file, so a key stored here is used by the seat that names it. The startup
+log records `Credential: <kind> <name> stored|removed|cancelled|failed: <reason>`;
+reasons carry Win32 error codes, not values. On other operating systems both
+requests answer `credential prompt is available on Windows only`.
+
 The desktop closes its private child-stdin pipe on normal close or startup/WebView
 failure. `arc-science-native serve --parent-stdin` treats EOF as cancellation and
 terminates its worker process group/job, including ordinary descendants. Standalone
@@ -175,7 +211,10 @@ cargo clippy --locked --manifest-path native/arc-desktop/Cargo.toml --all-target
 Tests cover loopback/authority validation, root health paths, status/identity checks,
 redirect/proxy settings, remaining-deadline behavior, literal argv, reuse, spawn errors,
 early exits, timeout cleanup, local navigation, external-target filtering, the
-download-report script literal, icon transparency and white puddles. One ignored test
+download-report script literal, icon transparency and white puddles, and the
+credential boundary (message parsing and validation, the `ArcScience/<name>` target,
+the prompt caption and its length limit, the `arc-credential` script literal, buffer
+wiping; the Windows prompt itself is never shown by a test). One ignored test
 is an intentional subprocess fixture executed by its owning timeout regression.
 
 Developer verification on Windows, 2026-09-18: 12 desktop tests passed, 24 supervisor

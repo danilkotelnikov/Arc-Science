@@ -208,8 +208,13 @@ def test_seats_configured_in_settings_drive_the_endpoints_and_the_falsifier_gets
     route_digest, detail = service.seat_plan(service.live_route())
     assert detail == 'sha256:' + route_digest + ' ' + json.dumps({'falsifier': 'openai:api:gpt-5.6-mini:medium:falsifier-key',
         'planner': 'openai:cli:gpt-5.5:xhigh:planner', 'reviewer': 'anthropic:api:claude-sonnet-5:low:reviewer'}, separators=(',', ':'))
-    # The digest covers the whole route, not only the summary: an endpoint change is a different plan.
+    # An endpoint off the official origin receives no credential until it is confirmed under Advanced.
     doc['providers']['anthropic']['endpoint'] = 'https://proxy.example/v1/messages'
+    settings.replace(doc, None)
+    with pytest.raises(ValueError, match=r'providers\.anthropic\.endpoint https://proxy\.example is not the official origin; confirm it under Advanced before a credential is sent there'):
+        service.live_route()
+    # The digest covers the whole route, not only the summary: an endpoint change is a different plan.
+    doc['providers']['anthropic']['custom_endpoint_confirmed'] = True
     settings.replace(doc, None)
     assert service.seat_plan(service.live_route())[0] != route_digest
 
@@ -328,7 +333,9 @@ def test_a_live_mission_runs_each_seat_through_its_own_cli_and_binds_the_seat_pl
         assert probe['transport'] == 'codex' and probe['results'] == [{**probe['results'][0], 'model': 'gpt-5.5', 'effort': 'xhigh',
                                                                         'roles': ['planner'], 'ok': True, 'observed_model': None,
                                                                         'identity_verified': False, 'applied_effort': 'xhigh'}]
-        assert c.post('/api/providers/openclaw/probe', headers=AUTH, json={'spend_tokens': True}).status_code == 404
+        assert c.post('/api/providers/nope/probe', headers=AUTH, json={'spend_tokens': True}).status_code == 404
+        unused = c.post('/api/providers/openclaw/probe', headers=AUTH, json={'spend_tokens': True})
+        assert unused.status_code == 409 and unused.json()['detail'] == 'No seat uses the provider openclaw'
         # A resume after the seats changed is refused; the routing is part of the consent.
         repo = c.app.state.repository
         current = repo.get(row['id'])

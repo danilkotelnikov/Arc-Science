@@ -3,10 +3,11 @@ store, the CLI login cache and the probe records; the reading is passive."""
 import json
 from pathlib import Path
 
+import httpx
 from fastapi.testclient import TestClient
 
-from arc_science import readiness, settings
-from arc_science.exploration import effort
+from arc_science import readiness, service, settings
+from arc_science.exploration import cli_seats, effort
 from test_settings import AUTH, app, launcher, stub  # noqa: F401  (stub is a fixture)
 
 NATIVE = 'native-session-secret-A-0123456789abcdef0123456789abcdef'
@@ -20,10 +21,10 @@ def seats(**overrides):
     return {'settings': {'seats': base, 'providers': {}, 'mcp_servers': [], 'acp_agents': []}, 'revision': 'a' * 64, 'path': 'settings.toml'}
 
 
-def build(snapshot, *, stored=lambda ref: True, cli=lambda provider: None, probes=lambda provider: None):
+def build(snapshot, *, stored=lambda ref: True, cli=lambda provider: None, probes=lambda provider: None, **extra):
     return readiness.build_readiness('token', settings_snapshot=snapshot, credential_stored=stored, cli_transport_reader=cli, probes_reader=probes,
                                      catalog=CATALOG, memory_health={'configured': False, 'capture': {'status': 'unconfigured'}},
-                                     renderer={'configured': False, 'exists': None, 'default_preset': None}, storage={'missions_db': True, 'missions': 0})
+                                     renderer={'configured': False, 'exists': None, 'default_preset': None}, storage={'missions_db': True, 'missions': 0}, **extra)
 
 
 def test_seat_states_follow_the_contract_matrix():
@@ -136,6 +137,55 @@ def test_probe_records_are_matched_to_the_seat_by_subject_digest():
     assert failed['live_mission']['blocking'] == ['planner']
 
 
+def test_api_seats_report_their_store_and_endpoint_and_match_probe_records_by_transport():
+    doc = seats(planner={'provider': 'openai', 'model': 'gpt-5.6-sol', 'effort': 'high', 'credential': 'planner-key'})
+    current = readiness.subject_digest(readiness.subject('openai', 'api', 'gpt-5.6-sol', 'high', endpoint='https://api.openai.com', credential_ref='planner-key'))
+    none = build(doc, stored=lambda ref: True)['seats']['planner']
+    assert none['facts'] == {**none['facts'], 'credential_stored': True, 'credential_store': None, 'endpoint': 'https://api.openai.com', 'endpoint_confirmed': True}
+    assert (none['code'], none['verification']['status'], none['verification']['subject_digest']) == ('seat.not_tested', 'not_tested', current)
+    stores = build(doc, credential_source=lambda ref: 'credential_manager')['seats']['planner']['facts']
+    assert stores['credential_store'] == 'credential_manager' and 'console_profile' not in stores
+    # The provider's records of both transports arrive merged; only the seat's own transport counts.
+    cli_same_model = {'at': 1, 'transport': 'cli', 'model': 'gpt-5.6-sol', 'effort': 'high', 'ok': True, 'subject_digest': 'x' * 64}
+    api_ok = {'at': 1700000001, 'transport': 'api', 'model': 'gpt-5.6-sol', 'effort': 'high', 'ok': True, 'observed_model': 'gpt-5.6-sol',
+              'identity_verified': True, 'subject_digest': current}
+    assert build(doc, probes=lambda p: {'at': 1, 'results': [cli_same_model]})['seats']['planner']['code'] == 'seat.not_tested'
+    verified = build(doc, probes=lambda p: {'at': 1700000001, 'results': [cli_same_model, api_ok]})
+    assert (verified['seats']['planner']['state'], verified['seats']['planner']['code']) == ('ready', 'seat.verified')
+    assert verified['seats']['planner']['verification'] == {'status': 'ok', 'checked_at': 1700000001, 'subject_digest': current, 'observed_model': 'gpt-5.6-sol',
+                                                             'identity_verified': True, 'error': None}
+    assert verified['seats']['planner']['meaning'] == 'The probe passed for gpt-5.6-sol at effort high at https://api.openai.com'
+    assert verified['live_mission']['code'] == 'live.verified'
+    stale = build(seats(planner={'provider': 'openai', 'model': 'gpt-5.6-sol', 'effort': 'low', 'credential': 'planner-key'}),
+                  probes=lambda p: {'at': 5, 'results': [api_ok]})['seats']['planner']
+    assert (stale['code'], stale['verification']['status'], stale['verification']['checked_at']) == ('seat.probe_stale', 'stale', 1700000001)
+    assert 'endpoint or credential name' in stale['meaning']
+    failed = build(doc, probes=lambda p: {'at': 2, 'results': [{**api_ok, 'ok': False, 'error': 'Provider HTTP 401'}]})['seats']['planner']
+    assert (failed['state'], failed['code'], failed['verification']['error']) == ('failed', 'seat.probe_failed', 'Provider HTTP 401')
+    # A custom endpoint is unconfirmed until ticked under Advanced; OpenClaw has no official origin.
+    custom = seats(planner={'provider': 'openai', 'model': 'gpt-5.6-sol', 'credential': 'planner-key'})
+    custom['settings']['providers'] = {'openai': {'endpoint': 'https://proxy.example/v1/responses'}}
+    blocked = build(custom, stored=lambda ref: False)['seats']['planner']
+    assert (blocked['state'], blocked['code'], blocked['facts']['endpoint'], blocked['facts']['endpoint_confirmed']) == ('blocked', 'seat.endpoint_unconfirmed', 'https://proxy.example', False)
+    assert blocked['next_action'] == 'Confirm the custom endpoint under Settings → Advanced, or clear it' and blocked['facts']['credential_stored'] is None
+    assert build(custom, stored=lambda ref: False)['live_mission']['blocking'] == ['planner']
+    custom['settings']['providers']['openai']['custom_endpoint_confirmed'] = True
+    confirmed = build(custom)['seats']['planner']
+    assert (confirmed['code'], confirmed['facts']['endpoint_confirmed']) == ('seat.not_tested', True)
+    assert readiness.endpoint_confirmed('openai', {'endpoint': 'https://api.openai.com/v1/responses'}) is True
+    assert readiness.endpoint_confirmed('openai', {}) is True and readiness.endpoint_confirmed('openai', {'endpoint': 'https://API.openai.com'}) is False
+    assert readiness.endpoint_confirmed('openclaw', {'endpoint': 'http://127.0.0.1:18789/v1'}) is None
+    claw = seats(planner={'provider': 'openclaw', 'model': 'agent', 'credential': 'claw'})
+    claw['settings']['providers'] = {'openclaw': {'endpoint': 'http://127.0.0.1:18789/v1', 'agent_id': 'a', 'isolated': True}}
+    assert build(claw)['seats']['planner']['facts']['endpoint_confirmed'] is None
+    # The Anthropic console profile is reported only: on the provider node and on Anthropic seats.
+    out = build(seats(planner={'provider': 'anthropic', 'model': 'claude-opus-5'}))
+    assert out['providers'] == {'anthropic': {'console_profile': {'detected': False, 'profile': None, 'source': 'ant auth status'}}}
+    assert out['seats']['planner']['facts']['console_profile'] == out['providers']['anthropic']['console_profile']
+    profile = {'detected': True, 'profile': 'default', 'source': 'ant auth status'}
+    assert build(seats(), console_profile=profile)['providers']['anthropic']['console_profile'] == profile
+
+
 def test_settings_unavailable_leaves_every_seat_unknown_and_the_other_nodes_still_read():
     out = readiness.build_readiness('native', settings_snapshot=None, credential_stored=lambda r: True, cli_transport_reader=lambda p: None,
                                     probes_reader=lambda p: None, catalog=CATALOG, memory_health={'configured': True, 'capture': {'status': 'ready'}, 'health': {'protocol': 1, 'sqlite': '3.45'}},
@@ -219,3 +269,151 @@ def test_the_route_is_authorized_names_the_session_kind_and_reads_probe_records(
     with TestClient(app(tmp_path)) as c:
         planner = c.get('/api/readiness', headers=AUTH).json()['seats']['planner']
         assert (planner['state'], planner['code'], planner['facts']['cli_logged_in']) == ('blocked', 'seat.cli_not_signed_in', False)
+
+
+ANT = r"""
+import sys
+mode = sys.argv[1]
+if sys.argv[2:4] != ['auth', 'status']:
+    sys.exit(2)
+print('Active profile:  default (from active_config file)')
+print('Config dir:      C:\\Users\\operator\\AppData\\Roaming\\Anthropic')
+print('')
+print('Credentials')
+if mode == 'profile':
+    print('  Logged in to Example Org as operator@example.org')
+    print('  (active) * Profile (user_oauth) [via active_config]       sk-ant-oat01-abc...')
+    print('               expires:        2026-09-20T19:42:48+03:00 (expired 20h7m0s ago)')
+else:
+    print('  No credentials found; run ant auth login')
+"""
+
+
+def rewind_cooldown(client):
+    """The probe cooldown clock lives in the app closure; wind it back between probes."""
+    route = next(r for r in client.app.router.routes if getattr(r, 'path', '') == '/api/providers/{provider}/probe')
+    for cell in route.endpoint.__closure__:
+        if isinstance(cell.cell_contents, dict) and list(cell.cell_contents) == ['at']:
+            cell.cell_contents['at'] = 0.0
+
+
+def test_api_seats_are_probed_over_http_with_the_official_header_style_and_persisted_per_provider(tmp_path, stub, monkeypatch):
+    for key in ('ARC_PROVIDER', 'ARC_MODEL', 'ARC_REVIEWER_MODEL', 'ARC_CLAUDE_CODE_EXE', 'ARC_MODEL_TOKEN_FILE', 'ARC_REVIEWER_TOKEN_FILE'):
+        monkeypatch.delenv(key, raising=False)
+    data = tmp_path / 'data'
+    monkeypatch.setenv('ARC_DATA_DIR', str(data))
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        body = json.loads(request.content)
+        if 'anthropic' in str(request.url):
+            return httpx.Response(200, json={'model': body['model'], 'stop_reason': 'end_turn', 'usage': {'input_tokens': 1, 'output_tokens': 1},
+                                             'content': [{'type': 'text', 'text': '{"ok": true}'}]})
+        return httpx.Response(200, json={'model': body['model'], 'status': 'completed', 'usage': {'input_tokens': 1, 'output_tokens': 1},
+                                         'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': '{"ok": true}'}]}]})
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(service.httpx, 'AsyncClient', lambda **kw: real_client(transport=httpx.MockTransport(respond), **kw))
+    doc = settings.snapshot()['settings']
+    doc['seats']['planner'].update(provider='openai', model='gpt-5.6-sol', effort='high', credential='planner-key')
+    doc['seats']['vision'].update(provider='anthropic', model='claude-opus-5', effort='low', credential='ant-key')
+    settings.replace(doc, None)
+    store = data / 'credentials'
+    store.mkdir(parents=True)
+    (store / 'planner-key.credential').write_text('sk-planner-secret-0123456789\n')
+    (store / 'ant-key.credential').write_text('sk-ant-secret-0123456789\n')
+    with TestClient(app(tmp_path)) as c:
+        before = c.get('/api/readiness', headers=AUTH).json()
+        assert before['seats']['planner']['code'] == 'seat.not_tested' and before['seats']['planner']['facts']['credential_store'] == 'file'
+        assert before['seats']['reviewer']['code'] == 'seat.inherits' and before['seats']['vision']['code'] == 'seat.not_tested'
+        # One call per distinct subject; the reviewer and falsifier inherit the planner's.
+        probe = c.post('/api/providers/openai/probe', headers=AUTH, json={'spend_tokens': True}).json()
+        assert probe['transport'] == 'api' and probe['provider'] == 'openai' and len(probe['results']) == 1
+        result = probe['results'][0]
+        assert result == {**result, 'model': 'gpt-5.6-sol', 'effort': 'high', 'roles': ['planner', 'reviewer', 'falsifier'], 'transport': 'api', 'ok': True,
+                          'observed_model': 'gpt-5.6-sol', 'identity_verified': True, 'applied_effort': 'high'}
+        assert result['subject'] == {'provider': 'openai', 'transport': 'api', 'model': 'gpt-5.6-sol', 'effort': 'high', 'endpoint': 'https://api.openai.com',
+                                     'credential_ref': 'planner-key'} and len(result['subject_digest']) == 64
+        assert len(requests) == 1 and requests[0].headers['authorization'] == 'Bearer sk-planner-secret-0123456789'
+        assert str(requests[0].url) == 'https://api.openai.com/v1/responses' and json.loads(requests[0].content)['reasoning'] == {'effort': 'high'}
+        assert 'secret' not in json.dumps(probe) and (data / 'providers' / 'openai-probes.jsonl').is_file() and not (data / 'providers' / 'codex-probes.jsonl').exists()
+        assert 'secret' not in (data / 'providers' / 'openai-probes.jsonl').read_text(encoding='utf-8')
+        out = c.get('/api/readiness', headers=AUTH).json()
+        planner = out['seats']['planner']
+        assert (planner['state'], planner['code'], planner['verification']['subject_digest']) == ('ready', 'seat.verified', result['subject_digest'])
+        assert planner['verification'] == {**planner['verification'], 'status': 'ok', 'checked_at': probe['at'], 'observed_model': 'gpt-5.6-sol', 'identity_verified': True}
+        assert out['live_mission']['code'] == 'live.verified' and out['seats']['vision']['code'] == 'seat.not_tested'
+        # The Anthropic vision seat: a text-only call with x-api-key; the cooldown is per service.
+        assert c.post('/api/providers/anthropic/probe', headers=AUTH, json={'spend_tokens': True}).status_code == 429
+        rewind_cooldown(c)
+        vision = c.post('/api/providers/anthropic/probe', headers=AUTH, json={'spend_tokens': True}).json()
+        assert vision['results'][0] == {**vision['results'][0], 'roles': ['vision'], 'ok': True, 'observed_model': 'claude-opus-5', 'applied_effort': 'low'}
+        assert requests[1].headers['x-api-key'] == 'sk-ant-secret-0123456789' and 'authorization' not in requests[1].headers
+        assert str(requests[1].url) == 'https://api.anthropic.com/v1/messages' and 'image' not in requests[1].content.decode()
+        assert c.get('/api/readiness', headers=AUTH).json()['seats']['vision']['code'] == 'seat.verified'
+        # A changed effort is an older subject.
+        doc = settings.snapshot()['settings']
+        doc['seats']['planner']['effort'] = 'low'
+        settings.replace(doc, None)
+        assert c.get('/api/readiness', headers=AUTH).json()['seats']['planner']['code'] == 'seat.probe_stale'
+    with TestClient(app(tmp_path)) as c:
+        # A fresh service reads the provider file; the memory is cold.
+        doc['seats']['planner']['effort'] = 'high'
+        settings.replace(doc, None)
+        assert c.get('/api/readiness', headers=AUTH).json()['seats']['planner']['code'] == 'seat.verified'
+        # An unconfirmed custom endpoint: no probe, no live mission, one state with the fix.
+        doc['providers']['openai']['endpoint'] = 'https://proxy.example/v1/responses'
+        settings.replace(doc, None)
+        blocked = c.get('/api/readiness', headers=AUTH).json()
+        assert (blocked['seats']['planner']['code'], blocked['seats']['planner']['facts']['endpoint_confirmed']) == ('seat.endpoint_unconfirmed', False)
+        assert blocked['live_mission']['blocking'] == ['planner']
+        refused = c.post('/api/providers/openai/probe', headers=AUTH, json={'spend_tokens': True})
+        assert refused.status_code == 409 and refused.json()['detail'] == 'providers.openai.endpoint https://proxy.example is not the official origin; confirm it under Advanced before a credential is sent there'
+        assert c.post('/api/missions', headers=AUTH, json={'goal': 'Live route to an unconfirmed endpoint', 'mode': 'live', 'allow_egress': True}).status_code == 409
+        assert len(requests) == 2
+        doc['providers']['openai']['custom_endpoint_confirmed'] = True
+        settings.replace(doc, None)
+        confirmed = c.get('/api/readiness', headers=AUTH).json()['seats']['planner']
+        assert (confirmed['code'], confirmed['facts']['endpoint'], confirmed['facts']['endpoint_confirmed']) == ('seat.probe_stale', 'https://proxy.example', True)  # the earlier probe was at the official origin
+        probe = c.post('/api/providers/openai/probe', headers=AUTH, json={'spend_tokens': True}).json()
+        assert probe['results'][0]['subject']['endpoint'] == 'https://proxy.example' and str(requests[2].url) == 'https://proxy.example/v1/responses'
+        assert c.get('/api/readiness', headers=AUTH).json()['seats']['planner']['code'] == 'seat.verified'
+
+
+def test_fresh_rereads_the_cli_login_and_the_console_profile_is_reported_only(tmp_path, stub, monkeypatch):
+    for key in ('ARC_PROVIDER', 'ARC_MODEL', 'ARC_REVIEWER_MODEL', 'ARC_CLAUDE_CODE_EXE', 'ARC_MODEL_TOKEN_FILE'):
+        monkeypatch.delenv(key, raising=False)
+    fixtures = Path(__file__).parent / 'fixtures'
+    codex = launcher(tmp_path, 'codex', fixtures / 'fake_codex.py', 'success')
+    doc = settings.snapshot()['settings']
+    doc['seats']['planner'].update(provider='openai', model='gpt-5.6-sol', auth='cli')
+    doc['providers']['openai']['cli'] = str(codex)
+    settings.replace(doc, None)
+    calls = []
+    real_status = cli_seats.auth_status
+
+    async def counted(command, *args, **kwargs):
+        calls.append(command)
+        return await real_status(command, *args, **kwargs)
+    monkeypatch.setattr(cli_seats, 'auth_status', counted)
+    monkeypatch.setattr(readiness.shutil, 'which', lambda name: None)
+    with TestClient(app(tmp_path)) as c:
+        assert c.get('/api/readiness', headers=AUTH).json()['seats']['planner']['facts']['cli_logged_in'] is True
+        assert c.get('/api/readiness', headers=AUTH).json()['seats']['planner']['code'] == 'seat.not_tested' and len(calls) == 1
+        fresh = c.get('/api/readiness?fresh=1', headers=AUTH).json()
+        assert len(calls) == 2 and fresh['seats']['planner']['facts']['cli_logged_in'] is True
+        # No ant on PATH: nothing is run and the profile is not detected.
+        assert fresh['providers']['anthropic']['console_profile'] == {'detected': False, 'profile': None, 'source': 'ant auth status'}
+    script = tmp_path / 'fake_ant.py'
+    script.write_text(ANT, encoding='utf-8')
+    ant = launcher(tmp_path, 'ant', script, 'profile')
+    monkeypatch.setattr(readiness.shutil, 'which', lambda name: str(ant) if name == 'ant' else None)
+    with TestClient(app(tmp_path)) as c:
+        out = c.get('/api/readiness', headers=AUTH).json()
+        assert out['providers']['anthropic']['console_profile'] == {'detected': True, 'profile': 'default', 'source': 'ant auth status'}
+        text = json.dumps(out)
+        assert 'sk-ant' not in text and 'operator@example.org' not in text and 'expires' not in text
+        # Cached like the transports; fresh re-runs it.
+        monkeypatch.setattr(readiness.shutil, 'which', lambda name: str(launcher(tmp_path, 'ant', script, 'none')) if name == 'ant' else None)
+        assert c.get('/api/readiness', headers=AUTH).json()['providers']['anthropic']['console_profile']['detected'] is True
+        assert c.get('/api/readiness?fresh=1', headers=AUTH).json()['providers']['anthropic']['console_profile'] == {'detected': False, 'profile': 'default', 'source': 'ant auth status'}

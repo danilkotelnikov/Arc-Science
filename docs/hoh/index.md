@@ -244,3 +244,11 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   attempted planner calls through the operator's Gemini CLI is recorded there.
 - Blocked: the Claude Science comparison baseline (unreachable) and a second Sol review
   (usage limit until 25 September).
+- [Slice 2 record](2026-09-21-slice2-credentials-record.md): the page never holds a
+  secret — the host opens the Windows credential prompt and keeps the value in the
+  Credential Manager, the service reads it by name; probes now cover API seats and
+  persist; a credential goes only to its provider's official origin unless confirmed;
+  Test / Remove / Re-check per seat; the sign-in modes with their official basis and
+  the `ant` Console profile reported only. Verified on the rebuilt EXE except the typed
+  half of the prompt, which accepts no automated input and needs a person once.
+

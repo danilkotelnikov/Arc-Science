@@ -50,12 +50,11 @@ Three routes; pick one.
   persisted model record carries the call's transport provenance. Visual review
   needs a native image endpoint: set `ARC_VISION_PROVIDER=anthropic` (or `openai`)
   with its own credential file and the vision seat uses it alongside the CLI seats.
-- **API key (direct HTTPS).** Leave `ARC_ANTHROPIC_AUTH` unset (default `x-api-key`).
-  Put an Anthropic **API key** in the seat's token file.
-- **Bearer token (direct HTTPS).** Set `ARC_ANTHROPIC_AUTH=bearer` (`oauth` is accepted
-  as the older spelling) and the adapter sends `Authorization: Bearer <token>`. Use
-  this only with a token Anthropic issued for a third-party service; subscription
-  OAuth tokens belong to Claude Code and are not impersonated here.
+- **API key (direct HTTPS).** Put an Anthropic **API key** in the seat's credential
+  (the `arc-science credential` command, or Settings → Store credential in the desktop
+  app); the adapter sends it as `x-api-key`. `ARC_ANTHROPIC_AUTH` (bearer/oauth) was
+  retired on 21 September 2026: no official basis exists for sending another token
+  kind, and subscription OAuth tokens belong to Claude Code.
 
 ## The one manual step — supply the credential
 

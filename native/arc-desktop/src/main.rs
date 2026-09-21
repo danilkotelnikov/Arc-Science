@@ -2,6 +2,7 @@
 // A windowed application: a double-click opens no console. When started from a
 // console (the launcher, `--check-startup`), that console is attached for output.
 #![cfg_attr(windows, windows_subsystem = "windows")]
+mod credential;
 mod external;
 mod launch;
 mod startup;
@@ -53,6 +54,9 @@ enum Shell {
         folder: Option<String>,
         success: bool,
     },
+    /// The page asked the host to store or remove a credential by name (IPC from the
+    /// service origin); a malformed message carries its reason and is reported back.
+    Credential(Result<credential::Request, String>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -457,6 +461,25 @@ fn js_string(value: Option<&str>) -> String {
     out
 }
 
+/// The `arc-credential` window event: the outcome only, never the secret. `kind`
+/// and `name` are null when the message itself was refused.
+fn credential_event_script(
+    kind: Option<&str>,
+    name: Option<&str>,
+    provider: Option<&str>,
+    outcome: &credential::Outcome,
+) -> String {
+    format!(
+        "window.dispatchEvent(new CustomEvent('arc-credential', {{detail: {{kind: {}, name: {}, provider: {}, stored: {}, cancelled: {}, error: {}}}}}))",
+        js_string(kind),
+        js_string(name),
+        js_string(provider),
+        outcome.stored,
+        outcome.cancelled,
+        js_string(outcome.error.as_deref())
+    )
+}
+
 /// Rasterize the Snöggo mark to a `size`×`size` transparent RGBA buffer, cropped to
 /// its bounding box so the mark fills the square with no white (or empty) padding.
 fn render_icon_rgba(size: u32) -> Option<Vec<u8>> {
@@ -687,6 +710,11 @@ fn run() -> Result<(), String> {
     let recovery_available = Arc::new(AtomicBool::new(false));
     let (nav_origin, nav_loaded) = (Arc::clone(&origin), Arc::clone(&workbench_loaded));
     let nav_recovery = Arc::clone(&recovery_available);
+    let (ipc_origin, ipc_shell, ipc_log) = (
+        Arc::clone(&origin),
+        event_loop.create_proxy(),
+        startup_log.clone(),
+    );
     let mut context = wry::WebContext::new(match &attach {
         Some(attach) => Some(attach.profile_directory()?),
         None => profile_directory(),
@@ -744,6 +772,27 @@ fn run() -> Result<(), String> {
             } else {
                 target == "about:blank" || target.starts_with("data:")
             }
+        })
+        .with_ipc_handler(move |request| {
+            // Only a page from the service origin may ask; the body of anything else
+            // is untrusted text and is neither parsed nor logged.
+            let uri = request.uri();
+            let allowed = ipc_origin
+                .lock()
+                .ok()
+                .and_then(|o| o.as_ref().map(|o| o.allows(&uri.to_string())))
+                .unwrap_or(false);
+            if !allowed {
+                let line = format!(
+                    "Credential: refused an IPC message from {}://{}",
+                    uri.scheme_str().unwrap_or("?"),
+                    uri.authority().map_or("?", |a| a.as_str())
+                );
+                eprintln!("arc-science-desktop: {line}");
+                append_startup_log(ipc_log.as_deref(), &line);
+                return;
+            }
+            let _ = ipc_shell.send_event(Shell::Credential(credential::parse(request.body())));
         })
         .with_download_completed_handler(move |_uri, path, success| {
             let text = |p: Option<&std::path::Path>| p.and_then(|p| p.to_str()).map(str::to_owned);
@@ -1019,6 +1068,44 @@ fn run() -> Result<(), String> {
                     eprintln!("arc-science-desktop: cannot report a download to the page: {error}");
                 }
             }
+            Event::UserEvent(Shell::Credential(request)) => {
+                // The prompt is modal to this window and runs on this thread.
+                let (kind, name, provider, outcome) = match request {
+                    Ok(credential::Request::Store { name, provider }) => {
+                        let outcome = credential::prompt_and_store(
+                            window_handle,
+                            &name,
+                            &provider,
+                            attach_record.is_some(),
+                        );
+                        (Some("store-credential"), Some(name), Some(provider), outcome)
+                    }
+                    Ok(credential::Request::Remove { name }) => {
+                        let outcome = credential::remove(&name);
+                        (Some("remove-credential"), Some(name), None, outcome)
+                    }
+                    Err(reason) => (None, None, None, credential::Outcome::error(reason)),
+                };
+                let result = match (&outcome.error, outcome.cancelled, outcome.stored) {
+                    (Some(error), _, _) => format!("failed: {error}"),
+                    (None, true, _) => "cancelled".into(),
+                    (None, false, true) => "stored".into(),
+                    (None, false, false) => "removed".into(),
+                };
+                append_startup_log(
+                    startup_log.as_deref(),
+                    &format!(
+                        "Credential: {} {} {result}",
+                        kind.unwrap_or("message"),
+                        name.as_deref().unwrap_or("-")
+                    ),
+                );
+                let script =
+                    credential_event_script(kind, name.as_deref(), provider.as_deref(), &outcome);
+                if let Err(error) = webview.evaluate_script(&script) {
+                    eprintln!("arc-science-desktop: cannot report a credential outcome to the page: {error}");
+                }
+            }
             _ => {}
         }
     });
@@ -1071,6 +1158,41 @@ mod tests {
             js_string(Some("x\"</script>\n\u{2028}\u{7}")),
             r#""x\"</script>\n\u{2028}\u{7}""#
         );
+    }
+
+    #[test]
+    fn credential_report_is_a_safe_javascript_literal_without_the_secret() {
+        let stored = credential::Outcome {
+            stored: true,
+            cancelled: false,
+            error: None,
+        };
+        assert_eq!(
+            credential_event_script(
+                Some("store-credential"),
+                Some("planner-key"),
+                Some("anthropic"),
+                &stored
+            ),
+            "window.dispatchEvent(new CustomEvent('arc-credential', {detail: {kind: \"store-credential\", name: \"planner-key\", provider: \"anthropic\", stored: true, cancelled: false, error: null}}))"
+        );
+        // A name is validated before it gets here; even so, quotes cannot end the literal.
+        let hostile = credential_event_script(
+            Some("remove-credential"),
+            Some("k\"}}));alert(1);//"),
+            None,
+            &credential::Outcome::error("CredDeleteW failed with code 5"),
+        );
+        assert!(hostile.contains(r#"name: "k\"}}));alert(1);//", provider: null"#));
+        assert!(hostile.ends_with(r#"error: "CredDeleteW failed with code 5"}}))"#));
+        assert_eq!(hostile.matches("dispatchEvent").count(), 1);
+        let refused = credential_event_script(
+            None,
+            None,
+            None,
+            &credential::Outcome::error("kind must be store-credential or remove-credential"),
+        );
+        assert!(refused.contains("kind: null, name: null, provider: null, stored: false, cancelled: false, error: \"kind must be"));
     }
 
     #[test]

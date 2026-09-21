@@ -24,6 +24,8 @@ from .exploration.engine import initialize, explore, MissionCancelled
 from .exploration.agents import DemoAgent, DemoVisionAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
 from .exploration.cli_seats import redact
+from .credentials import credential_path, credential_source, read_credential_manager
+from .readiness import INHERITS, endpoint_confirmed, origin
 from . import anchored
 from . import settings as operator_settings
 from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, declare_resume, mission_change, obligation_states
@@ -127,9 +129,13 @@ def _endpoint_from_seat(settings, role, seat):
     if auth=='cli':
         command=_cli_command(settings,provider)
         return ModelEndpoint(provider=provider,transport='cli',endpoint=command[0],model=seat['model'],credential_ref=role,effort=effort)
-    providers=settings.get('providers') or {}
-    endpoint=(providers.get(provider) or {}).get('endpoint') or ENDPOINTS.get(provider,'')
+    providers=settings.get('providers') or {};entry=providers.get(provider) or {}
+    endpoint=entry.get('endpoint') or ENDPOINTS.get(provider,'')
     if not endpoint:raise ValueError(f'providers.{provider}.endpoint is not set')
+    # A credential goes only where the operator confirmed: the official origin, or a custom
+    # one ticked under Advanced (OpenClaw endpoints are custom by nature).
+    if endpoint_confirmed(provider,entry) is False:
+        raise ValueError(f'providers.{provider}.endpoint {origin(endpoint)} is not the official origin; confirm it under Advanced before a credential is sent there')
     agent_id=(providers.get('openclaw') or {}).get('agent_id') or None
     return ModelEndpoint(provider=provider,endpoint=endpoint,model=seat['model'],credential_ref=seat.get('credential') or role,
         agent_id=agent_id if provider=='openclaw' else None,
@@ -266,44 +272,45 @@ def configured_vision_endpoint(settings=None):
 LEGACY_REFS=('planner','reviewer','vision','biorender')
 
 
-def credential_path(name,data=None):
-    """Where `arc-science credential --name NAME` stores a credential: one directory,
-    one file per name, never a key in the settings."""
-    if not name or len(name)>80 or not all(c.isascii() and (c.isalnum() or c in '._-') for c in name):
-        raise ValueError('A credential name is 1-80 characters of [A-Za-z0-9._-]')
-    return Path(data or os.environ.get('ARC_DATA_DIR','./data'))/'credentials'/(name+'.credential')
-
-
 def _secret(ref):
-    # The credential store first; the legacy environment token files only for the
-    # four historical names. A custom name that has no file is an error, never a
-    # fall-through to another account's credential.
+    # The credential file first, then the Windows Credential Manager, then the legacy
+    # environment token files only for the four historical names. A custom name stored
+    # nowhere is an error, never a fall-through to another account's credential.
     named=credential_path(ref)
-    if named.is_file():
-        value=named.read_text().strip()
-        if not value or len(value)>8192:raise ValueError('Provider token file is empty or exceeds limit')
-        return value
-    if ref not in LEGACY_REFS:
+    if named.is_file():value=named.read_text()
+    elif (stored:=read_credential_manager(ref)) is not None:value=stored
+    elif ref not in LEGACY_REFS:
         raise ValueError(f'No credential named {ref}: store it with arc-science credential --name {ref}')
-    if ref=='biorender':
-        path=os.environ.get('ARC_BIORENDER_TOKEN_FILE')
-    elif ref=='vision':
-        path=(os.environ.get('ARC_VISION_TOKEN_FILE') or os.environ.get('ARC_REVIEWER_TOKEN_FILE')
-              or os.environ.get('ARC_MODEL_TOKEN_FILE'))
     else:
-        name='ARC_REVIEWER_TOKEN_FILE' if ref=='reviewer' else 'ARC_MODEL_TOKEN_FILE'
-        path=os.environ.get(name) or os.environ.get('ARC_MODEL_TOKEN_FILE')
-    if not path:raise ValueError('Provider token file is not configured')
-    value=Path(path).read_text().strip()
+        if ref=='biorender':
+            path=os.environ.get('ARC_BIORENDER_TOKEN_FILE')
+        elif ref=='vision':
+            path=(os.environ.get('ARC_VISION_TOKEN_FILE') or os.environ.get('ARC_REVIEWER_TOKEN_FILE')
+                  or os.environ.get('ARC_MODEL_TOKEN_FILE'))
+        else:
+            name='ARC_REVIEWER_TOKEN_FILE' if ref=='reviewer' else 'ARC_MODEL_TOKEN_FILE'
+            path=os.environ.get(name) or os.environ.get('ARC_MODEL_TOKEN_FILE')
+        if not path:raise ValueError('Provider token file is not configured')
+        value=Path(path).read_text()
+    value=value.strip()
     if not value or len(value)>8192:raise ValueError('Provider token file is empty or exceeds limit')
     return value
 
 
+def access_grant(cfg,ref,principal,project):
+    """A 60 s grant for one API seat in the provider's official header style (x-api-key
+    for Anthropic, x-goog-api-key for Gemini, a Bearer otherwise); the secret is read
+    when the grant is made and held by nothing else."""
+    return AccessGrant(token=_secret(ref),principal=principal,project_id=project,resource=cfg.endpoint,
+        credential_ref=ref,expires_at=int(time.time())+60,auth_style=AUTH_STYLES.get(cfg.provider,'bearer'))
+
+
 def credential_stored(ref):
     """Whether a credential is stored under the name; nothing about its validity, and
-    the value never leaves this function."""
+    the value never leaves this function. A store that cannot be read raises OSError so
+    readiness can say so instead of "missing"."""
     try:_secret(ref);return True
-    except (ValueError,OSError):return False
+    except ValueError:return False
 
 
 def biorender_configuration():
@@ -479,12 +486,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                         command=claude_code_command() if cfg.provider=='anthropic' else [cfg.endpoint]
                         seat=CliAgent(command,cfg.model,cfg.model,provider=cfg.provider,efforts={'prose':cfg.effort} if cfg.effort else None)
                     else:
-                        def resolve(ref,principal,project):
-                            style=AUTH_STYLES.get(cfg.provider,'bearer')
-                            if cfg.provider=='anthropic' and os.environ.get('ARC_ANTHROPIC_AUTH') in ('oauth','bearer'):style='oauth'
-                            return AccessGrant(token=_secret(ref),principal=principal,project_id=project,resource=cfg.endpoint,
-                                credential_ref=ref,expires_at=int(time.time())+60,auth_style=style)
-                        seat=HTTPAgent(cfg,reviewer_config=cfg,falsifier_config=cfg,client=client,resolver=resolve,project='prose',principal='local-operator')
+                        seat=HTTPAgent(cfg,reviewer_config=cfg,falsifier_config=cfg,client=client,project='prose',principal='local-operator',
+                                       resolver=lambda ref,principal,project:access_grant(cfg,ref,principal,project))
                     result=await prose_humane.humanise(seat,body.text,body.instructions)
             except prose_module.ProseRefused as refused:
                 line({'status':refused.code});prose_error(refused)
@@ -610,22 +613,36 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     @app.get('/api/missions',dependencies=[Depends(authorized)])
     async def list_missions():return repository.list()
 
-    probes={name:None for _,name in CLI_TRANSPORTS.values()}
+    # The last probe record per CLI transport name and, for API subjects, per provider.
+    PROVIDERS=('anthropic','openai','gemini','openclaw')
+    probes={name:None for _,name in CLI_TRANSPORTS.values()}|{provider:None for provider in PROVIDERS}
     transport_cache={}
 
-    def cli_seats():
-        """The configured seats that run through a CLI login, by role."""
-        first,second=configured_endpoints()
-        seats={'planner':first,'reviewer':second,'falsifier':configured_falsifier_endpoint(first,second)}
-        return {role:e for role,e in seats.items() if e.transport=='cli'}
+    def provider_seats(settings,provider):
+        """Every configured seat on one provider by role, an inherited seat under its owner
+        (so it shares the owner's subject); a seat the service cannot build raises its
+        reason. A vision seat readiness refuses (CLI login, OpenClaw) is left out."""
+        seats={}
+        for role in ('planner','reviewer','falsifier','vision','prose'):
+            owner=next((r for r in (role,)+INHERITS.get(role,()) if operator_settings.seat(settings,r)),None)
+            seat=operator_settings.seat(settings,owner) if owner else None
+            if not seat or seat['provider']!=provider:continue
+            if role=='vision' and (seat.get('auth')=='cli' or provider=='openclaw'):continue
+            seats[role]=_endpoint_from_seat(settings,owner,seat)
+        if not operator_settings.seat(settings,'planner'):
+            # No planner in the settings: the environment route, when it is configured at all.
+            with suppress(ValueError):
+                first,second=configured_endpoints(settings)
+                seats.update(planner=first,reviewer=second,falsifier=configured_falsifier_endpoint(first,second,settings))
+        return {role:e for role,e in seats.items() if e.provider==provider}
 
-    async def cli_transport(provider):
+    async def cli_transport(provider,fresh=False):
         # Cost-free readiness: executable identity and the CLI's own login state, cached briefly.
         from .exploration import cli_seats as seats_module
         name=CLI_TRANSPORTS[provider][1]
         command=_cli_command(operator_settings.current() or {},provider)
         cached=transport_cache.get(provider)
-        if cached is None or time.monotonic()-cached['at']>30:
+        if fresh or cached is None or time.monotonic()-cached['at']>30:
             value={'transport':name,'provider':provider,'executable':Path(command[0]).name,
                 'executable_sha256':await seats_module.executable_digest(command[0]),
                 'version':await seats_module.version(command),
@@ -642,54 +659,69 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     PROBE_INSTRUCTIONS='You are Arc Science\'s readiness probe. Return only the JSON object {"ok": true}.'
 
     @app.post('/api/providers/{provider}/probe',dependencies=[Depends(authorized)])
-    async def probe_cli(provider:str,consent:ProbeRequest=Body(...)):
+    async def probe_provider(provider:str,consent:ProbeRequest=Body(...)):
         """An explicit, token-spending minimal call through the production adapter for every
-        distinct (model, effort) among the provider's CLI seats: one probe at a time, with a
-        cooldown, and an audit line in the data directory. A pass means reachable, schema-valid
-        and the requested selector accepted; identity is verified only where the CLI reports it."""
-        from .exploration.cli_seats import CliAgent
+        distinct subject among the provider's seats (planner, reviewer, falsifier, vision,
+        prose; an inherited seat under its owner): CLI subjects through the CLI seat, API
+        subjects through one text-only HTTP call with the same grant a mission uses. One
+        probe at a time, with a cooldown, and an audit line per transport in the data
+        directory. A pass means reachable, schema-valid and the requested selector accepted;
+        identity is verified where the CLI or the response reports it."""
+        from .exploration.cli_seats import CliAgent, executable_digest
+        from .readiness import subject as probe_subject, subject_digest
         provider='anthropic' if provider=='claude-code' else provider
-        if provider not in CLI_TRANSPORTS:raise HTTPException(404,'Unknown CLI transport')
-        name=CLI_TRANSPORTS[provider][1]
+        if provider not in PROVIDERS:raise HTTPException(404,'Unknown provider')
+        name=CLI_TRANSPORTS[provider][1] if provider in CLI_TRANSPORTS else None
         if not consent.spend_tokens:raise HTTPException(422,'Confirm spend_tokens=true; a probe makes a real model call per configured model')
-        try:seats={role:e for role,e in cli_seats().items() if e.provider==provider}
+        settings=operator_settings.current() or {}
+        try:seats=provider_seats(settings,provider)
         except Exception as error:raise HTTPException(409,str(error)) from None
-        if not seats:raise HTTPException(409,f'No seat uses the {name} transport')
+        if not seats:raise HTTPException(409,f'No seat uses the provider {provider}')
         if probe_lock.locked():raise HTTPException(409,'A probe is already running')
         if time.monotonic()-probe_last['at']<PROBE_COOLDOWN:raise HTTPException(429,'Probe cooldown: wait before spending again')
-        from .exploration.cli_seats import executable_digest
-        from .readiness import subject as probe_subject, subject_digest
         async with probe_lock:
             probe_last['at']=time.monotonic()
-            results=[];command=_cli_command(operator_settings.current() or {},provider)
-            executable_sha256=await executable_digest(command[0])
+            command=_cli_command(settings,provider) if any(e.transport=='cli' for e in seats.values()) else None
+            executable_sha256=await executable_digest(command[0]) if command else None
+            # The subject names what a result verifies; readiness matches a seat to it by digest.
             distinct={}
-            for role,e in seats.items():distinct.setdefault((e.model,e.effort),[]).append(role)
-            for (model,effort),roles in distinct.items():
-                seat=CliAgent(command,model,model,provider=provider,efforts={'probe':effort} if effort else None)
-                started=time.monotonic()
-                # The subject names what this result verifies; readiness matches a seat to it by digest.
-                verified=probe_subject(provider,'cli',model,effort,executable_sha256=executable_sha256)
-                record={'model':model,'effort':effort,'roles':roles,'subject':verified,'subject_digest':subject_digest(verified)}
-                try:
-                    await seat._call(model,PROBE_INSTRUCTIONS,{'probe':True},ProbeReply,role='probe')
-                    call=seat.calls[-1]
-                    results.append({**record,'ok':True,'observed_model':call['observed_model'],
-                                    'identity_verified':call['identity_verified'],'applied_effort':call['applied_effort'],
-                                    'duration_ms':int((time.monotonic()-started)*1000)})
-                except Exception as error:
-                    results.append({**record,'ok':False,'error':redact(str(error))[:300],
-                                    'duration_ms':int((time.monotonic()-started)*1000)})
-                finally:seat.close()
-            probes[name]={'at':int(time.time()),'transport':name,'provider':provider,'results':results}
-            audit=root/'providers'/(name+'-probes.jsonl')
-            audit.parent.mkdir(parents=True,exist_ok=True)
-            with audit.open('a',encoding='utf-8') as log:log.write(json.dumps(probes[name])+'\n')
-            return probes[name]
+            for role,e in seats.items():
+                verified=(probe_subject(provider,'cli',e.model,e.effort,executable_sha256=executable_sha256) if e.transport=='cli'
+                          else probe_subject(provider,'api',e.model,e.effort,endpoint=origin(e.endpoint),credential_ref=e.credential_ref))
+                distinct.setdefault(subject_digest(verified),(verified,e,[]))[2].append(role)
+            results=[]
+            async with httpx.AsyncClient(trust_env=False) as client:
+                for digest_value,(verified,e,roles) in distinct.items():
+                    record={'model':e.model,'effort':e.effort,'roles':roles,'transport':e.transport,'subject':verified,'subject_digest':digest_value}
+                    started=time.monotonic();seat=None
+                    try:
+                        if e.transport=='cli':
+                            seat=CliAgent(command,e.model,e.model,provider=provider,efforts={'probe':e.effort} if e.effort else None);target=e.model
+                        else:
+                            seat=HTTPAgent(e,client=client,project='probe',principal='local-operator',
+                                           resolver=lambda ref,principal,project,e=e:access_grant(e,ref,principal,project));target=e
+                        await seat._call(target,PROBE_INSTRUCTIONS,{'probe':True},ProbeReply,role='probe')
+                        call=seat.calls[-1]
+                        results.append({**record,'ok':True,'observed_model':call['observed_model'],
+                                        'identity_verified':call['identity_verified'],'applied_effort':call['applied_effort'],
+                                        'duration_ms':int((time.monotonic()-started)*1000)})
+                    except Exception as error:
+                        results.append({**record,'ok':False,'error':redact(str(error))[:300],
+                                        'duration_ms':int((time.monotonic()-started)*1000)})
+                    finally:
+                        if seat is not None and hasattr(seat,'close'):seat.close()
+            at=int(time.time());reply={'at':at,'transport':name if command else 'api','provider':provider,'results':results}
+            (root/'providers').mkdir(parents=True,exist_ok=True)
+            for key,transport in ((name,'cli'),(provider,'api')):
+                mine=[r for r in results if r['transport']==transport]
+                if not mine:continue
+                probes[key]={'at':at,'transport':key if transport=='cli' else 'api','provider':provider,'results':mine}
+                with (root/'providers'/(key+'-probes.jsonl')).open('a',encoding='utf-8') as log:log.write(json.dumps(probes[key])+'\n')
+            return reply
 
     from .readiness import create_router as readiness_router
     app.include_router(readiness_router(authorized=authorized,root=root,repository=repository,cli_transport=cli_transport,cli_transports=CLI_TRANSPORTS,
-                                        probes=probes,credential_stored=credential_stored,memory_routes=memory_routes,molecular_jobs=molecular_jobs))
+                                        probes=probes,credential_stored=credential_stored,credential_source=credential_source,memory_routes=memory_routes,molecular_jobs=molecular_jobs))
 
     @app.get('/api/capabilities',dependencies=[Depends(authorized)])
     async def capabilities():
@@ -796,10 +828,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                     def resolve(ref,principal,project):
                         cfg={'planner':first,'vision':vision,'falsifier':third}.get(ref,second)
                         if ref not in ('planner','reviewer','vision','falsifier','biorender'):cfg=next((c for c in (first,second,third,vision) if c and c.credential_ref==ref),second)
-                        style=AUTH_STYLES.get(cfg.provider,'bearer')
-                        if cfg.provider=='anthropic' and os.environ.get('ARC_ANTHROPIC_AUTH') in ('oauth','bearer'):style='oauth'
-                        return AccessGrant(token=_secret(ref),principal=principal,project_id=project,resource=cfg.endpoint,
-                            credential_ref=ref,expires_at=int(time.time())+60,auth_style=style)
+                        return access_grant(cfg,ref,principal,project)
                     from .exploration.cli_seats import CliAgent
                     from .exploration.providers import SeatAgent
                     # The visual seat, when configured, is always a native image endpoint.

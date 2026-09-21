@@ -111,6 +111,11 @@ pub struct Provider {
     pub agent_id: String,
     #[serde(default)]
     pub isolated: bool,
+    /// The operator confirmed that an endpoint off the official origin may receive
+    /// the credential (anthropic/openai/gemini only; OpenClaw endpoints are custom by
+    /// nature). The service refuses probes and missions to an unconfirmed one.
+    #[serde(default)]
+    pub custom_endpoint_confirmed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -197,24 +202,28 @@ impl Default for Settings {
                     cli: "claude".into(),
                     agent_id: String::new(),
                     isolated: false,
+                    custom_endpoint_confirmed: false,
                 },
                 openai: Provider {
                     endpoint: "https://api.openai.com/v1/responses".into(),
                     cli: "codex".into(),
                     agent_id: String::new(),
                     isolated: false,
+                    custom_endpoint_confirmed: false,
                 },
                 gemini: Provider {
                     endpoint: "https://generativelanguage.googleapis.com/v1beta".into(),
                     cli: "gemini".into(),
                     agent_id: String::new(),
                     isolated: false,
+                    custom_endpoint_confirmed: false,
                 },
                 openclaw: Provider {
                     endpoint: String::new(),
                     cli: String::new(),
                     agent_id: String::new(),
                     isolated: true,
+                    custom_endpoint_confirmed: false,
                 },
             },
             mcp_servers: Vec::new(),
@@ -976,6 +985,41 @@ mod tests {
         let bad = document.replace("\"gpt-5.6\"", "\"\"");
         assert!(Settings::replace(dir.path(), &bad, None).is_err());
         assert_eq!(Settings::load_or_create(dir.path()).unwrap().0, written);
+    }
+
+    #[test]
+    fn custom_endpoint_confirmed_defaults_to_false_and_round_trips() {
+        // A file from before the field existed loads with false; the default document
+        // writes it out; a document that sets it survives replace.
+        let dir = tempfile::tempdir().unwrap();
+        let old = toml::to_string_pretty(&Settings::default())
+            .unwrap()
+            .replace("custom_endpoint_confirmed = false\n", "");
+        assert!(!old.contains("custom_endpoint_confirmed"));
+        write_atomically(dir.path(), old.as_bytes()).unwrap();
+        let (loaded, bytes) = Settings::load_or_create(dir.path()).unwrap();
+        assert_eq!(loaded, Settings::default());
+        assert!(!loaded.providers.anthropic.custom_endpoint_confirmed);
+        assert_eq!(
+            toml::to_string_pretty(&Settings::default())
+                .unwrap()
+                .matches("custom_endpoint_confirmed = false")
+                .count(),
+            4
+        );
+        let mut confirmed = loaded.clone();
+        confirmed.providers.openai.endpoint = "https://proxy.example/v1/responses".into();
+        confirmed.providers.openai.custom_endpoint_confirmed = true;
+        let (written, _) = Settings::replace(
+            dir.path(),
+            &serde_json::to_string(&confirmed).unwrap(),
+            Some(&revision(&bytes)),
+        )
+        .unwrap();
+        assert_eq!(written, confirmed);
+        let (reread, _) = Settings::load_or_create(dir.path()).unwrap();
+        assert!(reread.providers.openai.custom_endpoint_confirmed);
+        assert!(!reread.providers.anthropic.custom_endpoint_confirmed);
     }
 
     #[test]

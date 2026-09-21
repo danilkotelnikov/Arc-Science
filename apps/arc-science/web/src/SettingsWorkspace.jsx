@@ -2,18 +2,30 @@ import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from '
 import {Button} from '@heroui/react/button';
 import {NATIVE_SESSION, SESSION_COPY, apiFetch, sessionState} from './http';
 import {LockNotice, focusTokenField, unlockLabel} from './LockNotice';
-import {STATE_LABEL, sentence, stateOf} from './readiness';
+import {STATE_LABEL, loginLine, probeLine, sentence, stateOf} from './readiness';
 import './SettingsWorkspace.css';
 
 // Settings are owned by the native supervisor: the service reads a snapshot with a
 // revision and forwards the whole edited document back with that revision, so a
 // concurrent change is refused instead of overwritten. Nothing here holds a key:
-// seats name a credential file or the operator's own CLI login.
+// seats name a credential (a Windows Credential Manager entry or a file) or the
+// operator's own CLI login. Storing one never crosses this page: the desktop host is
+// asked over IPC, shows the Windows prompt itself and answers with an arc-credential
+// event that carries stored/cancelled/error and never the secret.
 // Readiness (which seat can run) and the catalog (which providers, models, efforts and
 // sign-in methods exist) arrive through props from GET /api/readiness; nothing here
 // recomputes them. The fallback below only names the providers while that is unloaded.
 const ROLES = [['planner', 'Planner'], ['reviewer', 'Reviewer (QA)'], ['falsifier', 'Falsifier'], ['vision', 'Vision'], ['prose', 'Prose']];
 const PROVIDER_NAMES = ['anthropic', 'openai', 'gemini', 'openclaw'];
+const CLI_TOOL = {anthropic: 'Claude Code', openai: 'Codex', gemini: 'Gemini CLI'};
+const STORE_LABEL = {file: 'stored as a file in the data directory', credential_manager: 'stored in the Windows Credential Manager'};
+// The host validates the same shape; checking here only saves a pointless round trip.
+const CREDENTIAL_NAME = /^[A-Za-z0-9._-]{1,80}$/;
+const CREDENTIAL_WAIT_MS = 5 * 60 * 1000;
+const hostIpc = () => typeof window.ipc?.postMessage === 'function';
+const originOf = url => { try { return new URL(url).origin; } catch { return null; } };
+// An endpoint off the catalog's official origin; OpenClaw has none, so it is never custom.
+const customEndpoint = (catalog, name, endpoint) => { const official = catalog.providers?.[name]?.official_origin; return Boolean(official && endpoint && originOf(endpoint) !== official); };
 const FALLBACK_CATALOG = {catalog_version: null, efforts: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], efforts_by_transport: null,
   providers: {anthropic: {label: 'Anthropic', models: []}, openai: {label: 'OpenAI', models: []}, gemini: {label: 'Gemini', models: []}, openclaw: {label: 'OpenClaw', models: []}}, auth_modes: {}};
 const FALLBACK_AUTH = [['api_key', 'API credential'], ['cli', 'CLI login']];
@@ -121,15 +133,17 @@ function sectionLabel(catalog, section) {
 export default function SettingsWorkspace({token, setToken, active = false, readiness = null, readinessError = null, refreshReadiness, onNavigate}) {
   const [snapshot, setSnapshot] = useState(null), [draft, setDraft] = useState(null);
   const [error, setError] = useState(null), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
-  const [live, setLive] = useState(null), [probes, setProbes] = useState({}), [consent, setConsent] = useState(false);
+  // Per role: probe consent (one tick per click, never remembered), the seat waiting on
+  // the host's credential prompt, and the seat whose Remove asks for confirmation.
+  const [consent, setConsent] = useState({}), [waiting, setWaiting] = useState(null), [confirming, setConfirming] = useState(null);
   const [checks, setChecks] = useState({}), [authExpired, setAuthExpired] = useState(false);
   // Roles whose model picker is on "Custom id…" although the typed id may be in the catalog.
   const [customRoles, setCustomRoles] = useState({});
-  const credential = useRef(null), autoloaded = useRef(false), running = useRef(false);
+  const credential = useRef(null), autoloaded = useRef(false), running = useRef(false), waitCancel = useRef(null);
   const catalog = readiness?.catalog || FALLBACK_CATALOG, catalogLoaded = Boolean(readiness?.catalog);
   useLayoutEffect(() => {
     const controller = new AbortController(); credential.current = controller;
-    setSnapshot(null); setDraft(null); setError(null); setNotice(''); setBusy(false); setLive(null); setProbes({}); setConsent(false); setChecks({}); setAuthExpired(false); setCustomRoles({});
+    setSnapshot(null); setDraft(null); setError(null); setNotice(''); setBusy(false); setConsent({}); setWaiting(null); setConfirming(null); setChecks({}); setAuthExpired(false); setCustomRoles({});
     autoloaded.current = false; running.current = false;
     return () => controller.abort();
   }, [token]);
@@ -158,18 +172,13 @@ export default function SettingsWorkspace({token, setToken, active = false, read
     finally { if (!signal.aborted) { running.current = false; setBusy(false); } }
   }
   const errorAt = where => error?.where === where ? <StateCard state={error}/> : null;
-  async function connections(signal) {
-    // Cost-free: the CLI's own login state per provider, never an inference.
-    const caps = await read('/capabilities', signal);
-    setLive(caps.live || {configured: false});
-  }
   async function load(signal) {
     const snap = await read('/settings', signal);
     setSnapshot(snap); setDraft(structuredClone(snap.settings)); setCustomRoles({});
-    await connections(signal);
   }
   // main.jsx owns the readiness request and its error; this only asks (cached, idempotent).
-  const askReadiness = () => Promise.resolve(refreshReadiness?.()).catch(() => {});
+  // {fresh: true} re-reads the CLI logins and the credential store instead of the 30 s cache.
+  const askReadiness = options => Promise.resolve(refreshReadiness?.(options)).catch(() => {});
   const loadTask = () => { askReadiness(); return task(load, 'Load settings', 'sidebar', () => ({label: 'Retry', run: loadTask})); };
   // The snapshot loads by itself on discrete events only: the workspace shown with a
   // session, the shell's desktop session arriving, and the header token field settling
@@ -195,17 +204,48 @@ export default function SettingsWorkspace({token, setToken, active = false, read
     const result = await read(kind === 'mcp' ? '/mcp/servers/check' : '/acp/agents/check', signal, 'POST');
     setChecks(current => ({...current, [kind]: result}));
   }
-  async function probe(provider, signal) {
-    // Explicit consent per click: a probe makes one real model call per distinct model and
-    // effort pair among the planner, reviewer and falsifier seats (cli_seats() in the service).
-    const result = await read('/providers/' + provider + '/probe', signal, 'POST', {spend_tokens: true});
-    setProbes(current => ({...current, [provider]: result}));
+  async function probe(provider, role, signal) {
+    // Explicit consent per click: one real call per distinct subject among the five seats
+    // on that provider (CLI and API alike). The result is read back through readiness,
+    // and the tick is spent whatever the outcome.
+    try { await read('/providers/' + provider + '/probe', signal, 'POST', {spend_tokens: true}); }
+    finally { if (!signal.aborted) setConsent(current => ({...current, [role]: false})); }
     askReadiness();
+  }
+  // The host shows the Windows prompt and stores or deletes the entry; the page only posts
+  // the request and waits for the arc-credential answer for that name. The operator may
+  // take minutes in the dialog, so the wait is long and Cancel waiting only stops waiting.
+  function credentialRequest(kind, role, seat, signal) {
+    const name = seat.credential;
+    return new Promise((resolve, reject) => {
+      const stop = () => { clearTimeout(timer); window.removeEventListener('arc-credential', answered); signal.removeEventListener('abort', aborted); waitCancel.current = null; setWaiting(null); };
+      const aborted = () => { stop(); reject(new Error('aborted')); };
+      // The host answers a refused message with kind and name null; while a request waits it is ours.
+      const answered = event => { const detail = event.detail || {}; if ((detail.kind === kind && detail.name === name) || (detail.kind === null && detail.error)) { stop(); resolve({...detail, kind, name}); } };
+      const timer = setTimeout(() => { stop(); reject(new Error('No answer from the Windows credential prompt after 5 minutes')); }, CREDENTIAL_WAIT_MS);
+      window.addEventListener('arc-credential', answered); signal.addEventListener('abort', aborted);
+      waitCancel.current = () => { stop(); resolve({kind, name, stopped: true}); };
+      setWaiting(role);
+      window.ipc.postMessage(JSON.stringify(kind === 'store-credential' ? {kind, name, provider: seat.provider} : {kind, name}));
+    });
+  }
+  const STOPPED = 'Stopped waiting for the credential prompt. If it is still open, finish it there, then press Reload.';
+  async function store(role, seat, signal) {
+    const answer = await credentialRequest('store-credential', role, seat, signal);
+    if (answer.error) throw new Error(answer.error);
+    setNotice(answer.stopped ? STOPPED : answer.stored ? 'Credential ' + seat.credential + ' is stored in the Windows Credential Manager as ArcScience/' + seat.credential + '.' : 'The credential prompt was cancelled; nothing was stored.');
+    if (answer.stored) askReadiness({fresh: true});
+  }
+  async function remove(role, seat, signal) {
+    setConfirming(null);
+    const answer = await credentialRequest('remove-credential', role, seat, signal);
+    if (answer.error) throw new Error(answer.error);
+    setNotice(answer.stopped ? STOPPED : 'Credential ' + seat.credential + ' was removed from the Windows Credential Manager.');
+    if (!answer.stopped) askReadiness({fresh: true});
   }
   async function save(signal) {
     const snap = await read('/settings', signal, 'PUT', {settings: draft, if_revision: snapshot.revision});
     setSnapshot(snap); setDraft(structuredClone(snap.settings));
-    await connections(signal);
     askReadiness();
     const effects = Array.isArray(snap.effects) ? snap.effects : [];
     const bound = Number(snap.bound_missions) || 0;
@@ -224,7 +264,6 @@ export default function SettingsWorkspace({token, setToken, active = false, read
     const next = structuredClone(snap.settings);
     for (const [path, value] of changes) setPath(next, path, value);
     setSnapshot(snap); setDraft(next);
-    await connections(signal);
     setNotice('Edits re-applied onto revision ' + snap.revision.slice(0, 12) + '; review and save');
   }
   const saveTask = () => task(save, 'Save', 'sidebar', e => /Request failed \(409\)/.test(e.message) ? {label: 'Reload and keep my edits', run: () => task(rebase, 'Reload and keep my edits')} : null);
@@ -240,6 +279,17 @@ export default function SettingsWorkspace({token, setToken, active = false, read
   const saveBlocker = !snapshot ? 'Settings are not loaded.' : readOnly ? 'Read only: the supervisor cannot write this file.' : seatIssues.length > 0 ? 'Save is off until the seat issues under Research Models are fixed.' : !dirty ? 'No unsaved edits.' : '';
   const liveMission = readiness?.live_mission || null;
   const liveState = stateOf(liveMission);
+  const ipc = native && hostIpc();
+  const consoleProfile = readiness?.providers?.anthropic?.console_profile || null;
+  // The credential and probe controls of one seat; the host answers only in the desktop window.
+  const access = (role, label) => { const seat = draft.seats[role], saved = snapshot.settings.seats[role], node = readiness?.seats?.[role] || null; return !seat.provider ? null
+    : <SeatAccess role={role} label={label} seat={seat} saved={saved} node={node} catalog={catalog} ipc={ipc} busy={busy} readOnly={readOnly}
+      consent={Boolean(consent[role])} setConsent={on => setConsent(current => ({...current, [role]: on}))}
+      waiting={waiting === role} cancelWaiting={() => waitCancel.current?.()} confirming={confirming === role} setConfirming={on => setConfirming(on ? role : null)}
+      onStore={() => task(signal => store(role, seat, signal), 'Store credential', 'seat:' + role)}
+      onRemove={() => task(signal => remove(role, seat, signal), 'Remove credential', 'seat:' + role)}
+      onTest={() => task(signal => probe(saved.provider, role, signal), 'Test ' + label + ' seat', 'seat:' + role)}
+      onRecheck={() => askReadiness({fresh: true})} error={errorAt('seat:' + role)}/>; };
   return <div className="research-workspace settings-workspace">
     <aside className="research-form settings-sidebar">
       <div className="settings-heading"><p className="eyebrow">SETTINGS</p><h1>Configure Arc Science.</h1>
@@ -279,14 +329,14 @@ export default function SettingsWorkspace({token, setToken, active = false, read
           </div>
           <div className="seat-cards">
             {ROLES.map(([role, label]) => <SeatCard key={role} role={role} label={label} seat={draft.seats[role]} saved={snapshot.settings.seats[role]} node={readiness?.seats?.[role] || null}
-              readinessError={readinessError} catalog={catalog} catalogLoaded={catalogLoaded} readOnly={readOnly} custom={Boolean(customRoles[role])}
-              setCustom={on => setCustomRoles(current => ({...current, [role]: on}))} set={(key, value) => set(['seats', role, key], value)}/>)}
+              readinessError={readinessError} catalog={catalog} catalogLoaded={catalogLoaded} readOnly={readOnly} custom={Boolean(customRoles[role])} profile={consoleProfile}
+              setCustom={on => setCustomRoles(current => ({...current, [role]: on}))} set={(key, value) => set(['seats', role, key], value)} access={access(role, label)}/>)}
           </div>
-          <p className="field-note">API credential: the name of a file created with <code>arc-science credential --name NAME</code>; no key is stored here. CLI login: the account already signed in to that tool (Claude Code, Codex, Gemini CLI). Provider OAuth sign-in inside Arc is not available in this build. An effort level the sign-in method cannot express is refused on save, not rounded.</p>
+          <p className="field-note">API credential: a name. In the desktop app, Store credential… opens the Windows credential prompt and keeps the key in your Windows Credential Manager; from a terminal, <code>arc-science credential --name NAME</code> writes an owner-only file. No key is stored here, and it is sent only to that provider's official origin unless a custom endpoint is confirmed under Advanced. CLI login: the account already signed in to that tool (Claude Code, Codex, Gemini CLI). Provider OAuth sign-in inside Arc is not available in this build. An effort level the sign-in method cannot express is refused on save, not rounded.</p>
         </SettingsSection>
 
-        <SettingsSection title="Connections" summary="See which seats are running, probe signed-in CLIs, and manage the MCP servers and ACP agents missions may use.">
-          {!live ? <p className="muted">Connection state did not load. Press Reload to retry.</p> : !live.configured ? <p className="muted">No seats are running, so there is nothing to check.</p> : <LiveConnections live={live} probes={probes} catalog={catalog} consent={consent} setConsent={setConsent} busy={busy} probe={(provider) => task(signal => probe(provider, signal), 'Probe ' + providerLabel(catalog, provider), 'probe')} error={errorAt('probe')}/>}
+        <SettingsSection title="Connections" summary="See which seats are configured and signed in, and manage the MCP servers and ACP agents missions may use.">
+          <Connections readiness={readiness} readinessError={readinessError} catalog={catalog}/>
           <h3>MCP servers (Model Context Protocol)</h3>
           <ListEditor rows={draft.mcp_servers} readOnly={readOnly} kind="mcp" onChange={rows => set(['mcp_servers'], rows)}/>
           <div className="actions"><Button variant="secondary" size="sm" isDisabled={busy || !snapshot} onPress={() => task(signal => check('mcp', signal), 'Check MCP servers', 'mcp')}>Check MCP servers</Button></div>
@@ -326,7 +376,16 @@ export default function SettingsWorkspace({token, setToken, active = false, read
           <div className="settings-table-wrap"><table className="seats settings-table providers-table"><thead><tr><th>Provider</th><th>Endpoint</th><th>CLI command</th><th>OpenClaw agent</th></tr></thead><tbody>
             {PROVIDER_NAMES.map(name => { const p = draft.providers[name]; const label = providerLabel(catalog, name); return <tr key={name}>
               <th scope="row">{label}</th>
-              <td data-label="Endpoint"><input aria-label={label + ' endpoint'} value={p.endpoint} disabled={readOnly} onChange={e => set(['providers', name, 'endpoint'], e.target.value)}/></td>
+              <td data-label="Endpoint"><input aria-label={label + ' endpoint'} value={p.endpoint} disabled={readOnly} onChange={e => setDraft(current => {
+                  // A confirmation was given for one origin; another origin has to be confirmed again.
+                  const copy = structuredClone(current); const before = copy.providers[name].endpoint; copy.providers[name].endpoint = e.target.value;
+                  if (originOf(e.target.value) !== originOf(before)) copy.providers[name].custom_endpoint_confirmed = false;
+                  return copy;
+                })}/>
+                {customEndpoint(catalog, name, p.endpoint) && <>
+                  <label className="check"><input type="checkbox" aria-label={label + ' custom endpoint confirmed'} checked={Boolean(p.custom_endpoint_confirmed)} disabled={readOnly} onChange={e => set(['providers', name, 'custom_endpoint_confirmed'], e.target.checked)}/>This endpoint may receive the credential (custom endpoint confirmed)</label>
+                  <p className="seat-note">Off the official origin {catalog.providers[name].official_origin}. Until this is ticked and saved, no probe or mission sends the credential there.</p>
+                </>}</td>
               <td data-label="CLI command">{name === 'openclaw' ? <span className="muted">not applicable</span> : <input aria-label={label + ' CLI command'} value={p.cli} disabled={readOnly} onChange={e => set(['providers', name, 'cli'], e.target.value)}/>}</td>
               <td data-label="OpenClaw agent">{name === 'openclaw' ? <><input aria-label="OpenClaw agent id" value={p.agent_id} disabled={readOnly} onChange={e => set(['providers', name, 'agent_id'], e.target.value)}/> <label className="check"><input type="checkbox" checked={p.isolated} disabled={readOnly} onChange={e => set(['providers', name, 'isolated'], e.target.checked)}/>Isolated agent (tools disabled; OpenClaw needs this)</label></> : <span className="muted">not applicable</span>}</td>
             </tr>; })}
@@ -340,7 +399,7 @@ export default function SettingsWorkspace({token, setToken, active = false, read
 
 // One seat: the five controls, the server's readiness for the saved seat, and the
 // draft-versus-saved difference as its own badge (never as a readiness state).
-function SeatCard({role, label, seat, saved, node, readinessError, catalog, catalogLoaded, readOnly, custom, setCustom, set}) {
+function SeatCard({role, label, seat, saved, node, readinessError, catalog, catalogLoaded, readOnly, custom, setCustom, set, access = null, profile = null}) {
   const state = stateOf(node);
   const unsaved = JSON.stringify(seat) !== JSON.stringify(saved);
   const entry = modelEntry(catalog, seat);
@@ -352,6 +411,10 @@ function SeatCard({role, label, seat, saved, node, readinessError, catalog, cata
   const source = catalog.providers?.[seat.provider]?.source;
   const caps = entry?.capabilities || {};
   const meaning = node?.meaning || readinessError || (catalogLoaded ? 'No readiness was reported for this seat.' : 'Readiness has not loaded yet.');
+  // What `ant auth status` reported (readiness carries it per provider and on Anthropic seats); never used for a call.
+  const ant = profile || node?.facts?.console_profile || null;
+  const modeSupport = mode => mode.mode !== 'console_profile' ? mode.support
+    : (ant?.detected ? 'detected (' + (ant.profile || 'unnamed profile') + ')' : 'not detected') + ' — reported only, not used';
   return <article className="seat-card" aria-label={label + ' seat'} data-state={state}>
     <div className="seat-card-head">
       <h3>{label}</h3>
@@ -393,17 +456,59 @@ function SeatCard({role, label, seat, saved, node, readinessError, catalog, cata
         </select>
         {support.transport && <p className="seat-note">{support.note}</p>}
       </div>
-      <div className="seat-field"><span className="seat-field-label">Credential file</span>
-        <input aria-label={label + ' credential'} value={seat.credential} disabled={readOnly || seat.auth !== 'api_key'} onChange={e => set('credential', e.target.value)} placeholder={seat.auth === 'api_key' ? 'file name' : 'not used with CLI login'}/>
+      <div className="seat-field"><span className="seat-field-label">Credential name</span>
+        <input aria-label={label + ' credential'} value={seat.credential} disabled={readOnly || seat.auth !== 'api_key'} onChange={e => set('credential', e.target.value)} placeholder={seat.auth === 'api_key' ? 'credential name' : 'not used with CLI login'}/>
       </div>
     </div>
     <p className="seat-meaning">{meaning}</p>
     {node?.next_action && state !== 'ready' && <p className="seat-next">Next: {node.next_action}</p>}
     {unsaved && <p className="seat-next">Readiness refers to the saved seat; save to check this draft.</p>}
+    {access}
     {allModes.length > 0 && <details className="seat-auth-modes"><summary>Sign-in methods</summary>
-      <ul>{allModes.map(mode => <li key={mode.mode}>{mode.label}: {mode.support}{mode.source && <> · <a href={mode.source} target="_blank" rel="noreferrer">basis</a></>}</li>)}</ul>
+      <ul>{allModes.map(mode => <li key={mode.mode}>{mode.label}: {modeSupport(mode)}{mode.source && <> · <a href={mode.source} target="_blank" rel="noreferrer">basis</a></>}</li>)}</ul>
     </details>}
   </article>;
+}
+
+// Under a seat card: for an API credential, where the key goes (the host's prompt in the
+// desktop window, a terminal elsewhere) and Remove; for a CLI login, the login as read and
+// Re-check; for both, the consented Test seat and the last probe from readiness.
+function SeatAccess({role, label, seat, saved, node, catalog, ipc, busy, readOnly, consent, setConsent, waiting, cancelWaiting, confirming, setConfirming, onStore, onRemove, onTest, onRecheck, error}) {
+  const provider = providerLabel(catalog, seat.provider);
+  const unsaved = JSON.stringify(seat) !== JSON.stringify(saved);
+  const facts = node?.facts || {};
+  const named = CREDENTIAL_NAME.test(seat.credential || '');
+  const asFile = facts.credential_store === 'file';
+  const testBlocker = unsaved ? 'Save the seat first; Test seat uses the saved seat.' : !saved.provider ? 'Save the seat first.' : !consent ? 'Tick the consent box to enable Test seat.' : '';
+  return <div className="seat-access" role="group" aria-label={label + ' access'}>
+    {seat.auth === 'cli' ? <>
+      <p className="seat-note"><strong>{loginLine(node) || 'Sign-in state not read yet'}.</strong> Sign in inside {CLI_TOOL[seat.provider] || 'the CLI'}, then press Re-check.</p>
+      <div className="actions"><Button variant="secondary" size="sm" aria-label={label + ' re-check'} isDisabled={busy} onPress={onRecheck}>Re-check</Button></div>
+    </> : <>
+      {facts.credential_store && <p className="seat-note">Credential {facts.credential_ref}: {STORE_LABEL[facts.credential_store]}.</p>}
+      {ipc ? <>
+        {waiting ? <div className="actions"><p role="status">Waiting for the Windows credential prompt…</p><Button variant="ghost" size="sm" onPress={cancelWaiting}>Cancel waiting</Button></div>
+        : confirming ? <div className="actions" role="group" aria-label={label + ' remove confirmation'}>
+          <span>Remove ArcScience/{seat.credential} from the Windows Credential Manager? Seats naming it stop working until a new one is stored.</span>
+          <Button size="sm" aria-label={label + ' confirm remove'} isDisabled={busy} onPress={onRemove}>Remove</Button>
+          <Button variant="ghost" size="sm" onPress={() => setConfirming(false)}>Keep it</Button>
+        </div>
+        : <div className="actions">
+          <Button variant="secondary" size="sm" aria-label={label + ' store credential'} isDisabled={busy || readOnly || !named} onPress={onStore}>Store credential…</Button>
+          <Button variant="ghost" size="sm" aria-label={label + ' remove credential'} isDisabled={busy || readOnly || !named || asFile} onPress={() => setConfirming(true)}>Remove credential</Button>
+        </div>}
+        {!named && <p className="seat-note">Give the credential a name first: 1–80 characters of letters, digits, dot, underscore or hyphen.</p>}
+        {asFile && <p className="seat-note">A file credential is removed by deleting it from the data directory, not from here.</p>}
+      </> : <p className="seat-note">Store it from a terminal: <code>arc-science credential --name {seat.credential || '<name>'} --data &lt;data dir&gt;</code></p>}
+    </>}
+    <div className="actions">
+      <label className="check"><input type="checkbox" aria-label={label + ' probe consent'} checked={consent} disabled={busy} onChange={e => setConsent(e.target.checked)}/>One real call per distinct seat of {provider}; it spends tokens on your account</label>
+      <Button variant="secondary" size="sm" aria-label={label + ' test seat'} isDisabled={busy || Boolean(testBlocker)} onPress={onTest}>Test seat</Button>
+    </div>
+    {testBlocker && <p className="seat-note">{testBlocker}</p>}
+    <p className="seat-verification">{probeLine(node)}</p>
+    {error}
+  </div>;
 }
 
 function StateCard({state}) {
@@ -421,29 +526,25 @@ function SettingsSection({title, summary, open = false, children}) {
   </details>;
 }
 
-function LiveConnections({live, probes, catalog, consent, setConsent, busy, probe, error}) {
-  const transports = Object.keys(live.transports || {});
+// Both tables are readiness facts (the saved seats and the CLI logins as last read) and
+// the verification per seat; nothing here is asked of the service.
+function Connections({readiness, readinessError, catalog}) {
+  const seats = readiness?.seats || null;
+  if (!seats) return <p className="muted">{readinessError ? 'Seat facts did not load: ' + readinessError : 'Seat facts appear once readiness has loaded.'}</p>;
+  const rows = ROLES.map(([role, label]) => [role, label, seats[role] || null]);
+  const cli = rows.filter(([, , node]) => node?.facts?.transport === 'cli');
   return <>
-    <div className="settings-table-wrap"><table className="seats settings-table" aria-label="Running seats"><thead><tr><th>Seat</th><th>Provider</th><th>Sign-in</th><th>Model</th><th>Effort</th></tr></thead><tbody>
-      {Object.entries(live.seats || {}).map(([role, seat]) => <tr key={role}><th scope="row">{roleLabel(role)}</th><td>{providerLabel(catalog, seat.provider)}</td><td>{seat.transport === 'cli' ? 'CLI login' : 'API credential'}</td><td>{seat.model}</td><td>{seat.effort || 'default'}</td></tr>)}
+    <div className="settings-table-wrap"><table className="seats settings-table" aria-label="Configured seats"><thead><tr><th>Seat</th><th>Provider</th><th>Sign-in</th><th>Model</th><th>Effort</th></tr></thead><tbody>
+      {rows.map(([role, label, node]) => { const f = node?.facts || {}; return <tr key={role}><th scope="row">{label}</th>
+        {f.inherits_from ? <td colSpan={4} className="muted">uses the {roleLabel(f.inherits_from)} seat</td> : !f.provider ? <td colSpan={4} className="muted">not set</td>
+        : <><td>{providerLabel(catalog, f.provider)}</td><td>{f.transport === 'cli' ? 'CLI login' : 'API credential' + (f.credential_store ? ' (' + STORE_LABEL[f.credential_store] + ')' : '')}</td><td>{f.model}</td><td>{f.effort || 'default'}</td></>}
+      </tr>; })}
     </tbody></table></div>
-    {transports.length === 0 ? <p className="muted">The planner, reviewer and falsifier seats use API credentials; no CLI login to check.</p> : <>
-      <div className="settings-table-wrap"><table className="seats settings-table" aria-label="CLI logins"><thead><tr><th>CLI</th><th>Version</th><th>Login</th><th>Reports answering model</th><th>Last probe</th></tr></thead><tbody>
-        {Object.entries(live.transports).map(([provider, t]) => { const last = probes[provider] || t.last_probe; return <tr key={provider}>
-          <th scope="row">{t.transport} ({t.executable})</th><td>{t.version}</td>
-          <td>{t.logged_in ? 'signed in (' + t.auth_method + ')' : 'not signed in'}</td>
-          <td>{t.identity_reported ? 'yes' : 'no (only the requested model is known)'}</td>
-          <td>{!last ? 'not run' : (last.results || []).map((r, i) => <div key={i}>{r.model + (r.effort ? '/' + r.effort : '') + ': ' + (r.ok ? 'ok, answering model ' + (r.identity_verified ? r.observed_model : 'not reported') : 'failed: ' + r.error)}</div>)}</td>
-        </tr>; })}
-      </tbody></table></div>
-      <div className="actions">
-        <label className="check"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}/>I accept that a probe spends tokens on my account: one real model call per distinct model and effort pair among the planner, reviewer and falsifier seats</label>
-        {transports.map(provider => <Button key={provider} variant="secondary" size="sm" isDisabled={busy || !consent} onPress={() => probe(provider)}>Probe {providerLabel(catalog, provider)}</Button>)}
-      </div>
-      {!consent && <p className="field-note">Probe buttons unlock when you tick the consent box.</p>}
-      {error}
-      <p className="field-note">Signed in only means a session exists. A probe makes one real model call per distinct model and effort pair among the planner, reviewer and falsifier seats to show that they are accepted; the answering model is confirmed only when the CLI reports it.</p>
-    </>}
+    {cli.length === 0 ? <p className="muted">No seat uses a CLI login; there is nothing to sign in to.</p>
+    : <div className="settings-table-wrap"><table className="seats settings-table" aria-label="CLI logins"><thead><tr><th>Seat</th><th>CLI</th><th>Login</th><th>Last probe</th></tr></thead><tbody>
+      {cli.map(([role, label, node]) => <tr key={role}><th scope="row">{label}</th><td>{node.facts.executable || 'not found'}</td><td>{loginLine(node)}</td><td>{probeLine(node)}</td></tr>)}
+    </tbody></table></div>}
+    <p className="field-note">Signed in only means a login exists. Test seat on a card makes one real call per distinct seat of that provider; the answering model is confirmed only when the provider reports it.</p>
   </>;
 }
 

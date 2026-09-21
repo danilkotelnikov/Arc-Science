@@ -1,6 +1,6 @@
 import React from 'react';
 import {afterEach, beforeEach, expect, test, vi} from 'vitest';
-import {fireEvent, render, screen, within} from '@testing-library/react';
+import {act, fireEvent, render, screen, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import SettingsWorkspace from './SettingsWorkspace';
 import {NATIVE_SESSION, SESSION_COPY} from './http';
@@ -27,14 +27,6 @@ const settings = {
   viewer: {representation: 'cartoon', colouring: 'chain', assembly: 'asymmetric_unit', background: 'white'}
 };
 const snapshot = {revision, path: 'C:/Arc/settings.toml', read_only: false, settings, changed: [], effects: [], restart_required: [], restart_note: 'No setting in this build needs a restart.', bound_missions: 0};
-const live = {
-  configured: true,
-  seats: {
-    planner: {provider: 'openai', transport: 'api', model: 'gpt-5.6-sol', effort: 'medium'},
-    reviewer: {provider: 'anthropic', transport: 'cli', model: 'claude-sonnet-5', effort: 'high'}
-  },
-  transports: {anthropic: {transport: 'claude-code', executable: 'claude', version: '5.0.0', logged_in: false, auth_method: 'oauth', identity_reported: false, last_probe: null}}
-};
 // A cut of apps/arc-science/src/arc_science/exploration/model_catalog.json: the shapes the picker reads.
 const model = (id, label, efforts, caps = {}) => ({id, label, capabilities: {text: true, vision: true, tool_use: true, ...caps}, efforts, transports: ['api', 'cli']});
 const catalog = {
@@ -42,14 +34,14 @@ const catalog = {
   efforts: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
   efforts_by_transport: {'anthropic:api': ['low', 'medium', 'high', 'xhigh', 'max'], 'anthropic:cli': ['low', 'medium', 'high', 'xhigh', 'max'], 'openai:api': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'openai:cli': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'gemini:api': ['minimal', 'low', 'medium', 'high'], 'gemini:cli': [], 'openclaw:api': []},
   providers: {
-    anthropic: {label: 'Anthropic', source: 'https://platform.claude.com/docs/en/about-claude/models/overview', models: [
+    anthropic: {label: 'Anthropic', official_origin: 'https://api.anthropic.com', source: 'https://platform.claude.com/docs/en/about-claude/models/overview', models: [
       model('claude-sonnet-5', 'Claude Sonnet 5', ['low', 'medium', 'high', 'xhigh', 'max'], {context_tokens: 1000000, thinking: 'adaptive'}),
       model('claude-haiku-4-5-20251001', 'Claude Haiku 4.5', [], {context_tokens: 200000, thinking: 'extended'})]},
-    openai: {label: 'OpenAI', source: 'https://developers.openai.com/api/docs/models', models: [
+    openai: {label: 'OpenAI', official_origin: 'https://api.openai.com', source: 'https://developers.openai.com/api/docs/models', models: [
       model('gpt-5.6-sol', 'GPT-5.6 Sol', ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], {context_tokens: 1050000}),
       model('gpt-5.6-luna', 'GPT-5.6 Luna', ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], {context_tokens: 1050000})]},
-    gemini: {label: 'Gemini', source: 'https://ai.google.dev/gemini-api/docs/models', models: [model('gemini-3.8-flash', 'Gemini 3.8 Flash', ['low', 'medium', 'high'])]},
-    openclaw: {label: 'OpenClaw', source: null, models: []}
+    gemini: {label: 'Gemini', official_origin: 'https://generativelanguage.googleapis.com', source: 'https://ai.google.dev/gemini-api/docs/models', models: [model('gemini-3.8-flash', 'Gemini 3.8 Flash', ['low', 'medium', 'high'])]},
+    openclaw: {label: 'OpenClaw', official_origin: null, source: null, models: []}
   },
   auth_modes: {
     anthropic: [{mode: 'cli', label: 'CLI login (Claude Code)', support: 'supported', source: 'https://code.claude.com/docs/en/authentication'}, {mode: 'api_key', label: 'API credential (Console key)', support: 'supported', source: 'https://platform.claude.com/docs/en/manage-claude/authentication'}, {mode: 'console_profile', label: 'Console profile via the external `ant` CLI', support: 'detected only', source: 'https://platform.claude.com/docs/en/cli-sdks-libraries/cli/authentication'}, {mode: 'oauth', label: 'In-app provider OAuth', support: 'unavailable', source: 'https://platform.claude.com/docs/en/manage-claude/authentication'}],
@@ -58,20 +50,34 @@ const catalog = {
     openclaw: [{mode: 'api_key', label: 'API credential (Gateway token)', support: 'supported', source: 'apps/arc-science/docs/architecture.md'}, {mode: 'cli', label: 'CLI login', support: 'unavailable', source: 'native/arc-science/src/settings.rs'}]
   }
 };
-const seatNode = (role, state, code, meaning, next_action = null) => ({role, label: {planner: 'Planner', reviewer: 'Reviewer (QA)', falsifier: 'Falsifier', vision: 'Vision', prose: 'Prose'}[role], state, code, facts: {}, verification: {status: 'not_tested'}, meaning, next_action, source: 'settings revision ' + revision.slice(0, 12)});
+// Seat nodes as GET /api/readiness builds them: facts (the saved seat and what was read
+// about it), a verification (the last probe matched to the seat's subject) and the words.
+const PROBED_AT = 1_800_000_000;
+const seatNode = (role, state, code, meaning, next_action = null, facts = {}, verification = {status: 'not_tested'}) => ({role, label: {planner: 'Planner', reviewer: 'Reviewer (QA)', falsifier: 'Falsifier', vision: 'Vision', prose: 'Prose'}[role], state, code,
+  facts: {provider: settings.seats[role].provider, model: settings.seats[role].model, effort: settings.seats[role].effort, transport: settings.seats[role].auth === 'cli' ? 'cli' : 'api', ...facts},
+  verification: {checked_at: null, subject_digest: null, observed_model: null, identity_verified: null, error: null, ...verification}, meaning, next_action, source: 'settings revision ' + revision.slice(0, 12)});
+const consoleProfile = {detected: true, profile: 'default', source: 'ant auth status'};
 const readiness = {
-  checked_at: 1_800_000_000,
+  checked_at: PROBED_AT,
   session: {kind: 'native', state: 'ready', code: 'session.native', label: 'Desktop session', meaning: 'The desktop app opened this session.', next_action: null, source: 'request header'},
   seats: {
-    planner: seatNode('planner', 'ready', 'seat.verified', 'The last probe reached gpt-5.6-sol at medium effort.'),
-    reviewer: seatNode('reviewer', 'blocked', 'seat.cli_not_signed_in', 'Claude Code is installed but not signed in.', 'Run `claude` and sign in, then reload readiness.'),
-    falsifier: seatNode('falsifier', 'not_tested', 'seat.not_tested', 'A credential is stored; no call has been made.', 'Probe from Connections (spends tokens).'),
-    vision: seatNode('vision', 'not_tested', 'seat.not_tested', 'A credential is stored; no call has been made.', 'Probe from Connections (spends tokens).'),
-    prose: seatNode('prose', 'not_tested', 'seat.custom_model', 'arc-humane-prose-2 is not in the catalog; nothing is assumed about it.', 'Save and run a prose request to check it.')
+    planner: seatNode('planner', 'ready', 'seat.verified', 'The last probe reached gpt-5.6-sol at medium effort.', null, {credential_ref: 'openai', credential_stored: true, credential_store: 'credential_manager', endpoint: 'https://api.openai.com', endpoint_confirmed: true},
+      {status: 'ok', checked_at: PROBED_AT, subject_digest: 'd1', observed_model: 'gpt-5.6-sol', identity_verified: true}),
+    reviewer: seatNode('reviewer', 'blocked', 'seat.cli_not_signed_in', 'Claude Code is installed but not signed in.', 'Run `claude` and sign in, then reload readiness.', {executable: 'claude', executable_detected: true, cli_logged_in: false, cli_auth_method: null, console_profile: consoleProfile}),
+    falsifier: seatNode('falsifier', 'not_tested', 'seat.not_tested', 'A credential is stored; no call has been made.', 'Test the seat in Settings (spends tokens).', {credential_ref: 'gemini', credential_stored: true, credential_store: 'file'}),
+    vision: seatNode('vision', 'failed', 'seat.probe_failed', 'The last probe failed: Credit balance is too low.', 'Fix the cause, then test the seat again in Settings.', {credential_ref: 'openai', credential_stored: true, credential_store: 'credential_manager'},
+      {status: 'failed', checked_at: PROBED_AT, subject_digest: 'd2', error: 'Credit balance is too low'}),
+    prose: seatNode('prose', 'not_tested', 'seat.custom_model', 'arc-humane-prose-2 is not in the catalog; nothing is assumed about it.', 'Save and run a prose request to check it.', {credential_ref: 'openclaw', credential_stored: true, credential_store: 'file'})
   },
   live_mission: {state: 'blocked', code: 'live.blocked', blocking: ['reviewer'], meaning: 'The reviewer seat is blocked.', next_action: 'Sign in to Claude Code.'},
+  providers: {anthropic: {console_profile: consoleProfile}},
   catalog
 };
+const withSeat = (role, node) => ({...readiness, seats: {...readiness.seats, [role]: node}});
+const capabilityReads = () => fetch.mock.calls.filter(([path]) => String(path).includes('/api/capabilities'));
+// The desktop host's IPC as the page sees it: a function that receives one JSON string.
+const nativeHost = () => { const postMessage = vi.fn(); vi.stubGlobal('ipc', {postMessage}); return postMessage; };
+const answer = detail => act(() => { window.dispatchEvent(new CustomEvent('arc-credential', {detail})); });
 const json = (data, init = {}) => new Response(JSON.stringify(data), {...init, headers: {'Content-Type': 'application/json', ...(init.headers || {})}});
 const put = (base, options, extra = {}) => json({...base, settings: JSON.parse(options.body).settings, changed: ['seats.planner'], effects: [{section: 'seats.planner', applies: 'next live mission start', note: 'Missions already bound to a route keep it; a changed route blocks their resume until it is restored.'}], ...extra});
 // The header's token field (main.jsx) stands beside the workspace: autoload listens for it settling.
@@ -85,10 +91,9 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (path, options = {}) => {
     if (path === '/api/settings' && options.method === 'PUT') return put(snapshot, options);
     if (path === '/api/settings') return json(snapshot);
-    if (path === '/api/capabilities') return json({live});
     if (path === '/api/mcp/servers/check') return json({sdk: 'mcp-1', consented: ['pubmed'], servers: [{server: 'pubmed', ok: true, tools: [{name: 'search', offered: true}]}]});
     if (path === '/api/acp/agents/check') return json({protocol_version: '1', consented: [], agents: [{agent: 'gemini-acp', ok: false, error: 'not signed in'}]});
-    if (path === '/api/providers/anthropic/probe') return json({transport: 'claude-code', results: [{model: 'claude-sonnet-5', effort: 'high', ok: false, error: 'Credit balance is too low'}]});
+    if (path === '/api/providers/openai/probe') return json({at: PROBED_AT, transport: 'api', provider: 'openai', results: [{model: 'gpt-5.6-sol', effort: 'medium', roles: ['planner'], transport: 'api', ok: true, observed_model: 'gpt-5.6-sol', identity_verified: true}]});
     throw new Error('Unexpected request ' + path);
   }));
 });
@@ -158,16 +163,14 @@ test('the desktop session loads settings as soon as the shell reports it', async
 });
 
 test('missing supervisor settings file is actionable, does not show a raw 503, and offers Retry', async () => {
-  fetch.mockImplementation(async path => path === '/api/settings'
-    ? json({detail: 'No settings file is configured for this service'}, {status: 503})
-    : json({live: {configured: false}}));
+  fetch.mockImplementation(async () => json({detail: 'No settings file is configured for this service'}, {status: 503}));
   mount();
   const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent('No settings file was given to this service.');
   expect(screen.getByText('Settings file not configured')).toBeInTheDocument();
   expect(alert).not.toHaveTextContent('Request failed (503)');
   expect(screen.getByText('Settings did not load. Use Retry or Load settings.')).toBeInTheDocument();
-  fetch.mockImplementation(async path => path === '/api/settings' ? json(snapshot) : json({live}));
+  fetch.mockImplementation(async () => json(snapshot));
   await userEvent.setup().click(within(alert).getByRole('button', {name: 'Retry'}));
   expect(await screen.findByLabelText('Planner model')).toHaveValue('gpt-5.6-sol');
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -206,7 +209,7 @@ test('settings are grouped by user task while advanced controls remain reachable
   expect(within(settingsRegion).getByText('Viewer')).toBeVisible();
   expect(within(settingsRegion).getByText('Advanced')).toBeVisible();
   await user.click(screen.getByText('Connections'));
-  expect(await screen.findByRole('table', {name: 'CLI logins'})).toHaveTextContent('claude-code');
+  expect(await screen.findByRole('table', {name: 'CLI logins'})).toHaveTextContent('claude');
   expect(screen.getByRole('button', {name: 'Check MCP servers'})).toBeEnabled();
   expect(screen.getByRole('button', {name: 'Check ACP agents'})).toBeEnabled();
   await user.click(screen.getByText('Rendering'));
@@ -360,18 +363,206 @@ test('MCP and ACP editors keep consented checks visible after edits', async () =
   expect(screen.getByLabelText('ACP agent 2 name')).toHaveValue('');
 });
 
-test('CLI probes require consent, report failed reachability without claiming identity, and refresh readiness', async () => {
+test('the Connections tables are readiness facts and verification; nothing asks /api/capabilities', async () => {
+  const user = userEvent.setup();
+  const rendered = mount();
+  await user.click(await screen.findByText('Connections'));
+  const seats = screen.getByRole('table', {name: 'Configured seats'});
+  expect(within(seats).getByRole('row', {name: 'Planner OpenAI API credential (stored in the Windows Credential Manager) gpt-5.6-sol medium'})).toBeInTheDocument();
+  expect(within(seats).getByRole('row', {name: 'Reviewer (QA) Anthropic CLI login claude-sonnet-5 high'})).toBeInTheDocument();
+  expect(within(seats).getByRole('row', {name: 'Falsifier Gemini API credential (stored as a file in the data directory) gemini-3.8-flash medium'})).toBeInTheDocument();
+  const logins = screen.getByRole('table', {name: 'CLI logins'});
+  expect(within(logins).getByRole('row', {name: 'Reviewer (QA) claude Not signed in Never probed'})).toBeInTheDocument();
+  // An inherited seat is named after its owner, and without a CLI seat there is no login table.
+  rendered.rerender({readiness: withSeat('reviewer', seatNode('reviewer', 'not_tested', 'seat.inherits', 'No model of its own; it uses the planner seat', null, {provider: '', model: '', transport: null, inherits_from: 'planner'}))});
+  expect(within(screen.getByRole('table', {name: 'Configured seats'})).getByRole('row', {name: 'Reviewer (QA) uses the Planner seat'})).toBeInTheDocument();
+  expect(screen.queryByRole('table', {name: 'CLI logins'})).not.toBeInTheDocument();
+  expect(screen.getByText('No seat uses a CLI login; there is nothing to sign in to.')).toBeInTheDocument();
+  rendered.rerender({readiness: null, readinessError: 'Readiness is unavailable: the service returned 503.'});
+  expect(screen.getByText('Seat facts did not load: Readiness is unavailable: the service returned 503.')).toBeInTheDocument();
+  expect(capabilityReads()).toEqual([]);
+  expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/settings']);
+});
+
+test('in the desktop window an API seat stores its credential through the host; the page posts a name and reads back an answer', async () => {
+  const user = userEvent.setup();
+  const postMessage = nativeHost();
+  const refreshReadiness = vi.fn(() => Promise.resolve());
+  mount({token: NATIVE_SESSION, refreshReadiness});
+  const planner = await screen.findByRole('article', {name: 'Planner seat'});
+  expect(planner).toHaveTextContent('Credential openai: stored in the Windows Credential Manager.');
+  expect(planner).not.toHaveTextContent('Store it from a terminal');
+  await user.click(within(planner).getByRole('button', {name: 'Planner store credential'}));
+  expect(postMessage).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(postMessage.mock.calls[0][0])).toEqual({kind: 'store-credential', name: 'openai', provider: 'openai'});
+  expect(within(planner).getByRole('status')).toHaveTextContent('Waiting for the Windows credential prompt…');
+  expect(screen.getByRole('button', {name: 'Save'})).toBeDisabled();
+  // Another name's answer is not this seat's.
+  answer({kind: 'store-credential', name: 'gemini', provider: 'gemini', stored: true, cancelled: false, error: null});
+  expect(within(planner).getByRole('status')).toHaveTextContent('Waiting for the Windows credential prompt…');
+  answer({kind: 'store-credential', name: 'openai', provider: 'openai', stored: true, cancelled: false, error: null});
+  expect(await screen.findByText('Credential openai is stored in the Windows Credential Manager as ArcScience/openai.')).toBeInTheDocument();
+  expect(refreshReadiness).toHaveBeenLastCalledWith({fresh: true});
+  expect(within(planner).queryByRole('status')).not.toBeInTheDocument();
+  // A cancelled prompt stores nothing and re-reads nothing.
+  await user.click(within(planner).getByRole('button', {name: 'Planner store credential'}));
+  answer({kind: 'store-credential', name: 'openai', provider: 'openai', stored: false, cancelled: true, error: null});
+  expect(await screen.findByText('The credential prompt was cancelled; nothing was stored.')).toBeInTheDocument();
+  expect(refreshReadiness).toHaveBeenCalledTimes(2);
+  // A host error is the card under this seat.
+  await user.click(within(planner).getByRole('button', {name: 'Planner store credential'}));
+  answer({kind: 'store-credential', name: 'openai', provider: 'openai', stored: false, cancelled: false, error: 'The Credential Manager refused the write'});
+  expect(await within(planner).findByRole('alert')).toHaveTextContent('Store credential did not complete: The Credential Manager refused the write. Your draft was kept.');
+  // Cancel waiting only stops waiting; the prompt, if open, is the host's.
+  await user.click(within(planner).getByRole('button', {name: 'Planner store credential'}));
+  await user.click(within(planner).getByRole('button', {name: 'Cancel waiting'}));
+  expect(await screen.findByText('Stopped waiting for the credential prompt. If it is still open, finish it there, then press Reload.')).toBeInTheDocument();
+  expect(within(planner).queryByRole('button', {name: 'Cancel waiting'})).not.toBeInTheDocument();
+  expect(screen.getByRole('button', {name: 'Save'})).toBeDisabled();
+  expect(screen.getByRole('button', {name: 'Reload'})).toBeEnabled();
+  // Four requests, each naming the credential and nothing else.
+  expect(postMessage.mock.calls.map(([message]) => JSON.parse(message))).toEqual(Array(4).fill({kind: 'store-credential', name: 'openai', provider: 'openai'}));
+});
+
+test('Remove credential asks inline before posting; a file credential is not removable from here; a bad name disables both', async () => {
+  const user = userEvent.setup();
+  const postMessage = nativeHost();
+  const refreshReadiness = vi.fn(() => Promise.resolve());
+  mount({token: NATIVE_SESSION, refreshReadiness});
+  const planner = await screen.findByRole('article', {name: 'Planner seat'});
+  await user.click(within(planner).getByRole('button', {name: 'Planner remove credential'}));
+  expect(postMessage).not.toHaveBeenCalled();
+  const confirm = within(planner).getByRole('group', {name: 'Planner remove confirmation'});
+  expect(confirm).toHaveTextContent('Remove ArcScience/openai from the Windows Credential Manager? Seats naming it stop working until a new one is stored.');
+  await user.click(within(confirm).getByRole('button', {name: 'Keep it'}));
+  expect(within(planner).queryByRole('group', {name: 'Planner remove confirmation'})).not.toBeInTheDocument();
+  expect(postMessage).not.toHaveBeenCalled();
+  await user.click(within(planner).getByRole('button', {name: 'Planner remove credential'}));
+  await user.click(within(planner).getByRole('button', {name: 'Planner confirm remove'}));
+  expect(postMessage.mock.calls.map(([message]) => JSON.parse(message))).toEqual([{kind: 'remove-credential', name: 'openai'}]);
+  answer({kind: 'remove-credential', name: 'openai', provider: 'openai', stored: false, cancelled: false, error: null});
+  expect(await screen.findByText('Credential openai was removed from the Windows Credential Manager.')).toBeInTheDocument();
+  expect(refreshReadiness).toHaveBeenLastCalledWith({fresh: true});
+  const falsifier = screen.getByRole('article', {name: 'Falsifier seat'});
+  expect(falsifier).toHaveTextContent('Credential gemini: stored as a file in the data directory.');
+  expect(within(falsifier).getByRole('button', {name: 'Falsifier remove credential'})).toBeDisabled();
+  expect(within(falsifier).getByRole('button', {name: 'Falsifier store credential'})).toBeEnabled();
+  expect(falsifier).toHaveTextContent('A file credential is removed by deleting it from the data directory, not from here.');
+  await user.clear(screen.getByLabelText('Falsifier credential'));
+  await user.type(screen.getByLabelText('Falsifier credential'), 'bad name!');
+  expect(within(falsifier).getByRole('button', {name: 'Falsifier store credential'})).toBeDisabled();
+  expect(within(falsifier).getByRole('button', {name: 'Falsifier remove credential'})).toBeDisabled();
+  expect(falsifier).toHaveTextContent('Give the credential a name first: 1–80 characters of letters, digits, dot, underscore or hyphen.');
+});
+
+test('outside the desktop window the credential is stored from a terminal; no host prompt is offered', async () => {
+  const rendered = mount();
+  const planner = await screen.findByRole('article', {name: 'Planner seat'});
+  expect(planner).toHaveTextContent('Store it from a terminal: arc-science credential --name openai --data <data dir>');
+  expect(within(planner).queryByRole('button', {name: 'Planner store credential'})).not.toBeInTheDocument();
+  expect(within(planner).queryByRole('button', {name: 'Planner remove credential'})).not.toBeInTheDocument();
+  expect(within(planner).getByRole('button', {name: 'Planner test seat'})).toBeInTheDocument();
+  // A desktop session whose host offers no IPC (an older shell) gets the same line.
+  rendered.unmount();
+  mount({token: NATIVE_SESSION});
+  expect(await screen.findByRole('article', {name: 'Planner seat'})).toHaveTextContent('Store it from a terminal');
+  expect(screen.queryByRole('button', {name: 'Planner store credential'})).not.toBeInTheDocument();
+});
+
+test('Test seat waits for its consent tick, probes the saved seat\'s provider and reads the result through readiness', async () => {
   const user = userEvent.setup();
   const refreshReadiness = vi.fn(() => Promise.resolve());
   mount({refreshReadiness});
-  await user.click(await screen.findByText('Connections'));
-  expect(screen.getByRole('button', {name: 'Probe Anthropic'})).toBeDisabled();
-  await user.click(screen.getByLabelText(/I accept that a probe spends tokens/));
-  await user.click(screen.getByRole('button', {name: 'Probe Anthropic'}));
-  expect(await screen.findByRole('table', {name: 'CLI logins'})).toHaveTextContent('failed: Credit balance is too low');
-  expect(screen.getByRole('table', {name: 'CLI logins'})).not.toHaveTextContent('ok, answering model');
-  const probeCall = fetch.mock.calls.find(([path]) => path === '/api/providers/anthropic/probe');
+  const planner = await screen.findByRole('article', {name: 'Planner seat'});
+  const testSeat = within(planner).getByRole('button', {name: 'Planner test seat'});
+  expect(testSeat).toBeDisabled();
+  expect(planner).toHaveTextContent('Tick the consent box to enable Test seat.');
+  const consent = within(planner).getByLabelText('Planner probe consent');
+  expect(consent.closest('label')).toHaveTextContent('One real call per distinct seat of OpenAI; it spends tokens on your account');
+  await user.click(consent);
+  expect(testSeat).toBeEnabled();
+  // The other seats keep waiting for their own tick.
+  expect(within(screen.getByRole('article', {name: 'Falsifier seat'})).getByRole('button', {name: 'Falsifier test seat'})).toBeDisabled();
+  await user.click(testSeat);
+  const probeCall = fetch.mock.calls.find(([path]) => path === '/api/providers/openai/probe');
+  expect(probeCall[1].method).toBe('POST');
   expect(JSON.parse(probeCall[1].body)).toEqual({spend_tokens: true});
+  await vi.waitFor(() => expect(refreshReadiness).toHaveBeenCalledTimes(2));
+  // The tick is spent by the click; the words come from readiness, not from the reply.
+  expect(consent).not.toBeChecked();
+  expect(testSeat).toBeDisabled();
+  expect(planner).toHaveTextContent('Last probe ' + new Date(PROBED_AT * 1000).toLocaleString() + ' · answering model gpt-5.6-sol · identity verified');
+  expect(screen.getByRole('article', {name: 'Vision seat'})).toHaveTextContent('Probe failed: Credit balance is too low');
+  expect(screen.getByRole('article', {name: 'Falsifier seat'})).toHaveTextContent('Never probed');
+  // An edited seat is not what a probe would test.
+  await user.click(consent);
+  await user.selectOptions(screen.getByLabelText('Planner effort'), 'high');
+  expect(testSeat).toBeDisabled();
+  expect(planner).toHaveTextContent('Save the seat first; Test seat uses the saved seat.');
+});
+
+test('a CLI seat shows the login as read, Re-check re-reads it, and the ant profile is reported only', async () => {
+  const user = userEvent.setup();
+  const refreshReadiness = vi.fn(() => Promise.resolve());
+  const rendered = mount({refreshReadiness});
+  const reviewer = await screen.findByRole('article', {name: 'Reviewer (QA) seat'});
+  expect(reviewer).toHaveTextContent('Not signed in. Sign in inside Claude Code, then press Re-check.');
+  expect(within(reviewer).queryByRole('button', {name: 'Reviewer (QA) store credential'})).not.toBeInTheDocument();
+  expect(reviewer).not.toHaveTextContent('Store it from a terminal');
+  expect(reviewer).toHaveTextContent('Never probed');
+  await user.click(within(reviewer).getByRole('button', {name: 'Reviewer (QA) re-check'}));
+  expect(refreshReadiness).toHaveBeenLastCalledWith({fresh: true});
+  rendered.rerender({refreshReadiness, readiness: withSeat('reviewer', seatNode('reviewer', 'not_tested', 'seat.not_tested', 'Configured; never probed', 'Test the seat in Settings (spends tokens)',
+    {executable: 'claude', executable_detected: true, cli_logged_in: true, cli_auth_method: 'oauth', console_profile: consoleProfile}))});
+  expect(reviewer).toHaveTextContent('Signed in via claude (oauth). Sign in inside Claude Code, then press Re-check.');
+  await user.click(within(reviewer).getByText('Sign-in methods'));
+  expect(reviewer).toHaveTextContent('Console profile via the external `ant` CLI: detected (default) — reported only, not used');
+  expect(reviewer).toHaveTextContent('In-app provider OAuth: unavailable');
+  rendered.rerender({refreshReadiness, readiness: {...readiness, providers: {anthropic: {console_profile: {detected: false, profile: null, source: 'ant auth status'}}}}});
+  expect(reviewer).toHaveTextContent('Console profile via the external `ant` CLI: not detected — reported only, not used');
+});
+
+test('a custom endpoint shows its confirmation only when the origin differs; the seat stays unconfirmed until it is saved', async () => {
+  const user = userEvent.setup();
+  const custom = {...snapshot, settings: {...settings, providers: {...settings.providers, openai: {...settings.providers.openai, endpoint: 'https://proxy.example.net/v1'}}}};
+  fetch.mockImplementation(async (path, options = {}) => {
+    if (path === '/api/settings' && options.method === 'PUT') return put(custom, options, {changed: ['providers.openai'], effects: [{section: 'providers.openai', applies: 'next live mission start', note: ''}]});
+    if (path === '/api/settings') return json(custom);
+    throw new Error('Unexpected request ' + path);
+  });
+  const refreshReadiness = vi.fn(() => Promise.resolve());
+  const unconfirmed = seatNode('planner', 'blocked', 'seat.endpoint_unconfirmed', 'providers.openai.endpoint https://proxy.example.net is not the official origin; the credential is not sent there until it is confirmed',
+    'Confirm the custom endpoint under Settings → Advanced, or clear it', {credential_ref: 'openai', endpoint: 'https://proxy.example.net', endpoint_confirmed: false});
+  mount({refreshReadiness, readiness: withSeat('planner', unconfirmed)});
+  const planner = await screen.findByRole('article', {name: 'Planner seat'});
+  expect(within(planner).getByText('Blocked')).toBeInTheDocument();
+  expect(planner).toHaveTextContent('https://proxy.example.net is not the official origin; the credential is not sent there until it is confirmed');
+  expect(planner).toHaveTextContent('Next: Confirm the custom endpoint under Settings → Advanced, or clear it');
+  await user.click(screen.getByText('Advanced'));
+  const confirm = screen.getByLabelText('OpenAI custom endpoint confirmed');
+  expect(confirm).not.toBeChecked();
+  expect(confirm.closest('label')).toHaveTextContent('This endpoint may receive the credential (custom endpoint confirmed)');
+  expect(screen.getByText('Off the official origin https://api.openai.com. Until this is ticked and saved, no probe or mission sends the credential there.')).toBeInTheDocument();
+  // The official origin, with or without a path, and OpenClaw (custom by nature) show no box.
+  expect(screen.queryByLabelText('Anthropic custom endpoint confirmed')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('OpenClaw custom endpoint confirmed')).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText('Anthropic endpoint'), '/v1');
+  expect(screen.queryByLabelText('Anthropic custom endpoint confirmed')).not.toBeInTheDocument();
+  await user.clear(screen.getByLabelText('Anthropic endpoint'));
+  await user.type(screen.getByLabelText('Anthropic endpoint'), 'https://relay.example.net');
+  expect(screen.getByLabelText('Anthropic custom endpoint confirmed')).not.toBeChecked();
+  await user.clear(screen.getByLabelText('Anthropic endpoint'));
+  await user.type(screen.getByLabelText('Anthropic endpoint'), 'https://api.anthropic.com');
+  // Ticking is a draft edit: the seat keeps the server's state until the save is read back.
+  await user.click(confirm);
+  expect(within(planner).getByText('Blocked')).toBeInTheDocument();
+  expect(screen.getByRole('button', {name: 'Save'})).toBeEnabled();
+  await user.click(screen.getByRole('button', {name: 'Save'}));
+  expect(await screen.findByText(/^Saved \(revision aaaaaaaaaaaa\)\. OpenAI provider: applies at next live mission start\./)).toBeInTheDocument();
+  const saved = JSON.parse(fetch.mock.calls.find(([, options]) => options?.method === 'PUT')[1].body);
+  expect(saved.settings.providers.openai).toEqual({endpoint: 'https://proxy.example.net/v1', cli: 'codex', agent_id: '', isolated: true, custom_endpoint_confirmed: true});
+  // Typing an endpoint resets its confirmation (a confirmation belongs to one origin), so the flag is written as false.
+  expect(saved.settings.providers.anthropic.custom_endpoint_confirmed).toBe(false);
   expect(refreshReadiness).toHaveBeenCalledTimes(2);
 });
 
@@ -382,7 +573,6 @@ test('the save notice names each changed section, when it applies, the restart n
       effects: [{section: 'blender', applies: 'next render submission', note: ''}, {section: 'seats.planner', applies: 'next live mission start', note: 'Missions already bound to a route keep it; a changed route blocks their resume until it is restored.'}],
       restart_required: [], restart_note: 'No setting in this build needs a restart.', bound_missions: 2});
     if (path === '/api/settings') return json(snapshot);
-    if (path === '/api/capabilities') return json({live: {configured: false}});
     throw new Error('Unexpected request ' + path);
   });
   const user = userEvent.setup();
@@ -418,7 +608,7 @@ test('a stale save keeps the edits, and "Reload and keep my edits" puts only the
   fetch.mockImplementation(async (path, options = {}) => {
     if (path === '/api/settings' && options.method === 'PUT') return put(elsewhere, options);
     if (path === '/api/settings') return json(elsewhere);
-    return json({live});
+    throw new Error('Unexpected request ' + path);
   });
   await user.click(within(alert).getByRole('button', {name: 'Reload and keep my edits'}));
   expect(await screen.findByText('Edits re-applied onto revision bbbbbbbbbbbb; review and save')).toBeInTheDocument();
@@ -435,17 +625,17 @@ test('a stale save keeps the edits, and "Reload and keep my edits" puts only the
   expect(saved.settings.blender.default_preset).toBe('publication_clean_v2');
 });
 
-test('a failed probe is reported beside the probe button and the locked card can reach the token field', async () => {
+test('a refused probe is reported under its seat and the locked card can reach the token field', async () => {
   const user = userEvent.setup();
   const setToken = vi.fn();
   mount({token: NATIVE_SESSION, setToken});
-  await user.click(await screen.findByText('Connections'));
-  await user.click(screen.getByLabelText(/I accept that a probe spends tokens/));
-  fetch.mockImplementationOnce(async () => json({detail: 'probe timed out'}, {status: 500}));
-  await user.click(screen.getByRole('button', {name: 'Probe Anthropic'}));
-  const alert = await screen.findByRole('alert');
-  expect(alert).toHaveTextContent('Probe Anthropic did not complete: probe timed out. Your draft was kept.');
-  expect(within(alert.closest('details')).getByRole('table', {name: 'CLI logins'})).toBeInTheDocument();
+  const planner = await screen.findByRole('article', {name: 'Planner seat'});
+  await user.click(within(planner).getByLabelText('Planner probe consent'));
+  fetch.mockImplementationOnce(async () => json({detail: 'Probe cooldown: wait before spending again'}, {status: 429}));
+  await user.click(within(planner).getByRole('button', {name: 'Planner test seat'}));
+  const alert = await within(planner).findByRole('alert');
+  expect(alert).toHaveTextContent('Test Planner seat did not complete: Probe cooldown: wait before spending again. Your draft was kept.');
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
   fetch.mockImplementationOnce(async () => json({detail: 'stale'}, {status: 401}));
   await user.click(screen.getByRole('button', {name: 'Reload'}));
   const lock = (await screen.findByText(SESSION_COPY.nativeExpired.title)).closest('.unlock-card');

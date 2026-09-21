@@ -576,6 +576,24 @@ async def auth_status(command, environment=None, timeout=20.0, provider='anthrop
         return dict(UNKNOWN_LOGIN)
 
 
+CONSOLE_PROFILE = re.compile(r'^\s*Active profile:\s*(\S+)', re.M)
+CONSOLE_CREDENTIAL = re.compile(r'\bProfile \(\w+\)')
+
+
+async def console_profile(command, environment=None, timeout=10.0):
+    """What the official `ant` CLI reports about its Console profile: whether a credential
+    line exists and the active profile's name. Reported only, never used for a call; the
+    raw output (it shows a token prefix and the account) is discarded here."""
+    try:
+        stdout, stderr, _ = await _helper(command, ['auth', 'status'], environment, timeout)
+        text = (stdout + stderr).decode('utf-8', errors='replace')
+    except Exception:
+        return {'detected': False, 'profile': None, 'source': 'ant auth status'}
+    named = CONSOLE_PROFILE.search(text)
+    return {'detected': bool(CONSOLE_CREDENTIAL.search(text)), 'profile': named.group(1) if named else None,
+            'source': 'ant auth status'}
+
+
 async def version(command, environment=None, timeout=20.0):
     try:
         stdout, _, _ = await _helper(command, ['--version'], environment, timeout)

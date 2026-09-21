@@ -9,7 +9,8 @@ function json(data, init = {}) {
   return new Response(JSON.stringify(data), {status: init.status || 200, headers: {'Content-Type': 'application/json'}});
 }
 const health = () => json({status: 'ready', version: '0.6.0', deployment: 'single-trust-domain'});
-const seat = (role, label, state, code, meaning, next_action = null) => ({role, label, state, code, facts: {}, verification: {status: 'not_tested'}, meaning, next_action, source: 'settings revision abcdef123456'});
+const seat = (role, label, state, code, meaning, next_action = null, extra = {}) => ({role, label, state, code, facts: {}, verification: {status: 'not_tested'}, meaning, next_action, source: 'settings revision abcdef123456', ...extra});
+const PROBED_AT = 1_699_999_000, PROBED = new Date(PROBED_AT * 1000).toLocaleString();
 const ROLES = [{role: 'planner', label: 'Planner', purpose: 'proposes branches and actions'}, {role: 'reviewer', label: 'Reviewer (QA)', purpose: 'assesses'}, {role: 'falsifier', label: 'Falsifier', purpose: 'assesses with the brief to refute'}, {role: 'vision', label: 'Vision', purpose: 'reviews images'}, {role: 'prose', label: 'Prose', purpose: 'edits text'}];
 const readiness = (kind = 'token') => ({
   checked_at: 1_700_000_000,
@@ -17,10 +18,10 @@ const readiness = (kind = 'token') => ({
   settings: {state: 'ready', code: 'settings.available', revision: 'abcdef1234567890', path: 'C:/data/settings.json', read_only: false, meaning: 'Settings can be read and saved.', next_action: null, source: 'supervisor'},
   roles: ROLES,
   seats: {
-    planner: seat('planner', 'Planner', 'ready', 'seat.verified', 'Verified against the configured model.'),
+    planner: seat('planner', 'Planner', 'ready', 'seat.verified', 'Verified against the configured model.', null, {facts: {transport: 'cli', executable: 'claude.cmd', cli_logged_in: true, cli_auth_method: 'claude.ai'}, verification: {status: 'ok', checked_at: PROBED_AT, observed_model: 'claude-sonnet-5', identity_verified: true}}),
     reviewer: seat('reviewer', 'Reviewer (QA)', 'not_tested', 'seat.inherits', 'Inherits the planner seat.', 'Run the probe in Settings to verify it.'),
-    falsifier: seat('falsifier', 'Falsifier', 'failed', 'seat.probe_failed', 'The last probe failed.', 'Fix the credential, then probe again in Settings.'),
-    vision: seat('vision', 'Vision', 'blocked', 'seat.unconfigured', 'Visual review is unavailable until a vision seat is set', 'Set a vision seat in Settings.'),
+    falsifier: seat('falsifier', 'Falsifier', 'failed', 'seat.probe_failed', 'The last probe failed.', 'Fix the credential, then probe again in Settings.', {facts: {transport: 'api', credential_ref: 'falsifier-key', credential_stored: true, credential_store: 'credential_manager'}, verification: {status: 'failed', checked_at: PROBED_AT, observed_model: null, identity_verified: null, error: 'HTTP 401 from the provider'}}),
+    vision: seat('vision', 'Vision', 'blocked', 'seat.cli_not_signed_in', 'The openai CLI reports no login', 'Sign in inside the CLI, then reload this page', {facts: {transport: 'cli', executable: 'codex', cli_logged_in: false, cli_auth_method: 'none'}, verification: {status: 'not_applicable'}}),
     prose: seat('prose', 'Prose', 'blocked', 'seat.unconfigured', 'Prose edits through a model are unavailable; the local rewrite still works', 'Set a prose seat in Settings.'),
   },
   live_mission: {state: 'failed', code: 'live.failed', blocking: ['falsifier'], meaning: 'A live mission would fail on the falsifier seat.', next_action: 'Repair the falsifier seat, then probe it.'},
@@ -55,19 +56,29 @@ describe('DiagnosticsWorkspace', () => {
     expect(card('Settings')).not.toHaveTextContent('abcdef1234567890');
     expect(card('Settings')).toHaveTextContent('C:/data/settings.json');
 
-    const seats = within(screen.getByRole('table', {name: 'Seat readiness'})).getAllByRole('row');
+    const table = screen.getByRole('table', {name: 'Seat readiness'});
+    expect(within(table).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Seat', 'Readiness', 'Last probe']);
+    const seats = within(table).getAllByRole('row').slice(1);
     expect(seats).toHaveLength(5);
     expect(seats[0]).toHaveTextContent('Planner');
     expect(seats[0]).toHaveTextContent('Ready');
     expect(seats[0]).not.toHaveTextContent('Next:');
+    // The third column is the verification as readiness reports it, plus a CLI seat's login fact.
+    expect(within(seats[0]).getAllByRole('cell')[1]).toHaveTextContent('Last probe ' + PROBED + ' · answering model claude-sonnet-5 · identity verified Signed in via claude.cmd (claude.ai)');
     expect(seats[1]).toHaveAttribute('data-state', 'not_tested');
-    expect(seats[1]).toHaveTextContent('Reviewer (QA)Not tested Inherits the planner seat. Next: Run the probe in Settings to verify it.');
+    expect(seats[1]).toHaveTextContent('Reviewer (QA)Not tested Inherits the planner seat. Next: Run the probe in Settings to verify it.Never probed');
+    expect(seats[1]).not.toHaveTextContent(/Signed in|Not signed in/);
     expect(seats[2]).toHaveAttribute('data-state', 'failed');
     expect(seats[2]).toHaveTextContent('Failed');
+    expect(within(seats[2]).getAllByRole('cell')[1]).toHaveTextContent('Probe failed: HTTP 401 from the provider');
+    expect(seats[2]).not.toHaveTextContent(/Signed in|Not signed in/);
     expect(seats[3]).toHaveTextContent('Vision');
     expect(seats[3]).toHaveTextContent('Blocked');
-    expect(seats[3]).toHaveTextContent('Visual review is unavailable until a vision seat is set');
-    expect(seats[3]).toHaveTextContent('Next: Set a vision seat in Settings.');
+    expect(seats[3]).toHaveTextContent('The openai CLI reports no login');
+    expect(seats[3]).toHaveTextContent('Next: Sign in inside the CLI, then reload this page');
+    expect(within(seats[3]).getAllByRole('cell')[1]).toHaveTextContent('Never probed Not signed in');
+    expect(seats[4]).toHaveTextContent('Prose');
+    expect(within(seats[4]).getAllByRole('cell')[1]).toHaveTextContent('Never probed');
     expect(card('Seats')).toHaveAttribute('data-state', 'failed');
     expect(card('Seats')).toHaveTextContent('Next: Repair the falsifier seat, then probe it.');
     await user.click(within(card('Seats')).getByRole('button', {name: 'Open Settings'}));
@@ -108,6 +119,7 @@ describe('DiagnosticsWorkspace', () => {
     expect(screen.getByRole('button', {name: 'Go to token field'})).toBeInTheDocument();
     expect(screen.getByRole('button', {name: 'Refresh service'})).toBeEnabled();
     expect(screen.getByRole('button', {name: 'Refresh readiness'})).toBeDisabled();
+    expect(screen.getByRole('button', {name: 'Refresh readiness (re-read logins)'})).toBeDisabled();
     expect(screen.getByRole('button', {name: 'Check MCP'})).toBeDisabled();
     expect(screen.getByRole('button', {name: 'Check ACP'})).toBeDisabled();
     // The reason sits beside both disabled button groups and in each unread card.
@@ -139,12 +151,18 @@ describe('DiagnosticsWorkspace', () => {
     expect(card('Seats')).toHaveTextContent('Select Refresh readiness to read it.');
     await user.click(screen.getByRole('button', {name: 'Refresh readiness'}));
     expect(refreshReadiness).toHaveBeenCalledTimes(1);
+    expect(refreshReadiness).toHaveBeenLastCalledWith();
     rerender(<DiagnosticsWorkspace token="operator" readiness={current} refreshReadiness={refreshReadiness}/>);
     expect(card('Session')).toHaveAttribute('data-state', 'ready');
     expect(card('Session')).toHaveTextContent('Operator token');
     expect(card('Session')).toHaveTextContent('The bearer token was accepted.');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/paste/i);
+    // Re-read logins is the same read with fresh=true; the shell builds the URL, this page only asks.
+    await user.click(screen.getByRole('button', {name: 'Refresh readiness (re-read logins)'}));
+    expect(refreshReadiness).toHaveBeenCalledTimes(2);
+    expect(refreshReadiness).toHaveBeenLastCalledWith({fresh: true});
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the rejected desktop session to the shared card and no other instruction', async () => {

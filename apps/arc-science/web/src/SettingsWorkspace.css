@@ -254,6 +254,42 @@
   color: var(--ink-2);
 }
 
+/* Under the controls: where the key goes (host prompt, terminal or CLI login), the
+   consented Test seat and the last probe. Its buttons keep the small actions spacing. */
+.seat-access {
+  margin-top: var(--s2);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+}
+
+.seat-access .actions {
+  align-items: center;
+  margin: var(--s2) 0;
+}
+
+.seat-access .actions [role="status"],
+.seat-access .actions > span {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.seat-access .check {
+  display: flex;
+  gap: var(--s2);
+  align-items: flex-start;
+  line-height: 1.55;
+  font-size: var(--text-sm);
+}
+
+.seat-verification {
+  margin: 4px 0 0;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
 .seat-auth-modes {
   margin-top: var(--s2);
   font-size: var(--text-sm);
