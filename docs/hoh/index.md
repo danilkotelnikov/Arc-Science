@@ -187,3 +187,28 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   Playwright acceptance increment for a fresh Claude Code session.
 - [Claude↔Codex plugin inspection](2026-09-20-claude-codex-plugin-check.md)
   records the installed commands without claiming an authenticated consultation.
+
+## Execution loop — 2026-09-20/21, Claude (design, copy, icons, Playwright from the EXE)
+
+- Model `claude-opus-5`, session effort `xhigh`, ultracode orchestration on; "Claude
+  Opus Ultracode" is not a model identity here. [Plan](2026-09-20-design-copy-native-playwright-plan.md),
+  [inventory of visible strings and controls](2026-09-20-ui-inventory.md),
+  [development record with reviews and gates](2026-09-20-design-record.md).
+- One design system (tokens, 18 px Lucide navigation icons including the new
+  pilcrow / sliders-horizontal / activity / image glyphs, a sticky rail, one-column
+  Settings), one session voice through a shared lock notice, per-surface copy from
+  the inventory with the critique's fact corrections; two shell treatments measured
+  by task outcomes at 1280×720 and 700×800 and the rail frozen.
+- `ARC_DESKTOP_DIAGNOSTIC_ATTACH=1` (development only) lets Playwright drive the real
+  `Arc Science.exe` window over CDP; the journeys ran through the native window on an
+  isolated workspace including a Blender 1DQJ render, a cancellation and a download
+  (the host's own download path verified by UI Automation, since Playwright
+  intercepts downloads while attached). A BioArt cache-root defect under the
+  desktop's extended-length paths was found by that run and fixed with a test.
+- Reviews: vision/UX and copy reviewers (separate Claude contexts) → changes-required
+  → surviving findings applied; Sol (GPT-5.6) on the native/shell diff → changes
+  required twice → accept-with-findings. Cross-vendor vision review blocked (credit,
+  tier). Remaining gates in the record: redirect and stale-secret native cases, the
+  failure-page clicks, trajectory frames, live provider and connector routes,
+  portable install.
+

@@ -61,6 +61,179 @@ enum RecoveryAction {
     OpenLog,
 }
 
+/// Development-only diagnostic attach. With `ARC_DESKTOP_DIAGNOSTIC_ATTACH=1` the
+/// WebView opens the Chromium DevTools protocol on an ephemeral loopback port so a
+/// Playwright client can drive this very window (`connectOverCDP`). The port and
+/// this process id are written to `<app data>/diagnostic-attach.json` and to the
+/// window title, so the mode is never silent. It exposes the WebView, its network
+/// traffic and therefore the native session header to any local process that can
+/// reach the port: an operator enables it for one development run and nothing else.
+struct DiagnosticAttach {
+    port: u16,
+    record: PathBuf,
+    published: bool,
+}
+
+/// Only the literal `1` enables the attach; any other value is a configuration error
+/// rather than a silent no.
+fn diagnostic_attach_requested(value: Option<&std::ffi::OsStr>) -> Result<bool, String> {
+    match value {
+        None => Ok(false),
+        Some(value) if value == "1" => Ok(true),
+        Some(_) => Err("ARC_DESKTOP_DIAGNOSTIC_ATTACH accepts only the value 1 (development-only WebView attach)".into()),
+    }
+}
+
+/// The DevTools switch WebView2 receives, with the defaults Wry would otherwise pass
+/// on its own (they are replaced, not extended, by additional arguments): the feature
+/// switches and the autoplay policy Wry sets when autoplay is left enabled.
+fn diagnostic_browser_args(port: u16) -> String {
+    format!(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --remote-debugging-port={port}"
+    )
+}
+
+/// Whether the DevTools endpoint itself answers on the loopback port (its
+/// `/json/version` names a browser WebSocket), polled for a bounded time. A bare
+/// listener that won the released port is not enough.
+fn devtools_answering(port: u16, wait: Duration) -> bool {
+    let deadline = Instant::now() + wait;
+    let agent = startup::health_agent();
+    loop {
+        if let Ok(mut response) = agent
+            .get(&format!("http://127.0.0.1:{port}/json/version"))
+            .call()
+            && response.status() == 200
+            && let Ok(body) = response.body_mut().read_to_string()
+            && body.contains("webSocketDebuggerUrl")
+        {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Whether a process with this id is still running (Windows: the process can be
+/// opened and has not exited).
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
+        fn GetExitCodeProcess(handle: *mut std::ffi::c_void, code: *mut u32) -> i32;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    }
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const STILL_ACTIVE: u32 = 259;
+    // SAFETY: plain kernel32 calls with a handle we open and close ourselves.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut code = 0u32;
+        let alive = GetExitCodeProcess(handle, &mut code) != 0 && code == STILL_ACTIVE;
+        CloseHandle(handle);
+        alive
+    }
+}
+
+#[cfg(not(windows))]
+fn process_alive(_pid: u32) -> bool {
+    false
+}
+
+/// The process id named by an existing attach record, when the record is readable.
+fn recorded_pid(record: &Path) -> Option<u32> {
+    let text = std::fs::read_to_string(record).ok()?;
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()?
+        .get("pid")?
+        .as_u64()
+        .and_then(|pid| u32::try_from(pid).ok())
+}
+
+impl DiagnosticAttach {
+    fn enable() -> Result<Option<Self>, String> {
+        if !diagnostic_attach_requested(
+            std::env::var_os("ARC_DESKTOP_DIAGNOSTIC_ATTACH").as_deref(),
+        )? {
+            return Ok(None);
+        }
+        // An ephemeral port from the OS; the listener is released at once and the
+        // WebView2 browser process binds the same number (loopback only) moments later.
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .map_err(|error| format!("Cannot choose a diagnostic attach port: {error}"))?;
+        let port = listener
+            .local_addr()
+            .map_err(|error| format!("Cannot read the diagnostic attach port: {error}"))?
+            .port();
+        drop(listener);
+        let record = app_data_directory()?.join("diagnostic-attach.json");
+        // One attached window at a time: the diagnostic profile is shared, and WebView2
+        // would otherwise fold a second attached window into the first browser process.
+        if let Some(pid) = recorded_pid(&record)
+            && pid != std::process::id()
+            && process_alive(pid)
+        {
+            return Err(format!(
+                "Another Arc Science window (pid {pid}) already has the diagnostic attach open; close it first"
+            ));
+        }
+        let _ = std::fs::remove_file(&record);
+        Ok(Some(Self {
+            port,
+            record,
+            published: false,
+        }))
+    }
+
+    /// A profile of its own, so the attached browser process is never shared with an
+    /// ordinary window (WebView2 shares one browser per user data folder). A profile
+    /// that cannot be created fails the attach rather than falling back to the default.
+    fn profile_directory(&self) -> Result<PathBuf, String> {
+        let directory = app_data_directory()?.join("webview-diagnostic");
+        std::fs::create_dir_all(&directory).map_err(|error| {
+            format!(
+                "Cannot create the diagnostic WebView profile {}: {error}",
+                directory.display()
+            )
+        })?;
+        Ok(directory)
+    }
+
+    /// Write the record only once the DevTools endpoint answers; a client that reads
+    /// the record then still checks the listener's owner chain against `pid`.
+    fn publish(&mut self) -> Result<(), String> {
+        if !devtools_answering(self.port, Duration::from_secs(10)) {
+            return Err(format!(
+                "The diagnostic attach endpoint 127.0.0.1:{} did not answer /json/version",
+                self.port
+            ));
+        }
+        let body = serde_json::json!({
+            "port": self.port,
+            "pid": std::process::id(),
+            "endpoint": format!("http://127.0.0.1:{}", self.port),
+            "warning": "development-only; exposes the WebView and its requests to local processes",
+        });
+        std::fs::write(&self.record, body.to_string())
+            .map_err(|error| format!("Cannot write {}: {error}", self.record.display()))?;
+        self.published = true;
+        Ok(())
+    }
+}
+
+impl Drop for DiagnosticAttach {
+    fn drop(&mut self) {
+        if self.published {
+            let _ = std::fs::remove_file(&self.record);
+        }
+    }
+}
+
 fn failure_recovery_action(target: &str, enabled: bool) -> Option<RecoveryAction> {
     if !enabled {
         return None;
@@ -412,7 +585,10 @@ fn open_owned_path(path: &Path) -> Result<(), String> {
         if result > 32 {
             Ok(())
         } else {
-            Err(format!("ShellExecuteW failed with code {result}"))
+            Err(format!(
+                "Windows could not open {} (ShellExecuteW returned {result})",
+                path.display()
+            ))
         }
     }
     #[cfg(not(windows))]
@@ -458,11 +634,11 @@ fn run() -> Result<(), String> {
         let (config, _) = Config::from_env()?;
         let service = start_service(&config)?;
         println!(
-            "Arc Science readiness verified; service {}",
+            "Arc Science is ready. {}",
             if service.is_some() {
-                "owned (shutdown requested on exit)"
+                "The service was started by this check and is shut down on exit."
             } else {
-                "reused (left running)"
+                "An existing service answered and is left running."
             }
         );
         return Ok(());
@@ -478,8 +654,16 @@ fn run() -> Result<(), String> {
     let startup_log = startup_log_path();
     reset_startup_log(startup_log.as_deref());
     append_startup_log(startup_log.as_deref(), "Startup: opening native window");
+    let attach = DiagnosticAttach::enable()?;
+    let title = match &attach {
+        Some(attach) => format!(
+            "Arc Science — diagnostic attach on 127.0.0.1:{}",
+            attach.port
+        ),
+        None => "Arc Science".to_string(),
+    };
     let mut window = WindowBuilder::new()
-        .with_title("Arc Science")
+        .with_title(&title)
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 860.0));
     if let Some(icon) = snoggo_icon() {
         window = window.with_window_icon(Some(icon));
@@ -495,7 +679,7 @@ fn run() -> Result<(), String> {
     let workbench_loaded = Arc::new(AtomicBool::new(false));
     let startup_started = Instant::now();
     let startup_display = Arc::new(Mutex::new(StartupDisplay {
-        operation: "Configuring native workspace".into(),
+        operation: "Preparing the workspace".into(),
         timeout: Some(launch::STEP_TIMEOUT),
         timeout_note: Some("per-step configuration timeout".into()),
     }));
@@ -503,16 +687,39 @@ fn run() -> Result<(), String> {
     let recovery_available = Arc::new(AtomicBool::new(false));
     let (nav_origin, nav_loaded) = (Arc::clone(&origin), Arc::clone(&workbench_loaded));
     let nav_recovery = Arc::clone(&recovery_available);
-    let mut context = wry::WebContext::new(profile_directory());
+    let mut context = wry::WebContext::new(match &attach {
+        Some(attach) => Some(attach.profile_directory()?),
+        None => profile_directory(),
+    });
     let initial_progress = startup_progress(
-        "Configuring native workspace",
+        "Preparing the workspace",
         startup_started,
         Some(launch::STEP_TIMEOUT),
         Some("per-step configuration timeout"),
         startup_started,
     );
-    let webview = WebViewBuilder::new_with_web_context(&mut context)
-        .with_html(launch::starting_page_with_progress(None, &initial_progress))
+    let builder = WebViewBuilder::new_with_web_context(&mut context)
+        .with_html(launch::starting_page_with_progress(None, &initial_progress));
+    #[cfg(windows)]
+    let builder = match &attach {
+        Some(attach) => {
+            use wry::WebViewBuilderExtWindows;
+            append_startup_log(
+                startup_log.as_deref(),
+                &format!(
+                    "Startup: development diagnostic attach enabled on 127.0.0.1:{} (WebView and its requests are exposed to local processes)",
+                    attach.port
+                ),
+            );
+            builder.with_additional_browser_args(diagnostic_browser_args(attach.port))
+        }
+        None => builder,
+    };
+    #[cfg(not(windows))]
+    if attach.is_some() {
+        return Err("ARC_DESKTOP_DIAGNOSTIC_ATTACH is supported on Windows WebView2 only".into());
+    }
+    let webview = builder
         .with_navigation_handler(move |target| {
             if let Some(action) =
                 failure_recovery_action(target.as_str(), nav_recovery.load(Ordering::SeqCst))
@@ -565,6 +772,17 @@ fn run() -> Result<(), String> {
         })
         .build(&window)
         .map_err(|e| format!("Cannot initialize desktop WebView: {e}"))?;
+    let mut attach = attach;
+    if let Some(attach) = attach.as_mut() {
+        attach.publish()?;
+        append_startup_log(
+            startup_log.as_deref(),
+            &format!(
+                "Startup: diagnostic attach listening on 127.0.0.1:{}; record published",
+                attach.port
+            ),
+        );
+    }
     let native_session_available =
         match install_native_session_handler(&webview, Arc::clone(&native_session)) {
             Ok(available) => available,
@@ -586,7 +804,7 @@ fn run() -> Result<(), String> {
         let running = Arc::clone(&startup_running);
         let log_path = startup_log.clone();
         std::thread::spawn(move || {
-            append_startup_log(log_path.as_deref(), "Startup: configuring native workspace");
+            append_startup_log(log_path.as_deref(), "Startup: preparing the workspace");
             let (config, plan) = match Config::from_env() {
                 Ok(found) => found,
                 Err(reason) => {
@@ -610,14 +828,14 @@ fn run() -> Result<(), String> {
                 *slot = Some(config.url.clone());
             }
             if let Ok(mut state) = display.lock() {
-                state.operation = "Starting local service".into();
+                state.operation = "Starting the local service".into();
                 state.timeout = Some(config.timeout);
                 state.timeout_note = Some("service readiness timeout".into());
             }
             let _ = starter.send_event(Shell::Planned {
                 plan: plan.clone(),
                 progress: startup_progress(
-                    "Starting local service",
+                    "Starting the local service",
                     startup_started,
                     Some(config.timeout),
                     Some("service readiness timeout"),
@@ -666,6 +884,9 @@ fn run() -> Result<(), String> {
         });
     }
     let window_handle = launch::window_handle(&window);
+    // tao's event loop never returns, so the attach record is dropped on the close
+    // paths explicitly rather than at the end of scope.
+    let mut attach_record = attach;
     let mut startup_plan: Option<launch::Plan> = None;
     let mut startup_terminal = false;
     event_loop.run(move |event, _target, control_flow| {
@@ -676,6 +897,7 @@ fn run() -> Result<(), String> {
                 ..
             } => {
                 service.take();
+                attach_record.take();
                 startup_running.store(false, Ordering::SeqCst);
                 *control_flow = ControlFlow::Exit;
             }
@@ -754,6 +976,7 @@ fn run() -> Result<(), String> {
                                 "Recovery: fresh process launched; exiting current window",
                             );
                             service.take();
+                            attach_record.take();
                             *control_flow = ControlFlow::Exit;
                         }
                         Err(error) => {
@@ -867,19 +1090,99 @@ mod tests {
     fn startup_progress_uses_elapsed_time_and_config_timeout() {
         let started = Instant::now();
         let progress = startup_progress(
-            "Starting local service",
+            "Starting the local service",
             started,
             Some(Duration::from_secs(45)),
             Some("service readiness timeout"),
             started + Duration::from_secs(3),
         );
-        assert_eq!(progress.operation, "Starting local service");
+        assert_eq!(progress.operation, "Starting the local service");
         assert_eq!(progress.elapsed, Some(Duration::from_secs(3)));
         assert_eq!(progress.timeout, Some(Duration::from_secs(45)));
         assert_eq!(
             progress.timeout_note.as_deref(),
             Some("service readiness timeout")
         );
+    }
+
+    #[test]
+    fn diagnostic_attach_is_opt_in_and_literal() {
+        assert_eq!(diagnostic_attach_requested(None), Ok(false));
+        assert_eq!(
+            diagnostic_attach_requested(Some(std::ffi::OsStr::new("1"))),
+            Ok(true)
+        );
+        assert!(diagnostic_attach_requested(Some(std::ffi::OsStr::new("true"))).is_err());
+        assert!(diagnostic_attach_requested(Some(std::ffi::OsStr::new(""))).is_err());
+        let args = diagnostic_browser_args(4321);
+        assert!(args.contains("--remote-debugging-port=4321"));
+        assert!(
+            args.starts_with("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection ")
+        );
+        assert!(args.contains("--autoplay-policy=no-user-gesture-required"));
+    }
+
+    #[test]
+    fn diagnostic_record_is_published_only_for_a_devtools_endpoint() {
+        // A port nobody listens on: publish refuses and writes no record.
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let record = std::env::temp_dir().join(format!("arc-attach-test-{port}.json"));
+        let mut attach = DiagnosticAttach {
+            port,
+            record: record.clone(),
+            published: false,
+        };
+        assert!(!devtools_answering(port, Duration::from_millis(300)));
+        assert!(attach.publish().is_err());
+        assert!(!record.exists());
+        // A bare listener that answers nothing DevTools-like is not enough either.
+        let bare = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        attach.port = bare.local_addr().unwrap().port();
+        assert!(attach.publish().is_err());
+        drop(bare);
+        // Something that answers /json/version like a DevTools endpoint: published, then removed.
+        let endpoint = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        attach.port = endpoint.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            for stream in endpoint.incoming().take(3) {
+                let mut stream = stream.unwrap();
+                let mut buffer = [0u8; 1024];
+                let _ = stream.read(&mut buffer);
+                let body = "{\"Browser\":\"fake\",\"webSocketDebuggerUrl\":\"ws://127.0.0.1/devtools/browser/x\"}";
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+            }
+        });
+        attach.publish().unwrap();
+        let text = std::fs::read_to_string(&record).unwrap();
+        assert!(text.contains(&format!("\"port\":{}", attach.port)));
+        assert!(text.contains(&format!("\"pid\":{}", std::process::id())));
+        drop(attach);
+        assert!(!record.exists());
+    }
+
+    #[test]
+    fn a_live_attach_record_belongs_to_a_running_process() {
+        let record =
+            std::env::temp_dir().join(format!("arc-attach-pid-test-{}.json", std::process::id()));
+        std::fs::write(
+            &record,
+            format!("{{\"pid\":{},\"port\":1}}", std::process::id()),
+        )
+        .unwrap();
+        assert_eq!(recorded_pid(&record), Some(std::process::id()));
+        assert!(process_alive(std::process::id()) == cfg!(windows));
+        // A pid that cannot exist is not alive.
+        assert!(!process_alive(u32::MAX - 1));
+        let _ = std::fs::remove_file(&record);
+        assert_eq!(recorded_pid(&record), None);
     }
 
     #[test]

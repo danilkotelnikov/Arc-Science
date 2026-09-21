@@ -30,6 +30,10 @@ export function DownloadNotice() {
   return notice?<p role={notice.tone} className={'download-notice '+notice.tone}>{notice.text}</p>:null;
 }
 
+// Primary workspaces in the order a session runs, then the tools. One glyph each.
+const MAIN=[['research','Research','search'],['memory','Memory','database'],['molecules','Molecules','atom'],['bioart','BioArt','image']];
+const TOOLS=[['prose','Prose','pilcrow'],['settings','Settings','sliders-horizontal'],['diagnostics','Diagnostics','activity']];
+
 export function App() {
   const fromLocation=()=>window.location.pathname==='/diagnostics'?'diagnostics':window.history.state?.arcWorkspace||'research';
   const [workspace,setWorkspace]=useState(fromLocation);
@@ -51,18 +55,30 @@ export function App() {
     if(next!==workspace||window.location.pathname!==path)window.history.pushState({arcWorkspace:next},'',path);
     setWorkspace(next);
   };
+  const item=([key,label,icon])=><Button key={key} variant="ghost" aria-pressed={workspace===key} onPress={()=>navigate(key)}><Icon name={icon} size={18}/>{label}</Button>;
   return <div className="app-shell">
-    <header className="app-header"><div className="brand"><img className="brand-mark" src="/snoggo-mark.svg" alt="" width="26" height="26"/>Arc Science</div><DownloadNotice/>{token===NATIVE_SESSION?<div className="native-session" role="status">Desktop session ready <Button variant="ghost" onPress={()=>setToken('')}>Use operator token</Button></div>:<><label className="token-field"><span>Operator token</span><input id="operator-token" type="password" value={token} onChange={e=>setToken(e.target.value)} autoComplete="off" aria-describedby="operator-token-note"/></label><span id="operator-token-note" className="header-note">Run <code>arc-science token --data ./data</code> for your project; paste token here.</span></>}</header>
-    <div className="app-body"><nav className="workspace-nav" aria-label="Workspaces"><p className="eyebrow">MAIN</p><Button variant="ghost" aria-pressed={workspace==='research'} onPress={()=>navigate('research')}><Icon name="search"/>Research</Button><Button variant="ghost" aria-pressed={workspace==='memory'} onPress={()=>navigate('memory')}><Icon name="database"/>Memory</Button><Button variant="ghost" aria-pressed={workspace==='molecules'} onPress={()=>navigate('molecules')}><Icon name="atom"/>Molecules</Button><Button variant="ghost" aria-pressed={workspace==='bioart'} onPress={()=>navigate('bioart')}><Icon name="scan-search"/>BioArt</Button><div className="nav-utility"><p className="eyebrow">TOOLS</p><Button variant="ghost" aria-pressed={workspace==='prose'} onPress={()=>navigate('prose')}><Icon name="pen-line"/>Prose</Button><Button variant="ghost" aria-pressed={workspace==='settings'} onPress={()=>navigate('settings')}><Icon name="sliders"/>Settings</Button><Button variant="ghost" aria-pressed={workspace==='diagnostics'} onPress={()=>navigate('diagnostics')}><Icon name="scan-search"/>Diagnostics</Button></div></nav>
+    <header className="app-header">
+      <div className="brand"><img className="brand-mark" src="/snoggo-mark.svg" alt="" width="26" height="26"/>Arc Science</div>
+      <DownloadNotice/>
+      {token===NATIVE_SESSION
+        ?<div className="session-control native-session" role="status">Desktop session ready <Button variant="ghost" size="sm" onPress={()=>setToken('')}>Use operator token</Button></div>
+        :<div className="session-control token-field"><label htmlFor="operator-token">Operator token</label><input id="operator-token" type="password" value={token} onChange={e=>setToken(e.target.value)} autoComplete="off" placeholder="Paste to unlock" aria-describedby="operator-token-note"/><span id="operator-token-note" className="visually-hidden">The owner-only token printed by arc-science token --data your-project. It stays in this window.</span></div>}
+    </header>
+    <div className="app-body">
+      <nav className="workspace-nav" aria-label="Workspaces">
+        <p className="eyebrow" aria-hidden="true">Main</p>
+        {MAIN.map(item)}
+        <div className="nav-utility" role="group" aria-label="Tools"><p className="eyebrow" aria-hidden="true">Tools</p>{TOOLS.map(item)}</div>
+      </nav>
       <main className="workspace-content">
-        {/* Keep both workspaces mounted: credentials, goal and selection stay in memory. */}
+        {/* Keep every workspace mounted: credentials, drafts and selections stay in memory. */}
         <div hidden={workspace!=='molecules'}><MolecularWorkspace token={token} setToken={setToken}/></div>
         <div hidden={workspace!=='bioart'}><BioArtWorkspace token={token} setToken={setToken}/></div>
         <div hidden={workspace!=='research'}><ResearchWorkspace token={token} setToken={setToken}/></div>
         <div hidden={workspace!=='memory'}><MemoryWorkspace token={token} setToken={setToken}/></div>
         <div hidden={workspace!=='prose'}><ProseWorkspace token={token} setToken={setToken}/></div>
-        <div hidden={workspace!=='settings'}><SettingsWorkspace token={token}/></div>
-        <div hidden={workspace!=='diagnostics'}><DiagnosticsWorkspace token={token} active={workspace==='diagnostics'}/></div>
+        <div hidden={workspace!=='settings'}><SettingsWorkspace token={token} setToken={setToken}/></div>
+        <div hidden={workspace!=='diagnostics'}><DiagnosticsWorkspace token={token} setToken={setToken} active={workspace==='diagnostics'}/></div>
       </main>
     </div>
   </div>;

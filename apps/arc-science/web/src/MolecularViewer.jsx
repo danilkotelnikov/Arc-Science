@@ -15,6 +15,7 @@ export const REPRESENTATIONS = {cartoon: 'cartoon', surface: 'molecular-surface'
 export const COLOURINGS = {chain: 'chain-id', element: 'element-symbol', residue: 'residue-name', secondary_structure: 'secondary-structure', bfactor: 'uncertainty', uniform: 'uniform'};
 const BACKGROUNDS = {white: 0xffffff, black: 0x000000, transparent: 0xffffff};
 const QUALITIES = ['auto', 'high', 'medium', 'low'];
+const OPTION_LABELS = {bfactor: 'B-factor'};
 const CONTACT_COLOUR = 0xd9480f;
 export const DEFAULTS = {representation: 'cartoon', colouring: 'chain', assembly: 'asymmetric_unit', background: 'white', quality: 'auto', spin: false, contacts: true, waters: false};
 
@@ -159,8 +160,10 @@ export default function MolecularViewer({source, scene, defaults, stage}) {
       }
       if (!isCurrent()) return;
       contacts.current = {component, representation};
-      const origin = scene?.state === 'verified' ? 'the verified scene' : 'the provisional scene';
-      setStatus('Loaded ' + atomCount.current + ' atoms' + (residues.length ? '; ' + residues.length + ' contact residues from ' + origin + ' highlighted; coordinates unchanged' : scene ? '; no contacts in ' + origin + '; coordinates unchanged' : '') + '.');
+      // Provisional contacts come from the pipeline while it still renders; verified ones once it has finished.
+      const origin = scene?.state === 'verified' ? 'verified contacts (render finished)' : 'provisional contacts (render still running)';
+      const count = residues.length;
+      setStatus('Loaded ' + atomCount.current + ' atoms.' + (count ? ' ' + count + (count === 1 ? ' contact residue' : ' contact residues') + ' highlighted from ' + origin + '; coordinates unchanged.' : scene ? ' No ' + origin + '; coordinates unchanged.' : ''));
     } catch (reason) {
       if (sequence === contactSeq.current && plugin.current === context) setError('The contact overlay could not be updated: ' + (reason?.message || String(reason)));
     } });
@@ -176,6 +179,10 @@ export default function MolecularViewer({source, scene, defaults, stage}) {
   }, [ready, settings.background, settings.spin]);
 
   const set = (key, value) => setSettings(current => ({...current, [key]: value}));
+  // The assembly is committed on Enter or blur: every change of settings.assembly re-parses the structure.
+  const [assemblyDraft, setAssemblyDraft] = useState(settings.assembly);
+  useEffect(() => { setAssemblyDraft(settings.assembly); }, [settings.assembly]);
+  const commitAssembly = () => set('assembly', assemblyDraft.trim() || 'asymmetric_unit');
   async function screenshot() {
     const context = plugin.current;
     if (!context) return;
@@ -190,20 +197,20 @@ export default function MolecularViewer({source, scene, defaults, stage}) {
     } catch (reason) { setError('Screenshot failed: ' + reason.message); }
   }
   const select = (key, options, label) => <label>{label}<select aria-label={label} value={settings[key]} onChange={e => set(key, e.target.value)}>
-    {options.map(v => <option key={v} value={v}>{v.replace(/_/g, ' ')}</option>)}</select></label>;
-  return <div className="viewer" aria-label="Molecular viewer">
+    {options.map(v => <option key={v} value={v}>{OPTION_LABELS[v] || v.replace(/_/g, ' ')}</option>)}</select></label>;
+  return <div className="viewer" role="group" aria-label="Molecular viewer">
     <div className="viewer-canvas" ref={containerRef}><canvas ref={canvasRef}/></div>
     <div className="viewer-controls">
       {select('representation', Object.keys(REPRESENTATIONS), 'Representation')}
       {select('colouring', Object.keys(COLOURINGS), 'Colouring')}
       {select('background', Object.keys(BACKGROUNDS), 'Background')}
       {select('quality', QUALITIES, 'Quality')}
-      <label>Assembly<input aria-label="Assembly" value={settings.assembly} onChange={e => set('assembly', e.target.value || 'asymmetric_unit')}/></label>
-      <label className="check"><input type="checkbox" checked={!!settings.contacts} onChange={e => set('contacts', e.target.checked)}/>contacts</label>
-      <label className="check"><input type="checkbox" checked={!!settings.waters} onChange={e => set('waters', e.target.checked)}/>waters</label>
-      <label className="check"><input type="checkbox" checked={!!settings.spin} onChange={e => set('spin', e.target.checked)}/>spin</label>
+      <label>Viewer assembly (press Enter to apply)<input aria-label="Viewer assembly (press Enter to apply)" value={assemblyDraft} onChange={e => setAssemblyDraft(e.target.value)} onBlur={commitAssembly} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitAssembly(); } }}/></label>
+      <label className="check"><input type="checkbox" checked={!!settings.contacts} onChange={e => set('contacts', e.target.checked)}/>Show contacts</label>
+      <label className="check"><input type="checkbox" checked={!!settings.waters} onChange={e => set('waters', e.target.checked)}/>Show waters</label>
+      <label className="check"><input type="checkbox" checked={!!settings.spin} onChange={e => set('spin', e.target.checked)}/>Spin</label>
       <Button variant="ghost" size="sm" isDisabled={!ready} onPress={() => plugin.current && PluginCommands.Camera.Reset(plugin.current, {})}>Reset view</Button>
-      <Button variant="ghost" size="sm" isDisabled={!ready || !loaded.current} onPress={screenshot}>Save view</Button>
+      <Button variant="ghost" size="sm" isDisabled={!ready || !loaded.current} onPress={screenshot}>Save view as PNG</Button>
     </div>
     <p className="field-note" role="status">{error || status}{stage ? ' · ' + stage : ''}</p>
   </div>;

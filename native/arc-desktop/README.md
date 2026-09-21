@@ -74,12 +74,38 @@ existing session-memory worker; no embedding model is installed automatically.
 | `ARC_DESKTOP_ARG_0` ... | `serve` for the default command | Each value is one literal argument. Empty arguments and spaces are preserved; shell syntax is not evaluated. |
 | `ARC_DESKTOP_TIMEOUT` | `30` | Readiness deadline in seconds, 1–300. |
 | `ARC_DESKTOP_SERVE` | unset | Only the exact legacy value `arc-science serve` is accepted. Other command strings fail with migration instructions. Cannot be combined with an explicit executable. |
+| `ARC_DESKTOP_DIAGNOSTIC_ATTACH` | unset | Development only. The literal `1` opens the WebView2 DevTools protocol on an ephemeral loopback port for one run (see below); any other value is an error. |
 
 Configuration is captured once. Missing argv entries and invalid settings fail
 before network access or process creation. Stale entries beyond `ARG_COUNT` are
 unused. `--check-startup` runs exactly the startup contract without making a window,
 prints whether the service was owned or reused, and exits. Owned services then shut
 down; reused services stay running.
+
+## Diagnostic attach (development only)
+
+`ARC_DESKTOP_DIAGNOSTIC_ATTACH=1` makes the owned WebView2 open the Chromium
+DevTools protocol on an ephemeral port bound to `127.0.0.1`, so a Playwright client
+can drive the actual window (`chromium.connectOverCDP(endpoint)`) and operate its
+visible controls. One attached window at a time: a record whose process is still
+running refuses a second attach. Once the DevTools endpoint answers `/json/version`
+(polled for up to ten seconds after the WebView is created; an endpoint that never
+answers fails the start), the host
+records `{"port","pid","endpoint"}` in `%LOCALAPPDATA%\ArcScience\diagnostic-attach.json`
+for the window's lifetime, writes the same fact to the startup log, and puts
+`diagnostic attach on 127.0.0.1:<port>` in the window title so the mode is never
+silent; the record is removed when the window closes. The attached window uses its
+own WebView2 profile (`webview-diagnostic`), so it never shares a browser process with
+an ordinary window. A client should still confirm that the listener on that port
+belongs to `msedgewebview2.exe` under the recorded Arc Science process before
+trusting the page.
+
+The attach exposes the WebView, its network requests and therefore the native session
+header to any local process that can reach the port. Enable it for one development
+run on a machine you control and never in an installed copy; the flag is not set by
+the launcher, the supervisor or the workbench. Wry's default WebView2 switches
+(feature disables and the autoplay policy) are re-applied together with the DevTools
+switch; a proxy setting, if one is ever added, would need the same treatment.
 
 ## Readiness, navigation and lifetime
 

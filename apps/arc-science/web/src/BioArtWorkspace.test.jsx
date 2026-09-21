@@ -1,8 +1,8 @@
 import React from 'react';
 import {afterEach, beforeEach, expect, test, vi} from 'vitest';
-import {act, render, screen, waitFor} from '@testing-library/react';
+import {act, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import {NATIVE_SESSION} from './http';
+import {NATIVE_SESSION, SESSION_COPY} from './http';
 import BioArtWorkspace from './BioArtWorkspace';
 
 const entry = {
@@ -85,7 +85,7 @@ test('entry inspection freezes input and clears consumed consent while a request
   await user.click(screen.getByRole('button',{name:'Inspect entry'}));
   expect(input).toBeDisabled(); expect(consent).toBeDisabled(); expect(consent).not.toBeChecked();
   expect(screen.getByRole('button',{name:'Inspect entry'})).toBeDisabled();
-  expect(screen.getByRole('button',{name:'Search NIH BioArt'})).toBeDisabled();
+  expect(screen.getByRole('button',{name:'Search BioArt'})).toBeDisabled();
   await act(async()=>finish());
   expect(input).not.toBeDisabled();
   expect(await screen.findByRole('heading',{name:'Antibody'})).toBeVisible();
@@ -103,12 +103,22 @@ test('failed dynamic search preserves its error and offers an official search li
   expect(destination.searchParams.get('sort')).toBe('relevance');
   expect(link).toHaveAttribute('rel','noreferrer');
   expect(link.href).not.toContain('private-token');
-  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
-  expect(await screen.findByRole('alert')).toHaveTextContent('BioArt schema drift');
-  expect(screen.getByRole('alert')).not.toHaveTextContent('Request failed');
-  expect(screen.getByRole('alert')).not.toHaveTextContent('--search-html');
-  expect(screen.getByText(/NIH.*search.*browser rendering/)).toBeVisible();
-  expect(screen.queryByText('No matching entries in the returned metadata.')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button',{name:'Search BioArt'}));
+  const alert=await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('NIH metadata came in an unexpected shape');
+  expect(alert).not.toHaveTextContent('schema drift');
+  expect(alert).not.toHaveTextContent('Request failed');
+  expect(alert).not.toHaveTextContent('--search-html');
+  // The error sits next to the search controls, not in the other column.
+  expect(within(screen.getByRole('complementary',{name:'BioArt search'})).getByRole('alert')).toBe(alert);
+  // One caveat: cache-first search, consented lookups, and the official site for live search.
+  const caveat=screen.getByText(/Live NIH search is not available here/);
+  expect(caveat).toBeVisible();
+  expect(caveat).toHaveTextContent('Search matches the local cache; with consent, entry lookups (Inspect entry, below) fetch from NIH.');
+  expect(caveat).toHaveTextContent('Consent covers one search or inspection, then clears. Cached entries never contact NIH.');
+  expect(caveat).toContainElement(link);
+  expect(screen.queryByText(/browser rendering/)).not.toBeInTheDocument();
+  expect(screen.queryByText('No entries match this query.')).not.toBeInTheDocument();
   await user.type(screen.getByLabelText('NIH entry ID'),'18');
   await user.click(screen.getByRole('button',{name:'Inspect entry'}));
   expect(await screen.findByRole('heading',{name:'Antibody'})).toBeVisible();
@@ -124,9 +134,9 @@ test('cache miss uses a plain one-use consent recovery without backend flags', a
   const user=userEvent.setup();
   render(<BioArtWorkspace token="operator" setToken={()=>{}}/>);
   const consent=screen.getByLabelText('Permit NIH network access for the next search or inspection');
-  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
+  await user.click(screen.getByRole('button',{name:'Search BioArt'}));
   const alert=await screen.findByRole('alert');
-  expect(alert).toHaveTextContent('No cached BioArt source is available yet');
+  expect(alert).toHaveTextContent('No cached BioArt metadata is available yet');
   expect(alert).toHaveTextContent('Permit NIH network access for the next search or inspection');
   expect(alert).toHaveTextContent('Consent is used once and clears after the request');
   expect(alert).not.toHaveTextContent('409');
@@ -144,12 +154,68 @@ test('authorization and offline failures are actionable without raw transport st
     throw new TypeError('Failed to fetch');
   });
   render(<BioArtWorkspace token="operator" setToken={()=>{}}/>);
-  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
-  expect(await screen.findByRole('alert')).toHaveTextContent('BioArt is locked. Enter a valid operator token in the header, then try again.');
-  expect(screen.getByRole('alert')).not.toHaveTextContent('403');
-  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Arc Science cannot reach the local BioArt service. Check that the desktop service is running, then retry.');
+  await user.click(screen.getByRole('button',{name:'Search BioArt'}));
+  // A rejected token is session state: the shared lock notice in its error tone, once, and no alert with the same words.
+  const search=screen.getByRole('complementary',{name:'BioArt search'});
+  const notice=(await within(search).findByText(SESSION_COPY.expired.title)).closest('[role="status"]');
+  expect(notice).toHaveTextContent(SESSION_COPY.expired.text);
+  expect(notice).toHaveAttribute('data-tone','error');
+  expect(notice).not.toHaveTextContent('403');
+  expect(within(notice).getByRole('button',{name:'Go to token field'})).toBeEnabled();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getAllByText(SESSION_COPY.expired.title)).toHaveLength(1);
+  await user.click(screen.getByRole('button',{name:'Search BioArt'}));
+  expect(await screen.findByRole('alert')).toHaveTextContent(SESSION_COPY.offline.title+'. '+SESSION_COPY.offline.text);
   expect(screen.getByRole('alert')).not.toHaveTextContent('Failed to fetch');
+});
+
+test('without a token the locked line sits beside the search controls and result rows stay disabled', async () => {
+  const user=userEvent.setup();
+  fetch.mockImplementation(async (path, options) => { calls.push({path, options}); return json({hits:[{entry_id:18,title:'Antibody'}]}); });
+  // The header token field the lock notice hands focus to.
+  const rendered=render(<><input id="operator-token" aria-label="Operator token"/><BioArtWorkspace token="operator"/></>);
+  expect(screen.queryByText(SESSION_COPY.locked.title)).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button',{name:'Search BioArt'}));
+  const row=await screen.findByRole('button',{name:'Antibody · BIOART-000018'});
+  expect(row).not.toBeDisabled();
+  rendered.rerender(<><input id="operator-token" aria-label="Operator token"/><BioArtWorkspace token=""/></>);
+  expect(screen.getByRole('button',{name:'Search BioArt'})).toBeDisabled();
+  expect(row).toBeDisabled();
+  const search=screen.getByRole('complementary',{name:'BioArt search'});
+  const notice=within(search).getByRole('status');
+  expect(notice).toBeVisible();
+  expect(notice).toHaveTextContent(SESSION_COPY.locked.title);
+  expect(notice).toHaveTextContent(SESSION_COPY.locked.text);
+  expect(notice).toHaveAttribute('data-tone','info');
+  expect(screen.getAllByText(SESSION_COPY.locked.title)).toHaveLength(1);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  // The notice sits under the search action, and its button leads to the token field.
+  expect(screen.getByRole('button',{name:'Search BioArt'}).compareDocumentPosition(notice)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  await user.click(within(notice).getByRole('button',{name:'Go to token field'}));
+  await waitFor(()=>expect(screen.getByLabelText('Operator token')).toHaveFocus());
+});
+
+test('an entry without SVG starts on its first available format and fetch errors sit beside the fetch button', async () => {
+  const user=userEvent.setup();
+  fetch.mockImplementation(async (path, options) => {
+    calls.push({path, options});
+    if (path==='/api/bioart/inspect') return json({...entry, representations:[{group_id:63, caption:'Antibody - Colored', files:{PNG:626857, EPS:626859}}]});
+    if (path==='/api/bioart/fetch') return json({detail:'Missing or stale cache; explicit --allow-egress required'},409);
+    throw new Error('Unexpected request: '+path);
+  });
+  render(<BioArtWorkspace token="operator"/>);
+  await user.type(screen.getByLabelText('NIH entry ID'),'18');
+  await user.click(screen.getByRole('button',{name:'Inspect entry'}));
+  await screen.findByRole('heading',{name:'Antibody'});
+  expect(screen.getByLabelText('Format')).toHaveValue('PNG');
+  const fetchButton=screen.getByRole('button',{name:'Fetch and verify PNG'});
+  expect(fetchButton).not.toBeDisabled();
+  await user.click(fetchButton);
+  const alert=await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('No cached BioArt file is available yet. Permit NIH network access for this fetch');
+  expect(alert).not.toHaveTextContent('--allow-egress');
+  expect(fetchButton.parentElement).toContainElement(alert);
+  expect(within(screen.getByRole('complementary',{name:'BioArt search'})).queryByRole('alert')).not.toBeInTheDocument();
 });
 
 

@@ -1,10 +1,13 @@
 # UI icon notices
 
-The small atom, search and download icon geometry in `web/src/icons.jsx` comes
-from Lucide, retrieved through Supericons on 2026-09-08. Geometry is unchanged;
-JSX attribute spelling and accessibility/size attributes are adapted for React.
-The retrieval manifest is `docs/arc-science/supericons-manifest.json` at the
-repository root. These icons are UI controls, not molecular evidence or logos.
+The small outline icon geometry in `web/src/icons.jsx` comes from Lucide: atom,
+search and download retrieved through Supericons on 2026-09-08; database,
+cloud-download, import and shield-check from the same family; pilcrow,
+sliders-horizontal, activity and image from lucide-static 0.560.0 (jsDelivr) on
+2026-09-20. Geometry is unchanged; JSX attribute spelling and accessibility/size
+attributes are adapted for React. The retrieval manifest is
+`docs/arc-science/supericons-manifest.json` at the repository root. These icons are
+UI controls, not molecular evidence or logos.
 
 Official source: https://lucide.dev/license (checked 2026-09-08).
 Search and download are Feather-derived icons; both notices below apply.

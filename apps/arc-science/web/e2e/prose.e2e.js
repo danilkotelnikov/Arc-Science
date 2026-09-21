@@ -21,7 +21,7 @@ test('the local rewrite edits prose only and every protected span survives byte 
     await expect(output).toContainText(literal);
   }
   await expect(output).not.toContainText('utilize');
-  await expect(results.getByRole('heading', {level: 3}).first()).toHaveText(/^\d+ edits · \d+ protected spans \(/);
+  await expect(results.getByRole('heading', {level: 3}).first()).toHaveText(/^\d+ edits? · \d+ protected spans? \(/);
   await expect(results.getByText(/not a human-authorship claim/)).toBeVisible();
   // Deterministic: the service gives the same answer to the same text.
   const direct = await request.post('/api/prose/rewrite', {headers: {Authorization: `Bearer ${E2E_TOKEN}`}, data: {text: TEXT}});
@@ -38,7 +38,7 @@ test('detection is refused without consent and the workspace names the recipient
   const consent = page.getByLabel(/I consent to sending this text to api.edgeshop.ai/);
   await expect(consent).toBeDisabled();
   await expect(page.getByRole('button', {name: 'Detect (sends text)'})).toBeDisabled();
-  await page.getByRole('button', {name: 'Show rules and detection terms'}).click();
+  await page.getByRole('button', {name: 'Load rules and detection details'}).click();
   await expect(page.getByText(/Sends the text to api.edgeshop.ai \(COPYLEAKS, HEMINGWAY\)/)).toBeVisible();
   await expect(consent).toBeEnabled();
   await expect(page.getByRole('button', {name: 'Detect (sends text)'})).toBeDisabled();

@@ -3,6 +3,7 @@ import {afterEach, beforeEach, expect, test, vi} from 'vitest';
 import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ResearchWorkspace from './ResearchWorkspace';
+import {SESSION_COPY} from './http';
 
 const json = data => new Response(JSON.stringify(data), {headers: {'Content-Type': 'application/json'}});
 const mission = {id: 'private-mission', release: {policy_digest: 'p'.repeat(64), subject_digest: 's'.repeat(64), status: 'eligible_for_human_review', eligible_for_human_review: true, blocking_reasons: [], decided_at: 1, verification: null, checks: []}, state: {status: 'paused', round: 1, actions_used: 3, model_calls_used: 2, data_origin: 'fixture', branches: [], assessments: [], observations: [], events: [], visual_reports: [], artifacts: [], stop_reason: 'Private stop reason'}};
@@ -35,11 +36,11 @@ test('switching away from a validated credential clears private drafts and conse
   fireEvent.change(screen.getByLabelText('Measurement JSON'), {target: {value: '{"x":[1],"y":[2]}' }});
   await user.click(screen.getByLabelText(/Permit sending/));
   await user.click(screen.getByLabelText(/Require configured visual review/));
-  await user.click(screen.getByRole('button', {name: 'Verify and recompute'}));
+  await user.click(screen.getByRole('button', {name: 'Replay and verify'}));
   await screen.findByText(/3 computations/);
   rerender(<ResearchWorkspace token="new-token" setToken={setToken}/>);
   expect(screen.queryByText('Selected mission: private-mission')).not.toBeInTheDocument();
-  expect(screen.queryByText('Private stop reason')).not.toBeInTheDocument();
+  expect(screen.queryByText(/Private stop reason/)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', {name: 'paused · Private saved question'})).not.toBeInTheDocument();
   expect(screen.queryByText(/3 computations/)).not.toBeInTheDocument();
   expect(screen.getByLabelText('Research goal')).toHaveValue('');
@@ -74,8 +75,10 @@ test('expired credential recovery preserves the draft while resetting consent', 
   await user.click(screen.getByLabelText(/Permit sending/));
   fetch.mockImplementationOnce(async () => new Response(JSON.stringify({detail: 'expired'}), {status: 401, headers: {'Content-Type': 'application/json'}}));
 
-  await user.click(screen.getByRole('button', {name: 'Verify and recompute'}));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Operator session is locked or expired');
+  await user.click(screen.getByRole('button', {name: 'Replay and verify'}));
+  // The rejected token is stated once, by the lock notice in its error tone; no separate alert repeats it.
+  expect((await screen.findByText(SESSION_COPY.expired.title)).closest('[role="status"]')).toHaveAttribute('data-tone', 'error');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   rerender(<ResearchWorkspace token="replacement-token" setToken={setToken}/>);
 
   expect(screen.getByLabelText('Research goal')).toHaveValue('Draft after expiry');
@@ -119,7 +122,7 @@ test('an in-flight capsule cannot download after the token is removed', async ()
   let finish;
   fetch.mockImplementationOnce(async () => ({ok: true, blob: () => new Promise(resolve => { finish = resolve; })}));
   const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-  await user.click(screen.getByRole('button', {name: 'Export replay capsule'}));
+  await user.click(screen.getByRole('button', {name: 'Export replay archive (.zip)'}));
   await waitFor(() => expect(finish).toBeTypeOf('function'));
   rerender(<ResearchWorkspace token="" setToken={setToken}/>);
   await act(async () => finish(new Blob(['private archive'])));
@@ -130,7 +133,7 @@ test('an in-flight capsule cannot download after the token is removed', async ()
 test('verification summarizes evidence without expanding the full JSON report', async () => {
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
-  await user.click(screen.getByRole('button', {name: 'Verify and recompute'}));
+  await user.click(screen.getByRole('button', {name: 'Replay and verify'}));
   expect(await screen.findByText(/3 computations/)).toHaveTextContent('2 artifacts');
   expect(screen.getByText(/Scientific validity is not established/)).toBeVisible();
   const details = screen.getByText('Verification details').closest('details');
@@ -149,9 +152,9 @@ test('secondary research traces are collapsed by default and readable on demand'
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
 
   await openMission(user);
-  const reconciliation = screen.getByText('Reconciliation').closest('details');
+  const reconciliation = screen.getByText(/^Reconciliation \(/).closest('details');
   const evidence = screen.getByText('Execution evidence').closest('details');
-  const events = screen.getByText('Event history').closest('details');
+  const events = screen.getByText(/^Event history \(/).closest('details');
 
   expect(reconciliation).not.toHaveAttribute('open');
   expect(evidence).not.toHaveAttribute('open');
@@ -159,13 +162,13 @@ test('secondary research traces are collapsed by default and readable on demand'
   expect(screen.getByText('Release decision: Eligible for human review')).toBeVisible();
   expect(screen.getByRole('region', {name: 'Claim scope'})).toBeVisible();
 
-  await user.click(screen.getByText('Reconciliation'));
+  await user.click(screen.getByText(/^Reconciliation \(/));
   expect(reconciliation).toHaveAttribute('open');
   expect(screen.getByText('Residuals remain structured.')).toBeVisible();
   await user.click(screen.getByText('Execution evidence'));
   await user.click(screen.getByText('obs-1 · fit_model · ok'));
   expect(screen.getByText(/"rmse": 0.42/)).toBeVisible();
-  await user.click(screen.getByText('Event history'));
+  await user.click(screen.getByText(/^Event history \(/));
   expect(screen.getByText('[1] decision: Opened nonlinear route.')).toBeVisible();
 });
 
@@ -175,19 +178,25 @@ test('locked and expired research states preserve the draft goal without raw 401
   await user.type(screen.getByLabelText('Research goal'), 'Draft assay question');
   expect(screen.getByRole('button', {name: 'Create and start'})).toBeDisabled();
   expect(screen.getByRole('button', {name: 'Load missions'})).toBeDisabled();
-  expect(screen.getByRole('status')).toHaveTextContent('Local unlock required');
-  expect(screen.getByRole('status')).toHaveTextContent('arc-science token --data ./data');
-  expect(screen.getByRole('status')).toHaveTextContent('token file');
+  expect(screen.getByRole('status')).toHaveTextContent(SESSION_COPY.locked.title);
+  expect(screen.getByRole('status')).toHaveTextContent(SESSION_COPY.locked.text);
   expect(fetch).not.toHaveBeenCalled();
 
   fetch.mockImplementationOnce(async () => new Response(JSON.stringify({detail: 'bad token'}), {status: 401, headers: {'Content-Type': 'application/json'}}));
   rendered.rerender(<ResearchWorkspace token="expired-token" setToken={vi.fn()}/>);
   expect(screen.getByLabelText('Research goal')).toHaveValue('Draft assay question');
   await user.click(screen.getByRole('button', {name: 'Load missions'}));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Operator session is locked or expired');
-  expect(screen.getByRole('alert')).not.toHaveTextContent('Request failed (401)');
+  // One lock notice in its error tone beside Create and start; the Saved missions pane keeps only its own short line.
+  const notice = await screen.findByRole('status');
+  expect(notice).toHaveTextContent(SESSION_COPY.expired.title);
+  expect(notice).toHaveAttribute('data-tone', 'error');
+  expect(screen.getAllByText(SESSION_COPY.expired.title)).toHaveLength(1);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.queryByText(/Request failed \(401\)/)).not.toBeInTheDocument();
+  const saved = screen.getByRole('complementary', {name: 'Saved missions'});
+  expect(saved).toHaveTextContent('Enter an operator token to load saved missions.');
+  expect(saved).not.toHaveTextContent(SESSION_COPY.expired.title);
   expect(screen.getByLabelText('Research goal')).toHaveValue('Draft assay question');
-  expect(screen.getByRole('status')).toHaveTextContent('Operator token expired');
   expect(screen.getByRole('button', {name: 'Load missions'})).toBeDisabled();
   await user.click(screen.getByRole('button', {name: 'Go to token field'}));
 });
@@ -209,9 +218,10 @@ test('expired background polling gates controls and stops repeat polling', async
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
   expect(await screen.findByText('running')).toBeInTheDocument();
-  expect(await screen.findByRole('alert', {}, {timeout: 2500})).toHaveTextContent('Operator session is locked or expired');
-  expect(screen.getByRole('alert')).not.toHaveTextContent('Request failed (401)');
-  expect(screen.getByRole('button', {name: 'Verify and recompute'})).toBeDisabled();
+  expect((await screen.findByText(SESSION_COPY.expired.title, {}, {timeout: 2500})).closest('[role="status"]')).toHaveAttribute('data-tone', 'error');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.queryByText(/Request failed \(401\)/)).not.toBeInTheDocument();
+  expect(screen.getByRole('button', {name: 'Replay and verify'})).toBeDisabled();
   expect(screen.getByRole('button', {name: 'Cancel'})).toBeDisabled();
   const missionReadsAfterExpiry = () => fetch.mock.calls.filter(([path]) => path === '/api/missions/' + mission.id).length;
   const afterExpiry = missionReadsAfterExpiry();
@@ -223,8 +233,8 @@ test('offline research errors keep service recovery copy separate from auth expi
   fetch.mockImplementationOnce(async () => { throw new TypeError('Failed to fetch'); });
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await user.click(screen.getByRole('button', {name: 'Load missions'}));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Arc Science service is offline or unreachable');
-  expect(screen.getByRole('alert')).not.toHaveTextContent('Operator session is locked or expired');
+  expect(await screen.findByRole('alert')).toHaveTextContent(SESSION_COPY.offline.title);
+  expect(screen.getByRole('alert')).not.toHaveTextContent(SESSION_COPY.expired.title);
   expect(screen.getByRole('button', {name: 'Load missions'})).not.toBeDisabled();
 });
 
@@ -253,4 +263,50 @@ test('token removal revokes the loaded artifact and rejects an unfinished artifa
   await act(async () => finish(new Blob(['private unfinished artifact'])));
   expect(URL.createObjectURL).toHaveBeenCalledTimes(callsBefore);
   expect(screen.queryByRole('img')).not.toBeInTheDocument();
+});
+
+test('invalid measurement JSON is reported beside Create and start before any request, and the round limit is clamped', async () => {
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await user.type(screen.getByLabelText('Research goal'), 'Clamp and parse');
+  await user.click(screen.getByText('Execution settings'));
+  fireEvent.change(screen.getByLabelText(/Round limit/), {target: {value: '40'}});
+  fireEvent.change(screen.getByLabelText('Measurement JSON'), {target: {value: '{"x":[1],'}});
+  await user.click(screen.getByRole('button', {name: 'Create and start'}));
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('Measurement JSON is not valid JSON');
+  expect(alert.previousElementSibling).toBe(screen.getByRole('button', {name: 'Create and start'}));
+  expect(fetch).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('Measurement JSON'), {target: {value: '{"x":[1],"y":[2]}'}});
+  await user.click(screen.getByRole('button', {name: 'Create and start'}));
+  await screen.findByText('Selected mission: private-mission');
+  const sent = fetch.mock.calls.find(([path, options]) => path === '/api/missions' && options.method === 'POST');
+  expect(JSON.parse(sent[1].body)).toMatchObject({max_rounds: 12, points: {x: [1], y: [2]}});
+});
+
+test('a live mission without consent cannot be created, and the mode note beside Create and start says why', async () => {
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await user.type(screen.getByLabelText('Research goal'), 'Live question');
+  const button = screen.getByRole('button', {name: 'Create and start'});
+  expect(button).toBeEnabled();
+  await user.click(screen.getByText('Execution settings'));
+  await user.selectOptions(screen.getByLabelText('Model source'), 'live');
+  expect(button).toBeDisabled();
+  expect(button.parentElement).toHaveTextContent('A live mission is refused until you tick the consent box');
+  await user.click(screen.getByLabelText(/Permit sending/));
+  expect(button).toBeEnabled();
+  expect(button.parentElement).toHaveTextContent("This mission's goal and data will be sent to them.");
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+test('Create and start brings the results into view and keeps the composer as it is', async () => {
+  const scrollIntoView = vi.fn(); Element.prototype.scrollIntoView = scrollIntoView;
+  try {
+    const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+    await user.type(screen.getByLabelText('Research goal'), 'Scroll question');
+    await user.click(screen.getByRole('button', {name: 'Create and start'}));
+    await screen.findByText('Selected mission: private-mission');
+    expect(scrollIntoView).toHaveBeenCalledWith({block: 'start'});
+    expect(scrollIntoView.mock.contexts[0]).toBe(screen.getByRole('region', {name: 'Research results'}));
+    expect(screen.getByLabelText('Research goal')).toHaveValue('Scroll question');
+  } finally { delete Element.prototype.scrollIntoView; }
 });

@@ -25,14 +25,14 @@ test('seats are edited in the workspace and persisted by the supervisor', async 
   await page.getByLabel('Planner credential').fill('planner');
   await page.getByLabel('Reviewer (QA) provider').selectOption('anthropic');
   await page.getByLabel('Reviewer (QA) model').fill('claude-sonnet-5');
-  await page.getByLabel('Reviewer (QA) auth').selectOption('cli');
+  await page.getByLabel('Reviewer (QA) sign-in').selectOption('cli');
   await page.getByLabel('Falsifier provider').selectOption('gemini');
   await page.getByLabel('Falsifier model').fill('gemini-3-pro');
-  await page.getByLabel('Falsifier auth').selectOption('cli');
+  await page.getByLabel('Falsifier sign-in').selectOption('cli');
   await expect(page.getByLabel('Falsifier effort')).toHaveValue('medium');
   await expect(page.getByLabel('Falsifier effort')).toBeDisabled();
-  await page.getByRole('button', {name: 'Save'}).click();
-  await expect(page.getByRole('status')).toHaveText(/Saved\. Applied live: seats/);
+  await page.getByRole('button', {name: 'Save', exact: true}).click();
+  await expect(page.getByRole('status')).toHaveText(/Saved\. Applied now: Research Models/);
   const snap = await (await request.get('/api/settings', {headers})).json();
   expect(snap.settings.seats.planner).toMatchObject({provider: 'openai', model: 'gpt-5.6', effort: 'high'});
   expect(snap.settings.seats.reviewer).toMatchObject({provider: 'anthropic', model: 'claude-sonnet-5', auth: 'cli'});
@@ -57,7 +57,7 @@ test('settings recovery copy hides the raw missing-supervisor error', async ({pa
   await openWorkspace(page, 'Settings', 'Settings');
   await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await page.getByRole('button', {name: 'Load settings'}).click();
-  await expect(page.getByRole('alert')).toHaveText('Settings are unavailable because no supervisor settings file is configured.');
-  await expect(page.getByText('Supervisor Settings Unavailable')).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('No settings file was given to this service.');
+  await expect(page.getByText('Settings file not configured')).toBeVisible();
   await expect(page.getByRole('alert')).not.toContainText('Request failed (503)');
 });

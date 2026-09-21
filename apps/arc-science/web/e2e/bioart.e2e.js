@@ -13,15 +13,21 @@ test('an offline search miss requires explicit egress consent and the browser ne
   await page.goto('/');
   await openWorkspace(page, 'BioArt', 'BioArt evidence workspace');
   const search = page.getByRole('complementary', {name: 'BioArt search'}).or(page.getByLabel('BioArt search')).first();
-  await expect(search.getByRole('button', {name: 'Search NIH BioArt'})).toBeDisabled();
+  await expect(search.getByRole('button', {name: 'Search BioArt'})).toBeDisabled();
+  // Without a token the shared lock notice sits under the search action and leads to the token field.
+  await expect(search.getByRole('status')).toContainText('Operator token required');
+  await search.getByRole('button', {name: 'Go to token field'}).click();
+  await expect(page.getByLabel('Operator token')).toBeFocused();
   await page.getByLabel('Operator token').fill(E2E_TOKEN);
+  await expect(search.getByRole('status')).toHaveCount(0);
   await search.getByLabel('BioArt search query').fill('');
-  await expect(search.getByRole('button', {name: 'Search NIH BioArt'})).toBeDisabled();
+  await expect(search.getByRole('button', {name: 'Search BioArt'})).toBeDisabled();
   await search.getByLabel('BioArt search query').fill('antibody');
   await expect(search.getByRole('checkbox', {name: /Permit NIH network access/})).not.toBeChecked();
-  await search.getByRole('button', {name: 'Search NIH BioArt'}).click();
-  const alert = page.getByRole('region', {name: 'BioArt evidence workspace'}).getByRole('alert');
-  await expect(alert).toContainText('No cached BioArt source is available yet');
+  await search.getByRole('button', {name: 'Search BioArt'}).click();
+  // Search and inspection errors render beside their controls in the search column.
+  const alert = search.getByRole('alert');
+  await expect(alert).toContainText('No cached BioArt metadata is available yet');
   await expect(alert).toContainText('Consent is used once and clears after the request');
   await expect(alert).not.toContainText('409');
   await expect(alert).not.toContainText('--allow-egress');
@@ -48,7 +54,7 @@ test('direct entry inspection validates the identifier before any request and re
   await expect(inspect).toBeEnabled();
   // Without consent the inspection stays offline: a cache miss is a 409, not a fetch.
   await inspect.click();
-  const alert = page.getByRole('region', {name: 'BioArt evidence workspace'}).getByRole('alert');
-  await expect(alert).toContainText('No cached BioArt source is available yet');
+  const alert = search.getByRole('alert');
+  await expect(alert).toContainText('No cached BioArt metadata is available yet');
   await expect(alert).not.toContainText('409');
 });

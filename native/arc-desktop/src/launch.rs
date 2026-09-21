@@ -85,7 +85,7 @@ pub fn find_supervisor() -> Result<PathBuf, String> {
         .cloned()
         .ok_or_else(|| {
             format!(
-                "The native supervisor {} was not found beside Arc Science.exe, in the development layout, or on PATH. Build it with `cargo build --release` in native/arc-science or set ARC_DESKTOP_SUPERVISOR.",
+                "Arc Science needs its startup helper, {}, and could not find it next to Arc Science.exe, in native/arc-science/target/release, or on PATH. Build it with `cargo build --release` in native/arc-science, or point ARC_DESKTOP_SUPERVISOR at it.",
                 binary(SUPERVISOR)
             )
         })
@@ -98,14 +98,16 @@ pub fn workspace() -> Result<PathBuf, String> {
     let project = match std::env::var_os("ARC_DESKTOP_PROJECT") {
         Some(explicit) => PathBuf::from(explicit),
         None => {
-            let base = std::env::var_os(if cfg!(windows) {
+            let variable = if cfg!(windows) {
                 "LOCALAPPDATA"
             } else {
                 "HOME"
-            })
-            .ok_or(
-                "Neither ARC_DESKTOP_PROJECT nor the local application data directory is available",
-            )?;
+            };
+            let base = std::env::var_os(variable).ok_or_else(|| {
+                format!(
+                    "Cannot choose a workspace folder: ARC_DESKTOP_PROJECT is not set and the local application data folder ({variable}) is not available"
+                )
+            })?;
             PathBuf::from(base)
                 .join(if cfg!(windows) {
                     "ArcScience"
@@ -120,10 +122,18 @@ pub fn workspace() -> Result<PathBuf, String> {
     Ok(project)
 }
 
-fn run_supervisor(supervisor: &Path, args: &[OsString]) -> Result<(String, String), String> {
+/// Run one supervisor step (`<supervisor> --project <project> <step...>`), returning
+/// its stdout and stderr; a failure line names the step, not the whole command line.
+fn run_supervisor(
+    supervisor: &Path,
+    project: &Path,
+    step: &[&str],
+) -> Result<(String, String), String> {
     let mut command = Command::new(supervisor);
     command
-        .args(args)
+        .arg("--project")
+        .arg(project)
+        .args(step)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -132,9 +142,12 @@ fn run_supervisor(supervisor: &Path, args: &[OsString]) -> Result<(String, Strin
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
-    let child = command
-        .spawn()
-        .map_err(|e| format!("Cannot run the supervisor {}: {e}", supervisor.display()))?;
+    let child = command.spawn().map_err(|e| {
+        format!(
+            "Cannot run the startup helper {}: {e}",
+            supervisor.display()
+        )
+    })?;
     let started = std::time::Instant::now();
     let mut child = child;
     let stdout = child.stdout.take();
@@ -151,26 +164,22 @@ fn run_supervisor(supervisor: &Path, args: &[OsString]) -> Result<(String, Strin
                 if status.success() {
                     return Ok((out, err));
                 }
+                // The configuration failure page carries no plan, so the workspace
+                // is named here; the shown stderr line is redacted like every other.
                 return Err(format!(
-                    "{} {} failed ({status}): {}",
-                    supervisor
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(SUPERVISOR),
-                    args.iter()
-                        .map(|a| a.to_string_lossy())
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    err.trim().lines().last().unwrap_or("no detail").trim()
+                    "The startup helper failed during `{}` ({status}) in workspace {}: {}",
+                    step.join(" "),
+                    project.display(),
+                    crate::startup::redact(err.trim().lines().last().unwrap_or("no detail").trim())
                 ));
             }
             Ok(None) if started.elapsed() > STEP_TIMEOUT => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("The supervisor did not answer within 60 seconds".into());
+                return Err("The startup helper did not answer within 60 seconds".into());
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
-            Err(e) => return Err(format!("Cannot wait for the supervisor: {e}")),
+            Err(e) => return Err(format!("Cannot wait for the startup helper: {e}")),
         }
     }
 }
@@ -189,48 +198,30 @@ pub fn self_configure(timeout: Duration) -> Result<(Config, Plan), String> {
     let supervisor = find_supervisor()?;
     let project = workspace()?;
     let mut notes = Vec::new();
-    let project_arg: OsString = project.clone().into();
     if !project.join("arc-science.toml").is_file() {
-        let (_, err) = run_supervisor(
-            &supervisor,
-            &[
-                "--project".into(),
-                project_arg.clone(),
-                "init".into(),
-                "--auto".into(),
-            ],
-        )?;
+        let (_, err) = run_supervisor(&supervisor, &project, &["init", "--auto"])?;
+        // Shown on the failure page, so redacted like every other stderr line.
         notes.extend(
             err.lines()
-                .map(|l| l.trim_start_matches("discovery: ").to_string())
+                .map(|l| crate::startup::redact(l.trim_start_matches("discovery: ")))
                 .filter(|l| !l.is_empty()),
         );
     }
-    let read_plan = |project_arg: OsString| -> Result<serde_json::Value, String> {
-        let (out, _) = run_supervisor(
-            &supervisor,
-            &["--project".into(), project_arg, "startup-plan".into()],
-        )?;
+    let read_plan = || -> Result<serde_json::Value, String> {
+        let (out, _) = run_supervisor(&supervisor, &project, &["startup-plan"])?;
         serde_json::from_str(&out)
             .map_err(|e| format!("The startup plan is not readable JSON: {e}"))
     };
-    let mut value = read_plan(project_arg.clone())?;
+    let mut value = read_plan()?;
     if value["ready"].as_bool() != Some(true) {
         // A configuration written before discovery existed can still be completed:
         // only empty fields are filled, and the plan is read again.
-        if let Ok((applied, _)) = run_supervisor(
-            &supervisor,
-            &[
-                "--project".into(),
-                project_arg.clone(),
-                "discover".into(),
-                "--apply".into(),
-            ],
-        ) && let Ok(report) = serde_json::from_str::<serde_json::Value>(&applied)
+        if let Ok((applied, _)) = run_supervisor(&supervisor, &project, &["discover", "--apply"])
+            && let Ok(report) = serde_json::from_str::<serde_json::Value>(&applied)
             && report["applied"].as_array().is_some_and(|a| !a.is_empty())
         {
             notes.push(format!(
-                "filled {} from discovery",
+                "Detected and filled in: {}",
                 report["applied"]
                     .as_array()
                     .unwrap()
@@ -239,10 +230,12 @@ pub fn self_configure(timeout: Duration) -> Result<(Config, Plan), String> {
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
-            value = read_plan(project_arg)?;
+            value = read_plan()?;
         }
     }
-    let url = LocalUrl::parse(value["url"].as_str().ok_or("The startup plan has no URL")?)?;
+    // A double-click user never set ARC_DESKTOP_URL, so the plan is named instead.
+    let url = LocalUrl::parse(value["url"].as_str().ok_or("The startup plan has no URL")?)
+        .map_err(|e| format!("The startup plan's URL is invalid: {e}"))?;
     let args = value["serve"]
         .as_array()
         .ok_or("The startup plan has no serve arguments")?
@@ -291,7 +284,7 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-const STYLE: &str = "<style>body{margin:0;font:15px/1.5 system-ui,Segoe UI,sans-serif;color:#17212d;background:#fff}main{max-width:720px;margin:12vh auto;padding:0 24px}h1{font-size:22px;margin:0 0 8px}p{margin:8px 0}ul{padding-left:18px}li{margin:4px 0}.muted{color:#5b6875}.bad{color:#bb3e03}code{font-size:13px}.startup-status{margin:18px 0}.progress-track{position:relative;height:7px;overflow:hidden;border-radius:999px;background:#e7edf2}.progress-track::before{content:\"\";position:absolute;inset:0 auto 0 0;width:38%;border-radius:inherit;background:#315d7c;animation:arc-indeterminate 1.35s ease-in-out infinite}.failure-card{padding:14px 0;border-top:1px solid #e7edf2;border-bottom:1px solid #e7edf2}.recovery-actions{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.button-link{display:inline-flex;align-items:center;min-height:30px;padding:0 12px;border-radius:5px;background:#315d7c;color:#fff;text-decoration:none;font-size:13px}.button-link.secondary{background:#eef3f6;color:#243542;border:1px solid #d8e1e7}@keyframes arc-indeterminate{0%{transform:translateX(-105%)}100%{transform:translateX(265%)}}@media (prefers-reduced-motion:reduce){.progress-track::before{animation:none;transform:translateX(80%)}}</style>";
+const STYLE: &str = "<style>body{margin:0;font:15px/1.5 system-ui,Segoe UI,sans-serif;color:#17212d;background:#fff}main{max-width:720px;margin:12vh auto;padding:0 24px;overflow-wrap:anywhere}h1{font-size:22px;margin:0 0 8px}p{margin:8px 0}ul{padding-left:18px}li{margin:4px 0}.muted{color:#5b6875}.bad{color:#bb3e03}code{font-size:13px}.failure-card pre{white-space:pre-wrap;margin:8px 0;font-size:13px}.startup-status{margin:18px 0}.progress-track{position:relative;height:7px;overflow:hidden;border-radius:999px;background:#e7edf2}.progress-track::before{content:\"\";position:absolute;inset:0 auto 0 0;width:38%;border-radius:inherit;background:#315d7c;animation:arc-indeterminate 1.35s ease-in-out infinite}.failure-card{padding:14px 0;border-top:1px solid #e7edf2;border-bottom:1px solid #e7edf2}.recovery-actions{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.button-link{display:inline-flex;align-items:center;min-height:30px;padding:0 12px;border-radius:5px;background:#315d7c;color:#fff;text-decoration:none;font-size:13px}.button-link.secondary{background:#eef3f6;color:#243542;border:1px solid #d8e1e7}.button-link:focus-visible{outline:2px solid #17212d;outline-offset:2px}@keyframes arc-indeterminate{0%{transform:translateX(-105%)}100%{transform:translateX(265%)}}@media (prefers-reduced-motion:reduce){.progress-track::before{animation:none;width:100%;transform:none;opacity:.35}}</style>";
 
 #[derive(Debug, Clone, Default)]
 pub struct StartupProgress {
@@ -321,47 +314,42 @@ fn progress_html(progress: &StartupProgress) -> String {
         escape(operation),
         escape(operation)
     );
-    if progress.elapsed.is_some() || progress.timeout.is_some() {
-        body.push_str("<p class=\"muted\">");
-        match (
-            progress.elapsed,
-            progress.timeout,
-            progress.timeout_note.as_deref(),
-        ) {
-            (Some(elapsed), Some(timeout), Some(note)) => body.push_str(&format!(
-                "Elapsed {}. {} {}.",
-                format_seconds(elapsed),
-                format_seconds(timeout),
-                escape(note)
-            )),
-            (Some(elapsed), Some(timeout), None) => body.push_str(&format!(
-                "Elapsed {} of {} timeout.",
-                format_seconds(elapsed),
-                format_seconds(timeout)
-            )),
-            (Some(elapsed), None, Some(note)) => {
-                body.push_str(&format!(
-                    "Elapsed {}. {}.",
-                    format_seconds(elapsed),
-                    escape(note)
-                ));
-            }
-            (Some(elapsed), None, None) => {
-                body.push_str(&format!("Elapsed {}.", format_seconds(elapsed)));
-            }
-            (None, Some(timeout), Some(note)) => {
-                body.push_str(&format!("{} {}.", format_seconds(timeout), escape(note)));
-            }
-            (None, Some(timeout), None) => {
-                body.push_str(&format!("Timeout {}.", format_seconds(timeout)));
-            }
-            (None, None, Some(note)) => body.push_str(&escape(note)),
-            (None, None, None) => {}
-        }
-        body.push_str("</p>");
+    // Elapsed time counts from window open; each limit applies to one step, so the
+    // two are separate sentences and elapsed may exceed the limit without a failure.
+    let sentences: Vec<String> = [
+        progress
+            .elapsed
+            .map(|elapsed| format!("{} since launch.", format_seconds(elapsed))),
+        limit_sentence(progress.timeout, progress.timeout_note.as_deref()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !sentences.is_empty() {
+        body.push_str(&format!("<p class=\"muted\">{}</p>", sentences.join(" ")));
     }
     body.push_str("</section>");
     body
+}
+
+/// The limit as one sentence. The two notes main.rs sends are matched by name; any
+/// other note falls back to `{note}: {limit}.`.
+fn limit_sentence(timeout: Option<Duration>, note: Option<&str>) -> Option<String> {
+    Some(match (timeout, note) {
+        (Some(limit), Some("per-step configuration timeout")) => {
+            format!("Each setup step is allowed {}.", format_seconds(limit))
+        }
+        (Some(limit), Some("service readiness timeout")) => {
+            format!(
+                "The service is allowed {} to answer.",
+                format_seconds(limit)
+            )
+        }
+        (Some(limit), Some(note)) => format!("{}: {}.", escape(note), format_seconds(limit)),
+        (Some(limit), None) => format!("Limit {}.", format_seconds(limit)),
+        (None, Some(note)) => format!("{}.", escape(note)),
+        (None, None) => return None,
+    })
 }
 
 /// The page shown while the local service starts, with optional observed progress.
@@ -371,13 +359,13 @@ pub fn starting_page_with_progress(plan: Option<&Plan>, progress: &StartupProgre
     if let Some(plan) = plan
         && !plan.ready
     {
-        body.push_str("<p class=\"bad\">A readiness check failed; starting anyway so the reason is visible.</p>");
+        body.push_str("<p class=\"bad\">A startup check failed (marked below). Arc Science will still try to start so the service can show the error.</p>");
     }
     if let Some(plan) = plan {
-        body.push_str("<ul>");
+        body.push_str("<p class=\"muted\">Startup checks</p><ul aria-label=\"Startup checks\">");
         for check in &plan.checks {
             body.push_str(&format!(
-                "<li class=\"{}\">{}: {}</li>",
+                "<li class=\"{}\">{}{}: {}</li>",
                 if !check.ok {
                     "bad"
                 } else if check.optional {
@@ -386,39 +374,70 @@ pub fn starting_page_with_progress(plan: Option<&Plan>, progress: &StartupProgre
                     ""
                 },
                 escape(&check.name),
+                if check.optional { " (optional)" } else { "" },
                 escape(&check.detail)
             ));
         }
         body.push_str("</ul>");
         body.push_str(&format!(
-            "<p class=\"muted\">Workspace <code>{}</code></p>",
+            "<p class=\"muted\">Workspace: <code>{}</code></p>",
             escape(&plan.project.display().to_string())
         ));
     }
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Arc Science</title>{STYLE}</head><body><main>{body}</main></body></html>"
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Arc Science</title>{STYLE}</head><body><main>{body}</main></body></html>"
     )
 }
 
-/// The page shown when the service could not start; the reason is the whole message.
+const SHOWN_TAIL_LINES: usize = 12;
+
+/// Lines of the failure page's output block: the tail after the reason's first line.
+/// With a startup log (which holds the whole reason) only the last lines are shown;
+/// without one nothing is cut. Returns the lines and whether earlier ones were cut.
+fn shown_tail(reason: &str, has_log: bool) -> (Vec<&str>, bool) {
+    let lines: Vec<&str> = reason
+        .lines()
+        .skip(1)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    if has_log && lines.len() > SHOWN_TAIL_LINES {
+        (lines[lines.len() - SHOWN_TAIL_LINES..].to_vec(), true)
+    } else {
+        (lines, false)
+    }
+}
+
+/// The page shown when the service could not start. The reason's first line is the
+/// alert; any further lines (a redacted stderr tail) follow as output.
 pub fn failure_page(reason: &str, plan: Option<&Plan>, log_path: Option<&Path>) -> String {
     let mut body = format!(
-        "<h1>Arc Science could not start</h1><section class=\"failure-card\" role=\"alert\"><p class=\"bad\">{}</p></section>",
-        escape(reason)
+        "<h1>Arc Science could not start</h1><section class=\"failure-card\"><p class=\"bad\" role=\"alert\">{}</p>",
+        escape(reason.lines().next().unwrap_or(reason))
     );
-    body.push_str("<p class=\"recovery-actions\"><a class=\"button-link\" href=\"arc-science://startup/retry\">Retry</a>");
+    let (tail, cut) = shown_tail(reason, log_path.is_some());
+    if !tail.is_empty() {
+        body.push_str(&format!(
+            "<pre class=\"muted\">{}</pre>",
+            escape(&tail.join("\n"))
+        ));
+    }
+    if cut {
+        body.push_str("<p class=\"muted\">Earlier output is in the startup log.</p>");
+    }
+    body.push_str("</section>");
+    body.push_str("<p class=\"recovery-actions\"><a class=\"button-link\" href=\"arc-science://startup/retry\">Retry (reopens Arc Science)</a>");
     if log_path.is_some() {
-        body.push_str("<a class=\"button-link secondary\" href=\"arc-science://startup/open-log\">Open redacted startup log</a>");
+        body.push_str("<a class=\"button-link secondary\" href=\"arc-science://startup/open-log\">Open startup log</a>");
     }
     body.push_str("</p>");
     if let Some(plan) = plan {
         body.push_str(&format!(
-            "<p class=\"muted\">Configuration: <code>{}</code>. Edit it or delete it to discover the runtime again. Supervisor: <code>{}</code>.</p>",
+            "<p class=\"muted\">Configuration file: <code>{}</code>. Delete it and Arc Science will look for Python and its components again on the next start, or edit it by hand. Startup helper: <code>{}</code>.</p>",
             escape(&plan.project.join("arc-science.toml").display().to_string()),
             escape(&plan.supervisor.display().to_string())
         ));
         if !plan.notes.is_empty() {
-            body.push_str("<ul>");
+            body.push_str("<p class=\"muted\">Noted during setup</p><ul>");
             for note in &plan.notes {
                 body.push_str(&format!("<li class=\"muted\">{}</li>", escape(note)));
             }
@@ -427,12 +446,12 @@ pub fn failure_page(reason: &str, plan: Option<&Plan>, log_path: Option<&Path>) 
     }
     if let Some(log_path) = log_path {
         body.push_str(&format!(
-            "<p class=\"muted\">Startup log: <code>{}</code></p>",
+            "<p class=\"muted\">Startup log (credential-like values are replaced with [redacted]): <code>{}</code></p>",
             escape(&log_path.display().to_string())
         ));
     }
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Arc Science</title>{STYLE}</head><body><main>{body}</main></body></html>"
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Arc Science</title>{STYLE}</head><body><main>{body}</main></body></html>"
     )
 }
 
@@ -448,6 +467,18 @@ pub fn window_handle(_window: &tao::window::Window) -> isize {
     0
 }
 
+/// The dialog body: the reason's first line only (the full reason is on the page and
+/// in the log) and, when an Arc Science window owns the dialog, where the actions are.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn dialog_text(owner: isize, reason: &str) -> String {
+    let first = reason.lines().next().unwrap_or(reason).trim();
+    if owner == 0 {
+        first.to_string()
+    } else {
+        format!("{first}\n\nRetry and the startup log are in the Arc Science window.")
+    }
+}
+
 /// A native dialog with the reason, so a double-click failure is never silent.
 #[cfg(windows)]
 pub fn message_box(owner: isize, reason: &str) {
@@ -460,7 +491,10 @@ pub fn message_box(owner: isize, reason: &str) {
     const MB_OK: u32 = 0x0000_0000;
     const MB_ICONERROR: u32 = 0x0000_0010;
     let wide = |s: &str| -> Vec<u16> { OsStr::new(s).encode_wide().chain(Some(0)).collect() };
-    let (text, caption) = (wide(reason), wide("Arc Science could not start"));
+    let (text, caption) = (
+        wide(&dialog_text(owner, reason)),
+        wide("Arc Science could not start"),
+    );
     // SAFETY: both buffers are NUL-terminated UTF-16 and outlive the call; the owner
     // is either a live window handle of this process or null.
     unsafe {
@@ -550,10 +584,87 @@ mod tests {
             },
         );
         assert!(page.contains("Discovering runtime &lt;paths&gt;"));
-        assert!(page.contains("Elapsed 2 seconds. 60 seconds per-step configuration timeout."));
+        assert!(page.contains("2 seconds since launch. Each setup step is allowed 60 seconds."));
         assert!(page.contains("aria-valuetext=\"Discovering runtime &lt;paths&gt;\""));
         assert!(!page.contains(">2%"));
         assert!(!page.contains(">100%"));
+        let service = starting_page_with_progress(
+            None,
+            &StartupProgress {
+                operation: "Starting the local service".into(),
+                elapsed: Some(Duration::from_secs(75)),
+                timeout: Some(Duration::from_secs(30)),
+                timeout_note: Some("service readiness timeout".into()),
+            },
+        );
+        assert!(
+            service
+                .contains("75 seconds since launch. The service is allowed 30 seconds to answer.")
+        );
+        assert_eq!(
+            limit_sentence(Some(Duration::from_secs(1)), Some("custom <limit>")).as_deref(),
+            Some("custom &lt;limit&gt;: 1 second.")
+        );
+        assert_eq!(limit_sentence(None, None), None);
+    }
+
+    #[test]
+    fn starting_page_names_optional_checks_and_the_checks_list() {
+        let plan = Plan {
+            project: PathBuf::from("C:/ws"),
+            supervisor: PathBuf::from("sup"),
+            ready: true,
+            checks: vec![Check {
+                name: "gpu".into(),
+                ok: true,
+                optional: true,
+                detail: "not found".into(),
+            }],
+            notes: vec![],
+        };
+        let page = starting_page_with_progress(Some(&plan), &StartupProgress::default());
+        assert!(page.contains("<ul aria-label=\"Startup checks\">"));
+        assert!(page.contains("gpu (optional): not found"));
+        assert!(page.contains("Workspace: <code>C:/ws</code>"));
+        assert!(!page.contains("A startup check failed"));
+    }
+
+    #[test]
+    fn failure_page_shows_first_line_as_alert_and_tail_as_output() {
+        let log_path = Path::new("C:/ArcScience/startup.log");
+        let tail: Vec<String> = (1..=20).map(|i| format!("line {i} <{i}>")).collect();
+        let reason = format!(
+            "Service exited before readiness: exit code: 1\n{}",
+            tail.join("\n")
+        );
+        let page = failure_page(&reason, None, Some(log_path));
+        assert!(page.contains(
+            "<p class=\"bad\" role=\"alert\">Service exited before readiness: exit code: 1</p><pre class=\"muted\">line 9 &lt;9&gt;"
+        ));
+        assert!(page.contains("line 20 &lt;20&gt;</pre>"));
+        assert!(!page.contains("line 8 &lt;8&gt;"));
+        assert!(page.contains("Earlier output is in the startup log."));
+        assert!(page.contains("Open startup log"));
+        // Without a log nothing is cut and nothing points at one.
+        let page = failure_page(&reason, None, None);
+        assert!(page.contains("line 1 &lt;1&gt;") && page.contains("line 20 &lt;20&gt;"));
+        assert!(!page.contains("Earlier output"));
+        assert!(!page.contains("<pre class=\"muted\"></pre>"));
+        let single = failure_page("one line only", None, None);
+        assert!(!single.contains("<pre"));
+    }
+
+    #[test]
+    fn dialog_shows_the_first_line_and_points_at_the_window_only_when_owned() {
+        let reason = "Service readiness timed out after 30 seconds\nstderr tail";
+        assert_eq!(
+            dialog_text(42, reason),
+            "Service readiness timed out after 30 seconds\n\nRetry and the startup log are in the Arc Science window."
+        );
+        assert_eq!(
+            dialog_text(0, reason),
+            "Service readiness timed out after 30 seconds"
+        );
     }
 
     #[test]

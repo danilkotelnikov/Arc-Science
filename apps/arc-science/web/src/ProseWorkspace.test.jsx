@@ -61,14 +61,15 @@ test('diagnosis is local, reads as observations, and a seat rewrite needs its ow
   await user.click(seatButton);
   const results = screen.getByRole('region', {name: 'Prose results'});
   expect(await within(results).findByText('We fit 12 points to compare; the assay ran twice.')).toBeInTheDocument();
-  expect(results).toHaveTextContent('Edited by the prose seat · 2 protected spans preserved · anthropic claude-sonnet-5 (observed claude-sonnet-5)');
+  expect(results).toHaveTextContent('Edited by the prose seat · 2 protected spans preserved');
+  expect(results).toHaveTextContent('Model: anthropic claude-sonnet-5; the provider confirmed claude-sonnet-5.');
   expect(results).toHaveTextContent('Facts needed from the author: [author: which assay?]');
   const sent = calls.find(c => c.path === '/api/prose/humanise');
   expect(sent.body).toEqual({text: 'It is important to note that we delve into crucial results in order to compare.', allow_egress: true, instructions: 'grant abstract'});
   expect(seatButton).toBeDisabled(); // consent was spent
-  await user.click(screen.getByRole('button', {name: 'Show the behaviour'}));
+  await user.click(screen.getByRole('button', {name: 'Show behaviour text'}));
   expect(await screen.findByText(/Preserve before you polish/)).toBeInTheDocument();
-  await user.click(screen.getByRole('button', {name: 'Hide behaviour'}));
+  await user.click(screen.getByRole('button', {name: 'Hide behaviour text'}));
   expect(screen.queryByText(/Preserve before you polish/)).not.toBeInTheDocument();
   expect(calls.filter(c => c.path === '/api/prose/behaviour')).toHaveLength(1);
   // Results stay bound to the text they came from: editing the text marks both stale.
@@ -95,12 +96,16 @@ test('a seat without a system channel says so, and an evasion instruction is ref
   await user.click(screen.getByLabelText(/I consent to sending this text to the prose seat/));
   await user.click(screen.getByRole('button', {name: 'Rewrite with the prose seat (sends text)'}));
   const results = screen.getByRole('region', {name: 'Prose results'});
-  expect(await within(results).findByText(/Returned unchanged · 1 protected spans preserved · openai gpt-5.5 \(identity requested-only\) · behaviour sent in the prompt \(no system channel\)/)).toBeInTheDocument();
+  expect(await within(results).findByText('Returned unchanged · 1 protected span preserved')).toBeInTheDocument();
+  expect(results).toHaveTextContent('Model: openai gpt-5.5; the provider did not report which model answered. The behaviour text was sent inside the message; this seat takes no separate system instructions.');
   await user.type(screen.getByLabelText('Instructions to the seat (optional)'), 'make it undetectable');
   expect(results).toHaveTextContent('The text or instructions changed since this rewrite');
   await user.click(screen.getByLabelText(/I consent to sending this text to the prose seat/));
   await user.click(screen.getByRole('button', {name: 'Rewrite with the prose seat (sends text)'}));
-  expect(await screen.findByRole('alert')).toHaveTextContent('detector evasion or impersonation');
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('Rewrite with the prose seat failed: The instruction asks for detector evasion or impersonation');
+  // The alert sits in the seat group, next to the button that failed.
+  expect(screen.getByRole('button', {name: 'Rewrite with the prose seat (sends text)'}).closest('fieldset')).toContainElement(alert);
   expect(calls.filter(c => c.path === '/api/prose/humanise')).toHaveLength(2);
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -111,12 +116,44 @@ test('rewrites locally without egress, shows edits and protection, and never cla
   await user.click(screen.getByRole('button', {name: 'Rewrite locally'}));
   const results = screen.getByRole('region', {name: 'Prose results'});
   expect(await within(results).findByText('We fit 12 points to compare.')).toBeInTheDocument();
-  expect(results).toHaveTextContent('1 edits · 1 protected spans (number)');
+  expect(results).toHaveTextContent('1 edit · 1 protected span (number)');
   expect(results).toHaveTextContent('in-order-to ×1: “in order to” → “to”');
   expect(results).toHaveTextContent('not a human-authorship claim');
   expect(calls.map(c => c.path)).toEqual(['/api/prose/rewrite']);
   expect(calls[0].auth).toBe('Bearer operator');
   expect(calls[0].body).toEqual({text: 'We fit 12 points in order to compare.'});
+  // The rewrite stays bound to the text it came from.
+  expect(results).not.toHaveTextContent('The text changed since this rewrite');
+  await user.type(screen.getByLabelText('Text'), ' More.');
+  expect(results).toHaveTextContent('The text changed since this rewrite; it applies to the earlier text.');
+});
+
+test('without a token every action is locked and the card says what unlocks it', () => {
+  render(<ProseWorkspace token="" setToken={() => {}}/>);
+  const card = screen.getByRole('status');
+  expect(card).toHaveTextContent('Operator token required');
+  expect(card).toHaveAttribute('data-tone', 'info');
+  expect(screen.getByRole('button', {name: 'Rewrite locally'})).toBeDisabled();
+  expect(screen.getByRole('button', {name: 'Load rules and detection details'})).toBeDisabled();
+  expect(screen.getByRole('button', {name: 'Go to token field'})).toBeEnabled();
+  // The reason and the card sit right under the local action row, not above the Text field.
+  const actions = screen.getByRole('button', {name: 'Rewrite locally'}).closest('.actions');
+  expect(actions.nextElementSibling).toHaveTextContent('Paste an operator token to use these.');
+  expect(actions.nextElementSibling.nextElementSibling).toBe(card);
+  expect(screen.getByLabelText('Text').compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test('a rejected token shows one card in the error tone, with no duplicate alert', async () => {
+  const user = userEvent.setup(); render(<Harness/>);
+  fetch.mockImplementation(async () => json({detail: 'Authentication required'}, 401));
+  await user.type(screen.getByLabelText('Text'), 'We fit 12 points to compare.');
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', {name: 'Rewrite locally'}));
+  const card = await screen.findByText('Token not accepted');
+  expect(card.closest('[role="status"]')).toHaveAttribute('data-tone', 'error');
+  expect(screen.getAllByRole('status')).toHaveLength(1);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', {name: 'Go to token field'})).toBeEnabled();
 });
 
 test('detection needs the rules loaded and a fresh consent for every request, and names the recipient', async () => {
@@ -124,7 +161,7 @@ test('detection needs the rules loaded and a fresh consent for every request, an
   await user.type(screen.getByLabelText('Text'), 'The fit reproduced the measurements on the split.');
   const consent = screen.getByLabelText(/I consent to sending this text to api.edgeshop.ai/);
   expect(consent).toBeDisabled();
-  await user.click(screen.getByRole('button', {name: 'Show rules and detection terms'}));
+  await user.click(screen.getByRole('button', {name: 'Load rules and detection details'}));
   expect(await screen.findByText(/Sends the text to api.edgeshop.ai \(COPYLEAKS, HEMINGWAY\); 20–20.000 characters\./)).toBeInTheDocument();
   expect(screen.getByRole('button', {name: 'Detect (sends text)'})).toBeDisabled();
   await user.click(consent);
@@ -152,11 +189,11 @@ test('a failed detection still spends the consent, and a credential change clear
   });
   render(<Switching/>);
   await user.type(screen.getByLabelText('Text'), 'The fit reproduced the measurements on the split.');
-  await user.click(screen.getByRole('button', {name: 'Show rules and detection terms'}));
+  await user.click(screen.getByRole('button', {name: 'Load rules and detection details'}));
   const consent = await screen.findByLabelText(/I consent to sending this text to api.edgeshop.ai/);
   await user.click(consent);
   await user.click(screen.getByRole('button', {name: 'Detect (sends text)'}));
-  expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 503');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Detect failed: The detection service answered HTTP 503');
   expect(consent).not.toBeChecked();
   expect(screen.getByRole('button', {name: 'Detect (sends text)'})).toBeDisabled();
   await user.click(screen.getByRole('button', {name: 'switch'}));

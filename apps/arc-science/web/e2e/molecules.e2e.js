@@ -9,14 +9,15 @@ test('the render form stays gated until a runtime exists and reports its absence
   await page.getByRole('navigation', {name: 'Workspaces'}).getByRole('button', {name: 'Molecules'}).click();
   const controls = page.getByRole('complementary', {name: 'Molecular render controls'}).or(page.getByLabel('Molecular render controls')).first();
   await expect(controls.getByRole('button', {name: 'Load renders'})).toBeDisabled();
-  await expect(controls.getByText('Load with your operator token.')).toBeVisible();
+  await expect(controls.getByText('Operator token required')).toBeVisible();
   await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await controls.getByRole('button', {name: 'Load renders'}).click();
   await expect(controls.getByText('Configure ARC_MOLECULAR_BLENDER_PYTHON on the server, then restart the service.')).toBeVisible();
-  await expect(controls.getByText('Local renderer ready.')).toHaveCount(0);
+  await expect(controls.getByText('Local renderer configured.')).toHaveCount(0);
   // Viewing needs no renderer: the file input stays open while rendering stays gated.
   await expect(controls.getByLabel('Coordinate file')).toBeEnabled();
   await expect(controls.getByLabel('Antibody chains')).toBeDisabled();
+  await expect(controls.getByText('Locked until Load renders reports the local renderer is configured.')).toBeVisible();
   await expect(controls.getByRole('button', {name: 'Render structure'})).toBeDisabled();
   await expect(controls.getByText('No saved renders yet.')).toBeVisible();
   await expect(page.getByRole('region', {name: 'Molecular figure'}).getByRole('status')).toContainText('Choose a coordinate file or a saved render');
@@ -48,7 +49,7 @@ test('a chosen coordinate file is shown in the viewer at once, with its settings
   expect(await page.evaluate(() => performance.getEntriesByType('resource').filter(e => e.name.includes('/api/molecular/')).length)).toBe(0);
   // Saving the view goes through a blob: download, the path the desktop shell accepts.
   const download = page.waitForEvent('download');
-  await viewer.getByRole('button', {name: 'Save view'}).click();
+  await viewer.getByRole('button', {name: 'Save view as PNG'}).click();
   const saved = await download;
   expect(saved.suggestedFilename()).toBe('tiny-view.png');
   expect(saved.url()).toMatch(/^blob:/);

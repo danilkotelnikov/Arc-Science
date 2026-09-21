@@ -179,5 +179,18 @@
       "svg": "<svg class=\"lucide lucide-search\" xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" > <path d=\"m21 21-4.34-4.34\" /> <circle cx=\"11\" cy=\"11\" r=\"8\" /> </svg>",
       "type": "svg"
     }
+  },
+  "retrievals_2026_09_20": {
+    "source": "lucide-static 0.560.0 via jsDelivr (https://cdn.jsdelivr.net/npm/lucide-static@0.560.0/icons/<name>.svg), fetched 2026-09-20",
+    "family": "Lucide",
+    "licence": "ISC (https://lucide.dev/license)",
+    "usage": "Navigation glyphs at 18 px stroke 1.75: pilcrow (Prose), sliders-horizontal (Settings), activity (Diagnostics), image (BioArt). Geometry unchanged; React attribute spelling only.",
+    "icons": [
+      "pilcrow",
+      "sliders-horizontal",
+      "activity",
+      "image"
+    ],
+    "earlier_unrecorded": "database (Memory), cloud-download, import, shield-check were already in icons.jsx from the same family; sliders, pen-line and scan-search were removed on 2026-09-20."
   }
 }

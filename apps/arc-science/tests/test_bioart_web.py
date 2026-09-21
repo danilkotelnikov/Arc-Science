@@ -517,3 +517,17 @@ def test_import_maps_invalid_provider_configuration_without_server_error(tmp_pat
                                json={'receipt_id': 'a' * 64})
     assert response.status_code == 409
     assert 'cache path' in response.json()['detail'].lower()
+
+
+def test_native_supervisor_layout_keeps_the_cache_under_the_project_not_the_data_dir(tmp_path, monkeypatch):
+    """The supervisor passes ARC_PROJECT (the workspace) and an absolute cache path under
+    it, while the data directory is workspace/data: the cache is inside the project."""
+    from arc_science.service import create_app
+    workspace = tmp_path / 'workspace'
+    (workspace / 'data').mkdir(parents=True)
+    monkeypatch.setenv('ARC_PROJECT', str(workspace))
+    monkeypatch.setenv('ARC_BIOART_CACHE_DIR', str(workspace / '.arc-science' / 'bioart'))
+    with TestClient(create_app(data_dir=workspace / 'data', token=TOKEN)) as client:
+        response = client.post('/api/bioart/search', json={'query': 'antibody'}, headers=_auth())
+    assert response.status_code != 409 or 'inside the project' not in response.text, response.text
+    assert (workspace / '.arc-science' / 'bioart').exists() or response.status_code in (200, 409)

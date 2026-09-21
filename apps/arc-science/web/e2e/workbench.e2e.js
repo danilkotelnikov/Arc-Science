@@ -55,7 +55,7 @@ test('Diagnostics shares the shell and the API refuses unauthenticated private r
   await page.getByRole('navigation', {name: 'Workspaces'}).getByRole('button', {name: 'Diagnostics'}).click();
   await expect(page).toHaveURL(/\/diagnostics$/);
   await expect(page.getByRole('region', {name: 'Diagnostics'})).toBeVisible();
-  await expect(page.getByRole('status')).toContainText('Local unlock required');
+  await expect(page.getByRole('status')).toContainText('Operator token required');
   await page.getByRole('button', {name: 'Research', exact: true}).last().click();
   await expect(page.getByRole('heading', {name: 'Start with a question.'})).toBeVisible();
 });

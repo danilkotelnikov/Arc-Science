@@ -3,6 +3,7 @@ import {beforeEach, afterEach, expect, test, vi} from 'vitest';
 import {act, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {App} from './main.jsx';
+import {SESSION_COPY} from './http';
 
 const bioartEntry = {entry_id:18,title:'Antibody',license:'Public Domain',credit:'Courtesy of NIAID',creator:'Ryan Kissinger',collection:'NIAID Visual & Medical Arts',citation:'NIAID BioArt, BIOART-000018',source_url:'https://bioart.niaid.nih.gov/bioart/18',preferred_representation_id:64,representations:[{group_id:63,caption:'Antibody - Colored',files:{PNG:626857,SVG:626858}},{group_id:64,caption:'Antibody - Grey',files:{PNG:626859,SVG:626860,AI:626861,EPS:626862}}]};
 const bioartReceipt = {receipt_id:'b'.repeat(64),entry_id:18,title:'Antibody',license:'Public Domain',credit:'Courtesy of NIAID',creator:'Ryan Kissinger',collection:'NIAID Visual & Medical Arts',citation:'NIAID BioArt, BIOART-000018',representation_id:64,caption:'Antibody - Grey',format:'SVG',file_id:626860,source_page_sha256:'c'.repeat(64),sha256:'d'.repeat(64),size:120,preview_eligible:true,import_eligible:true,limitation:null,rights_verified:false,scientific_validity_established:false,preview_url:'/api/bioart/receipts/'+'b'.repeat(64)+'/preview',download_url:'/api/bioart/receipts/'+'b'.repeat(64)+'/source'};
@@ -66,7 +67,7 @@ test('mission creation sends actual egress and visual-review consent and executi
   const user=userEvent.setup();render(<App/>);
   await user.type(screen.getByLabelText('Operator token'),'operator');
   await user.type(screen.getByLabelText('Research goal'),'Live nonlinear response check');
-  await user.selectOptions(screen.getByLabelText('Execution'),'live');
+  await user.selectOptions(screen.getByLabelText('Model source'),'live');
   await user.click(screen.getByLabelText(/Permit sending/));await user.click(screen.getByLabelText(/Require configured visual review/));
   await user.click(screen.getByRole('button',{name:'Create and start'}));
   await waitFor(()=>expect(requests.some(r=>r.path==='/api/missions/mission-1/start')).toBe(true));
@@ -84,11 +85,11 @@ test('selected mission exposes authenticated artifacts, visual reports, verify, 
   expect(await screen.findByRole('img',{name:'Artifact from obs-1'})).toHaveAttribute('src','blob:artifact');
   expect(requests.find(r=>r.path?.includes('/artifacts/')).options.headers.Authorization).toBe('Bearer private');
   expect(screen.getByText('legibility: Inspect labels')).toBeInTheDocument();
-  await user.click(screen.getByRole('button',{name:'Verify and recompute'}));
+  await user.click(screen.getByRole('button',{name:'Replay and verify'}));
   expect(await screen.findByText(/"reproduction_passed": true/)).toBeInTheDocument();
-  await user.click(screen.getByRole('button',{name:'Export replay capsule'}));
+  await user.click(screen.getByRole('button',{name:'Export replay archive (.zip)'}));
   await waitFor(()=>expect(requests.some(r=>r.download==='arc-mission-1.zip')).toBe(true));
-  await user.click(screen.getByRole('button',{name:'Resume (declares an analysis change)'}));await user.click(screen.getByRole('button',{name:'Cancel'}));
+  await user.click(screen.getByRole('button',{name:'Resume (recorded as an analysis change)'}));await user.click(screen.getByRole('button',{name:'Cancel'}));
   await waitFor(()=>expect(requests.some(r=>r.path==='/api/missions/mission-1/cancel')).toBe(true));
   expect(screen.getByRole('button',{name:/^Resume/})).toBeDisabled();
   expect(screen.getByRole('button',{name:'Cancel'})).toBeDisabled();
@@ -103,20 +104,20 @@ test('a blocked release ledger explains itself and withholds the capsule until v
   const ledger=await screen.findByRole('region',{name:'Release decision'});
   expect(ledger).toHaveTextContent('Release decision: Blocked');
   expect(ledger).toHaveTextContent('replay integrity · unknown — Replay verification has not been run for this mission.');
-  expect(ledger).toHaveTextContent('Blocked by: replay_integrity:unknown.');
+  expect(ledger).toHaveTextContent('Blocked by: replay integrity:unknown.');
   expect(ledger).toHaveTextContent('not validated');
-  expect(screen.getByRole('button',{name:'Export replay capsule'})).toBeDisabled();
+  expect(screen.getByRole('button',{name:'Export replay archive (.zip)'})).toBeDisabled();
   // Inline inspection stays; the explicit file download consults the same ledger.
   expect(await screen.findByRole('img',{name:'Artifact from obs-1'})).toBeInTheDocument();
-  expect(screen.queryByRole('link',{name:'Download authenticated PNG'})).toBeNull();
-  expect(screen.getByText(/Download withheld until the release decision is eligible/)).toBeInTheDocument();
+  expect(screen.queryByRole('link',{name:'Download PNG'})).toBeNull();
+  expect(screen.getByText(/Download opens when the release decision is Eligible for human review/)).toBeInTheDocument();
   // Verification refreshes the mission; the service's new decision opens the export.
   fetch.mockImplementation(async(path,options={})=>{requests.push({path,options});if(path.endsWith('/verify'))return json({reproduction_passed:true,release:eligibleRelease});return json({...selectedRow,release:eligibleRelease});});
-  await user.click(screen.getByRole('button',{name:'Verify and recompute'}));
+  await user.click(screen.getByRole('button',{name:'Replay and verify'}));
   await waitFor(()=>expect(screen.getByRole('region',{name:'Release decision'})).toHaveTextContent('Eligible for human review'));
-  expect(screen.getByRole('button',{name:'Export replay capsule'})).toBeEnabled();
+  expect(screen.getByRole('button',{name:'Export replay archive (.zip)'})).toBeEnabled();
   expect(requests.find(r=>r.path?.endsWith('/verify')).options.method).toBe('POST');
-  expect(await screen.findByRole('link',{name:'Download authenticated PNG'})).toBeInTheDocument();
+  expect(await screen.findByRole('link',{name:'Download PNG'})).toBeInTheDocument();
 });
 
 test('repair cycles are listed with their own outcomes and superseded artifacts say so',async()=>{
@@ -130,10 +131,10 @@ test('repair cycles are listed with their own outcomes and superseded artifacts 
   const repairs=await screen.findByRole('region',{name:'Figure repair cycles'});
   const items=within(repairs).getAllByRole('listitem');
   expect(items).toHaveLength(2);
-  expect(items[0]).toHaveTextContent('Cycle 1 · round 0 · preset spacious · addressed legibility → adequate');
+  expect(items[0]).toHaveTextContent('Cycle 1 · round 0 · render preset spacious · addressed legibility · review verdict: adequate');
   expect(items[1]).toHaveAttribute('data-outcome','blocked');
   expect(items[1]).toHaveTextContent('the repair changed nothing');
-  const captions=screen.getAllByText(/preset (default|spacious)/);
+  const captions=screen.getAllByText(/render preset (default|spacious)/);
   expect(captions[0]).toHaveTextContent('superseded by a repair');
   expect(captions[1]).toHaveTextContent('repair of aaaaaaaaaaaa…');
   expect(captions[1]).not.toHaveTextContent('superseded');
@@ -172,7 +173,7 @@ test('declared changes list what was declared, what was derived and each obligat
   await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
   const changes=await screen.findByRole('region',{name:'Declared changes'});
   const item=within(changes).getByRole('listitem');
-  expect(item).toHaveTextContent('resume at round 1 · declared analysis, claim · derived analysis, claim · obligations: re execution satisfied · dependent claim invalidation stale · evidence review stale · scope review stale — Second round.');
+  expect(item).toHaveTextContent(/resume, round 1\s*Declared effect: analysis, claim · Derived effect: analysis, claim\s*Required checks: re execution satisfied · dependent claim invalidation stale · evidence review stale · scope review stale\s*Second round\./);
   expect(item.querySelectorAll('.check-stale')).toHaveLength(3);
 });
 
@@ -184,8 +185,8 @@ test('a finished mission keeps its outcome: Cancel is disabled, Verify and expor
   expect(await screen.findByText('completed')).toBeInTheDocument();
   expect(screen.getByRole('button',{name:'Cancel'})).toBeDisabled();
   expect(screen.getByRole('button',{name:/^Resume/})).toBeDisabled();
-  expect(screen.getByRole('button',{name:'Verify and recompute'})).toBeEnabled();
-  expect(screen.getByRole('button',{name:'Export replay capsule'})).toBeEnabled();
+  expect(screen.getByRole('button',{name:'Replay and verify'})).toBeEnabled();
+  expect(screen.getByRole('button',{name:'Export replay archive (.zip)'})).toBeEnabled();
   expect(requests.some(r=>r.path==='/api/missions/mission-1/cancel')).toBe(false);
 });
 
@@ -197,7 +198,7 @@ test('cold launch opens Research with a blank question and an explicit example o
   expect(screen.getByLabelText('Research goal')).toHaveValue('');
   expect(screen.getByRole('button',{name:'Create and start'})).toBeDisabled();
   expect(screen.getByRole('button',{name:'Load missions'})).toBeDisabled();
-  expect(screen.getByRole('status')).toHaveTextContent('Local unlock required');
+  expect(screen.getByRole('status')).toHaveTextContent(SESSION_COPY.locked.title);
   await userEvent.setup().click(screen.getByRole('button',{name:'Use example'}));
   expect(screen.getByLabelText('Research goal')).toHaveValue('Compare competing explanations of the nonlinear response and challenge the preferred fit.');
   expect(requests.some(r=>String(r.path).includes('/api/missions'))).toBe(false);
@@ -256,8 +257,8 @@ test('failed authenticated artifact stops loading and retries without losing Res
   await user.type(screen.getByLabelText('Operator token'),'private');
   await user.click(screen.getByRole('button',{name:'Load missions'}));
   await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
-  expect(await screen.findByText(/Artifact unavailable:/)).toHaveTextContent('503');
-  expect(screen.queryByText('Loading authenticated artifact…')).not.toBeInTheDocument();
+  expect(await screen.findByText(/Artifact could not be loaded:/)).toHaveTextContent('503');
+  expect(screen.queryByText('Loading image…')).not.toBeInTheDocument();
   expect(screen.queryByRole('img',{name:'Artifact from obs-1'})).not.toBeInTheDocument();
   await user.click(screen.getByRole('button',{name:'Molecules'}));await user.click(screen.getByRole('button',{name:'Research'}));
   expect(screen.getByLabelText('Operator token')).toHaveValue('private');
@@ -265,7 +266,7 @@ test('failed authenticated artifact stops loading and retries without losing Res
   unavailable=false;
   await user.click(screen.getByRole('button',{name:'Retry artifact'}));
   expect(await screen.findByRole('img',{name:'Artifact from obs-1'})).toHaveAttribute('src','blob:artifact');
-  expect(screen.queryByText(/Artifact unavailable:/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Artifact could not be loaded:/)).not.toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   const calls=requests.filter(r=>r.path?.includes('/artifacts/'));
   expect(calls).toHaveLength(2);
@@ -282,7 +283,7 @@ test('BioArt search is authenticated, cache-first, and shares the in-memory oper
   expect(screen.getByLabelText('Operator token')).toHaveValue('shared-operator');
   await user.clear(screen.getByLabelText('BioArt search query'));
   await user.type(screen.getByLabelText('BioArt search query'),'antibody');
-  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
+  await user.click(screen.getByRole('button',{name:'Search BioArt'}));
   expect(await screen.findByRole('button',{name:'Antibody · BIOART-000018'})).toBeInTheDocument();
   const sent=requests.find(r=>r.path==='/api/bioart/search');
   expect(sent.options.headers.Authorization).toBe('Bearer shared-operator');
@@ -302,7 +303,7 @@ test('BioArt freezes request controls while their submitted state is in flight',
   const query=screen.getByLabelText('BioArt search query');
   const consent=screen.getByLabelText('Permit NIH network access for the next search or inspection');
   await user.type(token,'operator');await user.click(consent);
-  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
+  await user.click(screen.getByRole('button',{name:'Search BioArt'}));
   expect(await screen.findByRole('status')).toHaveTextContent('request in progress');
   // The shared header token stays editable; the request's own controls freeze.
   expect(query).toBeDisabled();expect(consent).toBeDisabled();
@@ -316,29 +317,29 @@ test('BioArt inspects, fetches the automatic neutral SVG, verifies a protected p
   await user.type(screen.getByLabelText('Operator token'),'bioart-operator');
   const metadataConsent=screen.getByLabelText('Permit NIH network access for the next search or inspection');
   await user.click(metadataConsent);
-  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
+  await user.click(screen.getByRole('button',{name:'Search BioArt'}));
   expect(metadataConsent).not.toBeChecked();
   await user.click(metadataConsent);
   await user.click(await screen.findByRole('button',{name:'Antibody · BIOART-000018'}));
   expect(metadataConsent).not.toBeChecked();
   expect(await screen.findByText('Courtesy of NIAID')).toBeInTheDocument();
-  expect(screen.getByText('NIH metadata: Public Domain')).toBeInTheDocument();
-  expect(screen.getByLabelText('Representation')).toHaveValue('auto');
+  expect(screen.getByText('License per NIH: Public Domain')).toBeInTheDocument();
+  expect(screen.getByLabelText('Variant')).toHaveValue('auto');
   const fetchConsent=screen.getByLabelText('Permit NIH network access for this fetch');
   await user.click(fetchConsent);
   expect(metadataConsent).not.toBeChecked();
-  await user.click(screen.getByRole('button',{name:'Fetch verified SVG'}));
+  await user.click(screen.getByRole('button',{name:'Fetch and verify SVG'}));
   expect(fetchConsent).not.toBeChecked();
   expect(await screen.findByRole('img',{name:'Verified BioArt preview: Antibody'})).toHaveAttribute('src','blob:artifact');
   const fetchRequest=requests.find(r=>r.path==='/api/bioart/fetch');
   expect(JSON.parse(fetchRequest.options.body)).toEqual({entry_id:18,format:'SVG',allow_egress:true});
   const previewRequest=requests.find(r=>r.path===bioartReceipt.preview_url);
   expect(previewRequest.options.headers.Authorization).toBe('Bearer bioart-operator');
-  expect(screen.getByText('Receipt verified')).toBeInTheDocument();
-  expect(screen.getByText('Verified SVG · group 64')).toBeInTheDocument();
+  expect(screen.getByText('File fetched and verified')).toBeInTheDocument();
+  expect(screen.getByText('Verified SVG · variant 64')).toBeInTheDocument();
   expect(screen.getByText(/Rights metadata has not been independently verified/)).toBeInTheDocument();
   expect(screen.getByText(/Scientific validity is not established/)).toBeInTheDocument();
-  await user.click(screen.getByRole('button',{name:'Download verified source'}));
+  await user.click(screen.getByRole('button',{name:'Download verified file'}));
   await waitFor(()=>expect(requests).toContainEqual(expect.objectContaining({download:'bioart-18.svg',href:'blob:artifact'})));
   await user.click(screen.getByRole('button',{name:'Import verified SVG'}));
   expect(await screen.findByText('Imported asset nih-bioart-antibody')).toBeInTheDocument();
@@ -349,16 +350,16 @@ test('BioArt manual representation override is explicit and fetch errors preserv
   const user=userEvent.setup();render(<App/>);
   await user.click(screen.getByRole('button',{name:'BioArt'}));
   await user.type(screen.getByLabelText('Operator token'),'operator');
-  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
+  await user.click(screen.getByRole('button',{name:'Search BioArt'}));
   await user.click(await screen.findByRole('button',{name:'Antibody · BIOART-000018'}));
-  await user.selectOptions(screen.getByLabelText('Representation'),'63');
-  await user.click(screen.getByRole('button',{name:'Fetch verified SVG'}));
+  await user.selectOptions(screen.getByLabelText('Variant'),'63');
+  await user.click(screen.getByRole('button',{name:'Fetch and verify SVG'}));
   await screen.findByRole('img',{name:'Verified BioArt preview: Antibody'});
   const sent=requests.findLast(r=>r.path==='/api/bioart/fetch');
   expect(JSON.parse(sent.options.body)).toEqual({entry_id:18,representation_id:63,format:'SVG',allow_egress:false});
 
   fetch.mockImplementationOnce(async()=>json({detail:'Unknown or restricted license requires operator review; fetch/import blocked'},{status:409}));
-  await user.click(screen.getByRole('button',{name:'Fetch verified SVG'}));
+  await user.click(screen.getByRole('button',{name:'Fetch and verify SVG'}));
   expect(await screen.findByRole('alert')).toHaveTextContent('restricted license');
   expect(screen.getByText('Courtesy of NIAID')).toBeInTheDocument();
 });
@@ -367,17 +368,17 @@ test('BioArt exposes original vector formats without previewing or importing dow
   const user=userEvent.setup();render(<App/>);
   await user.click(screen.getByRole('button',{name:'BioArt'}));
   await user.type(screen.getByLabelText('Operator token'),'operator');
-  await user.click(screen.getByRole('button',{name:'Search NIH BioArt'}));
+  await user.click(screen.getByRole('button',{name:'Search BioArt'}));
   await user.click(await screen.findByRole('button',{name:'Antibody · BIOART-000018'}));
   expect(screen.getAllByRole('option').map(option=>option.value)).toEqual(expect.arrayContaining(['SVG','PNG','AI','EPS']));
   await user.selectOptions(screen.getByLabelText('Format'),'EPS');
-  await user.click(screen.getByRole('button',{name:'Fetch verified EPS'}));
+  await user.click(screen.getByRole('button',{name:'Fetch and verify EPS'}));
   expect(await screen.findByText(/download-only; no browser preview/)).toBeInTheDocument();
   expect(screen.getByRole('button',{name:'EPS import unavailable'})).toBeDisabled();
   const sent=requests.findLast(request=>request.path==='/api/bioart/fetch');
   expect(JSON.parse(sent.options.body)).toEqual({entry_id:18,format:'EPS',allow_egress:false});
   expect(requests.some(request=>request.path===bioartDownloadReceipt.preview_url)).toBe(false);
-  await user.click(screen.getByRole('button',{name:'Download verified source'}));
+  await user.click(screen.getByRole('button',{name:'Download verified file'}));
   await waitFor(()=>expect(requests).toContainEqual(expect.objectContaining({download:'bioart-18.eps',href:'blob:artifact'})));
 });
 
@@ -387,8 +388,8 @@ test('memory workspace loads a captured session and searches its reasoning',asyn
   await user.type(screen.getByLabelText('Operator token'),'tok');
   await user.click(screen.getByRole('button',{name:'Load sessions'}));
   await user.click(await screen.findByRole('button',{name:/mission-1 · 18 records/}));
-  await screen.findByText(/Captured trajectory/);
-  await screen.findByText(/analyst · epoch 0/);
+  await screen.findByText(/Captured records/);
+  await screen.findByText(/analyst · seq 2 · compaction epoch 0/);
   await user.type(screen.getByLabelText('Search memory'),'quadratic');
   await user.click(screen.getByRole('button',{name:'Search'}));
   await screen.findByText(/quadratic term hypothesis/);

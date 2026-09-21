@@ -380,7 +380,11 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         return {'status':'authorized'}
 
     from .bioart.web import create_router as create_bioart_router
-    app.include_router(create_bioart_router(root,authorized))
+    # The BioArt cache lives inside the project; under the native supervisor the
+    # project is the workspace (ARC_PROJECT) and the cache path it passes is absolute
+    # under that workspace, not under the data directory.
+    bioart_project=Path(os.environ.get('ARC_PROJECT') or root)
+    app.include_router(create_bioart_router(bioart_project if bioart_project.is_dir() else root,authorized))
 
     from .molecular_jobs import MolecularJobs
     def default_preset():

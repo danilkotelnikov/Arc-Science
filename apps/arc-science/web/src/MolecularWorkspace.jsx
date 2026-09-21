@@ -64,12 +64,12 @@ export default function MolecularWorkspace({token, setToken}) {
     return () => controller.abort();
   }, [token, renderJob?.id, renderJob?.status, (renderJob?.stages || []).length]);
   const overlay = scene && renderJob && scene.job === renderJob.id && source?.job === renderJob.id ? scene : null;
-  const stage = renderJob && source?.job === renderJob.id ? (renderJob.status === 'completed' ? 'render complete' : stageLine(renderJob) || renderJob.status) : '';
+  const stage = renderJob && source?.job === renderJob.id ? (renderJob.status === 'completed' ? 'render complete' : stageLine(renderJob) || 'render ' + String(renderJob.status).replace(/_/g, ' ')) : '';
   return <div className="molecular-workspace">
     <aside className="inspector" aria-label="Molecular render controls">
       <p className="eyebrow">MOLECULAR WORKBENCH</p><h1>Your structure</h1>
-      <p className="muted">Render a complex from your own coordinates with the local pipeline.</p>
-      <MolecularRenderPanel token={token} setToken={setToken} onJobChange={updateRender} onShowJob={setShowRender} onSource={setSource}/>
+      <p className="muted">Render an antibody–antigen complex from your own coordinates with the local pipeline.</p>
+      <MolecularRenderPanel token={token} setToken={setToken} onJobChange={updateRender} onShowJob={setShowRender} onSource={setSource} showRender={showRender}/>
     </aside>
     <section className="figure-workspace" aria-label="Molecular figure">
       {source ? <Suspense fallback={<div className="workspace-message"><p role="status">Loading the viewer…</p></div>}>

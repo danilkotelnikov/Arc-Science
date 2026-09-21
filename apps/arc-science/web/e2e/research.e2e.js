@@ -9,23 +9,24 @@ test('an offline mission explores competing branches, reconciles them and verifi
   const status = await runDemoMission(page, {goal: 'E2E: which response model fits the fixture?'});
   await expect(status).toHaveText('completed');
   const results = page.getByRole('region', {name: 'Research results'});
-  await expect(results.getByRole('heading', {name: 'Decision frontier'})).toBeVisible();
+  await expect(results.getByRole('heading', {name: 'Mission overview'})).toBeVisible();
   // Decision tree: the fixture opens a linear route, then quadratic and shuffled-control alternatives.
   const branches = results.locator('.branch');
   await expect(branches).toHaveCount(3);
   await expect(results.locator('.branch.focus')).toHaveCount(1);
   await expect(branches.filter({hasText: /parents: root/})).toHaveCount(1);
-  await expect(branches.filter({hasText: /Falsifier:/})).toHaveCount(3);
+  await expect(branches.filter({hasText: /Would be refuted by:/})).toHaveCount(3);
   // Reconciliation is discoverable but collapsed until the operator asks for the raw role trace.
   const reconciliation = results.locator('details.result-disclosure').filter({hasText: 'Reconciliation'});
   await expect(reconciliation).not.toHaveAttribute('open', '');
   await reconciliation.getByText('Reconciliation').click();
-  await expect(results.locator('.record h3').filter({hasText: /analyst · /}).first()).toBeVisible();
+  // The analyst role is printed under the seat that serves it: Reviewer (QA).
+  await expect(results.locator('.record h3').filter({hasText: /Reviewer \(QA\) · /}).first()).toBeVisible();
   await expect(results.locator('.record h3').filter({hasText: /falsifier · /}).first()).toBeVisible();
   await expect(results.locator('.record h3').filter({hasText: /· challenge$/}).first()).toBeVisible();
-  await expect(results.getByText(/Round \d+ · \d+ actions · \d+ model-role calls · data: synthetic_fixture/)).toBeVisible();
+  await expect(results.getByText(/Round \d+ · \d+ actions · \d+ model calls · data source: synthetic fixture/)).toBeVisible();
   // Verify and recompute: replay passes, integrity holds, validity is explicitly not claimed.
-  await results.getByRole('button', {name: 'Verify and recompute'}).click();
+  await results.getByRole('button', {name: 'Replay and verify'}).click();
   const report = page.getByRole('region', {name: 'Verification report'});
   await expect(report.getByRole('heading', {name: 'Replay verification: passed'})).toBeVisible();
   await expect(report.getByText('Integrity: passed · Evidence graph: passed')).toBeVisible();
@@ -66,24 +67,24 @@ test('the release ledger withholds the capsule until the mission is verified', a
   const ledger = page.getByRole('region', {name: 'Release decision'});
   await expect(ledger).toContainText('Release decision: Blocked');
   await expect(ledger).toContainText('replay integrity · unknown');
-  await expect(results.getByRole('button', {name: 'Export replay capsule'})).toBeDisabled();
+  await expect(results.getByRole('button', {name: 'Export replay archive (.zip)'})).toBeDisabled();
   const missionId = (await page.locator('.eyebrow').filter({hasText: 'Selected mission:'}).textContent()).split(': ')[1].trim();
   const refused = await request.get(`/api/missions/${missionId}/capsule`, {headers: {Authorization: `Bearer ${E2E_TOKEN}`}});
   expect(refused.status()).toBe(409);
   expect((await refused.json()).detail).toContain('replay_integrity:unknown');
-  await results.getByRole('button', {name: 'Verify and recompute'}).click();
+  await results.getByRole('button', {name: 'Replay and verify'}).click();
   await expect(ledger).toContainText('Release decision: Eligible for human review');
-  await expect(results.getByRole('button', {name: 'Export replay capsule'})).toBeEnabled();
+  await expect(results.getByRole('button', {name: 'Export replay archive (.zip)'})).toBeEnabled();
 });
 
 test('the replay capsule is delivered as a real browser download once the release is eligible', async ({page}) => {
   await page.goto('/');
   await runDemoMission(page, {goal: 'E2E: capsule export.'});
   const results = page.getByRole('region', {name: 'Research results'});
-  await results.getByRole('button', {name: 'Verify and recompute'}).click();
-  await expect(results.getByRole('button', {name: 'Export replay capsule'})).toBeEnabled();
+  await results.getByRole('button', {name: 'Replay and verify'}).click();
+  await expect(results.getByRole('button', {name: 'Export replay archive (.zip)'})).toBeEnabled();
   const download = page.waitForEvent('download');
-  await results.getByRole('button', {name: 'Export replay capsule'}).click();
+  await results.getByRole('button', {name: 'Export replay archive (.zip)'}).click();
   const capsule = await download;
   expect(capsule.suggestedFilename()).toMatch(/\.zip$/);
   const path = await capsule.path();
@@ -94,7 +95,7 @@ test('the replay capsule is delivered as a real browser download once the releas
 test('a one-round budget stops the mission as budget_exhausted with alternatives unresolved', async ({page}) => {
   await page.goto('/');
   const status = await runDemoMission(page, {goal: 'E2E: round budget.', rounds: 1});
-  await expect(status).toHaveText('budget_exhausted');
+  await expect(status).toHaveText('budget exhausted');
   const results = page.getByRole('region', {name: 'Research results'});
   await expect(results.getByRole('status').first()).toContainText(/unresolved|limit/i);
   await expect(results.getByRole('button', {name: 'Resume'})).toBeDisabled();
@@ -117,7 +118,8 @@ test('cancelling an unfinished mission fences late results; a finished one keeps
   const results = page.getByRole('region', {name: 'Research results'});
   const status = results.locator('.status-label');
   await expect(status).toHaveText('ready');
-  await expect(results.getByRole('button', {name: 'Resume'})).toBeEnabled();
+  // A created-but-not-started mission offers Start, not Resume.
+  await expect(results.getByRole('button', {name: 'Start', exact: true})).toBeEnabled();
   await results.getByRole('button', {name: 'Cancel'}).click();
   await expect(status).toHaveText('cancelled');
   await expect(results.getByRole('status').first()).toContainText('late results fenced');
@@ -144,19 +146,19 @@ test('saved missions reload with their outcome and an empty list is actionable',
   const saved = page.locator('.mission-choice').filter({hasText: 'E2E: saved mission listing.'});
   await expect(saved.first()).toBeVisible();
   await saved.first().click();
-  await expect(page.getByRole('region', {name: 'Research results'}).locator('.status-label')).toHaveText(/completed|budget_exhausted/);
+  await expect(page.getByRole('region', {name: 'Research results'}).locator('.status-label')).toHaveText(/completed|budget exhausted/);
 });
 
 test('a presentation finding is repaired, reviewed again as a new candidate, and the ledger reads the repair', async ({page}) => {
   const check = watchForTokenLeaks(page);
   await page.goto('/');
   const status = await runDemoMission(page, {goal: 'E2E: figure repair cycle.', rounds: 2, vision: true});
-  await expect(status).toHaveText('budget_exhausted');
+  await expect(status).toHaveText('budget exhausted');
   const results = page.getByRole('region', {name: 'Research results'});
   // Round 0: one fit, flagged by the scripted seat, re-rendered once, then found adequate.
   const repairs = page.getByRole('region', {name: 'Figure repair cycles'});
   const cycles = repairs.getByRole('listitem');
-  await expect(cycles.first()).toHaveText(/Cycle 1 · round 0 · preset spacious · addressed legibility → adequate/);
+  await expect(cycles.first()).toHaveText(/Cycle 1 · round 0 · render preset spacious · addressed legibility · review verdict: adequate/);
   await expect(cycles.first()).toHaveAttribute('data-outcome', 'adequate');
   await expect(cycles).toHaveCount(2); // round 1 renders the quadratic fit; it is repaired in its own cycle
   await expect(results.locator('.artifact figcaption').filter({hasText: 'superseded by a repair'})).toHaveCount(2);
@@ -167,11 +169,11 @@ test('a presentation finding is repaired, reviewed again as a new candidate, and
   await expect(reviews.filter({hasText: /· adequate$/})).toHaveCount(2);
   await expect(results.getByText(/Scripted fixture verdict/).first()).toBeVisible();
   // Verification reproduces every render, superseded ones included, and the ledger names the cycles.
-  await results.getByRole('button', {name: 'Verify and recompute'}).click();
+  await results.getByRole('button', {name: 'Replay and verify'}).click();
   await expect(page.getByRole('region', {name: 'Verification report'}).getByRole('heading', {name: 'Replay verification: passed'})).toBeVisible();
   const ledger = page.getByRole('region', {name: 'Release decision'});
   await expect(ledger.getByRole('heading', {name: 'Release decision: Eligible for human review'})).toBeVisible();
   await expect(ledger.locator('li[data-state="satisfied"]').filter({hasText: 'visual review'})).toHaveText(/Repair cycles: 1 \(spacious\) -> adequate/);
-  await expect(results.getByRole('link', {name: 'Download authenticated PNG'})).toHaveCount(4);
+  await expect(results.getByRole('link', {name: 'Download PNG'})).toHaveCount(4);
   check();
 });

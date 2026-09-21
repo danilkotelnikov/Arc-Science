@@ -22,7 +22,7 @@ let jobs, submitted, capabilities, calls, downloads;
 function Harness({initialToken='operator'}) {
   const [token,setToken]=useState(initialToken);
   // The operator token lives in the app header; the harness stands in for it.
-  return <><label>Operator token<input type="password" value={token} onChange={e=>setToken(e.target.value)}/></label><MolecularWorkspace token={token} setToken={setToken}/></>;
+  return <><label>Operator token<input id="operator-token" type="password" value={token} onChange={e=>setToken(e.target.value)}/></label><MolecularWorkspace token={token} setToken={setToken}/></>;
 }
 async function openPanel() {
   await screen.findByRole('heading',{name:'Render locally'});
@@ -31,7 +31,7 @@ async function openPanel() {
 async function loadPanel(user) {
   await openPanel();
   await user.click(screen.getByRole('button',{name:'Load renders'}));
-  await screen.findByText('Local renderer ready.');
+  await screen.findByText('Local renderer configured.');
 }
 async function fillSource(user) {
   await user.upload(screen.getByLabelText('Coordinate file'),new File(['data_complex\n# coordinates'], 'complex.cif', {type:'text/plain'}));
@@ -69,7 +69,7 @@ afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();vi.useRealTimers();});
 test('loads explicitly and submits coordinates, author chains and reproducible defaults with bearer auth',async()=>{
   const user=userEvent.setup();render(<Harness/>);await openPanel(user);
   expect(calls.filter(call=>call.path.startsWith('/api/molecular'))).toHaveLength(0);
-  await user.click(screen.getByRole('button',{name:'Load renders'}));await screen.findByText('Local renderer ready.');
+  await user.click(screen.getByRole('button',{name:'Load renders'}));await screen.findByText('Local renderer configured.');
   await fillSource(user);
   // The chosen coordinates are shown before any render exists, without a request.
   const viewer = await screen.findByTestId('viewer');
@@ -83,7 +83,7 @@ test('loads explicitly and submits coordinates, author chains and reproducible d
   expect(JSON.parse(sent.options.body)).toEqual({filename:'complex.cif',source_text:'data_complex\n# coordinates',antibody_chains:['A','B'],antigen_chains:['C'],assembly:'asymmetric_unit',model_index:0,cutoff:4,width:1400,samples:96,seed:23});
   // A chosen preset travels with the request; the default is left to the service.
   await user.click(screen.getByText('Assembly & render settings'));
-  expect(screen.getByLabelText('Render preset')).toHaveDisplayValue('default (publication_dark)');
+  expect(screen.getByLabelText('Render preset')).toHaveDisplayValue('default (publication dark)');
   await user.selectOptions(screen.getByLabelText('Render preset'),'grayscale');
   expect(screen.getByText('Two greys, for print without colour.')).toBeInTheDocument();
   expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
@@ -98,16 +98,19 @@ test('completed render uses authenticated artifacts while preserving the same vi
   expect(await screen.findByRole('img',{name:'Rendered molecular collage: complex.cif'})).toHaveAttribute('src','blob:molecular');
   expect(screen.getByTestId('viewer').dataset.instance).toBe(instance);
   expect(calls.find(call=>call.path===assets['collage.png'].url).options.headers.Authorization).toBe('Bearer operator');
-  expect(screen.getByText(/42 residue pairs/)).toBeInTheDocument();
-  expect(screen.getByText(/Rendering does not establish scientific validity/)).toBeVisible();
+  expect(screen.getByText(/42 contact residue pairs/)).toBeInTheDocument();
+  expect(screen.getByText(/A render does not establish scientific validity/)).toBeVisible();
   expect(screen.queryByText(/No render selected/)).not.toBeInTheDocument();
-  await user.click(screen.getByText('Artifact hashes'));
+  await user.click(screen.getByText('File hashes (SHA-256)'));
   expect(screen.getByText(completed.source_sha256)).toBeVisible();
   await user.click(screen.getByRole('button',{name:'Download manifest.json'}));
   await waitFor(()=>expect(downloads).toContainEqual({name:'job-1-manifest.json',url:'blob:molecular'}));
   expect(calls.find(call=>call.path===assets['manifest.json'].url).options.headers.Authorization).toBe('Bearer operator');
   expect(calls.every(call=>!call.path.includes('operator'))).toBe(true);
-  await user.click(screen.getByRole('button',{name:'Close render'}));
+  // The reopen button exists only while the details are closed.
+  expect(screen.queryByRole('button',{name:'View selected render'})).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button',{name:'Close details'}));
+  expect(screen.getByRole('button',{name:'View selected render'})).toBeInTheDocument();
   // Closing the render details leaves the already-mounted viewer on the render's coordinates and contacts.
   expect(screen.queryByRole('img',{name:'Rendered molecular collage: complex.cif'})).not.toBeInTheDocument();
   expect(screen.getByTestId('viewer')).toHaveTextContent('viewer complex.cif (fetched) · 1 verified contacts · render complete');
@@ -129,7 +132,7 @@ test('the package catalogue reports what each probe observed, never more',async(
   expect(report.getByText(/environment seen \(conda env SE3nv exists; the package itself was not observed\)/)).toBeInTheDocument();
   expect(report.getByText(/not probed \(bundled viewer in this workbench\)/)).toBeInTheDocument();
   expect(calls.find(c=>c.path.startsWith('/api/molecular/catalogue')).options.headers.Authorization).toBe('Bearer operator');
-  await user.click(screen.getByRole('button',{name:'Probe again'}));
+  await user.click(screen.getByRole('button',{name:'Check again'}));
   await waitFor(()=>expect(calls.filter(c=>c.path==='/api/molecular/catalogue/refresh'&&c.options.method==='POST')).toHaveLength(1));
 });
 
@@ -225,13 +228,75 @@ test('a render can be declared a change of the selected completed render, and th
   await user.click(screen.getByRole('button',{name:'completed · complex.cif'}));
   await user.click(screen.getByRole('button',{name:'Render structure'}).closest('form').querySelector('summary'));
   await user.click(screen.getByLabelText(/Render as a declared change of job-1/));
-  await user.click(screen.getByLabelText('Presentation (width, samples, seed)'));
-  await user.click(screen.getByLabelText('Scientific depiction (chains, assembly, model)'));
+  await user.click(screen.getByLabelText('Presentation (width, samples, seed, preset)'));
+  await user.click(screen.getByLabelText('Scientific depiction (chains, assembly, model, an envelope or stick preset)'));
   await fillSource(user);
   const width=screen.getByLabelText('Width (px)');await user.clear(width);await user.type(width,'1600');
   await user.click(screen.getByRole('button',{name:'Render structure'}));
   await screen.findByText('Render status: queued');
   const sent=JSON.parse(calls.find(call=>call.path==='/api/molecular/renders'&&call.options.method==='POST').options.body);
   expect(sent.base_job).toBe('job-1');expect(sent.declared_effects).toEqual(['presentation','scientific_depiction']);expect(sent.width).toBe(1600);
-  expect(screen.getByText(/Declared change of render job-1/)).toHaveTextContent('declared presentation, scientific_depiction; derived presentation (width); checks obliged: geometry, readability.');
+  expect(screen.getByText(/Change of render job-1/)).toHaveTextContent('Declared: presentation, scientific depiction. Derived by the server: presentation (changed: width). Required checks: geometry, readability.');
+});
+
+test('locked controls say what unlocks them, next to the control',async()=>{
+  const user=userEvent.setup();render(<Harness initialToken=""/>);await screen.findByRole('heading',{name:'Render locally'});
+  const controls=within(screen.getByRole('complementary',{name:'Molecular render controls'}));
+  expect(controls.getByText('Operator token required')).toBeVisible();
+  expect(controls.getByRole('button',{name:'Load renders'})).toBeDisabled();
+  // The chain fields name their first blocker: the token comes before Load renders.
+  expect(controls.getByText('Paste an operator token, then press Load renders.')).toBeVisible();
+  expect(controls.queryByText(/Locked until Load renders/)).not.toBeInTheDocument();
+  await user.click(controls.getByRole('button',{name:'Go to token field'}));
+  await waitFor(()=>expect(screen.getByLabelText('Operator token')).toHaveFocus());
+  await user.type(screen.getByLabelText('Operator token'),'operator');
+  expect(controls.queryByText('Operator token required')).not.toBeInTheDocument();
+  expect(controls.getByText('Locked until Load renders reports the local renderer is configured.')).toBeVisible();
+  await user.click(controls.getByRole('button',{name:'Load renders'}));await screen.findByText('Local renderer configured.');
+  expect(controls.queryByText(/Locked until Load renders/)).not.toBeInTheDocument();
+  expect(controls.getByText('Choose a coordinate file first.')).toBeVisible();
+  // An oversize file is reported next to the file input before Render structure is pressed.
+  await user.upload(screen.getByLabelText('Coordinate file'),new File(['x'.repeat(750001)],'big.pdb',{type:'text/plain'}));
+  expect(controls.getByRole('alert')).toHaveTextContent(/This file is 750.001 bytes; the limit is 750.000 bytes\./);
+  expect(controls.getByText('Enter antibody and antigen chains first.')).toBeVisible();
+});
+
+test('a dead service and a rejected token are said in the shared words, beside Load renders',async()=>{
+  const original=fetch.getMockImplementation();let mode='offline';
+  fetch.mockImplementation((path,options)=>path==='/api/molecular/capabilities'?(mode==='offline'?Promise.reject(new TypeError('Failed to fetch')):Promise.resolve(new Response('Authentication required',{status:401}))):original(path,options));
+  const user=userEvent.setup();render(<Harness/>);await openPanel(user);
+  const controls=within(screen.getByRole('complementary',{name:'Molecular render controls'}));
+  await user.click(controls.getByRole('button',{name:'Load renders'}));
+  expect(await controls.findByRole('alert')).toHaveTextContent('Arc Science is not reachable. Start the local service, then retry.');
+  expect(controls.queryByText(/Failed to fetch/)).not.toBeInTheDocument();
+  mode='auth';
+  await user.click(controls.getByRole('button',{name:'Load renders'}));
+  // A rejected token is the lock notice in its error tone, said once: no alert with the same words.
+  expect(await controls.findByText('Token not accepted')).toBeVisible();
+  expect(controls.queryByRole('alert')).not.toBeInTheDocument();
+  expect(controls.queryByText(/Request failed \(401\)/)).not.toBeInTheDocument();
+  expect(controls.getByRole('button',{name:'Go to token field'})).toBeInTheDocument();
+});
+
+test('the renderer line reports the load, then the capability, never both',async()=>{
+  const original=fetch.getMockImplementation();let finish;
+  fetch.mockImplementation((path,options)=>path==='/api/molecular/capabilities'?new Promise(resolve=>{finish=()=>resolve(json(capabilities));}):original(path,options));
+  const user=userEvent.setup();render(<Harness/>);await openPanel(user);
+  const controls=within(screen.getByRole('complementary',{name:'Molecular render controls'}));
+  await user.click(controls.getByRole('button',{name:'Load renders'}));
+  expect(await controls.findByRole('status')).toHaveTextContent('Loading renders…');
+  expect(controls.queryByText('Local renderer configured.')).not.toBeInTheDocument();
+  await waitFor(()=>expect(finish).toBeTypeOf('function'));await act(async()=>finish());
+  expect(await controls.findByText('Local renderer configured.')).toBeVisible();
+  expect(controls.queryByText('Loading renders…')).not.toBeInTheDocument();
+});
+
+test('a failed package check is reported inside Packages, not in the shared alert',async()=>{
+  const original=fetch.getMockImplementation();
+  fetch.mockImplementation((path,options)=>path.startsWith('/api/molecular/catalogue')?Promise.resolve(new Response('',{status:503})):original(path,options));
+  const user=userEvent.setup();render(<Harness/>);await openPanel(user);
+  await user.click(screen.getByText('Packages'));await user.click(screen.getByRole('button',{name:'Check packages'}));
+  const alert=await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('Package check failed: Request failed (503)');
+  expect(alert.closest('details')).toHaveTextContent('Packages');
 });

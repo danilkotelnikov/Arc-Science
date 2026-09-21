@@ -1,22 +1,22 @@
 .settings-workspace .settings-sidebar {
-  background: #fbfcfd;
+  background: var(--surface-2);
 }
 
 .settings-workspace .settings-status {
   margin: 18px 0 4px;
   padding: 10px 12px;
-  border: 1px solid #dce1e5;
-  border-radius: 5px;
-  background: #fff;
-  color: #3d4b55;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink-2);
   display: grid;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .settings-workspace .settings-status strong {
-  font-size: 12px;
-  color: #28323b;
+  font-size: var(--text-sm);
+  color: var(--ink);
 }
 
 .settings-workspace .settings-status span,
@@ -24,54 +24,61 @@
   overflow-wrap: anywhere;
 }
 
+/* "Not loaded" is a status line, not a boxed value. */
+.settings-workspace .settings-status.unloaded {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: var(--text-sm);
+}
+
 .settings-workspace .settings-state-card {
   margin: 14px 0;
   padding: 12px;
-  border-radius: 5px;
-  border: 1px solid #d9e3e9;
-  background: #f8fbfd;
-  color: #3d4b55;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--ink-2);
 }
 
 .settings-workspace .settings-state-card strong {
   display: block;
   margin-bottom: 4px;
-  font-size: 12px;
-  color: #28323b;
+  font-size: var(--text-sm);
+  color: var(--ink);
 }
 
 .settings-workspace .settings-state-card p {
-  color: #4d5962;
-  font-size: 11px;
+  color: var(--ink-2);
+  font-size: var(--text-xs);
 }
 
-.settings-workspace .settings-state-card.locked,
 .settings-workspace .settings-state-card.unconfigured,
 .settings-workspace .settings-state-card.offline {
-  border-color: #e5d8ba;
-  background: #fffaf0;
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
 }
 
 .settings-workspace .settings-state-card.conflict,
 .settings-workspace .settings-state-card.invalid,
 .settings-workspace .settings-state-card.error {
-  border-color: #efd3d3;
-  background: #fff7f7;
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
 }
 
 .settings-workspace .settings-validation {
   margin: 0 0 14px;
   padding: 12px;
-  border: 1px solid #efd3d3;
-  border-radius: 5px;
-  background: #fff7f7;
-  color: #8a2f2f;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .settings-workspace .settings-validation strong {
   display: block;
   margin-bottom: 6px;
-  color: #7a2626;
+  color: var(--danger);
 }
 
 .settings-workspace .settings-validation ul {
@@ -84,12 +91,12 @@
 }
 
 .settings-section {
-  border-bottom: 1px solid #edf0f2;
+  border-bottom: 1px solid var(--line);
   padding: 0;
 }
 
 .settings-section:first-child {
-  border-top: 1px solid #edf0f2;
+  border-top: 1px solid var(--line);
 }
 
 .settings-section > summary {
@@ -105,32 +112,33 @@
   display: none;
 }
 
+/* The same triangle disclosure as the native marker Research uses. */
 .settings-section > summary::before {
-  content: "+";
+  content: "\25B8";
   width: 18px;
-  color: #315d7c;
+  color: var(--accent);
   font-weight: 600;
   grid-column: 1;
   grid-row: 1;
 }
 
 .settings-section[open] > summary::before {
-  content: "-";
+  content: "\25BE";
 }
 
 .settings-section > summary span {
   grid-column: 1;
   grid-row: 1;
   padding-left: 24px;
-  font-size: 14px;
+  font-size: var(--text-lg);
   font-weight: 600;
-  color: #28323b;
+  color: var(--ink);
 }
 
 .settings-section > summary small {
   grid-column: 2;
-  font-size: 11px;
-  color: #4d5962;
+  font-size: var(--text-xs);
+  color: var(--ink-2);
   line-height: 1.5;
 }
 
@@ -142,18 +150,40 @@
   margin: 20px 0 10px;
 }
 
+.settings-table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
 .settings-table {
-  min-width: 940px;
+  min-width: 640px;
+}
+
+.settings-table th[scope="row"] {
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  z-index: 1;
 }
 
 .settings-table .seat-invalid select[aria-invalid="true"] {
-  border-color: #a23d3d;
+  border-color: var(--danger);
+}
+
+/* Selects are 100% of their cell; a floor keeps "OpenAI", "Anthropic" and
+   "API credential" from being cut when the table shares a narrow column. */
+.settings-table select {
+  min-width: 9em;
+}
+
+.settings-table select[aria-label$=" sign-in"] {
+  min-width: 11em;
 }
 
 .seat-guidance {
   margin-top: 4px;
-  color: #68727a;
-  font-size: 10px;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
   line-height: 1.4;
 }
 
@@ -166,33 +196,37 @@
 .seat-readiness strong {
   width: max-content;
   padding: 2px 6px;
-  border-radius: 4px;
-  border: 1px solid #dce1e5;
-  color: #4d5962;
-  font-size: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: var(--text-sm);
   font-weight: 600;
 }
 
 .seat-readiness span {
-  color: #68727a;
-  font-size: 10px;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
   line-height: 1.4;
 }
 
 .seat-readiness.ok strong {
-  color: #2e6b3f;
-  border-color: #cfe3d4;
-  background: #f3faf5;
+  color: var(--ok);
+  border-color: var(--ok-line);
+  background: var(--ok-soft);
 }
 
 .seat-readiness.warn strong {
-  color: #8a6d1d;
-  border-color: #e5d8ba;
-  background: #fffaf0;
+  color: var(--warn);
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
 }
 
 .settings-workspace .research-results {
   overflow-x: auto;
+}
+
+.settings-workspace .settings-sidebar .field-note {
+  margin-top: 0;
 }
 
 .settings-grid {
@@ -204,9 +238,9 @@
 
 .settings-grid label {
   display: block;
-  font-size: 11px;
+  font-size: var(--text-xs);
   margin-bottom: 6px;
-  color: #3d4b55;
+  color: var(--ink-2);
 }
 
 .settings-grid input,
@@ -228,4 +262,24 @@
   .settings-section-body {
     padding-left: 0;
   }
+}
+
+/* One column: heading, status and actions sit in a bar above the sections, so the seats
+   table gets the width it needs at 1280 px and readiness stays beside each seat. */
+.research-workspace.settings-workspace { display: block; }
+.settings-workspace .research-form.settings-sidebar { border-right: 0; border-bottom: 1px solid var(--line); padding: var(--s4) var(--s6); display: grid; grid-template-columns: minmax(240px, 1.1fr) minmax(280px, 1fr) auto; gap: var(--s3) var(--s5); align-items: start; }
+.settings-workspace .settings-heading h1 { margin: 4px 0 6px; }
+.settings-workspace .settings-status { margin: 0; }
+.settings-workspace .settings-sidebar .actions { margin: 0; }
+.settings-workspace .settings-sidebar .field-note, .settings-workspace .settings-sidebar [role="status"], .settings-workspace .settings-sidebar [role="alert"], .settings-workspace .settings-sidebar .settings-state-card, .settings-workspace .settings-sidebar .unlock-card { grid-column: 1 / -1; margin: 0; }
+.settings-workspace .research-results.settings { padding: var(--s4) var(--s6) var(--s6); overflow-x: visible; }
+.settings-section > summary { grid-template-columns: 1fr; gap: 4px; padding: var(--s3) 0; }
+.settings-section > summary small { grid-column: 1; padding-left: 24px; }
+.settings-section-body { padding: 0 0 var(--s4) 24px; }
+.settings-table { min-width: 880px; }
+.settings-table .seats th, .settings-table .seats td, .seats th, .seats td { vertical-align: top; }
+@media(max-width: 900px) {
+  .settings-workspace .research-form.settings-sidebar { grid-template-columns: 1fr; padding: var(--s4); }
+  .settings-workspace .research-results.settings { padding: var(--s4); }
+  .settings-section-body { padding-left: 0; }
 }
