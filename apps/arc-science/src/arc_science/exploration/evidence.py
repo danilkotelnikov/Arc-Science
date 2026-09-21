@@ -284,7 +284,10 @@ def validate_evidence(state: MissionState) -> None:
     if declared_events:
         raise ValueError("Declaration event without its change record")
     for index, event in enumerate(state.events[:-1]):
-        if event.kind in ("mission_stopped", "mission_interrupted") and state.events[index + 1].kind != "change_declared":
+        # A cancellation after a stop, an interruption or a pause is a terminal operator
+        # action, not a continuation; anything else must be a declared change.
+        if (event.kind in ("mission_stopped", "mission_interrupted", "mission_paused")
+                and state.events[index + 1].kind not in ("change_declared", "mission_cancelled")):
             raise ValueError("Mission continued after a stop without a declared change")
     for assessment in state.assessments:
         if assessment.branch_id not in branches:

@@ -27,7 +27,10 @@ def initialize(request: MissionRequest) -> MissionState:
     return MissionState(request_digest=digest(request), data_origin=origin, points=points,
                         dataset_digest=digest([p.model_dump(mode='json') for p in points]))
 
-async def explore(request: MissionRequest, agent, *, initial=None, emit=None, cancelled=None, extra_tools=None):
+async def explore(request: MissionRequest, agent, *, initial=None, emit=None, cancelled=None, extra_tools=None, log=None):
+    # log('started', operation=..., ...) -> op and log('finished', op, outcome=..., ...) write the
+    # operational timeline; the engine's state, reservations and commit order do not depend on it.
+    log=log or (lambda phase,op=None,**fields:None)
     state=initial or initialize(request)
     if getattr(agent,'requires_egress',False) and not request.allow_egress:
         raise ValueError('Live model agents require explicit mission egress consent')
@@ -66,6 +69,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         check_cancel()
         if emit: emit(state)
     def stop(status,reason):
+        op=log('started',operation='stop',role='engine',round=state.round,detail=reason[:300])
         # Every stop states what the evidence supports so far; the scope is derived,
         # never authored, and a resumed mission derives it again at its next stop.
         if status in ('completed','budget_exhausted','needs_input'):
@@ -73,6 +77,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             change(claim_scope=scope)
             event('claim_scope_derived',', '.join(f'{k}: {v}' for k,v in scope.counts.items()))
         change(status=status,stop_reason=reason);event('mission_stopped',reason);commit()
+        log('finished',op,outcome=status)
         return state
     def identity(role):
         return agent.model_for(role) if hasattr(agent, "model_for") else agent.model
@@ -109,15 +114,19 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                              if record.role=='planner' and record.round==state.round),None)
         if state.actions_used>=request.max_actions and committed_plan is None:
             return stop('budget_exhausted','Action limit reached; untested alternatives remain unresolved.')
+        op=None
         try:
             if committed_plan is None:
                 if not reserve_calls(1): return stop('budget_exhausted','Model-call limit reached.')
                 planning_context=context()
+                op=log('started',operation='plan',role='planner',round=state.round,model_requested=identity('planner'))
                 raw=await asyncio.wait_for(agent.propose(planning_context),timeout=90)
                 plan=Proposal.model_validate(raw)
             else:
                 planning_context=committed_plan.input_context
                 plan=Proposal.model_validate(committed_plan.payload)
+                log('finished',log('started',operation='plan',role='planner',round=state.round,model_requested=committed_plan.model,
+                                   detail='Planner record for this round reused; no call was made.'),outcome='reused')
             ids={b.id for b in state.branches};branches=list(state.branches)
             for idea in plan.branches:
                 if idea.id in ids:
@@ -131,12 +140,14 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             if len({a.id for a in plan.actions})!=len(plan.actions): raise ValueError('Duplicate actions')
             if any(a.branch_id not in ids for a in plan.actions): raise ValueError('Unknown branch')
         except Exception:
+            if op:log('finished',op,outcome='error',detail='Planning failed validation or provider execution.')
             return stop('error','Planning failed validation or provider execution. No synthetic fallback was used.')
         records=state.model_records
         if committed_plan is None:
+            transport=provenance('planner');log('finished',op,outcome='ok',transport=transport)
             records=records+(ModelRecord(role='planner',round=state.round,model=identity('planner'),
                     context_digest=digest(planning_context),input_context=planning_context,payload=plan.model_dump(mode='json'),
-                    transport=provenance('planner')),)
+                    transport=transport),)
         change(branches=tuple(branches),model_records=records)
         event('plan_committed',plan.reason or 'Bounded exploratory actions proposed.')
         if plan.stop:
@@ -162,6 +173,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         async def execute(action):
             async with semaphore:
                 check_cancel()
+                op=log('started',operation='tool',role='tool',round=state.round,tool=action.tool,action_id=action.id,branch_id=action.branch_id)
                 try:
                     validate_arguments(action.tool,action.arguments,runtime_catalog)
                     if action.tool in extra_tools:
@@ -180,6 +192,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                     policy=trusted_replay(action.tool)
                     version=TOOL_VERSION if policy=='numerical' else (trusted_version(action.tool) or 'unregistered-1')
                 replayable=trusted_replay(action.tool)=='numerical'
+                log('finished',op,outcome=status)
                 check_cancel()
                 return Observation(id=action.id,action=action,tool=action.tool,tool_version=version,
                     branch_id=action.branch_id,round=state.round,status=status,data=data,
@@ -244,16 +257,19 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                     change(model_calls_used=state.model_calls_used+1,
                            vision_records=state.vision_records+(reservation,))
                     commit()
+                    op=log('started',operation='visual_review',role='vision',round=state.round,model_requested=vision_model)
                     try:
                         report=VisualReport.model_validate(await asyncio.wait_for(
                             agent.review_visual(vcontext,batch),timeout=90))
                         validate_report(report,vcontext,batch,vision_model)
                     except Exception:
+                        log('finished',op,outcome='error',detail='Missing, failed, malformed or unbound visual review.')
                         rejected=reservation.model_copy(update={'status':'rejected'})
                         change(vision_records=state.vision_records[:-1]+(rejected,),
                                repairs=with_outcome(state.repairs,batch_digests,'rejected','The fresh review failed or was unbound; no success inferred.'))
                         event('visual_review_rejected','Missing, failed, malformed or unbound visual review; no success inferred.')
                         return stop('needs_input','Required visual review failed or lacked exact artifact coverage.')
+                    log('finished',op,outcome='ok')
                     accepted=reservation.model_copy(update={'status':'accepted','report_digest':report.digest})
                     change(vision_records=state.vision_records[:-1]+(accepted,),
                            visual_reports=state.visual_reports+(report,),
@@ -290,6 +306,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         if not reserve_calls(2): return stop('budget_exhausted','Insufficient remaining calls for the independent reconciliation roles.')
         frozen=context()
         async def review(role):
+            op=log('started',operation='reconcile',role=role,round=state.round,model_requested=identity(role))
             try:
                 packet=Reconciliation.model_validate(await asyncio.wait_for(agent.assess(role,frozen),timeout=90))
                 known={o.id for o in state.observations}
@@ -299,18 +316,20 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                     referenced=[o for o in state.observations if o.id in a.evidence_ids]
                     if a.position=='support' and not any(o.status=='ok' and o.claim_eligible for o in referenced):
                         raise ValueError('Tool failures and connector content cannot support a hypothesis')
-                return role,packet
-            except Exception: return role,None
+                return role,packet,op
+            except Exception: return role,None,op
         # Neither invocation sees the other's current-round answer.
         packets=await asyncio.gather(review('analyst'),review('falsifier'))
         check_cancel()
         assessments=list(state.assessments);records=list(state.model_records)
-        for role,packet in packets:
+        for role,packet,op in packets:
             try:transport=provenance(role) if packet is not None else None
             except ValueError:packet=None
             if packet is None:
+                log('finished',op,outcome='error',detail='missing, malformed or unbound review')
                 event('review_rejected',role+': missing, malformed or unbound review; no success inferred.')
                 continue
+            log('finished',op,outcome='ok',transport=transport)
             records.append(ModelRecord(role=role,round=state.round,model=identity(role),context_digest=digest(frozen),input_context=frozen,payload=packet.model_dump(mode='json'),transport=transport))
             assessments.extend(Assessed(**a.model_dump(),role=role,round=state.round,model=identity(role)) for a in packet.assessments)
         change(assessments=tuple(assessments),model_records=tuple(records))

@@ -31,8 +31,10 @@ const routePreview={settings_revision:'abcdef1234567890',route_digest:'r'.repeat
 let requests, downloadClick, selectedRow;
 const json = (data,init={}) => new Response(JSON.stringify(data),{...init,headers:{'Content-Type':'application/json',...(init.headers||{})}});
 
+// The browser keeps the selected mission's id only (reopen); the token never reaches any storage.
+const onlyMissionStored=()=>{expect(Object.keys(localStorage)).toEqual(['arc.research.mission']);expect(localStorage.getItem('arc.research.mission')).toBe('mission-1');expect(Object.values(localStorage).some(v=>/private|operator|token/.test(v))).toBe(false);expect(sessionStorage.length).toBe(0);};
 beforeEach(()=>{
-  requests=[]; selectedRow=structuredClone(row);
+  requests=[]; selectedRow=structuredClone(row); localStorage.clear();
   vi.stubGlobal('fetch',vi.fn(async(path,options={})=>{
     requests.push({path,options});
     if(path==='/api/session/status')return json({detail:'Authentication required'},{status:401});
@@ -47,6 +49,8 @@ beforeEach(()=>{
     if(path==='/api/missions')return json(options.method==='POST'?selectedRow:[{id:'mission-1',status:'paused',goal:'Saved experiment'}]);
     if(path.startsWith('/api/missions/preview'))return json(routePreview);
     if(path.endsWith('/grants'))return json({grants:[],receipts:[]});
+    if(path.endsWith('/timeline'))return json({mission_id:'mission-1',kind:'operational',recorded:false,count:0,rows:[],note:'Operational record written by the service worker and operator routes; not scientific evidence.'});
+    if(path.endsWith('/claims'))return json({mission_id:'mission-1',source:'derived',derivation_version:null,current_derivation_version:'arc-claim-scope-3',basis_round:null,rule:null,evidence_graph:'valid',uncertainty_note:'MSE values are errors on the exploratory validation split of the frozen dataset; no confidence interval or standard error is computed in this build.',note:'Claim cards are derived on read from the persisted claim scope, the recorded reconciliation, the evidence graph and the operational timeline; nothing here is validation.',claims:[]});
     if(path.endsWith('/verify'))return json({reproduction_passed:true});
     if(path.endsWith('/capsule'))return new Response('capsule');
     if(path.includes('/artifacts/'))return new Response('authenticated image',{headers:{'Content-Type':'image/png'}});
@@ -77,7 +81,7 @@ test('workspace switches retain in-memory token, goal and selected mission',asyn
   expect(screen.getByLabelText('Operator token')).toHaveValue('secret-token');
   expect(screen.getByLabelText('Research goal')).toHaveValue('Retained research question');
   expect(screen.getByText('Selected mission: mission-1')).toBeVisible();
-  expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
+  onlyMissionStored();
 });
 
 test('mission creation sends actual egress and visual-review consent and execution settings',async()=>{
@@ -112,7 +116,7 @@ test('selected mission exposes authenticated artifacts, visual reports, verify, 
   expect(await screen.findByText(/"reproduction_passed": true/)).toBeInTheDocument();
   await user.click(screen.getByRole('button',{name:'Export replay archive (.zip)'}));
   await waitFor(()=>expect(requests.some(r=>r.download==='arc-mission-1.zip')).toBe(true));
-  await user.click(screen.getByRole('button',{name:'Resume (recorded as an analysis change)'}));await user.click(screen.getByRole('button',{name:'Cancel'}));
+  await user.click(screen.getByRole('button',{name:'Resume (recorded as an analysis and claim change)'}));await user.click(screen.getByRole('button',{name:'Cancel'}));
   await waitFor(()=>expect(requests.some(r=>r.path==='/api/missions/mission-1/cancel')).toBe(true));
   expect(screen.getByRole('button',{name:/^Resume/})).toBeDisabled();
   expect(screen.getByRole('button',{name:'Cancel'})).toBeDisabled();
@@ -211,6 +215,29 @@ test('a finished mission keeps its outcome: Cancel is disabled, Verify and expor
   expect(screen.getByRole('button',{name:'Replay and verify'})).toBeEnabled();
   expect(screen.getByRole('button',{name:'Export replay archive (.zip)'})).toBeEnabled();
   expect(requests.some(r=>r.path==='/api/missions/mission-1/cancel')).toBe(false);
+});
+
+test('a stored mission id is reopened once the operator token is entered, without Load missions',async()=>{
+  localStorage.setItem('arc.research.mission','mission-1');
+  // Nothing is requested while the token is typed; the restore happens once the field settles (Tab), with the whole token.
+  const normalFetch=fetch.getMockImplementation();
+  fetch.mockImplementation((path,options={})=>String(path).startsWith('/api/missions')&&options.headers?.Authorization!=='Bearer private'
+    ? (requests.push({path,options}),Promise.resolve(json({detail:'bad token'},{status:401}))) : normalFetch(path,options));
+  const user=userEvent.setup();render(<App/>);
+  expect(screen.getByText('No mission selected.')).toBeVisible();
+  expect(requests.some(r=>String(r.path).startsWith('/api/missions'))).toBe(false);
+  await user.type(screen.getByLabelText('Operator token'),'private');
+  await new Promise(resolve=>setTimeout(resolve,50));
+  expect(requests.some(r=>String(r.path).startsWith('/api/missions'))).toBe(false);
+  expect(screen.queryByText(SESSION_COPY.expired.title)).not.toBeInTheDocument();
+  await user.tab();
+  expect(await screen.findByText('Selected mission: mission-1')).toBeVisible();
+  expect(requests.some(r=>r.path==='/api/missions')).toBe(false);
+  expect(requests.filter(r=>r.path==='/api/missions/mission-1').at(-1).options.headers.Authorization).toBe('Bearer private');
+  expect(screen.queryByText(SESSION_COPY.expired.title)).not.toBeInTheDocument();
+  expect(requests.every(r=>!String(r.path).includes('private'))).toBe(true);
+  expect(screen.getByRole('region',{name:'Timeline'})).toHaveTextContent('No timeline was recorded for this mission');
+  onlyMissionStored();
 });
 
 test('cold launch opens Research with a blank question and an explicit example opt-in',async()=>{
@@ -354,7 +381,7 @@ test('failed authenticated artifact stops loading and retries without losing Res
   const calls=requests.filter(r=>r.path?.includes('/artifacts/'));
   expect(calls).toHaveLength(2);
   expect(calls.every(r=>r.options.headers.Authorization==='Bearer private')).toBe(true);
-  expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
+  onlyMissionStored();
 });
 
 

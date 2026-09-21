@@ -179,6 +179,14 @@ input[type="checkbox"] { margin-top: 3px; accent-color: var(--accent); }
 .grants .revoke { display: flex; gap: 6px; align-items: center; }
 .grants .revoke input { width: 140px; margin: 0; padding: 4px 6px; font-size: var(--text-xs); }
 .grants-ledger h3 { margin: var(--s3) 0 0; }
+/* Interruption or pause banner (from the last persisted event) and the operational timeline. */
+.interruption { border-left: 3px solid var(--warn-line); background: var(--warn-soft); padding: 6px 10px; }
+.timeline-wrap { overflow-x: auto; max-width: 100%; }
+.timeline { min-width: 960px; }
+.timeline th { white-space: nowrap; }
+.timeline td:nth-child(2), .timeline td:nth-child(3) { white-space: nowrap; }
+.actions .retry { display: flex; gap: 6px; align-items: center; }
+.actions .retry input { width: 200px; margin: 0; padding: 4px 6px; font-size: var(--text-xs); }
 .release-chip.release-eligible_for_human_review { color: var(--ok); border-color: var(--ok-line); background: var(--ok-soft); }
 .release-chip.release-blocked { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
 .empty-state { padding: 56px 0; max-width: 420px; color: var(--ink-2); }

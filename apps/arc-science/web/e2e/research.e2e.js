@@ -1,7 +1,7 @@
 // Research: an offline mission's decision tree, reconciliation, verification, capsule
 // export, round budget and cancellation, exactly as the browser-QA checklist recorded.
 import {test, expect} from '@playwright/test';
-import {E2E_TOKEN, openWorkspace, runDemoMission, watchForTokenLeaks} from './fixtures.js';
+import {E2E_TOKEN, STORED_MISSION_KEY, openWorkspace, runDemoMission, selectedMissionId, watchForTokenLeaks} from './fixtures.js';
 
 test('an offline mission explores competing branches, reconciles them and verifies its replay', async ({page}) => {
   const check = watchForTokenLeaks(page);
@@ -53,6 +53,31 @@ test('an offline mission explores competing branches, reconciles them and verifi
   await expect(quadratic).toHaveText(/Next discriminating test/);
   await expect(scope.locator('article[data-status="provisionally_supported"]')).toHaveCount(0);
   await expect(scope.getByText(/provisional support is exploratory, never validation/)).toBeVisible();
+  // The cards are derived on read (GET /claims): evidence with method and digest, independence, alternatives, units and the derivation rule.
+  for (const row of ['Requested claim', 'Evidence-supported scope', 'Remaining uncertainty', 'Evidence', 'Independence', 'Findings', 'Alternatives', 'Next discriminating test', 'Units', 'Derivation']) {
+    await expect(quadratic.locator('dt', {hasText: new RegExp('^' + row + '$')})).toHaveCount(1);
+  }
+  await expect(quadratic.locator('li[data-evidence-id="fit-quadratic"]')).toHaveText(/fit-quadratic · polynomial_fit@arc-numeric-2 · digest [0-9a-f]{12}… · ok · started .+ · receipt none · validation MSE/);
+  await expect(quadratic).toHaveText(/Independent reviewers: no/);
+  await expect(quadratic).toHaveText(/parents linear; siblings null-control; children none/);
+  await expect(quadratic).toHaveText(/No units are recorded/);
+  await expect(quadratic).toHaveText(/arc-claim-scope-3 · release check claim scope: passed/);
+  await expect(quadratic).toHaveAttribute('data-stale', 'false');
+  await expect(scope.getByText(/nothing here is validation/)).toBeVisible();
+  // The operational timeline (GET /timeline): one recorded row per operation, in the engine's order, never evidence.
+  const timeline = page.getByRole('region', {name: 'Timeline'});
+  await expect(timeline).toContainText('not scientific evidence');
+  const rows = timeline.locator('tbody tr');
+  await expect(rows).toHaveCount(12);
+  expect(await rows.evaluateAll(trs => trs.map(tr => tr.dataset.operation))).toEqual(['start', 'plan', 'tool', 'reconcile', 'reconcile', 'plan', 'tool', 'tool', 'reconcile', 'reconcile', 'plan', 'stop']);
+  expect(await rows.evaluateAll(trs => trs.map(tr => tr.dataset.outcomeSource))).toEqual(Array(12).fill('recorded'));
+  expect(await rows.evaluateAll(trs => trs.map(tr => tr.children[1].textContent.trim() !== '—' && tr.children[2].textContent.trim() !== '—'))).toEqual(Array(12).fill(true));
+  await expect(rows.first()).toContainText('operator:token');
+  await expect(rows.first()).toHaveAttribute('data-outcome', 'scheduled');
+  await expect(rows.last()).toHaveAttribute('data-outcome', 'completed');
+  await expect(timeline.getByText('no outcome recorded')).toHaveCount(0);
+  // The route card of an offline mission: nothing was bound and no grant exists.
+  await expect(page.getByRole('region', {name: 'Mission route'})).toContainText('Offline fixture: scripted roles (scripted-fixture-v1); no route was bound and no grant exists.');
   // No operator change was declared on this mission; the section says what a change would mean.
   const declared = page.getByRole('region', {name: 'Declared changes'});
   await expect(declared).toHaveText(/No declared change\./);
@@ -76,7 +101,7 @@ test('the release ledger withholds the capsule until the mission is verified', a
   await expect(ledger).toContainText('Release decision: Blocked');
   await expect(ledger).toContainText('replay integrity · unverified');
   await expect(results.getByRole('button', {name: 'Export replay archive (.zip)'})).toBeDisabled();
-  const missionId = (await page.locator('.eyebrow').filter({hasText: 'Selected mission:'}).textContent()).split(': ')[1].trim();
+  const missionId = await selectedMissionId(page);
   const refused = await request.get(`/api/missions/${missionId}/capsule`, {headers: {Authorization: `Bearer ${E2E_TOKEN}`}});
   expect(refused.status()).toBe(409);
   expect((await refused.json()).detail).toContain('replay_integrity:unknown');
@@ -138,7 +163,7 @@ test('cancelling an unfinished mission fences late results; a finished one keeps
   await runDemoMission(page, {goal: 'E2E: finished missions keep their outcome.'});
   await expect(status).toHaveText('completed');
   await expect(results.getByRole('button', {name: 'Cancel'})).toBeDisabled();
-  const missionId = (await page.locator('.eyebrow').filter({hasText: 'Selected mission:'}).textContent()).split(': ')[1].trim();
+  const missionId = await selectedMissionId(page);
   const denied = await request.post(`/api/missions/${missionId}/cancel`, {headers: {Authorization: `Bearer ${E2E_TOKEN}`}});
   expect(denied.status()).toBe(409);
 });
@@ -155,6 +180,35 @@ test('saved missions reload with their outcome and an empty list is actionable',
   await expect(saved.first()).toBeVisible();
   await saved.first().click();
   await expect(page.getByRole('region', {name: 'Research results'}).locator('.status-label')).toHaveText(/completed|budget exhausted/);
+});
+
+test('the selected mission is reopened after a reload once the token is entered; the browser stores its id only', async ({page}) => {
+  const check = watchForTokenLeaks(page);
+  await page.goto('/');
+  await runDemoMission(page, {goal: 'E2E: reopen after reload.', rounds: 1});
+  const missionId = await selectedMissionId(page);
+  expect(await page.evaluate(key => [Object.keys(localStorage), localStorage.getItem(key)], STORED_MISSION_KEY)).toEqual([[STORED_MISSION_KEY], missionId]);
+  await page.reload();
+  await openWorkspace(page, 'Research', 'Research results');
+  // Locked: nothing is restored and nothing is requested until the token is entered.
+  await expect(page.getByText('No mission selected.')).toBeVisible();
+  const missionReads = [];
+  page.on('request', (request) => { if (request.url().includes('/api/missions')) missionReads.push(new URL(request.url()).pathname); });
+  await page.getByLabel('Operator token').fill(E2E_TOKEN);
+  // Typing alone requests nothing; leaving the field settles the token and restores the mission.
+  await page.waitForTimeout(300);
+  expect(missionReads).toEqual([]);
+  await page.getByLabel('Operator token').press('Tab');
+  const results = page.getByRole('region', {name: 'Research results'});
+  await expect(results.locator('.eyebrow').filter({hasText: 'Selected mission:'})).toHaveText('Selected mission: ' + missionId);
+  await expect(results.locator('.status-label')).toHaveText('budget exhausted');
+  expect(missionReads).not.toContain('/api/missions');
+  expect(missionReads).toContain(`/api/missions/${missionId}`);
+  const stored = await page.evaluate(() => Object.entries(localStorage));
+  expect(stored).toEqual([[STORED_MISSION_KEY, missionId]]);
+  expect(JSON.stringify(stored)).not.toContain(E2E_TOKEN);
+  expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
+  check();
 });
 
 test('a presentation finding is repaired, reviewed again as a new candidate, and the ledger reads the repair', async ({page}) => {

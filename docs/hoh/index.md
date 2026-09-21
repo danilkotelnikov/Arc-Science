@@ -260,3 +260,13 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   a Permissions section lists and revokes. Verified on the real EXE with a local
   stand-in planner and a logging fake MCP server (nothing left the machine); a guarded
   ACP call and expiry remain open; two pre-existing e2e test defects corrected.
+- [Slice 4 record](2026-09-21-slice4-cockpit-record.md): an append-only operational
+  timeline beside the missions (every planner, reviewer, tool, review, stop, start,
+  resume, pause, cancel and interruption as timed rows; an unfinished operation reads
+  "no outcome recorded", derived at read time); pause, retry from error as a declared
+  change with a reason, cancel with actor and time; the last mission reopened from the
+  browser profile (id only, on a settled token); claim cards from persisted records with
+  evidence method and digest, retrieval time, independence, alternatives, next tests,
+  units and the stale marker. Verified on the real EXE across a real service exit and a
+  window relaunch, and by the reviewer's black-box run; four view defects found only
+  natively are fixed and recorded.

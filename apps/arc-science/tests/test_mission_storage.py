@@ -49,7 +49,7 @@ def test_startup_pauses_incomplete_missions(tmp_path):
     from arc_science.exploration.engine import initialize
     request,_=results();path=tmp_path/'state.db';repo=MissionRepository(path)
     row=repo.create(request,initialize(request).model_copy(update={'status':'running'}),key='run')
-    assert MissionRepository(path).pause_interrupted()==1
+    assert MissionRepository(path).pause_interrupted()==[row['id']]
     assert repo.get(row['id'])['state']['status']=='paused'
 
 

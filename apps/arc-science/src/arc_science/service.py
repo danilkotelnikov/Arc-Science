@@ -34,6 +34,7 @@ from . import settings as operator_settings
 from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, declare_resume, mission_change, obligation_states
 from .exploration.claim_scope import DERIVATION_VERSION as CLAIM_DERIVATION_VERSION, derive_claim_scope
 from .exploration.repository import MissionRepository, MissionFinished, RevisionConflict
+from .exploration.timeline import CURRENT_OP, MissionTimeline
 from .exploration.capsule import export_capsule, verify_capsule
 from .exploration import release as release_ledger
 from .exploration.evidence import evidence_graph
@@ -450,17 +451,23 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     repository=MissionRepository(root/'missions.db');running={}
     # The grant ledger is operational and append-only, apart from the mission state and its chain.
     ledger=GrantLedger(root/'grants.db');consented=functools.partial(request_grant,ledger)
+    # The operational timeline: when each operation started and ended; never evidence.
+    timeline=MissionTimeline(root/'timeline.db')
+    INTERRUPTED=('Service exit noticed; the mission was running and is now paused (event mission_interrupted). '
+                 'Rows above without a recorded outcome were abandoned.')
 
     @asynccontextmanager
     async def lifespan(app):
-        repository.pause_interrupted()
+        for mid in repository.pause_interrupted():
+            timeline.record(mid,operation='interrupt',role='service',source='service',outcome='interrupted',detail=INTERRUPTED)
         memory_routes.schedule_reconcile()
         yield
         await molecular_jobs.close()
         for task in tuple(running.values()):task.cancel()
         for task in tuple(running.values()):
             with suppress(asyncio.CancelledError):await task
-        repository.pause_interrupted()
+        for mid in repository.pause_interrupted():
+            timeline.record(mid,operation='interrupt',role='service',source='service',outcome='interrupted',detail=INTERRUPTED)
         # Capture final paused/cancelled/error snapshots, then drain the single
         # capture worker before closing its stdio process.
         memory_routes.schedule_reconcile()
@@ -470,6 +477,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     app.state.repository=repository
     app.state.running=running
     app.state.grants=ledger
+    app.state.timeline=timeline
 
     async def authorized(authorization:str|None=Header(default=None),
                          x_arc_native_session:str|None=Header(default=None)):
@@ -723,6 +731,23 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         receipts=ledger.receipts(mission_id=mid,limit=1000)
         return {'grants':ledger.list('mission',mid),'receipts':receipts,'receipts_truncated':len(receipts)>=1000}
 
+    @app.get('/api/missions/{mid}/timeline',dependencies=[Depends(authorized)])
+    async def mission_timeline(mid:str):
+        get(mid);rows=timeline.rows(mid)
+        return {'mission_id':mid,'kind':'operational','recorded':bool(rows),'count':len(rows),'rows':rows,
+                'note':'Operational record written by the service worker and operator routes; not scientific evidence. '
+                       'A row whose outcome is not recorded is in flight while the mission status is running; '
+                       'otherwise it was abandoned by a pause, a cancellation or a service exit.'}
+
+    @app.get('/api/missions/{mid}/claims',dependencies=[Depends(authorized)])
+    async def mission_claims(mid:str):
+        # Derived on read from the persisted claim scope, the timeline and the evidence graph.
+        from .exploration.claims import build_claims
+        row=with_release(get(mid));state=MissionState.model_validate(row['state'])
+        try:graph=evidence_graph(state)
+        except ValueError:graph=None
+        return {'mission_id':mid,**build_claims(state,timeline.rows(mid),graph,row['release'])}
+
     @app.get('/api/grants',dependencies=[Depends(authorized)])
     async def list_grants(subject_kind:str|None=None,subject_id:str|None=None):
         return ledger.list(subject_kind or None,subject_id or None)
@@ -935,6 +960,21 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             # stall mission progress, status polling or cancellation.
             memory_routes.schedule_capture(mid,state)
         def cancelled():return repository.get(mid)['state']['status']=='cancelled'
+        receipts={}   # op -> the receipt row the guard wrote for it; timeline linkage only
+        def note(receipt):
+            op=CURRENT_OP.get()
+            if op:receipts[op]=receipt
+            return receipt
+        transports={}   # role -> 'api'|'cli' of the bound route; empty for the offline fixture
+        def log(phase,op=None,**fields):
+            if phase=='started':
+                if fields['role'] in ('planner','analyst','falsifier','vision'):
+                    fields.setdefault('transport','fixture' if request.mode=='demo' else transports.get(fields['role']))
+                op=timeline.start(mid,source='worker',**fields);CURRENT_OP.set(op);return op
+            receipt=receipts.pop(op,None);provenance=fields.pop('transport',None) or {}
+            if receipt and receipt['outcome']=='denied':fields['outcome']='denied'
+            timeline.finish(mid,op,model_observed=provenance.get('observed_model'),identity_verified=provenance.get('identity_verified'),
+                            receipt_id=receipt['id'] if receipt else None,**fields)
         def guard(kind,destination,category,call,*,role=None,error=ValueError,request_digest=None):
             """The ledger check before one external call of this mission and the receipt
             after it: a refusal never reaches the destination and is recorded as denied,
@@ -944,12 +984,12 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 fields={'grant_id':verdict['grant_id'],'mission_id':mid,'destination':destination,'destination_kind':kind,'data_category':category,
                         'role':role,'request_digest':request_digest(*args) if request_digest else None,'observation_id':None}
                 if not verdict['allowed']:
-                    ledger.receipt(**fields,outcome='denied',reason=verdict['reason'])
+                    note(ledger.receipt(**fields,outcome='denied',reason=verdict['reason']))
                     raise error('Refused by the grant ledger: '+verdict['reason'])
                 try:result=await call(*args)
                 except Exception as why:
-                    ledger.receipt(**fields,outcome='failed',reason=redact(str(why))[:300]);raise
-                ledger.receipt(**fields,outcome='ok',reason='')
+                    note(ledger.receipt(**fields,outcome='failed',reason=redact(str(why))[:300]));raise
+                note(ledger.receipt(**fields,outcome='ok',reason=''))
                 return result
             return run
         def guard_tool(binding,destination,kind,category=CONNECTOR_CATEGORY):
@@ -986,6 +1026,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                     # Every seat call passes the ledger under the seat's own destination
                     # (the engine's analyst role is the reviewer seat).
                     cfgs={'planner':first,'reviewer':second,'falsifier':third,'vision':vision}
+                    transports.update({'planner':first.transport,'analyst':second.transport,'reviewer':second.transport,
+                                       'falsifier':third.transport,'vision':vision.transport if vision else None})
                     def guard_seat(role,call,*args):
                         cfg=cfgs.get(role) or second
                         return guard('seat',seat_destination(cfg),SEAT_CATEGORY,call,role=role,error=ProviderError)(*args)
@@ -1028,16 +1070,18 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                         for name,binding in mcp.tools.items():
                             if name in tools:raise ValueError('Connector tool name collides: '+name)
                             tools[name]=guard_tool(binding,connector_destination(server_of[name]),'mcp')
-                        await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools)
+                        await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools,log=log)
                 else:
-                    await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools)
+                    await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools,log=log)
         except (MissionCancelled,RevisionConflict):pass
         except asyncio.CancelledError:raise
-        except Exception:
+        except Exception as why:
             fresh=repository.get(mid)
             if fresh['state']['status']!='cancelled':
                 error=MissionState.model_validate({**fresh['state'],'status':'error','stop_reason':'Service execution failed; inspect configuration. No success inferred.'})
                 with suppress(RevisionConflict):repository.save(mid,error,expected_revision=fresh['revision'])
+                timeline.record(mid,operation='stop',role='service',source='worker',round=fresh['state']['round'],outcome='error',
+                                detail=redact(str(why))[:300] or 'Service execution failed')
         finally:
             if hasattr(agent,'close'):agent.close()
             if consultations is not None:await consultations.close()
@@ -1056,7 +1100,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         except RevisionConflict:raise HTTPException(409,'Mission changed; retry') from None
         return change
 
-    def schedule(row,declared=None,note='',approval=None):
+    def schedule(row,declared=None,note='',approval=None,actor='operator'):
         """The one path that starts or resumes a mission: the live route is checked against
         the plan bound at the first start before anything is written; then the resume is
         recorded, the plan bound if this is the first start, and the worker scheduled with
@@ -1085,7 +1129,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 missing=[g for g in preview['required_grants'] if (g['destination'],g['destination_kind']) not in approved]
                 if missing:raise HTTPException(409,'No grant approved for the '+missing[0]['destination_kind']+' destination '+missing[0]['destination'])
         change=None
-        if row['state']['status']=='paused':
+        if row['state']['status'] in ('paused','error'):
             change=record_resume(row,declared if declared is not None else MISSION_CHANGES['resume']['derived'],note or 'Resumed from the workspace.')
             row=get(row['id'])
         if route is not None and (bound is None or not granted):
@@ -1098,15 +1142,17 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             state=state.model_copy(update={'events':state.events+(Event(kind='seats_bound',round=state.round,detail=detail[:1200]),)})
             try:repository.save(row['id'],state,expected_revision=row['revision'])
             except RevisionConflict:raise HTTPException(409,'Mission changed; retry') from None
+        timeline.record(row['id'],operation='resume' if change else 'start',role='operator',source='operator',actor=actor,
+                        round=row['state']['round'],outcome='resumed' if change else 'scheduled',detail=(change.note if change else ''))
         running[row['id']]=asyncio.create_task(worker(row['id'],route))
         return change
 
-    @app.post('/api/missions/{mid}/start',status_code=202,dependencies=[Depends(authorized)])
-    async def start(mid:str,approval:StartRequest|None=Body(default=None)):
+    @app.post('/api/missions/{mid}/start',status_code=202)
+    async def start(mid:str,approval:StartRequest|None=Body(default=None),principal:str=Depends(authorized)):
         row=get(mid)
         if mid in running or row['state']['status'] not in ('ready','paused'):
             raise HTTPException(409,'Only ready or interrupted missions can start or resume')
-        schedule(row,approval=approval)
+        schedule(row,approval=approval,actor='operator:'+principal)
         return {'id':mid,'status':'scheduled'}
 
     @app.get('/api/changes',dependencies=[Depends(authorized)])
@@ -1114,24 +1160,44 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         return {kind:{'applies':entry['applies'],'derived_effects':list(entry['derived']),'reason':entry['reason']}
                 for kind,entry in MISSION_CHANGES.items()}
 
-    @app.post('/api/missions/{mid}/changes',status_code=202,dependencies=[Depends(authorized)])
-    async def declare_change(mid:str,declaration:ChangeDeclaration=Body(...)):
+    @app.post('/api/missions/{mid}/changes',status_code=202)
+    async def declare_change(mid:str,declaration:ChangeDeclaration=Body(...),principal:str=Depends(authorized)):
         row=get(mid)
         # The declaration is checked before anything moves; a refusal names the table's reason.
         try:derived,checks=mission_change(declaration.kind,declaration.declared_effects)
         except ChangeRefused as refused:raise HTTPException(409,str(refused)) from None
-        if mid in running or row['state']['status']!='paused':
-            raise HTTPException(409,'Only an interrupted mission can be resumed')
-        change=schedule(row,declaration.declared_effects,declaration.note)
+        if mid in running or row['state']['status'] not in ('paused','error'):
+            raise HTTPException(409,'Only an interrupted or errored mission can be resumed')
+        # A retry from an error is a declared change whose reason the operator states.
+        if row['state']['status']=='error' and not declaration.note.strip():
+            raise HTTPException(409,'A retry from an error states its reason in the note')
+        change=schedule(row,declaration.declared_effects,declaration.note,actor='operator:'+principal)
         return {'id':mid,'status':'scheduled','change':change.model_dump(mode='json')}
 
-    @app.post('/api/missions/{mid}/cancel',dependencies=[Depends(authorized)])
-    async def cancel(mid:str):
-        get(mid)
-        try:row=repository.cancel(mid)
+    @app.post('/api/missions/{mid}/pause')
+    async def pause(mid:str,principal:str=Depends(authorized)):
+        get(mid);actor='operator:'+principal
+        # The pause save bumps the revision, so the worker's late commit is refused; the task is cancelled as for cancel.
+        try:row=repository.pause(mid,actor=actor)
+        except RevisionConflict:raise HTTPException(409,'Mission changed; retry pause') from None
+        except ValueError as why:raise HTTPException(409,str(why)) from None
+        if mid in running:running[mid].cancel()
+        timeline.record(mid,operation='pause',role='operator',source='operator',actor=actor,round=row['state']['round'],
+                        outcome='paused',detail=row['state']['stop_reason'])
+        memory_routes.schedule_capture(mid,MissionState.model_validate(row['state']))
+        return row
+
+    @app.post('/api/missions/{mid}/cancel')
+    async def cancel(mid:str,principal:str=Depends(authorized)):
+        before=get(mid);actor='operator:'+principal
+        try:row=repository.cancel(mid,actor=actor)
         except MissionFinished as finished:raise HTTPException(409,str(finished)) from None
         except RevisionConflict:raise HTTPException(409,'Mission changed; retry cancellation') from None
         if mid in running:running[mid].cancel()
+        # A repeated cancel changes nothing (same revision) and records nothing.
+        if row['revision']!=before['revision']:
+            timeline.record(mid,operation='cancel',role='operator',source='operator',actor=actor,round=row['state']['round'],
+                            outcome='cancelled',detail=row['state']['events'][-1]['detail'])
         memory_routes.schedule_capture(mid,MissionState.model_validate(row['state']))
         return row
 

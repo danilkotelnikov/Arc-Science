@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import closing, contextmanager
 import json
 import sqlite3
+import time
 import uuid
 from pathlib import Path
 from ..contracts import canonical, digest
@@ -13,6 +14,8 @@ from .models import MissionRequest, MissionState
 FINISHED=('completed','budget_exhausted','error','needs_input')
 
 class MissionFinished(ValueError):pass
+
+_iso=lambda at=None: time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(time.time() if at is None else at))
 
 class RevisionConflict(RuntimeError): pass
 
@@ -93,17 +96,31 @@ class MissionRepository:
             db.commit()
         return self.get(mid)
 
-    def cancel(self,mid):
+    def cancel(self,mid,*,actor='operator',at=None):
         old=self.get(mid)
         if old['state']['status']=='cancelled':return old
         # A finished mission keeps its recorded outcome; only unfinished work is fenced.
         if old['state']['status'] in FINISHED:
             raise MissionFinished('Mission already finished; its outcome is retained')
-        state=MissionState.model_validate({**old['state'],'status':'cancelled','stop_reason':'Cancelled by operator; late results fenced.'})
+        from .models import Event
+        cancelled=Event(kind='mission_cancelled',round=old['state']['round'],detail=f'Cancelled by {actor} at {_iso(at)}; late results fenced.')
+        state=MissionState.model_validate({**old['state'],'status':'cancelled','stop_reason':'Cancelled by operator; late results fenced.',
+                                           'events':list(old['state']['events'])+[cancelled.model_dump(mode='json')]})
+        return self.save(mid,state,expected_revision=old['revision'])
+
+    def pause(self,mid,*,actor='operator',at=None):
+        # The worker's next commit is refused by the revision fence; the route cancels its task.
+        old=self.get(mid)
+        if old['state']['status']!='running':raise ValueError('Only a running mission can be paused; this one is '+old['state']['status'])
+        from .models import Event
+        detail=f'Paused by {actor} at {_iso(at)}; resume explicitly.'
+        paused=Event(kind='mission_paused',round=old['state']['round'],detail=detail)
+        state=MissionState.model_validate({**old['state'],'status':'paused','stop_reason':detail,
+                                           'events':list(old['state']['events'])+[paused.model_dump(mode='json')]})
         return self.save(mid,state,expected_revision=old['revision'])
 
     def pause_interrupted(self):
-        count=0
+        paused=[]
         # Explicit resumption is safer than silently repeating paid calls after a restart.
         with self._connect() as db:
             ids=[x[0] for x in db.execute('SELECT id FROM missions').fetchall()]
@@ -114,8 +131,8 @@ class MissionRepository:
                 interrupted=Event(kind='mission_interrupted',round=row['state']['round'],detail='Service restarted; evidence retained. Resume explicitly.')
                 state=MissionState.model_validate({**row['state'],'status':'paused','stop_reason':interrupted.detail,
                                                    'events':list(row['state']['events'])+[interrupted.model_dump(mode='json')]})
-                self.save(mid,state,expected_revision=row['revision']);count+=1
-        return count
+                self.save(mid,state,expected_revision=row['revision']);paused.append(mid)
+        return paused
 
     def verify(self,mid):
         row=self.get(mid)

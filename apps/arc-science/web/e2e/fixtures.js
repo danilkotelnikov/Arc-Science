@@ -4,6 +4,13 @@ import {expect} from '@playwright/test';
 export const E2E_PORT = 8095;
 export const E2E_TOKEN = 'e2e-operator-token-0123456789abcdef0123456789abcdef';
 export const BASE = `http://127.0.0.1:${E2E_PORT}`;
+/** The one browser-storage key the Research workspace writes: the selected mission's id, never the token. */
+export const STORED_MISSION_KEY = 'arc.research.mission';
+
+/** The id of the mission the results pane shows ("Selected mission: <id>"). */
+export async function selectedMissionId(page) {
+  return (await page.locator('.eyebrow').filter({hasText: 'Selected mission:'}).textContent()).split(': ')[1].trim();
+}
 
 /** Tokens travel in memory and request headers only, never in a URL or a query string. */
 export function watchForTokenLeaks(page, ...tokens) {

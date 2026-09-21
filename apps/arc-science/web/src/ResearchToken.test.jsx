@@ -32,6 +32,34 @@ const ledger = {grants: [
   {id: 'r2', grant_id: null, mission_id: mission.id, destination: 'npx pubmed-mcp', destination_kind: 'mcp', data_category: TOOL_DATA, at: 1700000200, outcome: 'denied', reason: 'grant revoked', request_digest: 'q'.repeat(64), observation_id: null, role: null},
 ]};
 const empty = {grants: [], receipts: []};
+// GET /api/missions/{mid}/timeline and /claims as the slice 4 contract shapes them: the timeline is operational, the cards are derived on read.
+const TIMELINE_NOTE = 'Operational record written by the service worker and operator routes; not scientific evidence. A row whose outcome is not recorded is in flight while the mission status is running; otherwise it was abandoned by a pause, a cancellation or a service exit.';
+const noTimeline = {mission_id: mission.id, kind: 'operational', recorded: false, count: 0, rows: [], note: TIMELINE_NOTE};
+const CLAIMS_NOTE = 'Claim cards are derived on read from the persisted claim scope, the recorded reconciliation, the evidence graph and the operational timeline; nothing here is validation.';
+const UNCERTAINTY_NOTE = 'MSE values are errors on the exploratory validation split of the frozen dataset; no confidence interval or standard error is computed in this build.';
+const noClaims = {mission_id: mission.id, source: 'derived', derivation_version: null, current_derivation_version: 'arc-claim-scope-3', basis_round: null, rule: null, evidence_graph: 'valid', uncertainty_note: UNCERTAINTY_NOTE, note: CLAIMS_NOTE, claims: []};
+const timelineRow = (sequence, over) => ({id: 'op' + sequence, sequence, started_at: 1758463205100 + sequence * 10, finished_at: 1758463205105 + sequence * 10, operation: 'plan', role: 'planner', source: 'worker', round: 0, transport: 'fixture', model_requested: 'scripted-fixture-v1', model_observed: null, identity_verified: null, tool: null, action_id: null, branch_id: null, actor: null, receipt_id: null, outcome: 'ok', outcome_source: 'recorded', detail: '', ...over});
+const timelineRows = [
+  timelineRow(1, {operation: 'start', role: 'operator', source: 'operator', transport: null, model_requested: null, actor: 'operator:token', outcome: 'scheduled'}),
+  timelineRow(2, {operation: 'plan', transport: 'cli', model_requested: 'claude-opus-5', model_observed: 'claude-opus-5', identity_verified: true, receipt_id: '5f0c' + 'a'.repeat(28)}),
+  timelineRow(4, {operation: 'tool', role: 'tool', transport: null, model_requested: null, tool: 'polynomial_fit', action_id: 'fit-linear', branch_id: 'linear'}),
+  timelineRow(6, {operation: 'reconcile', role: 'analyst', identity_verified: false, model_observed: 'scripted-fixture-v1', outcome: 'denied', receipt_id: '7a1e' + 'b'.repeat(28)}),
+  timelineRow(8, {operation: 'plan', round: 1, finished_at: null, outcome: 'outcome_unknown', outcome_source: 'derived'}),
+  timelineRow(9, {operation: 'interrupt', role: 'service', source: 'service', round: 1, transport: null, model_requested: null, outcome: 'interrupted', detail: 'Service exit noticed; the mission was running and is now paused (event mission_interrupted). Rows above without a recorded outcome were abandoned.'}),
+];
+const recordedTimeline = {...noTimeline, recorded: true, count: timelineRows.length, rows: timelineRows};
+const exampleClaim = {claim_id: 'quadratic', branch_id: 'quadratic', title: 'Curved response', requested: 'The response requires a quadratic term.', status: 'unresolved',
+  supported_scope: ['analyst: Low error on the exploratory split.', 'falsifier: Low error on the exploratory split. Adaptive reuse of this split prevents confirmatory interpretation.'], scope_qualifier: 'on the exploratory validation split of the frozen dataset; not independent data',
+  uncertainties: [{reason: 'shared_identity', role: null, detail: 'Both roles ran as the same model identity (scripted-fixture-v1); separate invocations are not independent reviewers.', evidence_ids: []}],
+  evidence: [{id: 'fit-quadratic', tool: 'polynomial_fit', tool_version: 'arc-numeric-2', method: 'polynomial_fit@arc-numeric-2', digest: '9c4e' + 'f'.repeat(60), status: 'ok', claim_eligible: true, replayable: true, counts_for_scope: true, source_kind: 'builtin', round: 1, started_at: 1758463205400, finished_at: 1758463205460, time_source: 'timeline', receipt_id: null, numeric_summary: {degree: 2, training_mse: 0.0016, validation_mse: 0.0014, n_train: 48, n_validation: 16, split: 'index_mod_4_zero_validation'}, endpoint: null, response_sha256: null},
+    {id: 'shuffle-quadratic', tool: 'permutation_control', tool_version: 'arc-numeric-2', method: 'permutation_control@arc-numeric-2', digest: '1b2c' + 'e'.repeat(60), status: 'ok', claim_eligible: true, replayable: true, counts_for_scope: false, source_kind: 'builtin', round: 1, started_at: null, finished_at: null, time_source: 'none', receipt_id: null, numeric_summary: {permutations: 20, mean_shuffled_validation_mse: 0.9, minimum_shuffled_validation_mse: 0.4}, endpoint: null, response_sha256: null}],
+  independence: {roles_present: ['analyst', 'falsifier'], roles: {analyst: {model: 'scripted-fixture-v1', round: 1, identity_verified: null, identity_source: null}, falsifier: {model: 'scripted-fixture-v1', round: 1, identity_verified: null, identity_source: null}}, independent: false, reasons: ['shared_identity']},
+  findings: [{role: 'analyst', round: 1, model: 'scripted-fixture-v1', position: 'support', finding: 'Low error on the exploratory split.', next_test: 'Use independently acquired data before a scientific conclusion.', evidence_ids: ['fit-quadratic']}],
+  alternatives: {parents: ['linear'], children: [], siblings: ['null-control'], conflicts: [{branch_id: 'quadratic', positions: ['support', 'challenge'], assessment_ids: ['a-3', 'a-4'], evidence_ids: ['fit-quadratic']}], conflicts_source: 'evidence_graph'},
+  next_tests: [{role: 'analyst', round: 1, test: 'Use independently acquired data before a scientific conclusion.', evidence_ids: ['fit-quadratic']}],
+  units: null, units_note: 'No units are recorded: mission points are bare x/y numbers (models.Point) and no tool in this build reports a unit.',
+  stale_derivation: false, stale_reason: '', claim_scope_check: 'satisfied'};
+const exampleClaims = {...noClaims, derivation_version: 'arc-claim-scope-3', basis_round: 2, rule: 'A narrower conclusion is a valid research output. Nothing above is scientific validation.', claims: [exampleClaim]};
 const conflict = detail => new Response(JSON.stringify({detail}), {status: 409, headers: {'Content-Type': 'application/json'}});
 const renderLive = (readiness, extra = {}) => {
   const refreshReadiness = vi.fn(async () => {}), onNavigate = vi.fn();
@@ -40,10 +68,13 @@ const renderLive = (readiness, extra = {}) => {
 };
 
 beforeEach(() => {
+  localStorage.clear();
   vi.stubGlobal('fetch', vi.fn(async (path, options = {}) => {
     if (path === '/api/missions') return json(options.method === 'POST' ? mission : [{id: mission.id, status: 'paused', goal: 'Private saved question', mode: 'demo'}]);
     if (path.startsWith('/api/missions/preview')) return json(preview);
     if (path.endsWith('/grants')) return json(empty);
+    if (path.endsWith('/timeline')) return json(noTimeline);
+    if (path.endsWith('/claims')) return json(noClaims);
     if (path.endsWith('/verify')) return json(report);
     if (path.endsWith('/capsule')) return new Response('private archive');
     return json(mission);
@@ -580,4 +611,363 @@ test('a ledger that cannot be read is stated in its own section and leaves the m
   expect(await within(section).findByRole('alert')).toHaveTextContent('Grants could not be read: Request failed (404): Not Found');
   expect(screen.getByText(/Private stop reason/)).toBeVisible();
   expect(screen.getByRole('button', {name: 'Replay and verify'})).toBeEnabled();
+});
+
+// Slice 4: the operational timeline, the interruption banner, pause and retry, reopen, and the derived claim cards.
+const withMission = (over, extra = {}) => {
+  const original = fetch.getMockImplementation();
+  const row = {...mission, ...extra, state: {...mission.state, ...over}};
+  fetch.mockImplementation(async (path, options = {}) => path === '/api/missions/' + mission.id ? json(row) : original(path, options));
+  return row;
+};
+
+test('the timeline table shows every recorded row from its own fields and never calls a row running', async () => {
+  withMission({status: 'running'});
+  const inner = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path.endsWith('/timeline') ? json(recordedTimeline) : inner(path, options));
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  const section = await screen.findByRole('region', {name: 'Timeline'});
+  expect(section).toHaveTextContent(TIMELINE_NOTE);
+  const rows = within(await within(section).findByRole('table')).getAllByRole('row').slice(1);
+  expect(rows).toHaveLength(6);
+  expect(rows.map(row => row.getAttribute('data-operation'))).toEqual(['start', 'plan', 'tool', 'reconcile', 'plan', 'interrupt']);
+  expect(rows.map(row => row.getAttribute('data-outcome-source'))).toEqual(['recorded', 'recorded', 'recorded', 'recorded', 'derived', 'recorded']);
+  expect(rows[0]).toHaveAttribute('data-role', 'operator');
+  expect(rows[0]).toHaveTextContent('operator:token');
+  expect(rows[0]).toHaveTextContent('scheduled');
+  expect(rows[0]).toHaveTextContent(new Date(timelineRows[0].started_at).toLocaleString());
+  expect(rows[1]).toHaveTextContent('claude-opus-5 → claude-opus-5');
+  expect(rows[1]).toHaveTextContent('verified');
+  expect(rows[1]).toHaveTextContent('5f0caaaaaaaa');
+  expect(rows[2]).toHaveTextContent('polynomial_fit · fit-linear');
+  expect(rows[2]).toHaveTextContent('linear');
+  expect(rows[2]).toHaveTextContent('not recorded');
+  expect(rows[3]).toHaveTextContent('Reviewer (QA)');
+  expect(rows[3]).toHaveTextContent('not verified');
+  expect(rows[3]).toHaveAttribute('data-outcome', 'denied');
+  expect(rows[4]).toHaveAttribute('data-outcome', 'outcome_unknown');
+  expect(rows[4]).toHaveTextContent('no outcome recorded');
+  expect(rows[4]).not.toHaveTextContent('outcome_unknown');
+  expect(rows[4].children[2]).toHaveTextContent('—');
+  expect(rows[5]).toHaveTextContent('Rows above without a recorded outcome were abandoned.');
+  // No Outcome cell says a row is running (the service's own detail texts may use the word about the mission): that state is the persisted status alone.
+  expect(rows.map(row => row.children[9].textContent)).toEqual(['scheduled', 'ok', 'ok', 'denied', 'no outcome recorded', 'interrupted']);
+  expect(document.querySelector('.status-label')).toHaveTextContent('running');
+});
+
+test('a mission without a timeline says so and points at the persisted event history', async () => {
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  const section = await screen.findByRole('region', {name: 'Timeline'});
+  await waitFor(() => expect(section).toHaveTextContent('No timeline was recorded for this mission: it ran before the timeline existed, or it has not started. The event history below is the persisted record.'));
+  expect(within(section).queryByRole('table')).not.toBeInTheDocument();
+  expect(document.querySelector('.status-label')).toHaveTextContent('paused');
+});
+
+test('Pause is offered only while the persisted status is running and posts the pause', async () => {
+  const posts = [];
+  const original = fetch.getMockImplementation();
+  let status = 'running';
+  fetch.mockImplementation(async (path, options = {}) => {
+    if (path === '/api/missions/' + mission.id + '/pause') { posts.push(options.method); status = 'paused'; return json({...mission, state: {...mission.state, status}}); }
+    if (path === '/api/missions/' + mission.id) return json({...mission, state: {...mission.state, status, events: status === 'paused' ? [{kind: 'mission_paused', round: 1, detail: 'Paused by operator:token at 2026-09-21T14:03:05Z; resume explicitly.'}] : []}});
+    return original(path, options);
+  });
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  const pause = screen.getByRole('button', {name: 'Pause'});
+  expect(pause).toBeEnabled();
+  expect(screen.getByRole('button', {name: /^Resume/})).toBeDisabled();
+  expect(screen.queryByRole('button', {name: 'Retry after error'})).not.toBeInTheDocument();
+  await user.click(pause);
+  await waitFor(() => expect(posts).toEqual(['POST']));
+  expect(await screen.findByText('paused', {selector: '.status-label'})).toBeInTheDocument();
+  expect(screen.getByRole('button', {name: 'Pause'})).toBeDisabled();
+  expect(screen.getByRole('button', {name: 'Resume (recorded as an analysis and claim change)'})).toBeEnabled();
+  const banner = screen.getByText(/^Paused: Paused by operator:token at 2026-09-21T14:03:05Z; resume explicitly\. Resume continues it as a declared change\.$/);
+  expect(banner).toHaveAttribute('role', 'status');
+  expect(banner).toHaveAttribute('data-event', 'mission_paused');
+  expect(screen.getByRole('button', {name: 'Cancel'})).toBeEnabled();
+});
+
+test('Retry after error is offered only for an errored mission, needs a reason and declares the change with the note prefix', async () => {
+  const posts = [];
+  const original = fetch.getMockImplementation();
+  let status = 'error';
+  fetch.mockImplementation(async (path, options = {}) => {
+    if (path === '/api/missions/' + mission.id + '/changes') { posts.push([options.method, JSON.parse(options.body)]); status = 'running'; return json({id: 'c'.repeat(32), status: 'scheduled'}, {status: 202}); }
+    if (path === '/api/missions/' + mission.id) return json({...mission, state: {...mission.state, status, stop_reason: 'Service execution failed'}});
+    return original(path, options);
+  });
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await user.click(screen.getByRole('button', {name: 'Load missions'}));
+  await user.click(await screen.findByRole('button', {name: /paused · Private saved question/}));
+  await screen.findByText('Selected mission: private-mission');
+  const retry = screen.getByRole('button', {name: 'Retry after error'});
+  expect(retry).toBeDisabled();
+  expect(screen.getByRole('button', {name: 'Pause'})).toBeDisabled();
+  expect(screen.getByRole('button', {name: /^Resume/})).toBeDisabled();
+  expect(screen.getByRole('button', {name: 'Cancel'})).toBeDisabled();
+  expect(screen.getByText(/may call the planner again/)).toBeInTheDocument();
+  await user.type(screen.getByLabelText('Retry reason'), '  the planner CLI was signed in again ');
+  expect(retry).toBeEnabled();
+  await user.click(retry);
+  await waitFor(() => expect(posts).toEqual([['POST', {kind: 'resume', declared_effects: ['analysis', 'claim'], note: 'Retry after error: the planner CLI was signed in again'}]]));
+  expect(await screen.findByText('running', {selector: '.status-label'})).toBeInTheDocument();
+  expect(screen.queryByRole('button', {name: 'Retry after error'})).not.toBeInTheDocument();
+  expect(screen.getByRole('button', {name: 'Pause'})).toBeEnabled();
+});
+
+test('an accepted Resume keeps polling until the persisted status leaves paused', async () => {
+  // The service answers 202 before the worker's first commit (a live worker connects its connectors
+  // first), so the row read right after the 202 still says paused; the view must not stop there.
+  const original = fetch.getMockImplementation();
+  let started = false, readsAfterStart = 0;
+  fetch.mockImplementation(async (path, options = {}) => {
+    if (path === '/api/missions/' + mission.id + '/start') { started = true; return json({id: mission.id, status: 'scheduled'}); }
+    if (path === '/api/missions/' + mission.id && started) { readsAfterStart++; return json({...mission, state: {...mission.state, status: readsAfterStart >= 3 ? 'running' : 'paused'}}); }
+    return original(path, options);
+  });
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  await user.click(screen.getByRole('button', {name: 'Resume (recorded as an analysis and claim change)'}));
+  expect(await screen.findByText('running', {}, {timeout: 4000})).toBeInTheDocument();
+  expect(readsAfterStart).toBeGreaterThanOrEqual(3);
+});
+
+test('a 409 from Pause is shown in the results notice', async () => {
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path.endsWith('/pause') ? conflict('Only a running mission can be paused; this one is ready') : path === '/api/missions/' + mission.id ? json({...mission, state: {...mission.state, status: 'running'}}) : original(path, options));
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  await user.click(screen.getByRole('button', {name: 'Pause'}));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Only a running mission can be paused; this one is ready');
+});
+
+test('an interrupted mission shows the banner from its last persisted event', async () => {
+  withMission({events: [{kind: 'mission_stopped', round: 0, detail: 'earlier'}, {kind: 'mission_interrupted', round: 1, detail: 'Service restarted; evidence retained. Resume explicitly.'}]});
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  const banner = screen.getByText(/^Interrupted: the service exited/);
+  expect(banner).toHaveAttribute('role', 'status');
+  expect(banner).toHaveAttribute('data-event', 'mission_interrupted');
+  expect(banner).toHaveTextContent('Interrupted: the service exited while this mission was running (persisted event mission_interrupted, round 1). Evidence is retained. Resume continues it as a declared change; timeline rows without a recorded outcome were abandoned by the exit.');
+  expect(screen.getByRole('button', {name: 'Resume (recorded as an analysis and claim change)'})).toBeEnabled();
+});
+
+test('no banner when the last event is neither an interruption nor a pause', async () => {
+  withMission({events: [{kind: 'mission_interrupted', round: 1, detail: 'Service restarted; evidence retained. Resume explicitly.'}, {kind: 'change_declared', round: 1, detail: 'resume'}]});
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  expect(screen.queryByText(/^Interrupted:/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/^Paused:/)).not.toBeInTheDocument();
+});
+
+test('the route card reads the bound route from the seats_bound event and counts the grants', async () => {
+  const summary = {planner: 'anthropic:cli:claude-opus-5:default:planner', reviewer: 'anthropic:api:claude-sonnet-4-5:medium:anthropic-key', mcp_servers: ['pubmed']};
+  withMission({events: [{kind: 'seats_bound', round: 0, detail: 'sha256:' + 'c'.repeat(64) + ' ' + JSON.stringify(summary)}]}, {request: {mode: 'live'}});
+  const inner = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path.endsWith('/grants') ? json(ledger) : inner(path, options));
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  const route = await screen.findByRole('region', {name: 'Mission route'});
+  expect(route).toHaveTextContent('planner · anthropic:cli:claude-opus-5:default:planner');
+  expect(route).toHaveTextContent('reviewer · anthropic:api:claude-sonnet-4-5:medium:anthropic-key');
+  expect(route).toHaveTextContent('mcp_servers · pubmed');
+  expect(route).toHaveTextContent('Route digest cccccccccccc… · bound at round 0 (event seats_bound)');
+  await waitFor(() => expect(route).toHaveTextContent('Grants: 1 active · 1 revoked (see Grants and receipts)'));
+  expect(route).not.toHaveTextContent('Offline fixture');
+});
+
+test('the route card of an offline mission says no route was bound; an unstarted live one says it binds at the first start', async () => {
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  expect(screen.getByRole('region', {name: 'Mission route'})).toHaveTextContent('Offline fixture: scripted roles (scripted-fixture-v1); no route was bound and no grant exists.');
+  withMission({status: 'ready'}, {request: {mode: 'live'}});
+  const live = userEvent.setup(); const {unmount} = render(<ResearchWorkspace token="operator-live" setToken={vi.fn()}/>);
+  await live.click(screen.getAllByRole('button', {name: 'Load missions'})[1]);
+  await live.click((await screen.findAllByRole('button', {name: /paused · Private saved question/}))[1]);
+  await waitFor(() => expect(screen.getAllByRole('region', {name: 'Mission route'})[1]).toHaveTextContent('No route bound yet: a live mission binds its route (event seats_bound) at its first start.'));
+  unmount();
+});
+
+test('reopen restores the stored mission once the session is unlocked and stores only its id', async () => {
+  localStorage.setItem('arc.research.mission', 'private-mission');
+  const user = userEvent.setup(); const setToken = vi.fn();
+  const {rerender} = render(<ResearchWorkspace token="operator" setToken={setToken}/>);
+  expect(await screen.findByText('Selected mission: private-mission')).toBeVisible();
+  expect(fetch.mock.calls.map(([path]) => path)).toContain('/api/missions/private-mission');
+  expect(fetch.mock.calls.some(([path]) => path === '/api/missions')).toBe(false);
+  expect(fetch.mock.calls.every(([path, options]) => !path.includes('operator') && options.headers.Authorization === 'Bearer operator')).toBe(true);
+  expect(Object.keys(localStorage)).toEqual(['arc.research.mission']);
+  expect(localStorage.getItem('arc.research.mission')).toBe('private-mission');
+  expect(Object.values(localStorage).some(value => String(value).includes('operator'))).toBe(false);
+  expect(sessionStorage.length).toBe(0);
+  // A token switch clears the selection as always and does not restore it again.
+  fetch.mockClear();
+  rerender(<ResearchWorkspace token="another-operator" setToken={setToken}/>);
+  expect(screen.queryByText('Selected mission: private-mission')).not.toBeInTheDocument();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  expect(fetch.mock.calls.some(([path]) => path === '/api/missions/private-mission')).toBe(false);
+  expect(localStorage.getItem('arc.research.mission')).toBe('private-mission');
+  // Selecting a mission again stores its id; nothing else.
+  await user.click(screen.getByRole('button', {name: 'Load missions'}));
+  await user.click(await screen.findByRole('button', {name: /paused · Private saved question/}));
+  await screen.findByText('Selected mission: private-mission');
+  expect(Object.keys(localStorage)).toEqual(['arc.research.mission']);
+});
+
+test('reopen never fires on a keystroke: a typed token restores once it settles', async () => {
+  localStorage.setItem('arc.research.mission', 'private-mission');
+  const user = userEvent.setup();
+  // The workspace mounts locked; the header field is typed into afterwards, as in the app.
+  function Shell() {
+    const [token, setToken] = React.useState('');
+    return <><input id="operator-token" aria-label="Operator token" value={token} onChange={e => setToken(e.target.value)}/><ResearchWorkspace token={token} setToken={setToken}/></>;
+  }
+  render(<Shell/>);
+  await user.type(screen.getByLabelText('Operator token'), 'operator');
+  await new Promise(resolve => setTimeout(resolve, 50));
+  expect(fetch.mock.calls.some(([path]) => String(path).startsWith('/api/missions'))).toBe(false);
+  expect(screen.getByText('No mission selected.')).toBeVisible();
+  await user.keyboard('{Enter}');
+  expect(await screen.findByText('Selected mission: private-mission')).toBeVisible();
+  expect(fetch.mock.calls.filter(([path]) => path === '/api/missions/private-mission')).toHaveLength(1);
+});
+
+test('reopen waits for the token and a mission that is gone drops the key', async () => {
+  localStorage.setItem('arc.research.mission', 'gone-mission');
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path === '/api/missions/gone-mission' ? new Response(JSON.stringify({detail: 'Not Found'}), {status: 404, headers: {'Content-Type': 'application/json'}}) : original(path, options));
+  const user = userEvent.setup();
+  function Shell() {
+    const [token, setToken] = React.useState('');
+    return <><input id="operator-token" aria-label="Operator token" value={token} onChange={e => setToken(e.target.value)}/><ResearchWorkspace token={token} setToken={setToken}/></>;
+  }
+  render(<Shell/>);
+  expect(fetch).not.toHaveBeenCalled();
+  expect(screen.getByText('No mission selected.')).toBeVisible();
+  await user.type(screen.getByLabelText('Operator token'), 'operator{Enter}');
+  expect(await screen.findByRole('alert')).toHaveTextContent('The last mission (gone-mission) is no longer stored.');
+  expect(localStorage.getItem('arc.research.mission')).toBeNull();
+  expect(screen.getByText('No mission selected.')).toBeVisible();
+  expect(screen.getByRole('button', {name: 'Load missions'})).toBeEnabled();
+});
+
+test('Create and start stores the new mission id for reopening', async () => {
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await user.type(screen.getByLabelText('Research goal'), 'Stored question');
+  await user.click(screen.getByRole('button', {name: 'Create and start'}));
+  await screen.findByText('Selected mission: private-mission');
+  expect(Object.keys(localStorage)).toEqual(['arc.research.mission']);
+  expect(localStorage.getItem('arc.research.mission')).toBe('private-mission');
+});
+
+const CLAIM_ROWS = ['Requested claim', 'Evidence-supported scope', 'Remaining uncertainty', 'Evidence', 'Independence', 'Findings', 'Alternatives', 'Next discriminating test', 'Units', 'Derivation'];
+
+test('claim cards are rendered from the derived claims answer with every row in order', async () => {
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path.endsWith('/claims') ? json(exampleClaims) : original(path, options));
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  const scope = screen.getByRole('region', {name: 'Claim scope'});
+  const card = await within(scope).findByRole('article');
+  expect(card).toHaveAttribute('data-status', 'unresolved');
+  expect(card).toHaveAttribute('data-stale', 'false');
+  expect(within(card).getAllByRole('term').map(dt => dt.textContent)).toEqual(CLAIM_ROWS);
+  expect(card).toHaveTextContent('quadratic · Unresolved');
+  expect(card).toHaveTextContent('Scope: on the exploratory validation split of the frozen dataset; not independent data.');
+  expect(card).toHaveTextContent('shared identity: Both roles ran as the same model identity (scripted-fixture-v1)');
+  const evidence = within(card).getAllByRole('listitem').filter(li => li.hasAttribute('data-evidence-id'));
+  expect(evidence.map(li => li.getAttribute('data-evidence-id'))).toEqual(['fit-quadratic', 'shuffle-quadratic']);
+  expect(evidence[0]).toHaveTextContent('fit-quadratic · polynomial_fit@arc-numeric-2 · digest 9c4effffffff… · ok · started ' + new Date(1758463205400).toLocaleString() + ' · receipt none · validation MSE 0.0014');
+  expect(evidence[0]).not.toHaveTextContent('not counted for scope');
+  expect(evidence[1]).toHaveTextContent('· not counted for scope · started no time recorded · receipt none · mean shuffled MSE 0.9');
+  expect(card).toHaveTextContent('Independent reviewers: no');
+  expect(card).toHaveTextContent('Reviewer (QA): scripted-fixture-v1 · identity not recorded');
+  expect(card).toHaveTextContent('falsifier: scripted-fixture-v1 · identity not recorded');
+  expect(card).toHaveTextContent('Reviewer (QA) · support: Low error on the exploratory split.');
+  expect(card).toHaveTextContent('parents linear; siblings null-control; children none');
+  expect(card).toHaveTextContent('Conflict: support and challenge both recorded (assessments a-3, a-4)');
+  expect(card).toHaveTextContent('Reviewer (QA): Use independently acquired data before a scientific conclusion.');
+  expect(card).toHaveTextContent('No units are recorded: mission points are bare x/y numbers');
+  expect(card).toHaveTextContent('arc-claim-scope-3 · release check claim scope: passed');
+  expect(card).not.toHaveTextContent('Stale:');
+  expect(scope).toHaveTextContent('Worked out at round 2; provisional support is exploratory, never validation.');
+  expect(scope).toHaveTextContent(UNCERTAINTY_NOTE);
+  expect(scope).toHaveTextContent(CLAIMS_NOTE);
+  expect(within(scope).queryByRole('alert')).not.toBeInTheDocument();
+});
+
+test('the poll that sees the mission stop also lands its claim cards and timeline, without reselecting', async () => {
+  // The claim scope exists only once the mission has stopped: the final poll's side reads must not be lost
+  // when the status change ends the polling (the poll's abort signal is shared by those reads).
+  const original = fetch.getMockImplementation();
+  let missionReads = 0;
+  fetch.mockImplementation(async (path, options = {}) => {
+    if (path === '/api/missions') return json([{id: mission.id, status: 'running', goal: 'Private saved question'}]);
+    if (path === '/api/missions/' + mission.id) { missionReads++; return json({...mission, state: {...mission.state, status: missionReads === 1 ? 'running' : 'completed', claim_scope: missionReads === 1 ? null : mission.state.claim_scope}}); }
+    // The side reads take real time in a browser; here a tick, so React's commit and effect cleanup run first.
+    if (path.endsWith('/claims')) { await new Promise(resolve => setTimeout(resolve, 30)); return json(missionReads === 1 ? noClaims : exampleClaims); }
+    if (path.endsWith('/timeline')) { await new Promise(resolve => setTimeout(resolve, 30)); return json(missionReads === 1 ? noTimeline : recordedTimeline); }
+    return original(path, options);
+  });
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  expect(await screen.findByText('running')).toBeInTheDocument();
+  expect(await screen.findByText('completed', {}, {timeout: 3000})).toBeInTheDocument();
+  const scope = screen.getByRole('region', {name: 'Claim scope'});
+  const card = await within(scope).findByRole('article');
+  expect(card).toHaveAttribute('data-stale', 'false');
+  expect(within(card).getAllByRole('term').map(dt => dt.textContent)).toEqual(CLAIM_ROWS);
+  expect(within(screen.getByRole('region', {name: 'Timeline'})).getAllByRole('row')).toHaveLength(timelineRows.length + 1);
+  const polls = () => fetch.mock.calls.filter(([path]) => path === '/api/missions/' + mission.id).length;
+  const settled = polls();
+  await new Promise(resolve => setTimeout(resolve, 1300));
+  expect(polls()).toBe(settled);
+});
+
+test('a stale derivation is marked on the card and conflicts unavailable are said so', async () => {
+  const stale = {...exampleClaims, evidence_graph: 'unavailable', claims: [{...exampleClaim, stale_derivation: true, stale_reason: 'Claim scope was derived under an earlier rule (arc-claim-scope-2); re-derive it.', claim_scope_check: 'stale', alternatives: {...exampleClaim.alternatives, conflicts: [], conflicts_source: 'unavailable'}}]};
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path.endsWith('/claims') ? json(stale) : original(path, options));
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  const card = await within(screen.getByRole('region', {name: 'Claim scope'})).findByRole('article');
+  expect(card).toHaveAttribute('data-stale', 'true');
+  expect(card).toHaveTextContent('release check claim scope: stale · Stale: Claim scope was derived under an earlier rule (arc-claim-scope-2); re-derive it.');
+  expect(card).toHaveTextContent('conflicts unavailable');
+  expect(card).not.toHaveTextContent('Conflict: support');
+});
+
+test('when the claims read fails the persisted claim scope is shown as before, with the alert', async () => {
+  const persisted = {derivation_version: 'arc-claim-scope-3', basis_round: 1, counts: {}, rule: 'r', branches: [{branch_id: 'linear', requested: 'A linear curve adequately describes the fixture.', status: 'contradicted', supported_scope: [], scope_qualifier: '', uncertainties: [{reason: 'challenged', role: 'falsifier', detail: 'The linear fit leaves substantial residual error.', evidence_ids: ['fit-linear']}], next_tests: [{role: 'falsifier', round: 0, test: 'Compare a nonlinear alternative.', evidence_ids: ['fit-linear']}], evidence_ids: ['fit-linear']}]};
+  withMission({claim_scope: persisted});
+  const inner = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path.endsWith('/claims') ? new Response(JSON.stringify({detail: 'Not Found'}), {status: 404, headers: {'Content-Type': 'application/json'}}) : inner(path, options));
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  const scope = screen.getByRole('region', {name: 'Claim scope'});
+  expect(await within(scope).findByRole('alert')).toHaveTextContent('Request failed (404): Not Found');
+  const card = within(scope).getByRole('article');
+  expect(card).toHaveAttribute('data-status', 'contradicted');
+  expect(card).toHaveTextContent('No supported scope; the requested claim stands only as a hypothesis.');
+  expect(card).toHaveTextContent('challenged (falsifier): The linear fit leaves substantial residual error.');
+  expect(card).toHaveTextContent(/Next discriminating test\s*falsifier: Compare a nonlinear alternative\./);
+  expect(within(card).queryByText('Evidence')).not.toBeInTheDocument();
+  expect(scope).toHaveTextContent('Worked out at round 1; provisional support is exploratory, never validation.');
+  expect(screen.getByRole('button', {name: 'Replay and verify'})).toBeEnabled();
+});
+
+test('unshaped timeline and claims answers are stated in their sections and leave the mission usable', async () => {
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path.endsWith('/timeline') ? json({unexpected: true}) : path.endsWith('/claims') ? json({claims: 'nope'}) : original(path, options));
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  expect(await within(screen.getByRole('region', {name: 'Timeline'})).findByRole('alert')).toHaveTextContent('The timeline answer had no rows list; the service may be out of date.');
+  expect(await within(screen.getByRole('region', {name: 'Claim scope'})).findByRole('alert')).toHaveTextContent('The claims answer had no claims list; the service may be out of date.');
+  expect(screen.getByText(/Private stop reason/)).toBeVisible();
+  expect(screen.getByRole('button', {name: 'Replay and verify'})).toBeEnabled();
+  expect(screen.getByRole('region', {name: 'Claim scope'})).toHaveTextContent('Claim scope is worked out when the mission stops. Nothing yet.');
 });
