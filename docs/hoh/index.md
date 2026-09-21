@@ -270,3 +270,12 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   units and the stale marker. Verified on the real EXE across a real service exit and a
   window relaunch, and by the reviewer's black-box run; four view defects found only
   natively are fixed and recorded.
+- [Slice 5 record](2026-09-21-slice5-export-diagnostics-record.md): replay archives in
+  format 3 (release decision and receipt, evidence graph, claims, timeline, grants) that
+  verify beside format 2, with informational members whose tampering fails the manifest
+  and not the replay; a ledger-gated PNG download beside the inline preview;
+  `/api/diagnostics` (storage integrity, failed renders with retry, renderer, package,
+  probes, each with its source) and a redacted report; the desktop marks the service it
+  starts and Diagnostics shows the host session. Verified on the rebuilt desktop binary
+  (downloads driven through UI Automation, the archive verified from disk) and by the
+  reviewer's black-box run including a format-2 archive from the previous commit.

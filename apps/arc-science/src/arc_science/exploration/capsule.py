@@ -8,24 +8,35 @@ from pathlib import Path, PurePosixPath
 from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 from .. import __version__
 from ..contracts import canonical, digest
-from .models import MissionRequest, MissionState
+from .models import MissionRequest, MissionState, ReleaseDecision
 from . import tools
 from .catalog import trusted_replay, trusted_version
 from .evidence import evidence_graph
 from .vision import required_visual_reason
 
 CAPSULE_FORMAT='arc-research-capsule/2'
+CAPSULE_FORMAT_3='arc-research-capsule/3'
+CORE_MEMBERS=frozenset({'request.json','state.json','runtime.json','manifest.json'})
+DERIVED_MEMBERS=('release.json','evidence_graph.json')                 # service-side evidence about the state
+INFORMATIONAL_MEMBERS=('claims.json','grants.json','timeline.json')   # never evidence
+V3_MEMBERS=CORE_MEMBERS|set(DERIVED_MEMBERS)|set(INFORMATIONAL_MEMBERS)
 MAX_CAPSULE=20*1024*1024
 
-def export_capsule(request:MissionRequest,state:MissionState)->bytes:
+def export_capsule(request:MissionRequest,state:MissionState,*,release:dict|None=None,claims:dict|None=None,
+                   timeline:list|None=None,grants:dict|None=None)->bytes:
     if state.request_digest!=digest(request):raise ValueError('Unbound mission')
+    extras=(release,claims,timeline,grants);v3=any(x is not None for x in extras)
+    if v3 and any(x is None for x in extras):raise ValueError('Capsule v3 needs release, claims, timeline and grants')
     # The release ledger is service-side evidence about the state, not part of it.
     state=state.model_copy(update={'release':None})
     entries={'request.json':canonical(request),'state.json':canonical(state),
-             'runtime.json':canonical({'format':CAPSULE_FORMAT,'arc_version':__version__,
+             'runtime.json':canonical({'format':CAPSULE_FORMAT_3 if v3 else CAPSULE_FORMAT,'arc_version':__version__,
                  'numeric_version':tools.TOOL_VERSION,'numeric_source_sha256':hashlib.sha256(Path(tools.__file__).read_bytes()).hexdigest(),
                  'scientific_digest':state.scientific_digest,'scientific_validation':'not_established',
                  'model_replay':'recorded_outputs_only'})}
+    if v3:
+        entries.update({'release.json':canonical(release),'evidence_graph.json':canonical(evidence_graph(state)),
+                        'claims.json':canonical(claims),'timeline.json':canonical(timeline),'grants.json':canonical(grants)})
     entries['manifest.json']=canonical({name:hashlib.sha256(data).hexdigest() for name,data in entries.items()})
     if sum(len(data) for data in entries.values())>MAX_CAPSULE:
         raise ValueError('Expanded capsule would exceed verifier size limit')
@@ -49,8 +60,8 @@ def verify_capsule(blob:bytes)->dict:
     if len(blob)>MAX_CAPSULE:raise ValueError('Capsule exceeds size limit')
     try:
         with ZipFile(BytesIO(blob)) as z:
-            infos=z.infolist();names=[i.filename for i in infos]
-            if len(names)!=len(set(names)) or set(names)!={'request.json','state.json','runtime.json','manifest.json'}:
+            infos=z.infolist();names=[i.filename for i in infos];members=set(names)
+            if len(names)!=len(members) or members not in (CORE_MEMBERS,V3_MEMBERS):
                 raise ValueError('Unexpected or duplicate archive members')
             if sum(i.file_size for i in infos)>MAX_CAPSULE:raise ValueError('Expanded archive exceeds size limit')
             if any(PurePosixPath(i.filename).is_absolute() or '..' in PurePosixPath(i.filename).parts or
@@ -58,7 +69,11 @@ def verify_capsule(blob:bytes)->dict:
             entries={name:z.read(name) for name in names}
         manifest=json.loads(entries.pop('manifest.json'))
         if set(manifest)!=set(entries):raise ValueError('Manifest membership mismatch')
-        if any(hashlib.sha256(data).hexdigest()!=manifest[name] for name,data in entries.items()):raise ValueError('Artifact checksum mismatch')
+        v3=members==V3_MEMBERS
+        mismatched={name for name,data in entries.items() if hashlib.sha256(data).hexdigest()!=manifest[name]}
+        if mismatched&CORE_MEMBERS:raise ValueError('Artifact checksum mismatch')
+        # v3 members: a bad digest is reported, never parsed, and never touches the replay verdict.
+        manifest_failures=[name+': checksum mismatch' for name in DERIVED_MEMBERS+INFORMATIONAL_MEMBERS if name in mismatched]
         request=MissionRequest.model_validate_json(entries['request.json'])
         state=MissionState.model_validate_json(entries['state.json']);runtime=json.loads(entries['runtime.json'])
     except ValueError:raise
@@ -67,7 +82,7 @@ def verify_capsule(blob:bytes)->dict:
                       'scientific_digest','scientific_validation','model_replay'}
     if not isinstance(runtime,dict) or set(runtime)!=required_runtime:
         raise ValueError('Invalid capsule runtime metadata')
-    if (runtime['format']!=CAPSULE_FORMAT or runtime['arc_version']!=__version__ or
+    if (runtime['format']!=(CAPSULE_FORMAT_3 if v3 else CAPSULE_FORMAT) or runtime['arc_version']!=__version__ or
             runtime['numeric_version']!=tools.TOOL_VERSION or
             runtime['scientific_validation']!='not_established' or
             runtime['model_replay']!='recorded_outputs_only'):
@@ -95,6 +110,16 @@ def verify_capsule(blob:bytes)->dict:
             graph_check=False;graph_failure='evidence graph: '+str(exc)
         else:
             raise
+    if v3:
+        if 'release.json' not in mismatched:
+            try:ReleaseDecision.model_validate_json(entries['release.json'])
+            except ValueError:manifest_failures.append('release.json: not a release decision')
+        if 'evidence_graph.json' not in mismatched and graph_check and entries['evidence_graph.json']!=canonical(graph):
+            manifest_failures.append('evidence_graph.json: differs from the graph derived from state.json')
+        for name in INFORMATIONAL_MEMBERS:
+            if name not in mismatched:
+                try:json.loads(entries[name])
+                except ValueError:manifest_failures.append(name+': not JSON')
     if runtime['scientific_digest']!=state.scientific_digest:raise ValueError('Scientific state mismatch')
     if runtime['numeric_source_sha256']!=hashlib.sha256(Path(tools.__file__).read_bytes()).hexdigest():
         raise ValueError('Numeric implementation changed; explicitly review migration before replay')
@@ -136,9 +161,13 @@ def verify_capsule(blob:bytes)->dict:
                 artifacts_reproduced+=1
         except Exception:
             failures.append(artifact.digest+': artifact rendering no longer reproduces')
-    return {'integrity':True,'reproduction_passed':not failures,'reproduced':reproduced,'failures':failures,
+    limitations='Hashes detect corruption relative to this manifest; they are not external signatures or proof of truth.'
+    if v3:limitations+=' Informational members (claims, grants, timeline) are checked by digest only and are never evidence.'
+    return {'integrity':not manifest_failures,'reproduction_passed':not failures,'reproduced':reproduced,'failures':failures,
             'artifacts_reproduced':artifacts_reproduced,
             'snapshot_only':snapshot_only,'scientific_digest':state.scientific_digest,
             'evidence_graph':graph,'evidence_graph_valid':graph_check,
             'live_models_reexecuted':False,'scientific_validity_established':False,
-            'limitations':'Hashes detect corruption relative to this manifest; they are not external signatures or proof of truth.'}
+            'format':CAPSULE_FORMAT_3 if v3 else CAPSULE_FORMAT,'members':sorted(names),
+            'informational':list(INFORMATIONAL_MEMBERS) if v3 else [],'manifest_failures':manifest_failures,
+            'limitations':limitations}

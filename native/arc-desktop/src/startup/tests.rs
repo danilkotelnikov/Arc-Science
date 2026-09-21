@@ -321,7 +321,25 @@ fn native_session_secret_is_passed_only_to_owned_child() {
     .err()
     .unwrap();
     assert!(error.contains("native-session-present"));
+    assert!(error.contains("host-session=owned"));
     assert!(!error.contains("owned-child-secret-not-printed-0123456789"));
+}
+
+#[test]
+fn host_session_marker_reaches_only_the_owned_child() {
+    let mut config = closed_port_config();
+    config.args = [
+        "--exact",
+        "startup::tests::native_session_fixture",
+        "--ignored",
+        "--nocapture",
+    ]
+    .map(OsString::from)
+    .into();
+    let error = start_service(&config).err().unwrap();
+    assert!(error.contains("host-session=owned"));
+    assert!(error.contains("native-session-absent"));
+    assert!(std::env::var_os("ARC_HOST_SESSION").is_none());
 }
 
 #[test]
@@ -332,6 +350,10 @@ fn native_session_fixture() {
     } else {
         eprintln!("native-session-absent");
     }
+    eprintln!(
+        "host-session={}",
+        std::env::var("ARC_HOST_SESSION").unwrap_or_else(|_| "absent".into())
+    );
 }
 
 #[test]

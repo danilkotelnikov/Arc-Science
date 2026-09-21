@@ -70,9 +70,9 @@ test('at 700×800 Research and Diagnostics fit the viewport and every Diagnostic
   await page.getByLabel('Operator token').fill(E2E_TOKEN); // the operator checks enable with a token
   await fitsViewport();
   // Labels belong to the Diagnostics workspace; here only the count and the Tab order matter:
-  // Refresh service, Refresh readiness, Refresh readiness (re-read logins), Check MCP, Check ACP.
+  // Refresh service, Refresh readiness, Refresh readiness (re-read logins), Read diagnostics, Copy redacted report, Check MCP, Check ACP.
   const buttons = page.getByRole('main').getByRole('button', {disabled: false});
-  await expect(buttons).toHaveCount(5);
+  await expect(buttons).toHaveCount(7);
   const labels = await buttons.allTextContents();
   const reached = new Set();
   await page.getByLabel('Operator token').focus();
@@ -82,4 +82,28 @@ test('at 700×800 Research and Diagnostics fit the viewport and every Diagnostic
     if (focused !== null && labels.includes(focused)) reached.add(focused);
   }
   expect([...reached].sort()).toEqual([...labels].sort());
+});
+
+test('Diagnostics reads storage integrity and the redacted report carries no token', async ({request}) => {
+  const headers = {Authorization: 'Bearer ' + E2E_TOKEN};
+  const diagnostics = await request.get('/api/diagnostics', {headers});
+  expect(diagnostics.status()).toBe(200);
+  const doc = await diagnostics.json();
+  expect(doc.storage.sqlite['missions.db']).toBe('ok');
+  for (const name of ['storage', 'jobs', 'renderer', 'package', 'probes']) {
+    expect(typeof doc[name].source, name + '.source').toBe('string');
+    expect(doc[name].checked_at, name + '.checked_at').toBeGreaterThan(0);
+  }
+  // The service redacts before the page sees the text: no operator token, no bearer value, no home directory.
+  const report = await request.get('/api/diagnostics/report', {headers});
+  expect(report.status()).toBe(200);
+  expect(report.headers()['content-type']).toContain('text/plain');
+  const text = await report.text();
+  expect(text).not.toContain(E2E_TOKEN);
+  expect(text).not.toMatch(/Bearer [^[]/);
+  expect(text).not.toMatch(/[\\/]Users[\\/]/);
+  expect(JSON.parse(text).format).toBe('arc-diagnostics-report/1');
+  // The suite's service is started by e2e/serve.mjs, not by the desktop app.
+  const health = await request.get('/health');
+  expect((await health.json()).host_session.mode).toBe('standalone');
 });

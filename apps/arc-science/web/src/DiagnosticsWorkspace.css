@@ -120,6 +120,8 @@
   color: var(--ink-2);
 }
 
+.diagnostics-report { width: 100%; min-height: 10rem; font: 0.8rem/1.4 ui-monospace, monospace; }
+
 @media (max-width: 760px) {
   .diagnostics-kv {
     grid-template-columns: 1fr;

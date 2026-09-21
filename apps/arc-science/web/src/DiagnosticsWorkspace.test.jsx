@@ -28,11 +28,31 @@ const readiness = (kind = 'token') => ({
   connectors: {mcp: [{name: 'fake', transport: 'stdio', enabled: true, consented: true, state: 'not_tested', code: 'connector.eligible', meaning: 'Enabled and consented.', next_action: 'Check MCP below reaches it.'}], acp: [{name: 'agent', enabled: true, consented: false, state: 'blocked', code: 'connector.not_consented', meaning: 'Enabled but not consented.', next_action: 'Consent in Settings.'}], mcp_sdk: '1.2.3', acp_protocol: '1', state: 'not_tested', code: 'connectors.eligible', meaning: '1 of 2 connectors can be bound by a live mission; none is checked here', next_action: 'Run the connection checks in Diagnostics'},
   renderer: {state: 'not_tested', code: 'renderer.configured', facts: {configured: true, exists: true, default_preset: 'default'}, meaning: 'Blender is configured.', next_action: 'Submit a render in Molecules to test it.', source: 'settings'},
   memory: {state: 'ready', code: 'memory.available', facts: {protocol: 'arc-memory/1', sqlite: '3.53.2'}, meaning: 'The memory engine answers.', next_action: null},
-  storage: {state: 'not_tested', code: 'storage.present', facts: {missions_db: true, missions: 3}, meaning: 'The missions database is present.', next_action: 'Integrity is checked on demand in Diagnostics (not in this build).'},
+  storage: {state: 'not_tested', code: 'storage.present', facts: {missions_db: true, missions: 3}, meaning: 'The missions database is present.', next_action: 'Integrity is checked on demand: select Read diagnostics under Diagnostics.'},
   catalog: {},
   public_reads: {enabled: false},
 });
 const card = title => screen.getByRole('heading', {name: title, level: 3}).closest('article');
+// The /api/diagnostics document of §4: every section names its source and its read time.
+const READ_AT = 1_700_000_100;
+const section = (source, state, code, meaning, next_action, facts) => ({source, checked_at: READ_AT, state, code, meaning, next_action, ...facts});
+const diagnostics = () => ({
+  checked_at: READ_AT,
+  note: 'Local reads only: no model call, no connector start, no render. Each section names its source.',
+  storage: section('missions.db, grants.db and timeline.db in the data directory; memory capture status from the service', 'ready', 'storage.verified',
+    '3 of 3 missions verified · sqlite ok (missions, grants, timeline) · memory capture unconfigured', null,
+    {missions: {total: 3, checked: 3, verified: 3, broken: [], limit: 200}, sqlite: {'missions.db': 'ok', 'grants.db': 'ok', 'timeline.db': 'ok'}, memory_capture: {status: 'unconfigured', pending: 0, last_error: 'Native memory worker is not configured'}}),
+  jobs: section('molecular job records (molecular/<id>/job.json) held by the service', 'failed', 'jobs.failed', '2 of 4 molecular renders failed or were interrupted', 'Retry a render below, or render again from Molecules',
+    {total: 4, failed: [
+      {id: 'a'.repeat(32), status: 'failed', filename: 'complex.cif', error: 'Molecular rendering failed: the stand-in refused', updated_at: READ_AT - 100.5, retryable: true, retry_note: null},
+      {id: 'b'.repeat(32), status: 'interrupted', filename: 'older.cif', error: 'Interrupted by a service restart', updated_at: READ_AT - 900, retryable: false, retry_note: 'Recorded before settings tracking; render it again from Molecules'},
+    ]}),
+  renderer: section('ARC_MOLECULAR_BLENDER_PYTHON and ARC_SVG2PNG in the service environment; the runtime probe if one already ran; the newest molecular job record', 'blocked', 'renderer.not_configured', 'No Blender Python is configured', 'Set ARC_MOLECULAR_BLENDER_PYTHON on the server, then restart the service',
+    {blender_python: {configured: false, exists: null, executable: null}, svg_rasterizer: {configured: true, exists: true, executable: 'arc-svg2png.exe'}, runtime_probe: {checked: false, ok: null, reason: null}, last_render: {id: 'a'.repeat(32), status: 'failed', updated_at: READ_AT - 100.5, error: 'Molecular rendering failed: the stand-in refused'}}),
+  package: section('the running service process and its environment', 'not_tested', 'package.facts', 'Facts about the running service; nothing here is verified against the files on disk', null,
+    {version: '0.6.0', python: {version: '3.13.7', executable: 'C:/py/python.exe'}, supervisor: {configured: false, path: null, source: 'ARC_SUPERVISOR'}, settings: {revision: 'abcdef1234567890'}, data_dir: 'C:/data', started_at: READ_AT - 1000}),
+  probes: section('the last probe record per transport: memory, then providers/<name>-probes.jsonl', 'not_tested', 'probes.none', 'No probe has been recorded; readiness matches probe records to seats by subject digest', 'Probe a seat in Settings', {records: []}),
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -294,5 +314,164 @@ describe('DiagnosticsWorkspace', () => {
     expect(card('Service')).toHaveAttribute('data-state', 'failed');
     expect(card('Service')).toHaveTextContent('The last refresh failed. See the message beside Refresh service.');
     expect(screen.queryByText('single-trust-domain')).not.toBeInTheDocument();
+  });
+
+  it("shows the host session from /health beside the page's own session", async () => {
+    const healthWith = host_session => json({status: 'ready', version: '0.6.0', deployment: 'single-trust-domain', ...(host_session && {host_session})});
+    const cases = [
+      [{mode: 'owned', source: 'ARC_HOST_SESSION'}, NATIVE_SESSION, 'owned', 'owned by this window'],
+      [{mode: 'owned', source: 'ARC_HOST_SESSION'}, 'operator', 'reused', 'reused (started elsewhere)'],
+      [{mode: 'standalone', source: 'ARC_HOST_SESSION'}, 'operator', 'standalone', 'standalone (not started by the desktop app)'],
+      [null, 'operator', 'unreported', 'not reported by this service'],
+    ];
+    for (const [hostSession, token, key, value] of cases) {
+      vi.stubGlobal('fetch', vi.fn(async path => path === '/health' ? healthWith(hostSession) : Promise.reject(new Error('unexpected ' + path))));
+      const {unmount} = render(<DiagnosticsWorkspace token={token} readiness={null} refreshReadiness={vi.fn()}/>);
+      await screen.findByText('single-trust-domain');
+      expect(card('Service')).toHaveAttribute('data-host-session', key);
+      expect(card('Service')).toHaveTextContent('Host session');
+      expect(within(card('Service')).getByText(value)).toBeInTheDocument();
+      expect(within(card('Service')).getByText(/^Source: \/health/)).toBeInTheDocument();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      unmount();
+    }
+  });
+
+  it('reads diagnostics only when asked and renders every section with its source', async () => {
+    const fetch = vi.fn(async path => {
+      if (path === '/health') return health();
+      if (path === '/api/diagnostics') return json(diagnostics());
+      throw new Error('unexpected ' + path);
+    });
+    vi.stubGlobal('fetch', fetch);
+    const user = userEvent.setup();
+    render(<DiagnosticsWorkspace token="operator" readiness={null} refreshReadiness={vi.fn()}/>);
+    await screen.findByText('single-trust-domain');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    for (const title of ['Storage integrity', 'Failed renders', 'Renderer facts', 'Package', 'Probes']) {
+      expect(card(title)).toHaveAttribute('data-state', 'unknown');
+      expect(card(title)).toHaveTextContent('Select Read diagnostics to read it.');
+    }
+    await user.click(screen.getByRole('button', {name: 'Read diagnostics'}));
+    await waitFor(() => expect(card('Storage integrity')).toHaveAttribute('data-state', 'ready'));
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenLastCalledWith('/api/diagnostics', expect.objectContaining({headers: {Authorization: 'Bearer operator'}, signal: expect.any(AbortSignal)}));
+
+    expect(card('Storage integrity')).toHaveAttribute('data-section', 'storage');
+    expect(card('Storage integrity')).toHaveTextContent('3 of 3');
+    expect(card('Storage integrity')).toHaveTextContent('missions.db ok · grants.db ok · timeline.db ok');
+    expect(card('Storage integrity')).toHaveTextContent('memory capture');
+    expect(card('Storage integrity')).toHaveTextContent('unconfigured · pending 0 · Native memory worker is not configured');
+    expect(card('Storage integrity')).not.toHaveTextContent('Broken chains');
+
+    expect(card('Failed renders')).toHaveAttribute('data-section', 'jobs');
+    expect(card('Failed renders')).toHaveAttribute('data-state', 'failed');
+    expect(card('Failed renders')).toHaveTextContent('Next: Retry a render below, or render again from Molecules');
+    const rows = within(screen.getByRole('table', {name: 'Failed renders'})).getAllByRole('row');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent('complex.cif · aaaaaaaaaaaa…');
+    expect(rows[0]).toHaveTextContent('failed · Molecular rendering failed: the stand-in refused');
+    expect(within(rows[0]).getByRole('button', {name: 'Retry render'})).toBeEnabled();
+    expect(within(rows[0]).getByRole('button', {name: 'Retry render'})).toHaveAttribute('data-job-id', 'a'.repeat(32));
+    expect(rows[1]).toHaveTextContent('interrupted');
+    expect(within(rows[1]).getByRole('button', {name: 'Retry render'})).toBeDisabled();
+    expect(rows[1]).toHaveTextContent('Recorded before settings tracking; render it again from Molecules');
+
+    expect(card('Renderer facts')).toHaveAttribute('data-section', 'renderer');
+    expect(card('Renderer facts')).toHaveAttribute('data-state', 'blocked');
+    expect(card('Renderer facts')).toHaveTextContent('configured no · found unknown · none');
+    expect(card('Renderer facts')).toHaveTextContent('configured yes · found yes · arc-svg2png.exe');
+    expect(card('Renderer facts')).toHaveTextContent('not run in this service');
+    expect(card('Renderer facts')).toHaveTextContent('Next: Set ARC_MOLECULAR_BLENDER_PYTHON on the server, then restart the service');
+    expect(card('Package')).toHaveAttribute('data-section', 'package');
+    expect(card('Package')).toHaveTextContent('3.13.7 · C:/py/python.exe');
+    expect(card('Package')).toHaveTextContent('not configured (ARC_SUPERVISOR unset)');
+    expect(card('Package')).toHaveTextContent('abcdef123456');
+    expect(card('Package')).not.toHaveTextContent('abcdef1234567890');
+    expect(card('Probes')).toHaveAttribute('data-section', 'probes');
+    expect(card('Probes')).toHaveTextContent('No probe recorded.');
+    for (const title of ['Storage integrity', 'Failed renders', 'Renderer facts', 'Package', 'Probes']) {
+      expect(card(title)).toHaveTextContent('Source:');
+      expect(card(title)).toHaveTextContent('Read at ' + new Date(READ_AT * 1000).toLocaleString());
+    }
+    expect(screen.queryByRole('button', {name: /startup log/i})).toBeNull();
+    expect(screen.getByText(/opening it from this page is not available in this build/)).toBeInTheDocument();
+    expect(screen.queryByText(/"storage"/)).not.toBeInTheDocument();
+  });
+
+  it('retries a failed render through the service and re-reads', async () => {
+    const fetch = vi.fn(async (path, options = {}) => {
+      if (path === '/health') return health();
+      if (path === '/api/diagnostics') return json(diagnostics());
+      if (path === '/api/molecular/renders/' + 'a'.repeat(32) + '/retry') {
+        expect(options.method).toBe('POST');
+        expect(options.headers.Authorization).toBe('Bearer operator');
+        return json({id: 'c'.repeat(32), status: 'queued', filename: 'complex.cif'}, {status: 202});
+      }
+      throw new Error('unexpected ' + path);
+    });
+    vi.stubGlobal('fetch', fetch);
+    const user = userEvent.setup();
+    render(<DiagnosticsWorkspace token="operator" readiness={null} refreshReadiness={vi.fn()}/>);
+    await screen.findByText('single-trust-domain');
+    await user.click(screen.getByRole('button', {name: 'Read diagnostics'}));
+    const retryButton = () => screen.getAllByRole('button', {name: 'Retry render'}).find(button => !button.disabled);
+    await waitFor(() => expect(retryButton()).toBeDefined());
+    await user.click(retryButton());
+    expect(await screen.findByText('Resubmitted as render cccccccccccc…; open Molecules to follow it.')).toHaveAttribute('role', 'status');
+    expect(fetch.mock.calls.filter(([path]) => path === '/api/diagnostics')).toHaveLength(2);
+    expect(fetch.mock.calls.filter(([path]) => path.endsWith('/retry'))).toHaveLength(1);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    fetch.mockImplementation(async path => {
+      if (path === '/health') return health();
+      if (path === '/api/diagnostics') return json(diagnostics());
+      return json({detail: 'Molecular rendering is unavailable; check server capabilities'}, {status: 409});
+    });
+    await user.click(retryButton());
+    expect(await screen.findByRole('alert')).toHaveTextContent('The service refused it: Molecular rendering is unavailable; check server capabilities');
+    expect(screen.getByRole('alert')).not.toHaveTextContent('Request failed (409)');
+    expect(screen.queryByText(/Resubmitted as render/)).not.toBeInTheDocument();
+  });
+
+  it('copies the redacted report verbatim or shows it to copy by hand', async () => {
+    const text = '{\n  "format": "arc-diagnostics-report/1",\n  "health": {"host_session": {"mode": "standalone"}}\n}';
+    vi.stubGlobal('fetch', vi.fn(async path => {
+      if (path === '/health') return health();
+      if (path === '/api/diagnostics/report') return new Response(text, {status: 200, headers: {'Content-Type': 'text/plain; charset=utf-8'}});
+      throw new Error('unexpected ' + path);
+    }));
+    const user = userEvent.setup();
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {value: {writeText}, configurable: true});
+    render(<DiagnosticsWorkspace token="operator" readiness={null} refreshReadiness={vi.fn()}/>);
+    await screen.findByText('single-trust-domain');
+    expect(screen.queryByLabelText('Redacted report')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', {name: 'Copy redacted report'}));
+    expect(await screen.findByText('Copied the redacted report to the clipboard.')).toHaveAttribute('role', 'status');
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith(text);
+    expect(screen.getByLabelText('Redacted report')).toHaveValue(text);
+
+    writeText.mockRejectedValue(new DOMException('Write permission denied.', 'NotAllowedError'));
+    await user.click(screen.getByRole('button', {name: 'Copy redacted report'}));
+    expect(await screen.findByText('Clipboard unavailable; the report is shown below to copy by hand.')).toHaveAttribute('role', 'status');
+    expect(screen.getByLabelText('Redacted report')).toHaveValue(text);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps the new buttons locked without a session', async () => {
+    vi.stubGlobal('fetch', vi.fn(async path => path === '/health' ? health() : Promise.reject(new Error('unexpected ' + path))));
+    render(<DiagnosticsWorkspace token="" refreshReadiness={vi.fn()}/>);
+    await screen.findByText('single-trust-domain');
+    expect(screen.getByRole('button', {name: 'Read diagnostics'})).toBeDisabled();
+    expect(screen.getByRole('button', {name: 'Copy redacted report'})).toBeDisabled();
+    for (const title of ['Storage integrity', 'Failed renders', 'Renderer facts', 'Package', 'Probes']) {
+      expect(card(title)).toHaveAttribute('data-state', 'unknown');
+      expect(card(title)).toHaveTextContent('Needs a desktop session or an operator token.');
+    }
+    expect(screen.queryByLabelText('Redacted report')).not.toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });

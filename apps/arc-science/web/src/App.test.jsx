@@ -23,7 +23,7 @@ const readiness={checked_at:1700000000,session:{kind:'native',state:'ready',code
   connectors:{mcp:[],acp:[],mcp_sdk:null,acp_protocol:'1'},
   renderer:{...readinessNode('blocked','No renderer is configured.','Set the Blender path in Settings.'),code:'renderer.not_configured',facts:{configured:false,exists:null,default_preset:null},source:'settings'},
   memory:{...readinessNode('ready','The memory engine answers.'),code:'memory.available',facts:{protocol:'arc-memory/1',sqlite:'3.53.2'}},
-  storage:{...readinessNode('not_tested','The missions database is present.','Integrity is checked on demand in Diagnostics (not in this build).'),code:'storage.present',facts:{missions_db:true,missions:1}},
+  storage:{...readinessNode('not_tested','The missions database is present.','Integrity is checked on demand: select Read diagnostics under Diagnostics.'),code:'storage.present',facts:{missions_db:true,missions:1}},
   catalog:{},public_reads:{enabled:false}};
 // GET /api/missions/preview for the seat above: the route a live mission would use and the grants its first start must carry.
 const routePreview={settings_revision:'abcdef1234567890',route_digest:'r'.repeat(64),seats:[{role:'planner',provider:'anthropic',transport:'api',model:'claude-sonnet-5',effort:'medium',destination:'https://api.anthropic.com',destination_kind:'seat',data_category:'mission goal, dataset points, prior observations and assessments',purpose:'planning, review and refutation'}],connectors:[],public_reads:[],
@@ -136,7 +136,7 @@ test('a blocked release ledger explains itself and withholds the capsule until v
   expect(screen.getByRole('button',{name:'Export replay archive (.zip)'})).toBeDisabled();
   // Inline inspection stays; the explicit file download consults the same ledger.
   expect(await screen.findByRole('img',{name:'Artifact from obs-1'})).toBeInTheDocument();
-  expect(screen.queryByRole('link',{name:'Download PNG'})).toBeNull();
+  expect(screen.queryByRole('button',{name:'Download PNG'})).toBeNull();
   expect(screen.getByText(/Download opens when the release decision is Eligible for human review/)).toBeInTheDocument();
   // Verification refreshes the mission; the service's new decision opens the export.
   fetch.mockImplementation(async(path,options={})=>{requests.push({path,options});if(path.endsWith('/verify'))return json({reproduction_passed:true,release:eligibleRelease});return json({...selectedRow,release:eligibleRelease});});
@@ -144,7 +144,7 @@ test('a blocked release ledger explains itself and withholds the capsule until v
   await waitFor(()=>expect(screen.getByRole('region',{name:'Release decision'})).toHaveTextContent('Eligible for human review'));
   expect(screen.getByRole('button',{name:'Export replay archive (.zip)'})).toBeEnabled();
   expect(requests.find(r=>r.path?.endsWith('/verify')).options.method).toBe('POST');
-  expect(await screen.findByRole('link',{name:'Download PNG'})).toBeInTheDocument();
+  expect(await screen.findByRole('button',{name:'Download PNG'})).toBeInTheDocument();
 });
 
 test('repair cycles are listed with their own outcomes and superseded artifacts say so',async()=>{

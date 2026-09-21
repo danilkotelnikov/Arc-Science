@@ -17,6 +17,8 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 const SERVICE_HEADER: &str = "x-arc-science-service";
 const SERVICE_ID: &str = "arc-science-v1";
 pub const NATIVE_SESSION_ENV: &str = "ARC_NATIVE_SESSION_SECRET";
+/// Set only in the environment of a service process this host starts; a reused service never sees it.
+pub const HOST_SESSION_ENV: &str = "ARC_HOST_SESSION";
 
 #[derive(Clone, Debug)]
 pub struct LocalUrl {
@@ -399,6 +401,7 @@ pub fn start_service_with_native_session(
         ));
     }
     let mut command = Command::new(&config.executable);
+    command.env(HOST_SESSION_ENV, "owned");
     command
         .args(&config.args)
         .stdin(Stdio::piped())

@@ -124,6 +124,10 @@ passes a random secret only to the service process it starts and adds its header
 exact-origin `/api` Fetch/XHR/EventSource requests below JavaScript. A separate local
 browser and a desktop window reusing an existing service remain on the explicit
 operator-token path. The secret is never put in the URL, page state, storage or logs.
+The host also sets `ARC_HOST_SESSION=owned` only in the environment of the service
+process it starts; the service reports it in `/health` as `host_session.mode` (`owned`,
+otherwise `standalone`), a reused service never receives it, and the workbench derives
+"reused" from an owned service seen without a desktop session.
 This authenticates the trusted WebView, not arbitrary same-origin scripts; keep the
 service CSP and data/consent boundaries intact. See the
 [native session design](../../docs/hoh/2026-09-20-native-session-design.md) and its
@@ -214,10 +218,13 @@ early exits, timeout cleanup, local navigation, external-target filtering, the
 download-report script literal, icon transparency and white puddles, and the
 credential boundary (message parsing and validation, the `ArcScience/<name>` target,
 the prompt caption and its length limit, the `arc-credential` script literal, buffer
-wiping; the Windows prompt itself is never shown by a test). One ignored test
-is an intentional subprocess fixture executed by its owning timeout regression.
+wiping; the Windows prompt itself is never shown by a test), and the native and
+host session markers reaching only an owned child. The two ignored tests are
+intentional subprocess fixtures executed by their owning regressions (the timeout
+cleanup and the session-environment checks).
 
-Developer verification on Windows, 2026-09-18: 12 desktop tests passed, 24 supervisor
+Developer verification on Windows, 2026-09-21: 40 desktop tests passed and 2 were
+ignored (the fixtures above). Earlier, on 2026-09-18: 12 desktop tests passed, 24 supervisor
 tests passed, and 9 Python service tests passed. Both crates passed format checks,
 strict clippy and release builds. A real `--check-startup` launched the Python service
 from a project path containing spaces and Japanese characters, used a nested

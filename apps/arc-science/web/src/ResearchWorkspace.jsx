@@ -49,16 +49,24 @@ function VerificationReport({report}) {
 
 function Artifact({missionId,artifact,request,token,release,superseded}) {
   const [url,setUrl]=useState('');
-  const [error,setError]=useState(''),[attempt,setAttempt]=useState(0);
+  const [error,setError]=useState(''),[attempt,setAttempt]=useState(0),[refused,setRefused]=useState('');
   useEffect(()=>{
     const controller=new AbortController();let ownedUrl;
-    setUrl('');setError('');
+    setUrl('');setError('');setRefused('');
     request(`/missions/${missionId}/artifacts/${artifact.digest}`,'GET',undefined,controller.signal)
       .then(r=>r.blob()).then(blob=>{if(!controller.signal.aborted){ownedUrl=URL.createObjectURL(blob);setUrl(ownedUrl);}})
       .catch(e=>{if(!controller.signal.aborted&&e.name!=='AbortError')setError(friendlyError(e,token));});
     return ()=>{controller.abort();if(ownedUrl)URL.revokeObjectURL(ownedUrl);};
   },[missionId,artifact.digest,request,token,attempt]);
-  return <figure className="artifact">{url?<><img src={url} alt={'Artifact from '+artifact.source_observation_id}/>{release?.eligible_for_human_review?<a href={url} download={artifact.digest+'.png'}>Download PNG</a>:<span className="muted">Download opens when the release decision is Eligible for human review. You can still inspect the image here.</span>}</>:error?<><p role="alert">Artifact could not be loaded: {error}</p><Button variant="secondary" onPress={()=>setAttempt(n=>n+1)}>Retry artifact</Button><p className="muted">Retry, or select the mission again.</p></>:<p className="muted">Loading image…</p>}<figcaption>{artifact.source_observation_id} · digest {artifact.digest.slice(0,12)}… · render preset {words(artifact.preset||'default')}{artifact.repair_of?' · repair of '+artifact.repair_of.slice(0,12)+'…':''}{superseded?' · superseded by a repair':''}</figcaption></figure>;
+  // The file download goes through the ledger-gated route; the inline image above stays whatever it answers.
+  async function download(){
+    setRefused('');
+    try{
+      const response=await request(`/missions/${missionId}/artifacts/${artifact.digest}/download`,'GET',undefined,new AbortController().signal);
+      await downloadResponse(response,'arc-'+missionId+'-'+artifact.digest.slice(0,12)+'.png');
+    }catch(e){setRefused(friendlyError(e,token));}
+  }
+  return <figure className="artifact">{url?<><img src={url} alt={'Artifact from '+artifact.source_observation_id}/>{release?.eligible_for_human_review?<Button size="sm" variant="secondary" onPress={download}>Download PNG</Button>:<span className="muted">Download opens when the release decision is Eligible for human review. You can still inspect the image here.</span>}{refused&&<p role="alert">Download refused: {refused}</p>}</>:error?<><p role="alert">Artifact could not be loaded: {error}</p><Button variant="secondary" onPress={()=>setAttempt(n=>n+1)}>Retry artifact</Button><p className="muted">Retry, or select the mission again.</p></>:<p className="muted">Loading image…</p>}<figcaption>{artifact.source_observation_id} · digest {artifact.digest.slice(0,12)}… · render preset {words(artifact.preset||'default')}{artifact.repair_of?' · repair of '+artifact.repair_of.slice(0,12)+'…':''}{superseded?' · superseded by a repair':''}</figcaption></figure>;
 }
 
 /** One line for the alert beside the action that failed; session cards come from http.js so every workspace reads the same. */

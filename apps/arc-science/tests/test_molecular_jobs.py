@@ -748,3 +748,28 @@ def test_a_rerender_of_the_same_coordinates_declares_its_effects_and_keeps_the_b
     # The change survives a restart with its record.
     with TestClient(make_app(tmp_path)) as client:
         assert client.get(f'{PREFIX}/renders/{row["id"]}', headers=AUTH).json()['change']['changed_fields'] == ['width', 'antigen_chains']
+
+
+def test_failed_render_is_retried_as_a_fresh_job_from_its_recorded_settings(tmp_path, runtime):
+    runtime['value'] = 'fail'
+    with TestClient(make_app(tmp_path)) as client:
+        failed = terminal(client, client.post(PREFIX + '/renders', headers=AUTH, json={**REQUEST, 'width': 1800}).json()['id'])
+        assert failed['status'] == 'failed'
+        runtime['value'] = 'success'
+        retried = client.post(f'{PREFIX}/renders/{failed["id"]}/retry', headers=AUTH)
+        assert retried.status_code == 202, retried.text
+        new_id = retried.json()['id']
+        assert new_id != failed['id'] and retried.json()['status'] == 'queued'
+        done = terminal(client, new_id)
+        assert done['status'] == 'completed' and done['settings'] == failed['settings'] and done['change'] is None
+        assert done['source_sha256'] == failed['source_sha256'] and done['filename'] == failed['filename']
+        # The old record is untouched; only a failed or interrupted render can be retried.
+        assert client.get(f'{PREFIX}/renders/{failed["id"]}', headers=AUTH).json() == failed
+        refused = client.post(f'{PREFIX}/renders/{new_id}/retry', headers=AUTH)
+        assert refused.status_code == 409 and 'failed or interrupted' in refused.json()['detail']
+        assert client.post(f'{PREFIX}/renders/{"0" * 32}/retry', headers=AUTH).status_code == 404
+        assert client.post(f'{PREFIX}/renders/{failed["id"]}/retry').status_code == 401
+        # Without the uploaded coordinates the retry has nothing to resubmit.
+        (tmp_path / 'molecular' / failed['id'] / 'input' / failed['filename']).unlink()
+        gone = client.post(f'{PREFIX}/renders/{failed["id"]}/retry', headers=AUTH)
+        assert gone.status_code == 404 and 'no longer available' in gone.json()['detail']

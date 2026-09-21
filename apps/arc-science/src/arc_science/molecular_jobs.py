@@ -256,6 +256,7 @@ class MolecularJobs:
         self.router.add_api_route('/renders', self.submit, methods=['POST'], status_code=202)
         self.router.add_api_route('/renders/{job_id}', self.get_job, methods=['GET'])
         self.router.add_api_route('/renders/{job_id}/cancel', self.cancel, methods=['POST'])
+        self.router.add_api_route('/renders/{job_id}/retry', self.retry, methods=['POST'], status_code=202)
         self.router.add_api_route('/renders/{job_id}/events', self.events, methods=['GET'])
         self.router.add_api_route('/renders/{job_id}/scene', self.scene, methods=['GET'])
         self.router.add_api_route('/renders/{job_id}/source', self.source, methods=['GET'])
@@ -521,10 +522,33 @@ class MolecularJobs:
             raise HTTPException(422, 'Invalid coordinate upload or rendering settings') from None
         if parameters.preset is None:
             parameters = parameters.model_copy(update={'preset': self._resolved_default_preset()[0]})
-        settings = parameters.model_dump(include=set(SETTINGS))
         change = None
         if parameters.base_job is not None or parameters.declared_effects:
-            change = self._change_of(parameters, settings)
+            change = self._change_of(parameters, parameters.model_dump(include=set(SETTINGS)))
+        return await self._start(parameters, change)
+
+    async def retry(self, job_id: str):
+        """Resubmit a failed or interrupted render from its recorded settings and the
+        uploaded coordinates. The old record is untouched; the new job is a fresh candidate."""
+        row = await self.get_job(job_id)
+        if row['status'] not in ('failed', 'interrupted'):
+            raise HTTPException(409, 'Only a failed or interrupted render can be retried')
+        if row.get('settings') is None:
+            raise HTTPException(409, 'This render predates settings tracking; render it again from Molecules')
+        try:
+            data = await asyncio.to_thread(_read_file, self.root / job_id / 'input', row['filename'], MAX_SOURCE_BYTES)
+        except (OSError, ValueError):
+            raise HTTPException(404, 'The uploaded coordinates are no longer available') from None
+        if hashlib.sha256(data).hexdigest() != row['source_sha256']:
+            raise HTTPException(409, 'Molecular artifact integrity check failed')
+        try:
+            parameters = RenderRequest(filename=row['filename'], source_text=data.decode('utf-8'), **row['settings'])
+        except (ValueError, ValidationError, TypeError):
+            raise HTTPException(422, 'The recorded render settings are no longer valid') from None
+        return await self._start(parameters, None)
+
+    async def _start(self, parameters, change):
+        settings = parameters.model_dump(include=set(SETTINGS))
         async with self.lock:
             if self.closing or self.task is not None:
                 raise HTTPException(409, 'A molecular render is already active or the service is stopping')

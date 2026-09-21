@@ -39,6 +39,7 @@ from .exploration.capsule import export_capsule, verify_capsule
 from .exploration import release as release_ledger
 from .exploration.evidence import evidence_graph
 from .exploration.catalog import TrustedPublicTools
+from .diagnostics import host_session
 
 VERSION=__version__
 NATIVE_SESSION_ENV='ARC_NATIVE_SESSION_SECRET'
@@ -428,6 +429,7 @@ def combine_trusted_tools(*collections):
 
 
 def create_app(*,data_dir:Path|None=None,token:str|None=None):
+    started_at=int(time.time())
     root=Path(data_dir or os.environ.get('ARC_DATA_DIR','./data')).resolve()
     root.mkdir(parents=True,exist_ok=True,mode=0o700)
     # The data directory is the operator's alone before any secret is written into it;
@@ -703,11 +705,16 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         try:return repository.get(mid)
         except KeyError:raise HTTPException(404,'Unknown mission') from None
 
+    def health_document():
+        # host_session says who started the service (the desktop marks its own child); it is
+        # read from the environment on every call and is never authentication.
+        return {'status':'ready','version':VERSION,'deployment':'single-trust-domain','host_session':host_session()}
+
     @app.get('/health')
     async def health(response:Response):
         # Public compatibility marker for the local desktop, never authentication.
         response.headers['X-Arc-Science-Service']='arc-science-v1'
-        return {'status':'ready','version':VERSION,'deployment':'single-trust-domain'}
+        return health_document()
 
     @app.get('/api/missions',dependencies=[Depends(authorized)])
     async def list_missions():return repository.list()
@@ -865,8 +872,15 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             return reply
 
     from .readiness import create_router as readiness_router
-    app.include_router(readiness_router(authorized=authorized,root=root,repository=repository,cli_transport=cli_transport,cli_transports=CLI_TRANSPORTS,
-                                        probes=probes,credential_stored=credential_stored,credential_source=credential_source,memory_routes=memory_routes,molecular_jobs=molecular_jobs))
+    readiness_api=readiness_router(authorized=authorized,root=root,repository=repository,cli_transport=cli_transport,cli_transports=CLI_TRANSPORTS,
+                                   probes=probes,credential_stored=credential_stored,credential_source=credential_source,memory_routes=memory_routes,molecular_jobs=molecular_jobs)
+    app.include_router(readiness_api)
+    # On-demand local reads (storage integrity, failed renders, renderer, package, probes)
+    # and the redacted report; the report's readiness summary calls the readiness handler.
+    from .diagnostics import create_router as diagnostics_router
+    app.include_router(diagnostics_router(authorized=authorized,root=root,repository=repository,molecular_jobs=molecular_jobs,memory_routes=memory_routes,
+                                          probes=probes,settings_revision=settings_revision,health=health_document,readiness=readiness_api.read,
+                                          secrets=(token,native_session_secret),started_at=started_at))
 
     @app.get('/api/capabilities',dependencies=[Depends(authorized)])
     async def capabilities():
@@ -1209,6 +1223,22 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         return Response(item.bytes,media_type=item.media_type,
                         headers={'ETag':'"'+item.digest+'"','Content-Disposition':'inline'})
 
+    @app.get('/api/missions/{mid}/artifacts/{artifact_digest}/download',dependencies=[Depends(authorized)])
+    async def artifact_download(mid:str,artifact_digest:str):
+        # The inline preview above serves any mission; a file leaving the page consults the
+        # ledger exactly as the capsule does.
+        row=get(mid)
+        item=next((a for a in MissionState.model_validate(row['state']).artifacts if a.digest==artifact_digest),None)
+        if item is None:raise HTTPException(404,'Unknown mission artifact')
+        chain=repository.verify(mid)
+        if not chain:raise HTTPException(409,'Mission integrity check failed')
+        request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
+        try:release_ledger.assert_exportable(request,state,event_chain_ok=chain)
+        except release_ledger.ReleaseBlocked as blocked:
+            raise HTTPException(409,'Release blocked; verify the mission and resolve: '+', '.join(blocked.reasons)) from None
+        return Response(item.bytes,media_type=item.media_type,
+                        headers={'ETag':'"'+item.digest+'"','Content-Disposition':f'attachment; filename="arc-{mid}-{item.digest[:12]}.png"'})
+
     @app.get('/api/missions/{mid}/capsule',dependencies=[Depends(authorized)])
     async def capsule(mid:str):
         row=get(mid)
@@ -1216,10 +1246,19 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if not chain:raise HTTPException(409,'Mission integrity check failed')
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
         # Every release export consults the ledger: a blocked mission is not exported.
-        try:release_ledger.assert_exportable(request,state,event_chain_ok=chain)
+        try:decision=release_ledger.assert_exportable(request,state,event_chain_ok=chain)
         except release_ledger.ReleaseBlocked as blocked:
             raise HTTPException(409,'Release blocked; verify the mission and resolve: '+', '.join(blocked.reasons)) from None
-        data=export_capsule(request,state)
+        # Capsule format 3: the decision, the derived graph and claims, and the operational
+        # timeline and grants travel with the state; the informational members are never evidence.
+        from .exploration.claims import build_claims
+        release=decision.model_dump(mode='json')
+        try:graph=evidence_graph(state)
+        except ValueError:raise HTTPException(409,'Evidence graph is invalid; verify the mission') from None
+        rows=timeline.rows(mid)
+        receipts=ledger.receipts(mission_id=mid,limit=1000)
+        grants={'grants':ledger.list('mission',mid),'receipts':receipts,'receipts_truncated':len(receipts)>=1000}
+        data=export_capsule(request,state,release=release,claims=build_claims(state,rows,graph,release),timeline=rows,grants=grants)
         return Response(data,media_type='application/zip',headers={'Content-Disposition':f'attachment; filename="arc-{mid}.zip"'})
 
     @app.post('/api/missions/{mid}/verify',dependencies=[Depends(authorized)])

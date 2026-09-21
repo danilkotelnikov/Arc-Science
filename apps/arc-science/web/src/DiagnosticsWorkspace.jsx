@@ -9,15 +9,23 @@ const OFFLINE = SESSION_COPY.offline.title + '. Start the local service, then re
 const NEEDS_SESSION = 'Needs a desktop session or an operator token.';
 const LOCKED_LINE = 'Unlocks when the header holds an accepted desktop session or operator token.';
 const NO_SETTINGS = 'missing its settings or the MCP package';
-const BUSY = {health: 'Refreshing service status…', readiness: 'Reading readiness…', mcp: 'Checking MCP servers…', acp: 'Checking ACP agents…'};
+const BUSY = {health: 'Refreshing service status…', readiness: 'Reading readiness…', mcp: 'Checking MCP servers…', acp: 'Checking ACP agents…', diagnostics: 'Reading diagnostics…', report: 'Preparing the redacted report…', retry: 'Resubmitting the render…'};
+const READ_DIAGNOSTICS = 'Select Read diagnostics to read it.';
+const STARTUP_LOG_NOTE = 'The startup log is kept by the desktop app in its own app-data folder; opening it from this page is not available in this build.';
 
 const isAuthError = error => /Request failed \((401|403)\)/.test(error?.message || String(error));
 const words = value => typeof value === 'string' ? value.replace(/_/g, ' ') : value;
 const flag = value => typeof value === 'boolean' ? (value ? 'yes' : 'no') : value;
+const found = value => value === true ? 'yes' : value === false ? 'no' : 'unknown';
+const at = seconds => seconds > 0 ? new Date(seconds * 1000).toLocaleString() : 'unknown time';
+const short = id => String(id || '').slice(0, 12) + '…';
 
 function friendlyError(error, kind) {
   const message = error?.message || String(error);
   if (/Request failed \(503\)/.test(message)) return (kind === 'readiness' ? 'Readiness is' : 'Connection checks are') + ' unavailable in this local service: it is ' + NO_SETTINGS + '. Fix that, then retry.';
+  // A 409 carries the service's own sentence (a blocked release, an unavailable renderer); it is shown, not replaced.
+  const refused = /^Request failed \(409\)(?:: ([\s\S]*))?$/.exec(message);
+  if (refused) return 'The service refused it: ' + (refused[1] || 'no detail given');
   if (/Request failed \(\d+\)/.test(message)) return 'The request could not complete (the service returned an error). Retry; if it persists, review Settings.';
   if (/Failed to fetch|NetworkError|Load failed/.test(message)) return OFFLINE;
   if (/JSON|Unexpected token|Unexpected end/.test(message)) return 'The service returned an unreadable response. Retry.';
@@ -38,11 +46,23 @@ function stateFor(report) {
   return 'ready';
 }
 
-function StatusCard({title, state, wide = false, children}) {
-  return <article className={'diagnostics-card' + (wide ? ' wide' : '')} data-state={state}>
+function StatusCard({title, state, wide = false, attrs, children}) {
+  return <article className={'diagnostics-card' + (wide ? ' wide' : '')} data-state={state} {...attrs}>
     <div className="diagnostics-card-head"><h3>{title}</h3><span className="readiness-badge" data-state={state}>{STATE_LABEL[state]}</span></div>
     {children}
   </article>;
+}
+
+// What /health says about who started the service, read beside what this page holds. The service only
+// knows owned (ARC_HOST_SESSION from a desktop child) or standalone; "reused" is this page's inference.
+function hostSessionOf(health, native) {
+  if (!health || health.available === false) return {key: 'unread', value: 'not read', note: '/health has not been read; select Refresh service.'};
+  if (!health.host_session) return {key: 'unreported', value: 'not reported by this service', note: '/health has no host_session field.'};
+  const mode = health.host_session.mode;
+  if (mode === 'owned' && native) return {key: 'owned', value: 'owned by this window', note: '/health host_session.mode = owned; this page holds the desktop session.'};
+  if (mode === 'owned') return {key: 'reused', value: 'reused (started elsewhere)', note: '/health host_session.mode = owned; this page holds no desktop session, so another Arc Science window started the service.'};
+  if (mode === 'standalone') return {key: 'standalone', value: 'standalone (not started by the desktop app)', note: '/health host_session.mode = standalone: no ARC_HOST_SESSION in the service environment.'};
+  return {key: 'unknown', value: String(mode ?? 'unknown'), note: '/health host_session.mode reports a value this page does not know.'};
 }
 
 function SummaryLine({label, value}) {
@@ -57,9 +77,15 @@ function Meaning({node}) {
   </>;
 }
 
-function ReadinessCard({title, node, placeholder, wide, children}) {
-  if (!node) return <StatusCard title={title} state="unknown" wide={wide}><p className="muted">{placeholder}</p></StatusCard>;
-  return <StatusCard title={title} state={stateOf(node)} wide={wide}>{children}<Meaning node={node}/></StatusCard>;
+function ReadinessCard({title, node, placeholder, wide, attrs, footer, children}) {
+  if (!node) return <StatusCard title={title} state="unknown" wide={wide} attrs={attrs}><p className="muted">{placeholder}</p></StatusCard>;
+  return <StatusCard title={title} state={stateOf(node)} wide={wide} attrs={attrs}>{children}<Meaning node={node}/>{footer}</StatusCard>;
+}
+
+// One diagnostics section as a card: the facts, then the service's meaning, then where it read them.
+function SectionCard({name, title, section, placeholder, wide, children}) {
+  const footer = section && <p className="field-note">Source: {section.source}. Read at {at(section.checked_at)}.</p>;
+  return <ReadinessCard title={title} node={section} placeholder={placeholder} wide={wide} attrs={{'data-section': name}} footer={footer}>{section && children}</ReadinessCard>;
 }
 
 function NodeRow({name, node, children}) {
@@ -112,20 +138,21 @@ function AcpReport({report}) {
 export default function DiagnosticsWorkspace({token, setToken, active = true, readiness = null, readinessError = null, refreshReadiness, onNavigate}) {
   const [health, setHealth] = useState(null);
   const [mcp, setMcp] = useState(null), [acp, setAcp] = useState(null);
-  const [busy, setBusy] = useState(''), [error, setError] = useState(null);
+  const [diagnostics, setDiagnostics] = useState(null), [reportText, setReportText] = useState('');
+  const [busy, setBusy] = useState(''), [error, setError] = useState(null), [notice, setNotice] = useState(null);
   const credential = useRef(null);
 
   useLayoutEffect(() => {
     const controller = new AbortController();
     credential.current = controller;
-    setMcp(null); setAcp(null); setError(null); setBusy('');
+    setMcp(null); setAcp(null); setDiagnostics(null); setReportText(''); setError(null); setNotice(null); setBusy('');
     return () => controller.abort();
   }, [token]);
 
   // A rejected token or desktop session is announced by the unlock card, not by a second alert.
   const run = useCallback(async (kind, action) => {
     const signal = credential.current.signal;
-    setBusy(kind); setError(null);
+    setBusy(kind); setError(null); setNotice(null);
     try { await action(signal); }
     catch (err) { if (!signal.aborted && !isAuthError(err)) setError({kind, text: friendlyError(err, kind)}); }
     finally { if (!signal.aborted) setBusy(''); }
@@ -163,9 +190,37 @@ export default function DiagnosticsWorkspace({token, setToken, active = true, re
     }
   }
 
+  // A rejected session on any diagnostics call is recorded once, so the unlock card names it.
+  async function diagnosticsCall(signal, action) {
+    try { await action(); }
+    catch (error) { if (!signal.aborted && isAuthError(error)) setDiagnostics({locked: true}); throw error; }
+  }
+  const readDiagnostics = signal => diagnosticsCall(signal, async () => {
+    const response = await apiFetch('/api/diagnostics', {token, signal});
+    signal.throwIfAborted();
+    setDiagnostics(await response.json());
+  });
+  // The service redacts the report; the page copies its text verbatim and shows it when the clipboard cannot take it.
+  const copyReport = signal => diagnosticsCall(signal, async () => {
+    const response = await apiFetch('/api/diagnostics/report', {token, signal});
+    const text = await response.text();
+    signal.throwIfAborted();
+    setReportText(text);
+    try { await navigator.clipboard.writeText(text); setNotice({kind: 'report', text: 'Copied the redacted report to the clipboard.'}); }
+    catch { setNotice({kind: 'report', text: 'Clipboard unavailable; the report is shown below to copy by hand.'}); }
+  });
+  const retryRender = (id, signal) => diagnosticsCall(signal, async () => {
+    const response = await apiFetch('/api/molecular/renders/' + id + '/retry', {token, method: 'POST', signal});
+    const row = await response.json();
+    signal.throwIfAborted();
+    setNotice({kind: 'retry', text: 'Resubmitted as render ' + short(row.id) + '; open Molecules to follow it.'});
+    await readDiagnostics(signal);
+  });
+
   const native = token === NATIVE_SESSION;
   const who = native ? 'Desktop session' : 'Operator token';
-  const rejected = !!token && (isAuthError(readinessError) || [mcp, acp].some(report => report?.locked));
+  const rejected = !!token && (isAuthError(readinessError) || [mcp, acp, diagnostics].some(report => report?.locked));
+  const hostSession = hostSessionOf(health, native);
   const lock = sessionState(token, rejected, {draft: false});
   const readingFailed = !!readinessError && !isAuthError(readinessError);
   // A desktop session reads readiness on its own; a manual token reads it when asked.
@@ -181,8 +236,11 @@ export default function DiagnosticsWorkspace({token, setToken, active = true, re
   const connectors = readiness ? [...(readiness.connectors?.mcp || []).map(row => ({kind: 'MCP', ...row})), ...(readiness.connectors?.acp || []).map(row => ({kind: 'ACP', ...row}))] : [];
   // The card's own state comes from the server summary; rows keep theirs beside them.
   const connectorNode = readiness && {state: stateOf(readiness.connectors), meaning: readiness.connectors?.meaning, next_action: readiness.connectors?.next_action};
+  const sections = diagnostics?.locked || diagnostics?.available === false ? null : diagnostics;
+  const diagnosticsPlaceholder = !token ? NEEDS_SESSION : busy === 'diagnostics' ? BUSY.diagnostics : rejected ? 'Not read: the session was rejected.' : READ_DIAGNOSTICS;
   const feedback = (...kinds) => <>
     {kinds.includes(busy) && <p role="status">{BUSY[busy]}</p>}
+    {notice && kinds.includes(notice.kind) && busy !== notice.kind && <p role="status">{notice.text}</p>}
     {error && kinds.includes(error.kind) && <p role="alert">{error.text}</p>}
     {kinds.includes('readiness') && readingFailed && busy !== 'readiness' && friendlyError(readinessError, 'readiness') !== error?.text && <p role="alert">{friendlyError(readinessError, 'readiness')}</p>}
   </>;
@@ -203,12 +261,14 @@ export default function DiagnosticsWorkspace({token, setToken, active = true, re
     <section className="research-results" aria-label="Diagnostics">
       <div className="results-heading"><div><p className="eyebrow">Local service</p><h2>Service status</h2></div><span className="status-label">{health ? words(health.status) : STATE_LABEL.not_tested}</span></div>
       <div className="diagnostics-grid">
-        <StatusCard title="Service" state={health ? (health.available === false ? 'failed' : health.status === 'ready' ? 'ready' : 'unknown') : 'not_tested'}>
+        <StatusCard title="Service" state={health ? (health.available === false ? 'failed' : health.status === 'ready' ? 'ready' : 'unknown') : 'not_tested'} attrs={{'data-host-session': hostSession.key}}>
           {health?.available === false ? <p className="muted">The last refresh failed. See the message beside Refresh service.</p> : health ? <>
             <dl className="diagnostics-kv">
             <SummaryLine label="Status" value={words(health.status)}/>
             <SummaryLine label="Deployment mode" value={health.deployment}/>
+            <SummaryLine label="Host session" value={hostSession.value}/>
             </dl>
+            <p className="field-note">Source: {hostSession.note}</p>
             <details className="diagnostics-advanced">
               <summary>Version and limits</summary>
               <dl className="diagnostics-kv">
@@ -271,6 +331,55 @@ export default function DiagnosticsWorkspace({token, setToken, active = true, re
           </dl>}
         </ReadinessCard>
       </div>
+      <h2>Storage, renders and package (read on demand)</h2>
+      <p className="field-note">Read diagnostics verifies the event chain of the newest 200 missions, runs SQLite integrity checks on missions.db, grants.db and timeline.db, lists failed molecular renders and reports renderer, package and probe facts. Local reads only: no model call, no connector start, no render.</p>
+      <div className="actions">
+        <Button variant="secondary" isDisabled={!!busy || !token} onPress={() => run('diagnostics', readDiagnostics)}>Read diagnostics</Button>
+        <Button variant="secondary" isDisabled={!!busy || !token} onPress={() => run('report', copyReport)}>Copy redacted report</Button>
+      </div>
+      {!token && <p className="field-note">{NEEDS_SESSION}</p>}
+      {feedback('diagnostics', 'report', 'retry')}
+      {reportText !== '' && <textarea className="diagnostics-report" readOnly aria-label="Redacted report" value={reportText}/>}
+      <div className="diagnostics-grid">
+        <SectionCard name="storage" title="Storage integrity" section={sections?.storage} placeholder={diagnosticsPlaceholder}>
+          <dl className="diagnostics-kv">
+            <SummaryLine label="Missions verified" value={sections?.storage?.missions && sections.storage.missions.verified + ' of ' + sections.storage.missions.checked + (sections.storage.missions.checked < sections.storage.missions.total ? ' (newest ' + sections.storage.missions.limit + ' of ' + sections.storage.missions.total + ')' : '')}/>
+            <SummaryLine label="SQLite" value={sections?.storage?.sqlite && Object.entries(sections.storage.sqlite).map(([name, result]) => name + ' ' + result).join(' · ')}/>
+            <SummaryLine label="Memory capture" value={sections?.storage?.memory_capture && [sections.storage.memory_capture.status, 'pending ' + sections.storage.memory_capture.pending, sections.storage.memory_capture.last_error].filter(Boolean).join(' · ')}/>
+            {sections?.storage?.missions?.broken?.length > 0 && <SummaryLine label="Broken chains" value={sections.storage.missions.broken.join(', ')}/>}
+          </dl>
+        </SectionCard>
+        <SectionCard name="jobs" title="Failed renders" section={sections?.jobs} placeholder={diagnosticsPlaceholder} wide>
+          {sections?.jobs?.failed?.length > 0 ? <table className="diagnostics-table" aria-label="Failed renders">
+            <tbody>{sections.jobs.failed.map(job => <tr key={job.id}>
+              <th scope="row">{job.filename} · {short(job.id)}</th>
+              <td>{words(job.status)} · {job.error}</td>
+              <td><Button size="sm" variant="secondary" isDisabled={!!busy || !job.retryable} data-job-id={job.id} onPress={() => run('retry', signal => retryRender(job.id, signal))}>Retry render</Button>{!job.retryable && <span className="field-note"> {job.retry_note}</span>}</td>
+            </tr>)}</tbody>
+          </table> : <p className="muted">No failed or interrupted molecular render.</p>}
+        </SectionCard>
+        <SectionCard name="renderer" title="Renderer facts" section={sections?.renderer} placeholder={diagnosticsPlaceholder}>
+          <dl className="diagnostics-kv">
+            {[['Blender Python', sections?.renderer?.blender_python], ['SVG rasterizer', sections?.renderer?.svg_rasterizer]].map(([label, tool]) => <SummaryLine key={label} label={label} value={tool && 'configured ' + flag(!!tool.configured) + ' · found ' + found(tool.exists) + ' · ' + (tool.executable || 'none')}/>)}
+            <SummaryLine label="Runtime probe" value={sections?.renderer?.runtime_probe && (sections.renderer.runtime_probe.checked ? (sections.renderer.runtime_probe.ok ? 'passed' : 'failed') + ': ' + (sections.renderer.runtime_probe.reason || 'no detail given') : 'not run in this service')}/>
+            <SummaryLine label="Last render" value={sections?.renderer && (sections.renderer.last_render ? words(sections.renderer.last_render.status) + ' · ' + short(sections.renderer.last_render.id) + ' · ' + at(sections.renderer.last_render.updated_at) : 'none')}/>
+          </dl>
+        </SectionCard>
+        <SectionCard name="package" title="Package" section={sections?.package} placeholder={diagnosticsPlaceholder}>
+          <dl className="diagnostics-kv">
+            <SummaryLine label="Version" value={sections?.package?.version}/>
+            <SummaryLine label="Python" value={sections?.package?.python && sections.package.python.version + ' · ' + sections.package.python.executable}/>
+            <SummaryLine label="Supervisor" value={sections?.package?.supervisor && (sections.package.supervisor.path ? sections.package.supervisor.path + (sections.package.supervisor.configured ? '' : ' (not found)') : 'not configured (ARC_SUPERVISOR unset)')}/>
+            <SummaryLine label="Settings revision" value={sections?.package?.settings?.revision?.slice(0, 12) || 'unavailable'}/>
+            <SummaryLine label="Data directory" value={sections?.package?.data_dir}/>
+            <SummaryLine label="Started" value={sections?.package && at(sections.package.started_at)}/>
+          </dl>
+        </SectionCard>
+        <SectionCard name="probes" title="Probes" section={sections?.probes} placeholder={diagnosticsPlaceholder}>
+          {sections?.probes?.records?.length > 0 ? <ul className="muted">{sections.probes.records.map(record => <li key={record.name + record.at}>{record.name} ({record.provider}) · {record.ok} of {record.results} ok · {at(record.at)}</li>)}</ul> : <p className="muted">No probe recorded.</p>}
+        </SectionCard>
+      </div>
+      <p className="field-note">{STARTUP_LOG_NOTE}</p>
       <h2>Connection checks (run on demand)</h2>
       <p className="field-note">Consented means you approved that connector.</p>
       <div className="actions">

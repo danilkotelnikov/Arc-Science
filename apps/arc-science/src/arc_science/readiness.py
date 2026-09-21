@@ -28,7 +28,7 @@ INHERITS={'reviewer':('planner',),'falsifier':('reviewer','planner')}
 UNCONFIGURED={'planner':'No planner seat is set; a live mission cannot start',
               'vision':'Visual review is unavailable until a vision seat is set',
               'prose':'Prose edits through a model are unavailable; the local rewrite still works'}
-STORAGE_NEXT='Integrity is checked on demand in Diagnostics (not in this build).'
+STORAGE_NEXT='Integrity is checked on demand: select Read diagnostics under Diagnostics.'
 # The same refusals service.configured_vision_endpoint raises.
 VISION_REFUSED={'cli':'Visual review is not available through a CLI login; give the vision seat an API credential',
                 'openclaw':'Visual review requires an OpenAI, Anthropic or Gemini native image endpoint'}
@@ -334,4 +334,5 @@ def create_router(*,authorized,root,repository,cli_transport,cli_transports,prob
                       'default_preset':((settings or {}).get('blender') or {}).get('default_preset')},
             storage={'missions_db':db.is_file(),'missions':await asyncio.to_thread(repository.count) if db.is_file() else None},
             mcp_sdk=mcp_tools.sdk_version(),acp_protocol=acp_client.PROTOCOL_VERSION,public_reads=os.environ.get('ARC_PUBLIC_READS')=='1')
+    router.read=readiness  # callable directly as readiness(principal, fresh=False); the Depends default is FastAPI-only
     return router

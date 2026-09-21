@@ -211,3 +211,69 @@ def test_verification_refuses_to_run_beside_an_active_worker(tmp_path):
         refused=c.post(f'/api/missions/{mid}/verify',headers=auth())
         assert refused.status_code==409 and 'still running' in refused.json()['detail']
         assert c.get(f'/api/missions/{mid}/release',headers=auth()).json()['status']=='blocked'
+
+
+def test_health_reports_the_host_session_from_the_environment(tmp_path, monkeypatch):
+    # The desktop marks its own child with ARC_HOST_SESSION=owned; anything else is standalone
+    # (a reused service cannot be handed a variable, so 'reused' is never reported here).
+    from arc_science import __version__
+    monkeypatch.delenv('ARC_HOST_SESSION', raising=False)
+    with TestClient(app(tmp_path)) as c:
+        health=c.get('/health')
+        assert health.headers['X-Arc-Science-Service']=='arc-science-v1'
+        body=health.json()
+        assert (body['status'],body['version'],body['deployment'])==('ready',__version__,'single-trust-domain')
+        assert body['host_session']=={'mode':'standalone','source':'ARC_HOST_SESSION'}
+        monkeypatch.setenv('ARC_HOST_SESSION','owned')
+        assert c.get('/health').json()['host_session']['mode']=='owned'
+        monkeypatch.setenv('ARC_HOST_SESSION','reused')
+        assert c.get('/health').json()['host_session']['mode']=='standalone'
+
+
+def test_capsule_route_exports_format_3_with_the_decision_timeline_and_grants(tmp_path):
+    import io,zipfile
+    from arc_science.exploration.capsule import verify_capsule
+    with TestClient(app(tmp_path)) as c:
+        mid=c.post('/api/missions',headers=auth(),json={'goal':'Slice 5 export'}).json()['id']
+        c.post(f'/api/missions/{mid}/start',headers=auth());_finished(c,mid)
+        assert c.post(f'/api/missions/{mid}/verify',headers=auth()).json()['reproduction_passed']
+        exported=c.get(f'/api/missions/{mid}/capsule',headers=auth())
+        assert exported.status_code==200
+        with zipfile.ZipFile(io.BytesIO(exported.content)) as z:
+            assert sorted(z.namelist())==['claims.json','evidence_graph.json','grants.json','manifest.json','release.json',
+                                          'request.json','runtime.json','state.json','timeline.json']
+            assert json.loads(z.read('runtime.json'))['format']=='arc-research-capsule/3'
+            release=json.loads(z.read('release.json'))
+            assert release['status']=='eligible_for_human_review' and release['verification']['reproduction_passed'] is True
+            rows=json.loads(z.read('timeline.json'))
+            assert rows and all('started_at' in row for row in rows)
+            assert set(json.loads(z.read('grants.json')))=={'grants','receipts','receipts_truncated'}
+            assert json.loads(z.read('state.json'))['release'] is None
+        report=verify_capsule(exported.content)
+        assert report['format']=='arc-research-capsule/3' and report['reproduced']==3
+        assert report['integrity'] is True and report['manifest_failures']==[]
+        assert report['informational']==['claims.json','grants.json','timeline.json']
+
+
+def test_png_download_is_gated_by_the_ledger_while_the_inline_preview_is_not(tmp_path):
+    import os
+    from arc_science.svg_raster import cairo_available
+    if not os.environ.get('ARC_SVG2PNG') and not cairo_available():
+        pytest.skip('No SVG rasterizer: set ARC_SVG2PNG or install cairosvg so the demo mission has artifacts')
+    with TestClient(app(tmp_path)) as c:
+        mid=c.post('/api/missions',headers=auth(),json={'goal':'PNG gating'}).json()['id']
+        c.post(f'/api/missions/{mid}/start',headers=auth());row=_finished(c,mid)
+        assert row['state']['status']=='completed' and row['state']['artifacts']
+        digest=row['state']['artifacts'][0]['digest']
+        inline=c.get(f'/api/missions/{mid}/artifacts/{digest}',headers=auth())
+        assert inline.status_code==200 and inline.headers['Content-Disposition']=='inline'
+        refused=c.get(f'/api/missions/{mid}/artifacts/{digest}/download',headers=auth())
+        assert refused.status_code==409
+        assert 'Release blocked' in refused.json()['detail'] and 'replay_integrity:unknown' in refused.json()['detail']
+        assert c.get(f'/api/missions/{mid}/artifacts/{"0"*64}/download',headers=auth()).status_code==404
+        assert c.post(f'/api/missions/{mid}/verify',headers=auth()).json()['release']['eligible_for_human_review'] is True
+        allowed=c.get(f'/api/missions/{mid}/artifacts/{digest}/download',headers=auth())
+        assert allowed.status_code==200
+        assert allowed.headers['Content-Disposition']==f'attachment; filename="arc-{mid}-{digest[:12]}.png"'
+        assert allowed.content==inline.content and allowed.headers['ETag']==inline.headers['ETag']=='"'+digest+'"'
+        assert allowed.headers['Content-Type']==inline.headers['Content-Type']

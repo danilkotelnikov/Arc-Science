@@ -236,7 +236,7 @@ test('a presentation finding is repaired, reviewed again as a new candidate, and
   const ledger = page.getByRole('region', {name: 'Release decision'});
   await expect(ledger.getByRole('heading', {name: 'Release decision: Eligible for human review'})).toBeVisible();
   await expect(ledger.locator('li[data-state="satisfied"]').filter({hasText: 'visual review'})).toHaveText(/Repair cycles: 1 \(spacious\) -> adequate/);
-  await expect(results.getByRole('link', {name: 'Download PNG'})).toHaveCount(4);
+  await expect(results.getByRole('button', {name: 'Download PNG'})).toHaveCount(4);
   check();
 });
 
