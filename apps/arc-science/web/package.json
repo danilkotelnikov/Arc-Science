@@ -11,10 +11,15 @@
     "e2e:only": "playwright test"
   },
   "dependencies": {
-    "@heroui/react": "3.0.0",
-    "@heroui/styles": "3.0.0",
+    "@heroui/react": "3.2.6",
+    "@heroui/styles": "3.2.6",
+    "@internationalized/date": "3.12.4",
+    "@react-aria/ssr": "3.10.1",
+    "@react-aria/utils": "3.34.1",
     "molstar": "^5.11.0",
     "react": "19.0.0",
+    "react-aria": "3.52.1",
+    "react-aria-components": "1.21.1",
     "react-dom": "19.0.0"
   },
   "devDependencies": {
