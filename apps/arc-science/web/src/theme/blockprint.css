@@ -1,0 +1,434 @@
+/* Blockprint: ink outlines, square corners, solid offset shadows on primary blocks.
+   Import after @heroui/styles. Colours come from applyPalette() as inline custom
+   properties on <html>; the values below are first-paint fallbacks and derived tokens.
+   Component overrides live in @layer components (HeroUI's documented override point),
+   so Tailwind utilities on a component still win. Focus and fonts stay unlayered. */
+
+@font-face {
+  font-family: "HSE Sans";
+  src: local("HSE Sans"), local("HSE Sans Regular"), local("HSESans-Regular");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "HSE Sans";
+  src: local("HSE Sans SemiBold"), local("HSESans-SemiBold");
+  font-weight: 600;
+  font-display: swap;
+}
+
+:root,
+[data-theme] {
+  --font-sans: "HSE Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", ui-monospace, Consolas, monospace;
+
+  --bp-ink: var(--foreground);
+  --bp-shadow: var(--foreground);
+  --bp-outline: 2px;
+  --bp-offset: 4px;
+  --bp-accent2: var(--accent);
+  --bp-accent2-foreground: var(--accent-foreground);
+  /* applyPalette() replaces these with the contrast-tested hex values. */
+  --bp-density-1: color-mix(in srgb, var(--surface) 88%, var(--muted));
+  --bp-density-2: color-mix(in srgb, var(--surface) 84%, var(--success));
+  --bp-density-3: color-mix(in srgb, var(--surface) 74%, var(--success));
+  --bp-density-4: color-mix(in srgb, var(--surface) 64%, var(--success));
+
+  --radius: 0;
+  --field-radius: 0;
+  --border-width: var(--bp-outline);
+  --field-border-width: var(--bp-outline);
+  --field-border: var(--bp-ink);
+  /* No shadow by default. Offsets are opt-in: .bp-block--primary, .button--primary and the
+     open overlays below. A zero offset paints nothing, so Kyoto (offset 0) gets none. */
+  --surface-shadow: none;
+  --overlay-shadow: none;
+  --field-shadow: none;
+  --bp-overlay-offset: min(var(--bp-offset), 3px);
+  --bp-accent-text: var(--accent);
+  --bp-accent2-text: var(--bp-accent2);
+
+  /* HeroUI mixes soft text from the status hue; ink keeps it at the tested 4.5:1. */
+  --accent-soft-foreground: var(--foreground);
+  --success-soft-foreground: var(--foreground);
+  --warning-soft-foreground: var(--foreground);
+  --danger-soft-foreground: var(--foreground);
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Focus: a 3px ring outside the element, separate from the offset shadow. HeroUI's
+   box-shadow ring is switched off so only one indicator shows.
+   The ring goes on the focused leaf only. React Aria also sets data-focus-visible on
+   containers with focus-within semantics (Tabs, Select, Group, DatePicker, Table), so the
+   bare attribute would ring the container and the control inside it. Rule:
+   1. an element rings when it is focus-visible and has no focus-visible descendant;
+   2. checkbox, radio, switch and slider thumb focus a visually hidden input, so their
+      visible control carries the ring instead;
+   3. field shells (input plus affixes or steppers in one bordered box) ring as a whole,
+      and the bare input inside them does not. */
+:root :is(:focus-visible, [data-focus-visible="true"]):not(:has(:focus-visible, [data-focus-visible="true"])),
+:root :is(.checkbox, .radio, .switch):has(:focus-visible, [data-focus-visible="true"]) :is(.checkbox__control, .radio__control, .switch__control),
+:root .slider__thumb[data-focus-visible="true"],
+:root :is(.input-group, .number-field__group, .search-field__group, .date-input-group, .color-input-group):has(:focus-visible, [data-focus-visible="true"]) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  --tw-ring-shadow: 0 0 #0000;
+  --tw-ring-offset-shadow: 0 0 #0000;
+}
+
+:root :is(.input-group, .number-field__group, .search-field__group, .date-input-group, .color-input-group) :is(:focus-visible, [data-focus-visible="true"]) {
+  outline: none;
+}
+
+/* Cells and tabs sit inside clipped scrollers, so their ring goes inside. */
+:root :is(.table__column, .table__cell, .table__row, .tabs__tab):is(:focus-visible, [data-focus-visible="true"]) {
+  outline-offset: -3px;
+}
+
+@layer components {
+  /* Card */
+  .card:not(.card--transparent) {
+    border: var(--bp-outline) solid var(--bp-ink);
+    padding: 24px;
+  }
+
+  /* Button */
+  .button:not(.button--ghost) {
+    border: var(--bp-outline) solid var(--bp-ink);
+  }
+
+  .button {
+    font-weight: 600;
+  }
+
+  .button--secondary {
+    --button-fg: var(--default-foreground);
+  }
+
+  .button--primary {
+    --bp-drop: var(--bp-offset);
+  }
+
+  .button--primary,
+  .button.button--primary:is(:focus-visible, [data-focus-visible="true"]) {
+    box-shadow: var(--bp-drop) var(--bp-drop) 0 0 var(--bp-shadow);
+  }
+
+  @media (hover: hover) {
+    .button--primary:hover,
+    .button--primary[data-hovered="true"] {
+      --bp-drop: calc(var(--bp-offset) * 1.5);
+      transform: translate(calc(var(--bp-offset) * -0.5), calc(var(--bp-offset) * -0.5));
+    }
+  }
+
+  /* A disabled primary action is not a live block: no offset, no lift. */
+  .button--primary:is(:disabled, [data-disabled="true"]) {
+    --bp-drop: 0px;
+    transform: none;
+  }
+
+  .button--primary:active,
+  .button--primary[data-pressed="true"] {
+    --bp-drop: 0px;
+    transform: translate(var(--bp-offset), var(--bp-offset));
+  }
+
+  /* Tabs: square, ruled, the selected tab carries a 3px ink bar */
+  .tabs[data-orientation] > .tabs__list-container {
+    background: transparent;
+  }
+
+  .tabs[data-orientation="horizontal"] > .tabs__list-container {
+    border-bottom: var(--bp-outline) solid var(--bp-ink);
+  }
+
+  .tabs[data-orientation="vertical"] > .tabs__list-container {
+    border-inline-start: var(--bp-outline) solid var(--bp-ink);
+  }
+
+  .tabs[data-orientation] > .tabs__list-container .tabs__list {
+    padding: 0;
+  }
+
+  .tabs__tab[data-selected="true"] {
+    color: var(--foreground);
+  }
+
+  .tabs[data-orientation] > .tabs__list-container .tabs__indicator {
+    background: var(--bp-ink);
+    box-shadow: none;
+  }
+
+  .tabs[data-orientation="horizontal"] > .tabs__list-container .tabs__indicator {
+    top: auto;
+    bottom: 0;
+    height: 3px;
+  }
+
+  .tabs[data-orientation="vertical"] > .tabs__list-container .tabs__indicator {
+    inset-inline-start: 0;
+    width: 3px;
+    height: 100%;
+  }
+
+  /* Chip */
+  .chip {
+    border: var(--bp-outline) solid var(--bp-ink);
+    font-weight: 600;
+  }
+
+  /* Table: ink frame, 2px rule under the header, 1px rules between rows */
+  .table-root {
+    border: var(--bp-outline) solid var(--bp-ink);
+  }
+
+  .table-root--primary {
+    background: var(--surface);
+    padding: 0;
+  }
+
+  .table__column {
+    color: var(--foreground);
+    font-weight: 600;
+    border-bottom: var(--bp-outline) solid var(--bp-ink);
+  }
+
+  .table__column::after {
+    background: var(--bp-ink);
+  }
+
+  .table-root .table__row .table__cell {
+    border-bottom: 1px solid var(--bp-ink);
+  }
+
+  .table-root .table__body .table__row:last-child .table__cell {
+    border-bottom: 0;
+  }
+
+  /* Overlays: outline; an open modal, drawer or popover is the primary block at that moment,
+     so it also carries a smaller 3px offset. Tooltips stay flat. */
+  .modal__dialog,
+  .alert-dialog__dialog,
+  .drawer__dialog,
+  .popover,
+  .tooltip,
+  .dropdown__popover,
+  .select__popover,
+  .combo-box__popover {
+    border: var(--bp-outline) solid var(--bp-ink);
+  }
+
+  .modal__dialog,
+  .alert-dialog__dialog,
+  .drawer__dialog,
+  .popover,
+  .dropdown__popover,
+  .select__popover,
+  .combo-box__popover {
+    box-shadow: var(--bp-overlay-offset) var(--bp-overlay-offset) 0 0 var(--bp-shadow);
+  }
+
+  /* ToggleButton: transparent until selected, then inverted ink. In a group the group
+     carries the outline and full-height ink rules separate the items. */
+  .toggle-button {
+    --toggle-button-bg: transparent;
+    --toggle-button-bg-hover: var(--default);
+    --toggle-button-bg-pressed: var(--default);
+    --toggle-button-fg: var(--foreground);
+    --toggle-button-bg-selected: var(--foreground);
+    --toggle-button-bg-selected-hover: var(--foreground);
+    --toggle-button-bg-selected-pressed: var(--foreground);
+    --toggle-button-fg-selected: var(--background);
+    border: var(--bp-outline) solid var(--bp-ink);
+    font-weight: 600;
+  }
+
+  .toggle-button-group {
+    border: var(--bp-outline) solid var(--bp-ink);
+  }
+
+  .toggle-button-group .toggle-button {
+    border: 0;
+  }
+
+  /* The focused item paints its ring above its neighbours. */
+  .toggle-button-group .toggle-button:is(:focus-visible, [data-focus-visible="true"]) {
+    z-index: 1;
+  }
+
+  .toggle-button-group__separator {
+    background-color: var(--bp-ink);
+    opacity: 1;
+  }
+
+  .toggle-button-group--horizontal .toggle-button-group__separator {
+    inset-inline-start: 0;
+    top: 0;
+    width: var(--bp-outline);
+    height: 100%;
+  }
+
+  .toggle-button-group--vertical .toggle-button-group__separator {
+    inset-inline-start: 0;
+    top: 0;
+    width: 100%;
+    height: var(--bp-outline);
+  }
+
+  /* Switch, slider, meter, progress: hollow tracks with an ink ring, so each fill (accent,
+     success) sits on the page colour it is contrast-tested against. The off switch shows
+     an ink thumb; the on thumb stays accent-foreground on accent. */
+  .switch {
+    --switch-control-bg: transparent;
+  }
+
+  .switch__control,
+  .slider__track,
+  .meter__track,
+  .progress-bar__track {
+    box-shadow: 0 0 0 var(--bp-outline) var(--bp-ink);
+  }
+
+  /* Same two-class specificity as HeroUI's track colour, and later in the layer. */
+  .slider .slider__track,
+  .meter .meter__track,
+  .progress-bar .progress-bar__track {
+    background-color: transparent;
+  }
+
+  .switch__thumb {
+    background-color: var(--bp-ink);
+    box-shadow: none;
+  }
+
+  .separator {
+    background-color: var(--bp-ink);
+  }
+
+  /* Blockprint utilities. .bp-panel: outline only, for rows, tiles and cards. .bp-block is
+     its alias. .bp-block--primary adds the offset shadow; keep it to the mission header,
+     the approval item and the primary action. */
+  .bp-panel,
+  .bp-block,
+  .bp-block--primary {
+    border: var(--bp-outline) solid var(--bp-ink);
+    padding: 24px;
+    background: var(--surface);
+    color: var(--foreground);
+  }
+
+  .bp-block--primary {
+    box-shadow: var(--bp-offset) var(--bp-offset) 0 0 var(--bp-shadow);
+  }
+
+  /* Rail: the current item is an accent2 block behind a 4px ink bar. */
+  .bp-rail-item[aria-current="page"] {
+    background-color: var(--bp-accent2);
+    color: var(--bp-accent2-foreground);
+    box-shadow: inset 4px 0 0 var(--bp-ink);
+  }
+
+  .bp-rule-cols {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+  }
+
+  .bp-rule-cols > * {
+    padding-inline: 24px;
+  }
+
+  .bp-rule-cols > :first-child {
+    padding-inline-start: 0;
+  }
+
+  .bp-rule-cols > :last-child {
+    padding-inline-end: 0;
+  }
+
+  .bp-rule-cols > * + * {
+    border-inline-start: var(--bp-outline) solid var(--bp-ink);
+  }
+
+  @media (max-width: 640px) {
+    .bp-rule-cols {
+      grid-auto-flow: row;
+    }
+
+    .bp-rule-cols > * {
+      padding: 16px 0;
+    }
+
+    .bp-rule-cols > * + * {
+      border-inline-start: 0;
+      border-top: var(--bp-outline) solid var(--bp-ink);
+    }
+  }
+
+  .bp-meta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--muted);
+  }
+
+  .bp-kicker {
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--foreground);
+  }
+
+  /* Verification density: tint plus an ink bar whose width is the level, so the
+     scale does not rest on colour alone. */
+  .bp-density-1,
+  .bp-density-2,
+  .bp-density-3,
+  .bp-density-4,
+  .bp-density-5 {
+    color: var(--foreground);
+    box-shadow: inset calc(var(--bp-level) * 1px) 0 0 var(--bp-ink);
+  }
+
+  .bp-density-1 { --bp-level: 1; background: var(--bp-density-1); }
+  .bp-density-2 { --bp-level: 2; background: var(--bp-density-2); }
+  .bp-density-3 { --bp-level: 3; background: var(--bp-density-3); }
+  .bp-density-4 { --bp-level: 4; background: var(--bp-density-4); }
+  .bp-density-5 { --bp-level: 5; background: var(--success); color: var(--success-foreground); }
+
+  /* Status label, inverted */
+  .bp-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border: var(--bp-outline) solid var(--bp-ink);
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 600;
+    background: var(--foreground);
+    color: var(--background);
+  }
+
+  .bp-status[data-state="ready"] { background: var(--success); color: var(--success-foreground); }
+  .bp-status[data-state="not_tested"] { background: var(--muted); color: var(--background); }
+  .bp-status[data-state="failed"] { background: var(--danger); color: var(--danger-foreground); }
+  .bp-status[data-state="blocked"] { background: var(--warning); color: var(--warning-foreground); }
+  .bp-status[data-state="unknown"] { background: var(--foreground); color: var(--background); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-palette] *,
+  [data-palette] *::before,
+  [data-palette] *::after {
+    transition: none !important;
+  }
+}
