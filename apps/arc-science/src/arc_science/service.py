@@ -749,11 +749,12 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     @app.get('/api/missions/{mid}/claims',dependencies=[Depends(authorized)])
     async def mission_claims(mid:str):
         # Derived on read from the persisted claim scope, the timeline and the evidence graph.
-        from .exploration.claims import build_claims
-        row=with_release(get(mid));state=MissionState.model_validate(row['state'])
+        from .exploration.claims import build_claims, route_states
+        row,state=with_release(get(mid))
         try:graph=evidence_graph(state)
         except ValueError:graph=None
-        return {'mission_id':mid,**build_claims(state,timeline.rows(mid),graph,row['release'])}
+        # 'routes' is additive and read-only here; the capsule's claims.json is unchanged.
+        return {'mission_id':mid,**build_claims(state,timeline.rows(mid),graph,row['release']),'routes':route_states(state)}
 
     @app.get('/api/grants',dependencies=[Depends(authorized)])
     async def list_grants(subject_kind:str|None=None,subject_id:str|None=None):
@@ -948,17 +949,31 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
 
     def with_release(row):
         # The current decision is derived on read from the persisted ledger; it is
-        # never a claim of validity, only of eligibility for human review.
+        # never a claim of validity, only of eligibility for human review. The validated
+        # state is returned beside the row so one request validates it once.
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
         decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(row['id']))
         obligations={change.id:list(obligation_states(change,decision)) for change in state.changes}
-        return {**row,'release':decision.model_dump(mode='json'),'change_obligations':obligations}
+        return {**row,'release':decision.model_dump(mode='json'),'change_obligations':obligations},state
+
+    def manifest_view(row,state):
+        return {**row,'state':{**row['state'],'artifacts':[a.manifest() for a in state.artifacts]}}
 
     @app.get('/api/missions/{mid}',dependencies=[Depends(authorized)])
-    async def read_mission(mid:str):return with_release(get(mid))
+    async def read_mission(mid:str):
+        # Artifact manifests only: the image bytes are served by the artifact route, and
+        # the export and verify paths read full artifacts from the repository.
+        row,state=with_release(get(mid))
+        return manifest_view(row,state)
+
+    @app.get('/api/missions/{mid}/head',dependencies=[Depends(authorized)])
+    async def mission_head(mid:str):
+        # The cheap poll: revision, status and round read inside SQLite, no release derivation.
+        try:return {'id':mid,**repository.head(mid)}
+        except KeyError:raise HTTPException(404,'Unknown mission') from None
 
     @app.get('/api/missions/{mid}/release',dependencies=[Depends(authorized)])
-    async def read_release(mid:str):return with_release(get(mid))['release']
+    async def read_release(mid:str):return with_release(get(mid))[0]['release']
 
     @app.get('/api/missions/{mid}/evidence',dependencies=[Depends(authorized)])
     async def read_evidence(mid:str):
@@ -973,7 +988,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             # Best-effort capture off the event loop: blocking worker stdio must not
             # stall mission progress, status polling or cancellation.
             memory_routes.schedule_capture(mid,state)
-        def cancelled():return repository.get(mid)['state']['status']=='cancelled'
+        def cancelled():return repository.status(mid)=='cancelled'
         receipts={}   # op -> the receipt row the guard wrote for it; timeline linkage only
         def note(receipt):
             op=CURRENT_OP.get()
@@ -1198,8 +1213,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if mid in running:running[mid].cancel()
         timeline.record(mid,operation='pause',role='operator',source='operator',actor=actor,round=row['state']['round'],
                         outcome='paused',detail=row['state']['stop_reason'])
-        memory_routes.schedule_capture(mid,MissionState.model_validate(row['state']))
-        return row
+        state=MissionState.model_validate(row['state'])
+        memory_routes.schedule_capture(mid,state)
+        return manifest_view(row,state)
 
     @app.post('/api/missions/{mid}/cancel')
     async def cancel(mid:str,principal:str=Depends(authorized)):
@@ -1212,8 +1228,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if row['revision']!=before['revision']:
             timeline.record(mid,operation='cancel',role='operator',source='operator',actor=actor,round=row['state']['round'],
                             outcome='cancelled',detail=row['state']['events'][-1]['detail'])
-        memory_routes.schedule_capture(mid,MissionState.model_validate(row['state']))
-        return row
+        state=MissionState.model_validate(row['state'])
+        memory_routes.schedule_capture(mid,state)
+        return manifest_view(row,state)
 
     @app.get('/api/missions/{mid}/artifacts/{artifact_digest}',dependencies=[Depends(authorized)])
     async def artifact(mid:str,artifact_digest:str):

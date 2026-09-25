@@ -38,7 +38,7 @@ def subject_digest(state: MissionState) -> str:
     return digest(state.model_dump(mode='json', exclude={'release', 'events'}))
 
 
-def check_basis(name: MissionCheck, request: MissionRequest, state: MissionState) -> str:
+def check_basis(name: MissionCheck, request: MissionRequest, state: MissionState, subject: str | None = None) -> str:
     """The exact dependencies of one check, so staleness is per check, not per mission."""
     if name == 'operational_status':
         return digest({'status': state.status})
@@ -59,7 +59,8 @@ def check_basis(name: MissionCheck, request: MissionRequest, state: MissionState
                        'reports': [r.model_dump(mode='json') for r in state.visual_reports],
                        'records': [r.model_dump(mode='json') for r in state.vision_records],
                        'repairs': [r.model_dump(mode='json') for r in state.repairs]})
-    return subject_digest(state)
+    # The caller's subject digest when it already has one: it is the costliest digest here.
+    return subject or subject_digest(state)
 
 
 def _check(name, state: CheckState, basis, reason, evidence=()):
@@ -181,7 +182,7 @@ def evaluate_release(request: MissionRequest, state: MissionState, verification:
 
     def add(name, outcome):
         st, reason, evidence = (outcome + ((),))[:3] if len(outcome) == 2 else outcome
-        checks.append(_check(name, st, check_basis(name, request, state), reason, evidence))
+        checks.append(_check(name, st, check_basis(name, request, state, subject), reason, evidence))
 
     add('operational_status', _operational(state))
     if event_chain_ok is None:

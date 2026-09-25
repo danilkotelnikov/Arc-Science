@@ -107,6 +107,53 @@ def _alternatives(state, branch, graph):
             'conflicts_source': 'evidence_graph' if graph is not None else 'unavailable'}
 
 
+def _touches(record, branch_id):
+    payload = record.payload
+    return any(a.get('branch_id') == branch_id for a in payload.get('actions') or ()) \
+        or any(b.get('id') == branch_id for b in payload.get('branches') or ())
+
+
+def route_states(state: MissionState) -> list[dict]:
+    """Where the exploration stands on each branch, derived from recorded rounds only.
+
+    focused: the engine's recorded focus. warm: acted on (an observation) in the last
+    completed round, or targeted by an action of the plan committed for the current
+    round. parked: last acted on two or more rounds ago. A branch with no recorded action
+    and no targeting gets no route: no state is invented. next_test comes from the
+    standing assessments (latest round first, then role name); plan_reason from the
+    latest planner record that proposed or targeted the branch. basis.rounds counts every
+    observation; basis.evidence_ids only successful, claim-eligible ones."""
+    now = state.round
+    plans = sorted((r for r in state.model_records if r.role == 'planner'), key=lambda r: r.round)
+    current = next((r for r in plans if r.round == now), None)
+    # A stop plan dispatches nothing, even when it still lists actions.
+    targeted = (set() if current is None or current.payload.get('stop')
+                else {a.get('branch_id') for a in (current.payload.get('actions') or ())})
+    latest = latest_assessments(state)
+    routes = []
+    for branch in state.branches:
+        observed = [o for o in state.observations if o.branch_id == branch.id]
+        acted = {o.round for o in observed}
+        if branch.id == state.focus:
+            route = 'focused'
+        elif (acted and max(acted) >= now - 1) or branch.id in targeted:
+            route = 'warm'
+        elif acted and now - max(acted) >= 2:
+            route = 'parked'
+        else:
+            continue
+        tests = sorted(((-a.round, role, a.next_test) for (role, bid), a in latest.items() if bid == branch.id and a.next_test))
+        plan = next((r for r in reversed(plans) if _touches(r, branch.id)), None)
+        routes.append({'branch_id': branch.id, 'title': branch.title, 'hypothesis': branch.hypothesis,
+                       'falsifier': branch.falsifier, 'state': route,
+                       'basis': {'rounds': sorted(acted | ({now} if branch.id in targeted else set())),
+                                 'evidence_ids': [o.id for o in observed if o.status == 'ok' and o.claim_eligible]},
+                       'next_test': tests[0][2] if tests else None,
+                       'plan_reason': plan.payload.get('reason', '') if plan else None,
+                       'source': 'derived'})
+    return routes
+
+
 def build_claims(state: MissionState, timeline_rows: list[dict], graph: dict | None, release: dict | None) -> dict:
     scope = state.claim_scope
     check = next((c for c in (release or {}).get('checks', ()) if c.get('name') == 'claim_scope'), None)

@@ -289,3 +289,4 @@ do not re-run unrelated passed suites without a changed dependency or new concer
   the bundled layout, and CI building the supervisor. Reports stay under `.omx/artifacts/`
   with user paths redacted.
 - [Research dossier, 2026-09-25](2026-09-25-research-dossier.md): 340 papers first posted from 1 July 2026, grouped by area, with the basis of each approved plan decision and the remaining gaps.
+- [S2 record, 2026-09-25](2026-09-25-s2-read-path-record.md): mission reads carry artifact manifests (a 64-image mission read fell from 1.98 MB to 125 KB), a `head` read for polling, and route states (focused, warm, parked) derived from recorded rounds for the decision board.

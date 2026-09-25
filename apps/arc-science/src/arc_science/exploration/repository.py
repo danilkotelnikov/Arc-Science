@@ -66,9 +66,20 @@ class MissionRepository:
         with self._connect() as db:return self._row(db.execute('SELECT * FROM missions WHERE id=?',(mid,)).fetchone())
 
     def list(self,limit=100):
+        # json_extract reads the fields inside SQLite; the state is never parsed in Python.
         with self._connect() as db:
-            rows=db.execute('SELECT id,request,state,revision FROM missions ORDER BY rowid DESC LIMIT ?',(limit,)).fetchall()
-        return [{'id':i,'goal':(req:=json.loads(q))['goal'],'mode':req.get('mode','demo'),'status':json.loads(s)['status'],'revision':r} for i,q,s,r in rows]
+            rows=db.execute("SELECT id,json_extract(request,'$.goal'),json_extract(request,'$.mode'),json_extract(state,'$.status'),revision "
+                            'FROM missions ORDER BY rowid DESC LIMIT ?',(limit,)).fetchall()
+        return [{'id':i,'goal':g,'mode':'demo' if m is None else m,'status':s,'revision':r} for i,g,m,s,r in rows]
+
+    def head(self,mid):
+        """Revision, status and round without parsing the state in Python: the cheap poll."""
+        with self._connect() as db:
+            row=db.execute("SELECT revision,json_extract(state,'$.status'),json_extract(state,'$.round') FROM missions WHERE id=?",(mid,)).fetchone()
+        if row is None:raise KeyError('Unknown mission')
+        return {'revision':row[0],'status':row[1],'round':row[2]}
+
+    def status(self,mid):return self.head(mid)['status']
 
     def count(self):
         with self._connect() as db:return db.execute('SELECT COUNT(*) FROM missions').fetchone()[0]

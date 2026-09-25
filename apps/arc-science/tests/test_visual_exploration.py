@@ -490,7 +490,9 @@ def test_artifact_route_is_authenticated_and_returns_exact_png(tmp_path):
         response = client.get(path, headers=headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "image/png"
-        assert response.content == base64.b64decode(artifact["data_base64"], validate=True)
+        # The mission GET carries the manifest only; the bytes come from this route.
+        assert "data_base64" not in artifact
+        assert hashlib.sha256(response.content).hexdigest() == artifact["digest"] and len(response.content) == artifact["size"]
         assert "blob:" in client.get("/diagnostics").headers["content-security-policy"]
 
 
