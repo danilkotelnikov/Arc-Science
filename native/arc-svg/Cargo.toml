@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 publish = false
+license = "CC-BY-NC-SA-4.0"
 
 [[bin]]
 name = "arc-svg2png"
