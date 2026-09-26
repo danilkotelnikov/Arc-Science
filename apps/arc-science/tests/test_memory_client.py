@@ -9,11 +9,19 @@ import pytest
 from arc_science.memory import MemoryClient
 
 
+# Read once at import: service tests unset ARC_MEMORY_WORKER to test an unconfigured app.
+CONFIGURED_WORKER = os.environ.get("ARC_MEMORY_WORKER")
+
+
 def worker_binary() -> Path:
+    """The service's own locator (ARC_MEMORY_WORKER) first, then the cargo target dir."""
+    if CONFIGURED_WORKER and Path(CONFIGURED_WORKER).is_file():
+        return Path(CONFIGURED_WORKER)
     root = Path(__file__).resolve().parents[3]
+    target = Path(os.environ.get("CARGO_TARGET_DIR") or root / "native" / "arc-memory" / "target")
     name = "arc-memory-worker.exe" if os.name == "nt" else "arc-memory-worker"
     for profile in ("release", "debug"):
-        candidate = root / "native" / "arc-memory" / "target" / profile / name
+        candidate = target / profile / name
         if candidate.exists():
             return candidate
     pytest.skip("arc-memory-worker binary not built")
@@ -85,6 +93,19 @@ def test_memory_worker_launch_gets_scrubbed_environment(tmp_path, monkeypatch):
     assert "OPENAI_API_KEY" not in environment
     assert "PYTHONPATH" not in environment
     assert mem.is_alive()
+
+
+def test_client_stats_report_storage_from_the_worker(tmp_path):
+    with MemoryClient(worker_binary(), tmp_path / "memory.db") as mem:
+        mem.append(sample("hydrogen bond note"))
+        hidden = mem.append(sample("salt bridge"))
+        mem.disable(hidden)
+        stats = mem.stats()
+    assert stats["counts"] == {"sessions": 1, "records": 2, "visible": 1, "hidden": 1, "blobs": 2, "embeddings": 0}
+    assert stats["bytes"]["blobs_raw"] == len("hydrogen bond note") + len("salt bridge")
+    assert stats["bytes"]["logical"] == stats["bytes"]["blobs_raw"]
+    assert stats["index"]["in_step"] is True
+    assert stats["retrieval_modes"] == ["lexical"]
 
 
 def test_client_surfaces_worker_errors(tmp_path):

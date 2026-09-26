@@ -57,6 +57,7 @@ pub enum Request {
         record_id: String,
     },
     Embed,
+    Stats,
 }
 
 /// A protocol response, tagged by its `status` field.
@@ -91,6 +92,14 @@ impl Worker {
         Self { engine, embedder }
     }
 
+    fn retrieval_modes(&self) -> Vec<&'static str> {
+        if self.embedder.is_some() {
+            vec!["lexical", "semantic", "hybrid"]
+        } else {
+            vec!["lexical"]
+        }
+    }
+
     /// Parse and handle one request frame, always returning a response.
     pub fn handle_bytes(&self, frame: &[u8]) -> Response {
         match serde_json::from_slice::<Request>(frame) {
@@ -111,12 +120,15 @@ impl Worker {
             Request::Health => Response::ok(json!({
                 "protocol": crate::PROTOCOL_VERSION,
                 "sqlite": crate::sqlite_version(),
-                "retrieval_modes": if self.embedder.is_some() {
-                    vec!["lexical", "semantic", "hybrid"]
-                } else {
-                    vec!["lexical"]
-                },
+                "retrieval_modes": self.retrieval_modes(),
             })),
+            Request::Stats => match self.engine.stats() {
+                Ok(mut stats) => {
+                    stats["retrieval_modes"] = json!(self.retrieval_modes());
+                    Response::ok(stats)
+                }
+                Err(error) => Response::error(error.to_string()),
+            },
             Request::Append { record } => match self.engine.append(&record) {
                 Ok(id) => Response::ok(json!({ "record_id": id })),
                 Err(error) => Response::error(error.to_string()),

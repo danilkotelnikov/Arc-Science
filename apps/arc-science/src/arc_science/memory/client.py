@@ -141,6 +141,9 @@ class MemoryClient:
     def embed(self) -> int:
         return self._call({"op": "embed"})["embedded"]
 
+    def stats(self) -> dict[str, Any]:
+        return self._call({"op": "stats"})
+
     # --- lifecycle --------------------------------------------------------
     def is_alive(self) -> bool:
         return self._proc.poll() is None

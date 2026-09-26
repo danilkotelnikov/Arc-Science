@@ -9,7 +9,7 @@ use std::io::Read;
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, Row, ToSql, params};
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::embedding::Embedder;
@@ -310,7 +310,7 @@ impl Engine {
     pub fn session_list(&self, project: &str) -> Result<Vec<SessionSummary>> {
         let mut stmt = self.conn.prepare(
             "SELECT session, COUNT(*), MIN(seq), MAX(seq), MIN(compaction_epoch), \
-             MAX(compaction_epoch) FROM records \
+             MAX(compaction_epoch), MAX(wall_time_ms) FROM records \
              WHERE project = ?1 AND visibility = 'visible' \
              GROUP BY session ORDER BY MIN(rowid)",
         )?;
@@ -323,10 +323,68 @@ impl Engine {
                     last_seq: row.get(3)?,
                     min_epoch: row.get(4)?,
                     max_epoch: row.get(5)?,
+                    last_capture_ms: row.get(6)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// Storage facts read from the database itself: byte totals (on-disk pages, the
+    /// WAL file, unique text raw and compressed, and every record's text as
+    /// captured), row counts, and whether the lexical index is in step with the
+    /// visible records (same row count, current layout version).
+    pub fn stats(&self) -> Result<Value> {
+        let (blobs, blobs_raw, blobs_stored): (i64, i64, i64) = self.conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(original_size), 0), COALESCE(SUM(length(data)), 0) \
+             FROM blobs",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        let (records, visible, logical, last_capture): (i64, i64, i64, Option<i64>) =
+            self.conn.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(r.visibility = 'visible'), 0), \
+                 COALESCE(SUM(b.original_size), 0), MAX(r.wall_time_ms) \
+                 FROM records r JOIN blobs b ON b.content_digest = r.content_digest",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+        let count =
+            |sql: &str| -> Result<i64> { Ok(self.conn.query_row(sql, [], |row| row.get(0))?) };
+        let sessions =
+            count("SELECT COUNT(*) FROM (SELECT DISTINCT project, session FROM records)")?;
+        let embeddings = count("SELECT COUNT(*) FROM embeddings")?;
+        let index_rows = count("SELECT COUNT(*) FROM records_fts")?;
+        let version = count("PRAGMA user_version")?;
+        let db = count("SELECT page_count * page_size FROM pragma_page_count, pragma_page_size")?;
+        let journal: String = self
+            .conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+        let wal = match self.conn.path() {
+            Some(path) if !path.is_empty() => std::fs::metadata(format!("{path}-wal"))
+                .map(|meta| meta.len())
+                .unwrap_or(0),
+            _ => 0,
+        };
+        Ok(json!({
+            "engine": format!("sqlite-{}", journal.to_lowercase()),
+            "sqlite_version": crate::sqlite_version(),
+            "codec": {"name": "zstd", "level": ZSTD_LEVEL, "dictionary": false},
+            "bytes": {
+                "db": db, "wal": wal, "blobs_raw": blobs_raw,
+                "blobs_stored": blobs_stored, "logical": logical,
+            },
+            "counts": {
+                "sessions": sessions, "records": records, "visible": visible,
+                "hidden": records - visible, "blobs": blobs, "embeddings": embeddings,
+            },
+            // FTS_SCHEMA names no tokenizer, so FTS5 uses its default, unicode61.
+            "index": {
+                "kind": "fts5-bm25", "tokenizer": "unicode61", "rows": index_rows,
+                "in_step": index_rows == visible && version == FTS_VERSION,
+            },
+            "last_capture_ms": last_capture,
+        }))
     }
 
     /// Fetch a session's visible records in sequence order, optionally bounded by

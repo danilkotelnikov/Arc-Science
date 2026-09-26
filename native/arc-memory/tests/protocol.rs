@@ -60,6 +60,26 @@ fn health_reports_protocol_version() {
 }
 
 #[test]
+fn stats_over_json_report_storage_and_retrieval_modes() {
+    let worker = worker();
+    call(&worker, RECORD);
+    let stats = call(&worker, r#"{"op":"stats"}"#);
+    assert_eq!(stats["status"], "ok");
+    assert_eq!(stats["data"]["counts"]["records"], 1);
+    assert_eq!(
+        stats["data"]["bytes"]["blobs_raw"],
+        "hydrogen bond note".len()
+    );
+    assert_eq!(
+        stats["data"]["retrieval_modes"],
+        serde_json::json!(["lexical"])
+    );
+    assert_eq!(stats["data"]["last_capture_ms"], 1);
+    let sessions = call(&worker, r#"{"op":"session_list","project":"p"}"#);
+    assert_eq!(sessions["data"][0]["last_capture_ms"], 1);
+}
+
+#[test]
 fn rejects_unbounded_search_and_reversed_session_ranges() {
     let worker = worker();
     for op in ["search", "semantic", "hybrid"] {
