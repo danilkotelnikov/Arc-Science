@@ -12,8 +12,9 @@ SOURCE = Path(__file__).resolve().parents[1] / 'src' / 'arc_science'
 
 @pytest.fixture
 def system_proxy(monkeypatch):
-    def use(value):
+    def use(value, override=None):
         monkeypatch.setattr(urllib.request, 'getproxies', lambda: dict(value))
+        monkeypatch.setattr('arc_science.net._registry_override', lambda: override)
     use({'https': PROXY, 'http': PROXY, 'no': 'localhost,.internal.example'})
     return use
 
@@ -111,7 +112,59 @@ def test_bioart_owned_transport_passes_the_proxy_to_httpx(system_proxy, monkeypa
     assert seen == [PROXY]
 
 
-@pytest.mark.parametrize('module', ['bioart/client.py', 'prose.py', 'exploration/mcp_tools.py'])
+def test_windows_proxy_override_list_is_honoured_like_the_os(system_proxy, captured):
+    from arc_science.net import outbound_client, system_proxy as resolve
+    # A registry proxy: getproxies_registry() reports no 'no' key; ProxyOverride holds the bypass list.
+    system_proxy({'https': PROXY, 'http': PROXY}, override='192.168.*; *.corp.example;<local>')
+    for target in ('https://mcp.corp.example/mcp', 'https://MCP.Corp.Example/mcp', 'http://192.168.1.20:8000',
+                   'http://intranet/x'):
+        assert resolve(target) is None, target
+    assert resolve('https://bioart.niaid.nih.gov') == PROXY
+    assert resolve('https://corp.example.org') == PROXY
+    outbound_client('https://mcp.corp.example/mcp', asynchronous=True)
+    assert 'proxy' not in captured[0]
+
+
+def test_children_receive_the_expressible_part_of_the_registry_override(system_proxy):
+    from arc_science.net import proxy_environment
+    system_proxy({'https': PROXY, 'http': PROXY}, override='192.168.*; *.corp.example;<local>;intranet.example')
+    assert proxy_environment('https://bioart.niaid.nih.gov') == {
+        'HTTPS_PROXY': PROXY, 'HTTP_PROXY': PROXY, 'NO_PROXY': '.corp.example,intranet.example'}
+
+
+def test_registry_override_is_read_only_for_a_registry_proxy(monkeypatch):
+    import sys
+    from arc_science import net
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    monkeypatch.setattr(urllib.request, 'getproxies_environment', lambda: {'https': PROXY})
+    assert net._registry_override() is None  # *_PROXY variables win, with their own NO_PROXY
+
+
+def test_biorender_discovery_reaches_biorender_through_the_system_proxy(system_proxy, monkeypatch, tmp_path):
+    import asyncio
+    from arc_science.biorender import BIORENDER_ENDPOINT
+    from arc_science.exploration import biorender_read
+    token = tmp_path / 'token'
+    token.write_text('test-token', encoding='utf-8')
+    monkeypatch.setenv('ARC_BIORENDER_TOKEN_FILE', str(token))
+    monkeypatch.delenv('ARC_BIORENDER_PROTOCOL', raising=False)
+    routed = []
+
+    class Provider:
+        def __init__(self, *, client, protocol, **_):
+            routed.append(client._transport_for_url(httpx.URL(BIORENDER_ENDPOINT)) is not client._transport)
+            self.protocol, self.schemas = protocol, {}
+
+        async def discover(self, now):
+            return 'sha256:test'
+
+    monkeypatch.setattr(biorender_read, 'BioRenderClient', Provider)
+    assert asyncio.run(biorender_read.discover_biorender())['schema_digest'] == 'sha256:test'
+    assert routed == [True]
+
+
+@pytest.mark.parametrize('module', ['bioart/client.py', 'prose.py', 'exploration/mcp_tools.py',
+                                    'exploration/biorender_read.py', 'biorender.py'])
 def test_owned_modules_build_no_direct_proxyless_httpx_client(module):
     tree = ast.parse((SOURCE / module).read_text(encoding='utf-8'))
     direct = [node.lineno for node in ast.walk(tree)

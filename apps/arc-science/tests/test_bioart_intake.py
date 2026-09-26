@@ -213,3 +213,32 @@ def test_thumbnail_is_size_limited_and_must_be_an_image(tmp_path):
         other, _ = provider(tmp_path / 'other', 'PNG', bad, entry=250)
         with pytest.raises(ValueError):
             other.thumbnail(250, 650431)
+
+
+def two_page_ai():
+    """A multi-artboard AI file: its PDF-compatible representation has two pages."""
+    from reportlab.pdfgen import canvas
+    out = BytesIO()
+    sheet = canvas.Canvas(out, pagesize=(200, 100))
+    for _ in range(2):
+        sheet.rect(10, 10, 120, 60, fill=1)
+        sheet.showPage()
+    sheet.save()
+    return out.getvalue()
+
+
+@pytest.mark.parametrize('case', ['two-artboards', 'over-import-size-limit'])
+def test_ai_receipt_claims_import_only_when_the_pdf_importer_accepts_it(tmp_path, monkeypatch, case):
+    from arc_science.bioart.errors import BioArtError
+    data = two_page_ai() if case == 'two-artboards' else ai()
+    if case == 'over-import-size-limit':  # fetch still accepts it (max_file_bytes is larger)
+        monkeypatch.setattr('arc_science.bioart.client._SOURCE_LIMIT', len(data) - 1)
+    client, _ = provider(tmp_path, 'AI', data)
+    receipt = client.fetch(18, 64, 'AI')
+    value = client.verify(receipt.receipt_path)
+    assert value['import_eligible'] is False and value['preview_eligible'] is False
+    assert value['limitation'] == ('PDF must contain exactly one page' if case == 'two-artboards'
+                                   else 'AI exceeds existing vector import size limit')
+    with pytest.raises(BioArtError) as refused:
+        client.import_asset(receipt.receipt_path, tmp_path / 'project')
+    assert refused.value.code == 'bioart.not_eligible'

@@ -5,7 +5,9 @@ the Internet Options registry keys, so a system proxy (for example xray on
 127.0.0.1:10809) is found with no environment set. httpx keeps trust_env=False: only
 the proxy is taken, explicitly; .netrc and other environment settings stay ignored.
 """
+from fnmatch import fnmatchcase
 import ipaddress
+import sys
 import urllib.request
 from urllib.parse import urlsplit
 
@@ -25,12 +27,36 @@ def _loopback(host):
         return False
 
 
+def _registry_override() -> str | None:
+    """Windows ProxyOverride for a registry proxy; getproxies_registry() never reports it as 'no'."""
+    if sys.platform != 'win32' or urllib.request.getproxies_environment():
+        return None  # *_PROXY variables win over the registry, with their own NO_PROXY
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r'Software\Microsoft\Windows\CurrentVersion\Internet Settings') as key:
+            return str(winreg.QueryValueEx(key, 'ProxyOverride')[0]) or None
+    except OSError:
+        return None
+
+
+def _override_entries(override):
+    return [entry.strip().lower() for entry in (override or '').split(';') if entry.strip()]
+
+
+def _registry_bypass(host):
+    """The ProxyOverride match urllib.request.proxy_bypass_registry() makes."""
+    return any(('.' not in host) if entry == '<local>' else fnmatchcase(host.lower(), entry)
+               for entry in _override_entries(_registry_override()))
+
+
 def system_proxy(target: str | None = None) -> str | None:
     """The proxy URL for target (https by default), or None for a direct connection."""
     proxies = urllib.request.getproxies()
     parts = urlsplit(target or 'https://')
     host = parts.hostname or ''
-    if host and (_loopback(host) or urllib.request.proxy_bypass_environment(host, proxies)):
+    if host and (_loopback(host) or urllib.request.proxy_bypass_environment(host, proxies)
+                 or _registry_bypass(host)):
         return None
     proxy = proxies.get(parts.scheme or 'https')
     if not proxy:
@@ -61,5 +87,9 @@ def proxy_environment(target: str | None = None) -> dict[str, str]:
     proxy = system_proxy(target)
     if not proxy:
         return {}
-    bypass = urllib.request.getproxies().get('no')
+    # ponytail: NO_PROXY cannot express <local> or 192.168.* wildcards; those entries are dropped.
+    # The children call only the target decided above, so the full list is not needed there.
+    bypass = urllib.request.getproxies().get('no') or ','.join(
+        entry[1:] if entry.startswith('*.') else entry for entry in _override_entries(_registry_override())
+        if entry != '<local>' and '*' not in entry.removeprefix('*.'))
     return {'HTTPS_PROXY': proxy, 'HTTP_PROXY': proxy, **({'NO_PROXY': bypass} if bypass else {})}

@@ -9,12 +9,12 @@ from typing import Mapping
 from urllib.parse import urlsplit
 import uuid
 
-import httpx
 from jsonschema import Draft202012Validator
 
 from ..biorender import (BIORENDER_ENDPOINT, BioRenderClient, LEGACY_PROTOCOL,
                          SELECTABLE_PROTOCOLS)
 from ..contracts import canonical
+from ..net import outbound_client
 from ..transport import AccessGrant
 from .catalog import BIORENDER_CATALOG, TrustedPublicTools, validate_arguments
 
@@ -169,7 +169,8 @@ async def discover_biorender() -> dict:
     grant = AccessGrant(token=token, principal="local-operator", project_id="biorender-discovery",
                         resource=BIORENDER_ENDPOINT, credential_ref="biorender",
                         expires_at=now + 60)
-    async with httpx.AsyncClient(trust_env=False) as client:
+    # ProxyUnsupported is a ValueError, reported by the CLI like the other discovery errors.
+    async with outbound_client(BIORENDER_ENDPOINT, asynchronous=True) as client:
         provider = BioRenderClient(client=client, grant_resolver=lambda *_: grant,
                                    principal="local-operator", project_id="biorender-discovery",
                                    credential_ref="biorender", protocol=protocol)

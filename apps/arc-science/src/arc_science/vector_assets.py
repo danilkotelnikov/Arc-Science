@@ -329,7 +329,8 @@ def _render_svg(data: bytes) -> tuple[str, bytes, str, int, int]:
     return "vector", preview, pixel_digest, actual_width, actual_height
 
 
-def _render_pdf(data: bytes) -> tuple[str, bytes, str, int, int]:
+def _render_pdf(data: bytes, *, inspect_only: bool = False) -> tuple[str, bytes, str, int, int] | None:
+    """Validate and render a one-page PDF; inspect_only stops after every import check."""
     try:
         import pypdfium2 as pdfium
         document = pdfium.PdfDocument(data)
@@ -360,6 +361,8 @@ def _render_pdf(data: bytes) -> tuple[str, bytes, str, int, int]:
                 if vectors == 0:
                     raise ValueError("Image-only PDF is forbidden")
                 content_kind = "mixed_vector_image" if counts[pdfium.raw.FPDF_PAGEOBJ_IMAGE] else "vector"
+                if inspect_only:
+                    return None
                 scale = min(target[0] / width, target[1] / height)
                 bitmap = page.render(scale=scale)
                 try:

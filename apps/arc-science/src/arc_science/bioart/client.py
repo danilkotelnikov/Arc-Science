@@ -20,7 +20,7 @@ from .isolation import request_in_child
 from .models import BioArtLimits, BioArtReceipt, ORIGIN, _is_neutral_caption, positive_id
 from .parsing import action_id, discover_chunk, parse_entry, parse_search, parse_search_action
 from ..vector_assets import (_read_regular, _validate_svg, _SOURCE_LIMIT, _SVG_NS,
-    _local_name, _LOCAL_URL, _MAX_SVG_NODES, _MAX_SVG_DEPTH, import_vector)
+    _local_name, _LOCAL_URL, _MAX_SVG_NODES, _MAX_SVG_DEPTH, _render_pdf, import_vector)
 
 _HASH = re.compile(r'[0-9a-f]{64}')
 _MIME = {'SVG':{'image/svg+xml'}, 'PNG':{'image/png'},
@@ -159,7 +159,12 @@ def _eligibility(data, format):
         return True,True,None
     _sniff(data,format)
     if format=='PNG': return _eligibility_v1(data,format)
-    if format=='AI': return False,True,'AI is imported through its PDF-compatible representation'
+    if format=='AI':
+        # The receipt claims only what import_vector(kind='pdf') will accept.
+        if len(data)>_SOURCE_LIMIT: return False,False,'AI exceeds existing vector import size limit'
+        try: _render_pdf(data,inspect_only=True)
+        except ValueError as exc: return False,False,str(exc)
+        return False,True,'AI is imported through its PDF-compatible representation'
     return False,False,'EPS originals are download-only; never executed'
 
 
