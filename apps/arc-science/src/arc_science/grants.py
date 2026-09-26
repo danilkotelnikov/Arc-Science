@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS receipts(
   id TEXT PRIMARY KEY, grant_id TEXT, mission_id TEXT, destination TEXT NOT NULL,
   destination_kind TEXT NOT NULL, data_category TEXT NOT NULL, at INTEGER NOT NULL,
   outcome TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', request_digest TEXT,
-  observation_id TEXT, role TEXT);
+  observation_id TEXT, role TEXT, reason_code TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS grants_subject ON grants(subject_kind,subject_id);
 CREATE INDEX IF NOT EXISTS grants_destination ON grants(destination,destination_kind);
 CREATE INDEX IF NOT EXISTS grant_events_grant ON grant_events(grant_id,kind);
@@ -57,7 +57,7 @@ FROM grants g'''
 _GRANT_COLUMNS=('id','subject_kind','subject_id','destination','destination_kind','data_category','purpose',
                 'scope','route_digest','settings_revision','source','granted_at','expires_at','max_uses')
 _RECEIPT_COLUMNS=('id','grant_id','mission_id','destination','destination_kind','data_category','at',
-                  'outcome','reason','request_digest','observation_id','role')
+                  'outcome','reason','request_digest','observation_id','role','reason_code')
 _EVENT_COLUMNS=('seq','grant_id','kind','at','detail')
 _DIGEST=re.compile(r'[0-9a-f]{64}')
 
@@ -81,7 +81,11 @@ def _grant(row,now):
 class GrantLedger:
     def __init__(self,path):
         self.path=Path(path);self.path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-        with closing(sqlite3.connect(self.path,timeout=15)) as db: db.executescript(_SCHEMA)
+        with closing(sqlite3.connect(self.path,timeout=15)) as db:
+            db.executescript(_SCHEMA)
+            # A ledger from before reason codes gains the column; its old receipts read ''.
+            if 'reason_code' not in {row[1] for row in db.execute('PRAGMA table_info(receipts)')}:
+                db.execute("ALTER TABLE receipts ADD COLUMN reason_code TEXT NOT NULL DEFAULT ''");db.commit()
         anchored.owner_only(self.path)  # raises PermissionError rather than serving an open ledger
 
     def _db(self):
@@ -153,20 +157,25 @@ class GrantLedger:
                 (destination,destination_kind,subject_kind,subject_id)).fetchall()
             for row in rows:
                 if _state(row,now)=='active' and self._reserve(db,row['id'],now):
-                    db.commit();return {'allowed':True,'grant_id':row['id'],'reason':'Grant '+row['id'][:12]+' ('+row['scope']+')'}
+                    db.commit();return {'allowed':True,'grant_id':row['id'],'reason':'Grant '+row['id'][:12]+' ('+row['scope']+')',
+                                        'reason_code':'grant.active'}
             db.commit()
-        if not rows: return {'allowed':False,'grant_id':None,'reason':'No grant for '+destination+' ('+destination_kind+')'}
-        return {'allowed':False,'grant_id':rows[0]['id'],'reason':'Grant '+rows[0]['id'][:12]+' for '+destination+' is '+_state(rows[0],now)}
+        if not rows: return {'allowed':False,'grant_id':None,'reason':'No grant for '+destination+' ('+destination_kind+')','reason_code':'grant.none'}
+        state=_state(rows[0],now)
+        return {'allowed':False,'grant_id':rows[0]['id'],'reason':'Grant '+rows[0]['id'][:12]+' for '+destination+' is '+state,
+                'reason_code':'grant.'+state}
 
     def receipt(self,*,destination,destination_kind,data_category,outcome,reason='',grant_id=None,mission_id=None,
-                request_digest=None,observation_id=None,role=None):
+                request_digest=None,observation_id=None,role=None,reason_code=None):
+        """reason_code is the decision's code for a refusal (grant.none, grant.revoked, ...);
+        it defaults to call.<outcome>."""
         _one_of(destination_kind,DESTINATION_KINDS,'destination_kind');_one_of(outcome,OUTCOMES,'outcome')
         if request_digest is not None and not _DIGEST.fullmatch(request_digest):
             raise ValueError('request_digest must be a sha256 hex digest of the arguments, never the arguments')
         row=dict(id=secrets.token_hex(16),grant_id=grant_id,mission_id=mission_id,destination=_text(destination,'destination'),
                  destination_kind=destination_kind,data_category=_text(data_category,'data_category'),at=int(time.time()),
                  outcome=outcome,reason=_text(reason,'reason',required=False),request_digest=request_digest,
-                 observation_id=observation_id,role=role)
+                 observation_id=observation_id,role=role,reason_code=reason_code or 'call.'+outcome)
         with self._db() as db:
             db.execute('INSERT INTO receipts('+','.join(_RECEIPT_COLUMNS)+') VALUES ('+','.join(':'+c for c in _RECEIPT_COLUMNS)+')',row)
         return row

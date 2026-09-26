@@ -171,7 +171,7 @@ def test_routes_expose_rules_rewrite_and_consented_detection(tmp_path, monkeypat
         rewritten = c.post('/api/prose/rewrite', headers=AUTH, json={'text': SCIENTIFIC}).json()
         assert rewritten['status'] == 'edited' and 'Tyr33' in rewritten['text']
         refused = c.post('/api/prose/detect', headers=AUTH, json={'text': SCIENTIFIC})
-        assert refused.status_code == 422 and refused.json()['detail']['code'] == 'consent_required'
+        assert refused.status_code == 422 and refused.json()['detail']['code'] == 'prose.consent_required'
         assert 'api.edgeshop.ai' in refused.json()['detail']['detail']
         assert not (tmp_path / 'prose').exists()
         c.app.state.detector.transport = httpx.MockTransport(
@@ -180,7 +180,8 @@ def test_routes_expose_rules_rewrite_and_consented_detection(tmp_path, monkeypat
         assert receipt['status'] == 'ok' and receipt['missing_types'] == ['COPYLEAKS'] and receipt['authorship_claim'] == 'none'
         c.app.state.detector.transport = httpx.MockTransport(lambda r: httpx.Response(503))
         failed = c.post('/api/prose/detect', headers=AUTH, json={'text': SCIENTIFIC, 'allow_egress': True})
-        assert failed.status_code == 502 and failed.json()['detail']['code'] == 'http_503'
+        assert failed.status_code == 502 and failed.json()['detail']['code'] == 'prose.provider_failed'
+        assert failed.json()['detail']['facts'] == {'reason': 'http_503'}
 
 
 @pytest.mark.parametrize('text,expected', [

@@ -144,9 +144,9 @@ def test_declarations_that_cannot_apply_are_refused_with_the_table_reason(tmp_pa
         mid = paused_verified_mission(c)
         for kind in ('claim', 'permission', 'presentation'):
             reply = c.post(f'/api/missions/{mid}/changes', headers=AUTH, json={'kind': kind, 'declared_effects': [kind]})
-            assert reply.status_code == 409 and reply.json()['detail'] == changes.MISSION_CHANGES[kind]['reason']
+            assert reply.status_code == 409 and reply.json()['detail']['detail'] == changes.MISSION_CHANGES[kind]['reason']
         narrow = c.post(f'/api/missions/{mid}/changes', headers=AUTH, json={'kind': 'resume', 'declared_effects': ['analysis']})
-        assert narrow.status_code == 409 and 'also affects claim' in narrow.json()['detail']
+        assert narrow.status_code == 409 and 'also affects claim' in narrow.json()['detail']['detail']
         assert c.get(f'/api/missions/{mid}', headers=AUTH).json()['state']['changes'] == []
         table = c.get('/api/changes', headers=AUTH).json()
         assert table['resume']['applies'] is True and table['claim']['applies'] is False

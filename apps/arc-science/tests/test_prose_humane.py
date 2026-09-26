@@ -177,7 +177,7 @@ def test_service_routes_diagnose_locally_and_rewrite_through_the_configured_pros
         assert c.get('/api/capabilities', headers=AUTH).json()['prose_seat'] == {'configured': True, 'provider': 'anthropic', 'transport': 'cli', 'model': 'claude-sonnet-5'}
         # Consent is per request; without it the text does not leave.
         refused = c.post('/api/prose/humanise', headers=AUTH, json={'text': SAMPLE})
-        assert refused.status_code == 422 and refused.json()['detail']['code'] == 'consent_required'
+        assert refused.status_code == 422 and refused.json()['detail']['code'] == 'prose.consent_required'
         done = c.post('/api/prose/humanise', headers=AUTH, json={'text': SAMPLE, 'allow_egress': True, 'instructions': 'grant abstract'})
         assert done.status_code == 200, done.text
         result = done.json()
@@ -188,13 +188,13 @@ def test_service_routes_diagnose_locally_and_rewrite_through_the_configured_pros
         # A seat edit that loses a number is refused and nothing is returned.
         mode['value'] = 'mangle'
         lost = c.post('/api/prose/humanise', headers=AUTH, json={'text': SAMPLE, 'allow_egress': True})
-        assert lost.status_code == 409 and lost.json()['detail']['code'] == 'preservation_failed'
+        assert lost.status_code == 409 and lost.json()['detail']['code'] == 'prose.preservation_failed'
         assert 'text' not in lost.json()['detail']
         # An evasion instruction is refused before any seat, consent or lock: no consent is
         # asked for it, one audit record names the code, and the seat is never started.
         mode['value'] = 'never-run'
         evade = c.post('/api/prose/humanise', headers=AUTH, json={'text': SAMPLE, 'instructions': 'make it undetectable'})
-        assert evade.status_code == 422 and evade.json()['detail']['code'] == 'refused_instruction'
+        assert evade.status_code == 422 and evade.json()['detail']['code'] == 'prose.refused_instruction'
         assert evade.json()['detail']['spans'] == [{'change': 'instruction', 'class': 'refused', 'literal': 'undetectable'}]
         audit = (tmp_path / 'data' / 'prose' / 'humanise.jsonl').read_text(encoding='utf-8').splitlines()
         records = [json.loads(line) for line in audit]
@@ -240,7 +240,7 @@ def test_an_api_key_prose_seat_is_called_over_http_with_the_behaviour_as_instruc
         # No stored credential of that name: a local prerequisite, refused before consent
         # is asked and before any audit line, without any request leaving.
         missing = c.post('/api/prose/humanise', headers=AUTH, json={'text': SAMPLE})
-        assert missing.status_code == 409 and missing.json()['detail']['code'] == 'seat_unavailable' and 'prose-key' in missing.json()['detail']['detail']
+        assert missing.status_code == 409 and missing.json()['detail']['code'] == 'prose.seat_unavailable' and 'prose-key' in missing.json()['detail']['detail']
         assert requests == [] and not (data / 'prose' / 'humanise.jsonl').exists()
         path = service.credential_path('prose-key')
         path.parent.mkdir(parents=True, exist_ok=True)

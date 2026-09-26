@@ -71,7 +71,8 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
     def commit():
         check_cancel()
         if emit: emit(state)
-    def stop(status,reason):
+    def stop(status,code,reason,**facts):
+        # code is an error_codes.STOP_CODES key; facts are the variable parts of reason.
         op=log('started',operation='stop',role='engine',round=state.round,detail=reason[:300])
         # Every stop states what the evidence supports so far; the scope is derived,
         # never authored, and a resumed mission derives it again at its next stop.
@@ -79,7 +80,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             scope=derive_claim_scope(state)
             change(claim_scope=scope)
             event('claim_scope_derived',', '.join(f'{k}: {v}' for k,v in scope.counts.items()))
-        change(status=status,stop_reason=reason);event('mission_stopped',reason);commit()
+        change(status=status,stop_reason=reason,stop_code=code,stop_facts=facts);event('mission_stopped',reason);commit()
         log('finished',op,outcome=status)
         return state
     def identity(role):
@@ -106,6 +107,8 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                 'tools':runtime_catalog,
                 'remaining':{'rounds':request.max_rounds-state.round,'actions':request.max_actions-state.actions_used},
                 'rule':'All results remain exploratory. Never fabricate evidence. Preserve contradictory assessments.'}
+    def calls_left(phase,needed):
+        return {'phase':phase,'needed':needed,'max_model_calls':request.max_model_calls,'model_calls_used':state.model_calls_used}
     def reserve_calls(number):
         if state.model_calls_used+number>request.max_model_calls: return False
         change(model_calls_used=state.model_calls_used+number);commit()
@@ -116,11 +119,12 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         committed_plan=next((record for record in state.model_records
                              if record.role=='planner' and record.round==state.round),None)
         if state.actions_used>=request.max_actions and committed_plan is None:
-            return stop('budget_exhausted','Action limit reached; untested alternatives remain unresolved.')
+            return stop('budget_exhausted','action_limit','Action limit reached; untested alternatives remain unresolved.',
+                        max_actions=request.max_actions,actions_used=state.actions_used)
         op=None
         try:
             if committed_plan is None:
-                if not reserve_calls(1): return stop('budget_exhausted','Model-call limit reached.')
+                if not reserve_calls(1): return stop('budget_exhausted','call_limit','Model-call limit reached.',**calls_left('plan',1))
                 planning_context=context()
                 op=log('started',operation='plan',role='planner',round=state.round,model_requested=identity('planner'))
                 raw=await asyncio.wait_for(agent.propose(planning_context),timeout=90)
@@ -150,7 +154,8 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             if op:log('finished',op,outcome='error',detail='Planning failed validation or provider execution.')
             # Only the engine's own refusals are quoted; provider and schema errors may carry model text.
             reason=' Rejected: '+str(why)+'.' if isinstance(why,ProposalRejected) else ''
-            return stop('error','Planning failed validation or provider execution. No synthetic fallback was used.'+reason)
+            return stop('error','planning_failed','Planning failed validation or provider execution. No synthetic fallback was used.'+reason,
+                        rejected=isinstance(why,ProposalRejected))
         records=state.model_records
         if committed_plan is None:
             transport=provenance('planner');log('finished',op,outcome='ok',transport=transport)
@@ -160,18 +165,18 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         change(branches=tuple(branches),model_records=records)
         event('plan_committed',plan.reason or 'Bounded exploratory actions proposed.')
         if plan.stop:
-            if not state.observations: return stop('needs_input',plan.reason or 'More evidence or tools are required.')
+            if not state.observations: return stop('needs_input','no_observations',plan.reason or 'More evidence or tools are required.')
             if request.vision_review:
                 reason=required_visual_reason(state.artifacts,state.visual_reports,state.vision_records)
-                if reason:return stop('needs_input',reason)
-            return stop('completed',plan.reason or 'Exploratory planning stopped; human review is still required.')
-        if not plan.actions: return stop('needs_input','No executable actions proposed; additional data or tools are required.')
+                if reason:return stop('needs_input','vision_required',reason,cause='coverage')
+            return stop('completed','plan_stop',plan.reason or 'Exploratory planning stopped; human review is still required.')
+        if not plan.actions: return stop('needs_input','no_actions','No executable actions proposed; additional data or tools are required.')
         actions=[]
         for a in plan.actions:
             prior=next((o for o in state.observations if o.id==a.id),None)
             if prior:
                 if prior.request_digest!=digest([a.model_dump(mode='json'),state.dataset_digest]):
-                    return stop('error','An action ID was reused with different inputs.')
+                    return stop('error','action_reused','An action ID was reused with different inputs.',action_id=a.id)
                 continue
             actions.append(a)
         reserved=max(0,state.actions_used-len(state.observations))
@@ -227,7 +232,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             if len(state.artifacts)+len(created)>64:
                 raise ValueError('Artifact count exceeds the mission limit')
         except Exception:
-            return stop('error','Trusted plot rendering failed validation; no visual success was inferred.')
+            return stop('error','render_failed','Trusted plot rendering failed validation; no visual success was inferred.',phase='render')
         if created:
             change(artifacts=state.artifacts+created)
             for artifact in created:event('artifact_rendered',artifact.digest)
@@ -243,22 +248,24 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                 batch=tuple(artifact for artifact in current_artifacts(state.artifacts) if artifact.round==state.round)
                 if not batch:break
                 if len(batch)>8:
-                    return stop('needs_input','Required visual review exceeds the eight-image review limit.')
+                    return stop('needs_input','vision_required','Required visual review exceeds the eight-image review limit.',
+                                cause='image_limit',images=len(batch),limit=8)
                 batch_digests=tuple(artifact.digest for artifact in batch)
                 prior=next((record for record in state.vision_records
                             if record.round==state.round and record.reviewed_digests==batch_digests),None)
                 if prior is not None:
                     if prior.status!='accepted':
-                        return stop('needs_input','A reserved or rejected visual call cannot be repeated automatically; operator input is required.')
+                        return stop('needs_input','vision_required','A reserved or rejected visual call cannot be repeated automatically; operator input is required.',
+                                    cause='not_repeatable',record_status=prior.status)
                     report=next(r for r in state.visual_reports if r.digest==prior.report_digest)
                 else:
                     vcontext=visual_context(context(reviewing=batch),batch)
                     candidate=vcontext['candidate_digest']
                     vision_model=getattr(agent,'vision_model',None)
                     if not vision_model or not callable(getattr(agent,'review_visual',None)):
-                        return stop('needs_input','Required vision review has no configured vision seat.')
+                        return stop('needs_input','vision_required','Required vision review has no configured vision seat.',cause='no_seat')
                     if state.model_calls_used+1>request.max_model_calls:
-                        return stop('budget_exhausted','Model-call limit reached before required visual review.')
+                        return stop('budget_exhausted','call_limit','Model-call limit reached before required visual review.',**calls_left('visual_review',1))
                     reservation=VisionRecord(candidate_digest=candidate,
                         reviewed_digests=batch_digests,
                         context_digest=digest(vcontext),input_context=vcontext,
@@ -277,7 +284,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                         change(vision_records=state.vision_records[:-1]+(rejected,),
                                repairs=with_outcome(state.repairs,batch_digests,'rejected','The fresh review failed or was unbound; no success inferred.'))
                         event('visual_review_rejected','Missing, failed, malformed or unbound visual review; no success inferred.')
-                        return stop('needs_input','Required visual review failed or lacked exact artifact coverage.')
+                        return stop('needs_input','vision_required','Required visual review failed or lacked exact artifact coverage.',cause='review_failed')
                     log('finished',op,outcome='ok')
                     accepted=reservation.model_copy(update={'status':'accepted','report_digest':report.digest})
                     change(vision_records=state.vision_records[:-1]+(accepted,),
@@ -301,7 +308,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                                    preset=preset,repair_of=a.digest,round=state.round) for a in batch)
                     if len(state.artifacts)+len(repaired)>64:raise ValueError('Artifact count exceeds the mission limit')
                 except Exception:
-                    return stop('error','Trusted plot rendering failed validation during repair; no visual success was inferred.')
+                    return stop('error','render_failed','Trusted plot rendering failed validation during repair; no visual success was inferred.',phase='repair')
                 known={a.digest for a in state.artifacts}
                 if any(a.digest in known for a in repaired):
                     change(repairs=state.repairs+(RepairCycle(**cycle,outcome='blocked',
@@ -312,7 +319,8 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                        repairs=state.repairs+(RepairCycle(**cycle,artifact_digests=tuple(a.digest for a in repaired)),))
                 event('artifact_repaired',f"cycle {cycle['cycle']} ({preset}): "+', '.join(a.digest[:12] for a in repaired))
                 commit()
-        if not reserve_calls(2): return stop('budget_exhausted','Insufficient remaining calls for the independent reconciliation roles.')
+        if not reserve_calls(2): return stop('budget_exhausted','call_limit','Insufficient remaining calls for the independent reconciliation roles.',
+                                            **calls_left('reconcile',2))
         frozen=context()
         async def review(role):
             op=log('started',operation='reconcile',role=role,round=state.round,model_requested=identity(role))
@@ -348,4 +356,4 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             event('focus_changed',f'{state.focus or "unselected"} -> {focus}; exploratory fit error, not scientific confidence.')
             change(focus=focus)
         change(round=state.round+1);commit()
-    return stop('budget_exhausted','Round limit reached; remaining alternatives are unresolved.')
+    return stop('budget_exhausted','round_limit','Round limit reached; remaining alternatives are unresolved.',max_rounds=request.max_rounds)

@@ -101,7 +101,7 @@ def _seat(role,settings,*,credential_stored,credential_source,cli_transport_read
                         'Confirm the custom endpoint under Settings → Advanced, or clear it')
         try:stored=bool(credential_stored(ref))
         except OSError as why:
-            facts['credential_store']='error'
+            facts['credential_store']='error';facts['credential_store_error']=str(why)[:160]
             return node('blocked','seat.credential_store_unavailable',f'The credential store could not be read for {ref}: {str(why)[:160]}',
                         'Retry after the Windows Credential Manager is available to this session (a service started outside your logon cannot read it)')
         facts['credential_stored']=stored
@@ -119,7 +119,7 @@ def _seat(role,settings,*,credential_stored,credential_source,cli_transport_read
         if not info.get('logged_in'):
             return node('blocked','seat.cli_not_signed_in',f'The {provider} CLI reports no login','Sign in inside the CLI, then reload this page')
     accepted=accepted_efforts(provider,transport,model)
-    ok=effort in accepted if accepted else effort==DEFAULT;facts['effort_accepted']=ok
+    ok=effort in accepted if accepted else effort==DEFAULT;facts['effort_accepted']=ok;facts['allowed_efforts']=list(accepted)
     if not ok:
         return node('blocked','seat.effort_not_accepted',f'Effort {effort} is not accepted for {model} over the {provider} {transport} transport',
                     'Choose one of '+', '.join(accepted) if accepted else f'Leave the effort at {DEFAULT}; the provider default applies')
@@ -134,6 +134,7 @@ def _seat(role,settings,*,credential_stored,credential_source,cli_transport_read
                             identity_verified=match.get('identity_verified'),error=match.get('error'))
         if match.get('ok'):
             return node('ready','seat.verified',f'The probe passed for {model} at effort {effort} {where}')
+        facts['probe_error']=str(match.get('error') or 'no detail')[:200]
         return node('failed','seat.probe_failed','The last probe failed: '+str(match.get('error') or 'no detail')[:200],'Fix the cause, then test the seat again in Settings')
     if entry is None:
         verification['status']='not_tested'
@@ -152,15 +153,16 @@ def _seat(role,settings,*,credential_stored,credential_source,cli_transport_read
 def _live(seats,settings):
     needed=['planner']+[r for r in ('reviewer','falsifier') if operator_settings.seat(settings,r)]
     blocking=[r for r in needed if seats[r]['state'] in ('blocked','failed')]
+    facts={'blocking':[{'role':r,'state':seats[r]['state']} for r in blocking]}
     if any(seats[r]['state']=='blocked' for r in needed):
-        return {'state':'blocked','code':'live.blocked','blocking':blocking,'meaning':'A live mission cannot start: '+', '.join(f'{r} is {seats[r]["state"]}' for r in blocking),
+        return {'state':'blocked','code':'live.blocked','blocking':blocking,'facts':facts,'meaning':'A live mission cannot start: '+', '.join(f'{r} is {seats[r]["state"]}' for r in blocking),
                 'next_action':'Resolve each blocking seat above'}
     if blocking:
-        return {'state':'failed','code':'live.failed','blocking':blocking,'meaning':'The last probe failed for: '+', '.join(blocking),
+        return {'state':'failed','code':'live.failed','blocking':blocking,'facts':facts,'meaning':'The last probe failed for: '+', '.join(blocking),
                 'next_action':'Fix the failed seats, then probe again'}
     if all(seats[r]['state']=='ready' for r in needed):
-        return {'state':'ready','code':'live.verified','blocking':[],'meaning':'Every seat a live mission needs passed its probe','next_action':None}
-    return {'state':'not_tested','code':'live.not_tested','blocking':[],'meaning':'The seats are configured; not every one is verified',
+        return {'state':'ready','code':'live.verified','blocking':[],'facts':facts,'meaning':'Every seat a live mission needs passed its probe','next_action':None}
+    return {'state':'not_tested','code':'live.not_tested','blocking':[],'facts':facts,'meaning':'The seats are configured; not every one is verified',
             'next_action':'Test each seat in Settings (spends tokens)'}
 
 
@@ -188,7 +190,7 @@ def _connectors_summary(rows):
     if not eligible:
         return {'state':'blocked','code':'connectors.none_eligible','meaning':'No configured connector is enabled with consent',
                 'next_action':'Enable a connector and give consent in Settings'}
-    return {'state':'not_tested','code':'connectors.eligible','meaning':f'{len(eligible)} of {len(rows)} connectors can be bound by a live mission; none is checked here',
+    return {'state':'not_tested','code':'connectors.eligible','facts':{'eligible':len(eligible),'total':len(rows)},'meaning':f'{len(eligible)} of {len(rows)} connectors can be bound by a live mission; none is checked here',
             'next_action':'Run the connection checks in Diagnostics'}
 
 
@@ -212,7 +214,7 @@ def _memory(raw):
         return {'state':'ready','code':'memory.available','facts':{'protocol':health.get('protocol'),'sqlite':health.get('sqlite'),'capture':capture},
                 'meaning':'The memory worker answers','next_action':None}
     if raw.get('error'):
-        return {'state':'unknown','code':'memory.not_checked','facts':{'capture':capture,'error':raw['error']},
+        return {'state':'unknown','code':'memory.not_checked','facts':{'capture':capture,'error':raw['error'],'memory_error':str(raw['error'])[:200]},
                 'meaning':'The memory worker did not answer: '+str(raw['error'])[:200],'next_action':'Open Memory in Diagnostics to retry'}
     return {'state':'unknown','code':'memory.not_checked','facts':{'capture':capture},
             'meaning':'The memory worker is not running yet; this reading does not start it','next_action':'Open Memory in Diagnostics to start it'}
@@ -260,7 +262,7 @@ def build_readiness(principal,*,settings_snapshot,credential_stored,cli_transpor
                            probes_reader=probes_reader,catalog=catalog,source=source,console_profile=console_profile) for r in ROLES}
     if settings is None:
         for seat in seats.values():seat.update(state='unknown',code='seat.unknown',meaning='Settings are unavailable, so the seat cannot be read',next_action=node['next_action'])
-        live={'state':'unknown','code':'live.unknown','blocking':['planner'],'meaning':'Settings are unavailable, so the seats cannot be read','next_action':node['next_action']}
+        live={'state':'unknown','code':'live.unknown','blocking':['planner'],'facts':{'blocking':[{'role':'planner','state':'unknown'}]},'meaning':'Settings are unavailable, so the seats cannot be read','next_action':node['next_action']}
     else:live=_live(seats,settings)
     mcp=[_connector(e,'mcp') for e in ((settings or {}).get('mcp_servers') or [])]
     acp=[_connector(e,'acp') for e in ((settings or {}).get('acp_agents') or [])]

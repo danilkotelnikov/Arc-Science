@@ -1,7 +1,7 @@
 from __future__ import annotations
 import base64
 import hashlib
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from pydantic import Field, model_validator
 from ..contracts import Record, Versioned, Digest, Identifier, canonical, digest
 
@@ -398,6 +398,7 @@ class ReleaseDecision(Record):
 
 
 class MissionState(Versioned):
+    LATER_FIELDS = ('stop_code', 'stop_facts')
     request_digest: Digest
     status: Literal['ready','running','completed','budget_exhausted','needs_input','error','paused','cancelled'] = 'ready'
     round: int = 0
@@ -421,6 +422,10 @@ class MissionState(Versioned):
     focus: str | None = None
     publication_eligible: Literal[False] = False
     stop_reason: str = ''
+    # Why the mission stopped, as a registered error_codes.STOP_CODES key, and the variable
+    # parts of stop_reason; empty for missions stored before codes existed.
+    stop_code: str = ''
+    stop_facts: dict[str, Any] = {}
     # The persisted release ledger; None until verification or a terminal transition.
     release: ReleaseDecision | None = None
 

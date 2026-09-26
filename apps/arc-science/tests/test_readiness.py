@@ -126,7 +126,7 @@ def test_probe_records_are_matched_to_the_seat_by_subject_digest():
     assert (verified['seats']['planner']['state'], verified['seats']['planner']['code']) == ('ready', 'seat.verified')
     assert verified['seats']['planner']['verification'] == {'status': 'ok', 'checked_at': 1700000000, 'subject_digest': current, 'observed_model': None,
                                                              'identity_verified': False, 'error': None}
-    assert verified['live_mission'] == {'state': 'ready', 'code': 'live.verified', 'blocking': [], 'meaning': verified['live_mission']['meaning'], 'next_action': None}
+    assert verified['live_mission'] == {'state': 'ready', 'code': 'live.verified', 'blocking': [], 'facts': {'blocking': []}, 'meaning': verified['live_mission']['meaning'], 'next_action': None}
     stale = build(doc, cli=lambda p: {**cli(p), 'executable_sha256': 'f' * 64}, probes=lambda p: ok)['seats']['planner']
     assert (stale['state'], stale['code'], stale['verification']['status']) == ('not_tested', 'seat.probe_stale', 'stale')
     other = build(seats(planner={'provider': 'openai', 'model': 'gpt-5.6-terra', 'effort': 'high', 'auth': 'cli'}), cli=cli, probes=lambda p: ok)['seats']['planner']
@@ -368,7 +368,7 @@ def test_api_seats_are_probed_over_http_with_the_official_header_style_and_persi
         assert (blocked['seats']['planner']['code'], blocked['seats']['planner']['facts']['endpoint_confirmed']) == ('seat.endpoint_unconfirmed', False)
         assert blocked['live_mission']['blocking'] == ['planner']
         refused = c.post('/api/providers/openai/probe', headers=AUTH, json={'spend_tokens': True})
-        assert refused.status_code == 409 and refused.json()['detail'] == 'providers.openai.endpoint https://proxy.example is not the official origin; confirm it under Advanced before a credential is sent there'
+        assert refused.status_code == 409 and refused.json()['detail']['detail'] == 'providers.openai.endpoint https://proxy.example is not the official origin; confirm it under Advanced before a credential is sent there'
         assert c.post('/api/missions', headers=AUTH, json={'goal': 'Live route to an unconfirmed endpoint', 'mode': 'live', 'allow_egress': True}).status_code == 409
         assert len(requests) == 2
         doc['providers']['openai']['custom_endpoint_confirmed'] = True

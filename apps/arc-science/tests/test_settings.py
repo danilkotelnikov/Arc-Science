@@ -83,7 +83,7 @@ def test_settings_are_read_from_the_supervisor_and_replaced_with_the_revision_se
         edited['seats']['planner'].update(provider='openai', model='gpt-5.6', effort='high')
         # A stale revision is refused and changes nothing.
         stale = c.put('/api/settings', headers=AUTH, json={'settings': edited, 'if_revision': 'f' * 64})
-        assert stale.status_code == 409 and 'reload' in stale.json()['detail']
+        assert stale.status_code == 409 and 'reload' in stale.json()['detail']['detail']
         assert c.get('/api/settings', headers=AUTH).json()['settings']['seats']['planner']['provider'] == ''
         # The current revision lets the whole document through; the new snapshot comes back.
         written = c.put('/api/settings', headers=AUTH, json={'settings': edited, 'if_revision': snap['revision']})
@@ -93,7 +93,7 @@ def test_settings_are_read_from_the_supervisor_and_replaced_with_the_revision_se
         assert json.loads((stub / 'settings.toml').read_text())['seats']['planner']['effort'] == 'high'
         # The save names what changed and when it applies; nothing needs a restart.
         assert written.json()['changed'] == ['seats.planner'] and written.json()['applied_live'] == ['seats.planner']
-        assert written.json()['effects'] == [{'section': 'seats.planner', 'applies': 'next live mission start',
+        assert written.json()['effects'] == [{'section': 'seats.planner', 'applies': 'next live mission start', 'applies_code': 'mission_start',
                                               'note': 'Missions already bound to a route keep it; a changed route blocks their resume until it is restored.'}]
         edited['viewer']['background'] = 'black'
         viewer = c.put('/api/settings', headers=AUTH, json={'settings': edited, 'if_revision': written.json()['revision']}).json()
@@ -110,7 +110,7 @@ def test_settings_are_read_from_the_supervisor_and_replaced_with_the_revision_se
         # The owner's validation error is the operator's error message.
         edited['seats']['planner']['effort'] = 'turbo'
         rejected = c.put('/api/settings', headers=AUTH, json={'settings': edited, 'if_revision': unchanged['revision']})
-        assert rejected.status_code == 422 and 'effort must be one of' in rejected.json()['detail']
+        assert rejected.status_code == 422 and 'effort must be one of' in rejected.json()['detail']['detail']
 
 
 def test_settings_supervisor_gets_scrubbed_environment(tmp_path, monkeypatch):
@@ -341,7 +341,7 @@ def test_a_live_mission_runs_each_seat_through_its_own_cli_and_binds_the_seat_pl
                                                                         'identity_verified': False, 'applied_effort': 'xhigh'}]
         assert c.post('/api/providers/nope/probe', headers=AUTH, json={'spend_tokens': True}).status_code == 404
         unused = c.post('/api/providers/openclaw/probe', headers=AUTH, json={'spend_tokens': True})
-        assert unused.status_code == 409 and unused.json()['detail'] == 'No seat uses the provider openclaw'
+        assert unused.status_code == 409 and unused.json()['detail']['detail'] == 'No seat uses the provider openclaw'
         # A resume after the seats changed is refused; the routing is part of the consent.
         repo = c.app.state.repository
         current = repo.get(row['id'])
@@ -353,11 +353,11 @@ def test_a_live_mission_runs_each_seat_through_its_own_cli_and_binds_the_seat_pl
         settings.replace(doc, None)
         before = repo.get(row['id'])
         refused = c.post(f"/api/missions/{row['id']}/start", headers=AUTH)
-        assert refused.status_code == 409 and 'connectors changed' in refused.json()['detail']
+        assert refused.status_code == 409 and 'connectors changed' in refused.json()['detail']['detail']
         # A declared change is the other resume path; it is refused the same way, and neither
         # path wrote anything: no resume recorded, revision unchanged.
         declared = c.post(f"/api/missions/{row['id']}/changes", headers=AUTH, json={'kind': 'resume', 'declared_effects': ['analysis', 'claim']})
-        assert declared.status_code == 409 and 'connectors changed' in declared.json()['detail']
+        assert declared.status_code == 409 and 'connectors changed' in declared.json()['detail']['detail']
         after = repo.get(row['id'])
         assert after['revision'] == before['revision'] and after['state']['status'] == 'paused'
         assert len(after['state']['changes']) == len(before['state']['changes'])
@@ -445,7 +445,7 @@ print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 're
         doc['mcp_servers'][0]['consent'] = False
         settings.replace(doc, None)
         refused = c.post(f"/api/missions/{row['id']}/start", headers=AUTH)
-        assert refused.status_code == 409 and 'connectors changed' in refused.json()['detail']
+        assert refused.status_code == 409 and 'connectors changed' in refused.json()['detail']['detail']
 
 
 def test_the_falsifier_seat_reaches_the_agents():

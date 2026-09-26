@@ -116,6 +116,7 @@ class MissionRepository:
         from .models import Event
         cancelled=Event(kind='mission_cancelled',round=old['state']['round'],detail=f'Cancelled by {actor} at {_iso(at)}; late results fenced.')
         state=MissionState.model_validate({**old['state'],'status':'cancelled','stop_reason':'Cancelled by operator; late results fenced.',
+                                           'stop_code':'cancelled','stop_facts':{'actor':actor},
                                            'events':list(old['state']['events'])+[cancelled.model_dump(mode='json')]})
         return self.save(mid,state,expected_revision=old['revision'])
 
@@ -126,7 +127,7 @@ class MissionRepository:
         from .models import Event
         detail=f'Paused by {actor} at {_iso(at)}; resume explicitly.'
         paused=Event(kind='mission_paused',round=old['state']['round'],detail=detail)
-        state=MissionState.model_validate({**old['state'],'status':'paused','stop_reason':detail,
+        state=MissionState.model_validate({**old['state'],'status':'paused','stop_reason':detail,'stop_code':'paused_by_operator','stop_facts':{'actor':actor},
                                            'events':list(old['state']['events'])+[paused.model_dump(mode='json')]})
         return self.save(mid,state,expected_revision=old['revision'])
 
@@ -140,7 +141,7 @@ class MissionRepository:
             if row['state']['status']=='running':
                 from .models import Event
                 interrupted=Event(kind='mission_interrupted',round=row['state']['round'],detail='Service restarted; evidence retained. Resume explicitly.')
-                state=MissionState.model_validate({**row['state'],'status':'paused','stop_reason':interrupted.detail,
+                state=MissionState.model_validate({**row['state'],'status':'paused','stop_reason':interrupted.detail,'stop_code':'interrupted','stop_facts':{},
                                                    'events':list(row['state']['events'])+[interrupted.model_dump(mode='json')]})
                 self.save(mid,state,expected_revision=row['revision']);paused.append(mid)
         return paused

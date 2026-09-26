@@ -60,7 +60,7 @@ def test_finished_missions_keep_their_outcome_when_cancel_is_pressed(tmp_path):
         final=row['state']['status'];reason=row['state']['stop_reason']
         assert final in ('completed','budget_exhausted')
         denied=c.post(f'/api/missions/{mid}/cancel',headers=auth())
-        assert denied.status_code==409 and 'finished' in denied.json()['detail'].lower()
+        assert denied.status_code==409 and 'finished' in denied.json()['detail']['detail'].lower()
         after=c.get(f'/api/missions/{mid}',headers=auth()).json()['state']
         assert (after['status'],after['stop_reason'])==(final,reason)
 
@@ -138,7 +138,7 @@ def test_release_ledger_gates_the_capsule_and_survives_restart(tmp_path):
         assert release['status']=='blocked' and states['replay_integrity']=='unknown' and states['operational_status']=='satisfied'
         assert states['reconciliation']=='satisfied' and states['visual_review']=='not_applicable'
         blocked=c.get(f'/api/missions/{mid}/capsule',headers=auth())
-        assert blocked.status_code==409 and 'replay_integrity:unknown' in blocked.json()['detail']
+        assert blocked.status_code==409 and 'replay_integrity:unknown' in blocked.json()['detail']['detail']
         # Verification persists a receipt and the decision; the export is then allowed.
         verified=c.post(f'/api/missions/{mid}/verify',headers=auth()).json()
         assert verified['release']['status']=='eligible_for_human_review'
@@ -209,7 +209,7 @@ def test_verification_refuses_to_run_beside_an_active_worker(tmp_path):
         repo=c.app.state.repository;row=repo.get(mid)
         repo.save(mid,MissionState.model_validate({**row['state'],'status':'running'}),expected_revision=row['revision'])
         refused=c.post(f'/api/missions/{mid}/verify',headers=auth())
-        assert refused.status_code==409 and 'still running' in refused.json()['detail']
+        assert refused.status_code==409 and 'still running' in refused.json()['detail']['detail']
         assert c.get(f'/api/missions/{mid}/release',headers=auth()).json()['status']=='blocked'
 
 
@@ -269,7 +269,7 @@ def test_png_download_is_gated_by_the_ledger_while_the_inline_preview_is_not(tmp
         assert inline.status_code==200 and inline.headers['Content-Disposition']=='inline'
         refused=c.get(f'/api/missions/{mid}/artifacts/{digest}/download',headers=auth())
         assert refused.status_code==409
-        assert 'Release blocked' in refused.json()['detail'] and 'replay_integrity:unknown' in refused.json()['detail']
+        assert 'Release blocked' in refused.json()['detail']['detail'] and 'replay_integrity:unknown' in refused.json()['detail']['detail']
         assert c.get(f'/api/missions/{mid}/artifacts/{"0"*64}/download',headers=auth()).status_code==404
         assert c.post(f'/api/missions/{mid}/verify',headers=auth()).json()['release']['eligible_for_human_review'] is True
         allowed=c.get(f'/api/missions/{mid}/artifacts/{digest}/download',headers=auth())
