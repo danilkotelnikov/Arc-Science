@@ -71,8 +71,8 @@ def _storage(root,repository,memory_routes):
         pass
     checked=len(ids);capture=memory_routes.capture_status()
     sqlite_word='ok' if all(v=='ok' for v in sqlite.values()) else '; '.join(n+' '+v for n,v in sqlite.items() if v!='ok')
-    meaning=f'{verified} of {checked} missions verified · sqlite {sqlite_word} (missions, grants, timeline) · memory capture {capture.get("status")}'
-    if checked<total:meaning+=f' · newest {MISSION_LIMIT} of {total} checked'
+    meaning=f'{verified} of {checked} missions verified, sqlite {sqlite_word} (missions, grants, timeline), memory capture {capture.get("status")}'
+    if checked<total:meaning+=f', newest {MISSION_LIMIT} of {total} checked'
     if any(v=='missing' for v in sqlite.values()):
         state,code,next_action='blocked','storage.missing','Restore the data directory; a restart creates an empty store in place of a missing file'
     elif any(v!='ok' for v in sqlite.values()):

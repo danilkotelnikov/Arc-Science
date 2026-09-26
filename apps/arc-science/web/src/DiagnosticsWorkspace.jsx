@@ -350,7 +350,7 @@ export default function DiagnosticsWorkspace({token, setToken, active = true, re
             <p>{t('diagnostics.service.failed')}</p>
           </> : health ? <>
             <Facts items={[
-              [t('diagnostics.service.status'), value(words(health.status))],
+              [t('diagnostics.service.status'), value(health.status === 'ready' ? stateLabel('ready', i18n).toLowerCase() : words(health.status))],
               [t('diagnostics.service.deployment'), value(health.deployment)],
               [t('diagnostics.service.host_session'), hostSession.value],
             ]}/>

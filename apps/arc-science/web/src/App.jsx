@@ -1,4 +1,4 @@
-import React, {memo, useCallback, useEffect, useRef, useState} from 'react';
+import React, {memo, useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {Button} from '@heroui/react/button';
 import {Chip} from '@heroui/react/chip';
 import {ComboBox} from '@heroui/react/combo-box';
@@ -19,6 +19,7 @@ import SettingsWorkspace from './SettingsWorkspace';
 import DiagnosticsWorkspace from './DiagnosticsWorkspace';
 import {Brand} from './brand/Brand.jsx';
 import {NATIVE_SESSION, apiFetch} from './http';
+import {localizeReadiness} from './readiness';
 import {useI18n} from './i18n/index.jsx';
 import {GravityIcon} from './theme/gravity-icons.jsx';
 import {applyPalette, readStoredPalette, storePalette} from './theme/applyPalette.js';
@@ -147,7 +148,8 @@ function SessionControl({token, setToken}) {
 }
 
 export default function App() {
-  const {t, locale, setLocale} = useI18n();
+  const i18n = useI18n();
+  const {t, locale, setLocale} = i18n;
   const fromLocation = () => window.location.pathname === '/diagnostics' ? 'diagnostics' : window.history.state?.arcWorkspace || 'research';
   const [workspace, setWorkspace] = useState(fromLocation);
   const [token, setToken] = useState('');
@@ -217,7 +219,9 @@ export default function App() {
   const onPalette = useCallback(id => { storePalette(id); crossFade(() => applyPalette(id), () => setPalette(id)); }, []);
   const onMotion = useCallback(id => { setMotion(applyMotion(id)); storeMotion(id); }, []);
   const appearance = {palette, onPalette, motion, onMotion, locale, setLocale};
-  const shared = {token, setToken, readiness, readinessError, refreshReadiness, onNavigate: navigate};
+  // The service writes readiness in English; every workspace reads it in the chosen language.
+  const shownReadiness = useMemo(() => localizeReadiness(readiness, i18n), [readiness, i18n]);
+  const shared = {token, setToken, readiness: shownReadiness, readinessError, refreshReadiness, onNavigate: navigate};
 
   // React Aria formats numbers and dates in HeroUI fields by its own locale; it follows the toggle.
   return (

@@ -58,7 +58,7 @@ def test_diagnostics_requires_a_session_and_reads_a_fresh_directory(tmp_path, mo
         assert storage['sqlite'] == {'missions.db': 'ok', 'grants.db': 'ok', 'timeline.db': 'ok'}
         assert (storage['state'], storage['code']) == ('ready', 'storage.verified')
         assert storage['missions'] == {'total': 1, 'checked': 1, 'verified': 1, 'broken': [], 'limit': 200}
-        assert storage['meaning'].startswith('1 of 1 missions verified · sqlite ok')
+        assert storage['meaning'].startswith('1 of 1 missions verified, sqlite ok')
         assert storage['memory_capture']['status'] in ('unconfigured', 'degraded', 'ready')
         assert (doc['jobs']['state'], doc['jobs']['code'], doc['jobs']['total'], doc['jobs']['failed']) == ('not_tested', 'jobs.none', 0, [])
         renderer = doc['renderer']

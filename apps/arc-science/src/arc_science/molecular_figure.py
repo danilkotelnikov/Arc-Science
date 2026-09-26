@@ -42,7 +42,7 @@ def compose_complex(scene: dict, output: Path, *, width: int = 1400, panel_backg
     def line(points,color='#7D8991',extra=''):
         svg.append(f'<polyline points="{" ".join(f"{x:.3f},{y:.3f}" for x,y in points)}" fill="none" stroke="{color}" stroke-width="1" {extra}/>')
     selection=scene['selection']; cutoff=scene['contact_definition']['cutoff']
-    text(36,28,f'{Path(scene["source"]["name"]).stem} · Model {selection["model_number"]} · Assembly {selection["assembly"]}',16,color='#59656E')
+    text(36,28,f'{Path(scene["source"]["name"]).stem}, model {selection["model_number"]}, assembly {selection["assembly"]}',16,color='#59656E')
     colors=scene['representation']['colors']
     circle(937,22,6,colors['antibody']); text(952,28,'Antibody '+', '.join(selection['antibody_chains']),16)
     circle(1174,22,6,colors['antigen']); text(1189,28,'Antigen '+', '.join(selection['antigen_chains']),16)
@@ -51,7 +51,7 @@ def compose_complex(scene: dict, output: Path, *, width: int = 1400, panel_backg
     views=json.loads(receipt_path.read_text()).get('views',{}) if receipt_path.exists() else {}
     angle=views.get('rotated',{}).get('rotation_degrees')
     detail_title='Rotated complex' if empty else 'Closest residue pairs'
-    if angle is not None: detail_title+=f' · {angle:g}°'
+    if angle is not None: detail_title+=f', {angle:g}°'
     titles=[('a','Complex',36,78),('b','No contacting residues' if empty else 'Interface',732,78),
             ('c',detail_title,36,559),('d','Geometric contacts',732,559)]
     for letter,title,x,y in titles:
@@ -127,7 +127,7 @@ def compose_complex(scene: dict, output: Path, *, width: int = 1400, panel_backg
     for contact in contacts:
         circle(x0+columns[contact['antigen_residue']]*dx,y0+rows[contact['antibody_residue']]*dy,radius,'#6F93AE',extra='class="contact-dot"')
     if not contacts: text(820,780,'No contacts at the selected cutoff.',20)
-    text(732,1064,f'{len(contacts)} residue pairs · heavy-atom distance ≤ {cutoff:g} Å',15,color='#59656E')
+    text(732,1064,f'{len(contacts)} residue pairs, heavy-atom distance ≤ {cutoff:g} Å',15,color='#59656E')
     svg.append('</svg>')
     (output/'collage.svg').write_text('\n'.join(svg)+'\n',encoding='utf-8')
     _svg_to_png('\n'.join(svg).encode(),output/'collage.png',width)

@@ -345,7 +345,7 @@ def probe_bench():
             completed = _run(['wsl.exe', '-d', 'Ubuntu', '--', 'bash', '-lc', 'cd /home/user && ./linux-x64 status'], PROBE_TIMEOUT)
             status = json.loads(completed.stdout.strip()) if completed.stdout.strip() else {}
             running = bool(status.get('running'))
-            version = ' · v' + str(status['version']) if status.get('version') else ''
+            version = ', v' + str(status['version']) if status.get('version') else ''
             if running:
                 value = {'present': None, 'observed': 'daemon_reachable', 'detail': 'daemon running' + version + '; the package itself was not observed', 'where': 'wsl'}
             elif status:

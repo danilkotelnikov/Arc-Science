@@ -2,7 +2,7 @@ import {renderHook} from '@testing-library/react';
 import React from 'react';
 import {describe, expect, it} from 'vitest';
 import {I18nProvider, useI18n} from './i18n/index.jsx';
-import {GRANT_STATES, STATES, grantLabel, grantState, loginLine, probeLine, releaseWord, seatSummary, stateLabel, stateOf} from './readiness';
+import {GRANT_STATES, STATES, grantLabel, grantState, localizeReadiness, loginLine, probeLine, releaseWord, seatSummary, stateLabel, stateOf} from './readiness';
 
 const NB = ' ';
 const russian = () => renderHook(() => useI18n(), {wrapper: ({children}) => <I18nProvider locale="ru">{children}</I18nProvider>}).result.current;
@@ -54,6 +54,28 @@ describe('readiness vocabulary', () => {
     expect(probeLine({verification: {status: 'stale', checked_at: at}})).toBe(`Last probe ${when}, for an earlier configuration of this seat`);
     for (const seat of [{verification: {status: 'not_tested'}}, {verification: {status: 'not_applicable'}}, {}, null]) expect(probeLine(seat)).toBe('Never probed');
     expect(probeLine(null, russian())).toBe(`Ещё не${NB}проверялось`);
+  });
+
+  it('keeps the service sentences in English and reads them by code in Russian, falling back for an unknown code', () => {
+    const reading = {
+      seats: {
+        planner: {role: 'planner', label: 'Planner', state: 'blocked', code: 'seat.unconfigured', facts: {}, meaning: 'No planner seat is set; a live mission cannot start', next_action: 'Set the provider and model for this seat in Settings'},
+        reviewer: {role: 'reviewer', label: 'Reviewer (QA)', state: 'blocked', code: 'seat.credential_missing', facts: {credential_ref: 'qa-key'}, meaning: 'No credential is stored under the name qa-key', next_action: 'Store it with arc-science credential --name qa-key'},
+        prose: {role: 'prose', label: 'Prose', state: 'unknown', code: 'seat.something_new', facts: {}, meaning: 'A sentence the page does not know', next_action: null},
+      },
+      live_mission: {state: 'blocked', code: 'live.blocked', blocking: ['planner'], meaning: 'A live mission cannot start: planner is blocked', next_action: 'Resolve each blocking seat above'},
+      connectors: {state: 'not_tested', code: 'connectors.eligible', meaning: '1 of 2 connectors can be bound by a live mission; none is checked here', next_action: 'Run the connection checks in Diagnostics', mcp: [], acp: []},
+    };
+    expect(localizeReadiness(reading)).toBe(reading);
+    const ru = localizeReadiness(reading, russian());
+    expect(ru.seats.planner.label).toBe('Планировщик');
+    expect(ru.seats.planner.meaning).toBe(`Модель планировщика не${NB}задана, задание с${NB}подключёнными моделями не${NB}может начаться`);
+    expect(ru.seats.reviewer.next_action).toContain('arc-science credential --name qa-key');
+    expect(ru.seats.prose.meaning).toBe('A sentence the page does not know');
+    expect(ru.seats.prose.next_action).toBeNull();
+    expect(ru.live_mission.meaning).toContain('Планировщик — заблокировано');
+    expect(ru.connectors.meaning).toContain(`1${NB}из${NB}2`);
+    expect(reading.seats.planner.meaning).toBe('No planner seat is set; a live mission cannot start');
   });
 
   it('reports a CLI login as a fact and nothing for an API seat', () => {
