@@ -1,0 +1,38 @@
+/* Faces of the workbench. Kyiv Type Sans sets every word of the interface, Latin and
+   Cyrillic alike; Cascadia Mono sets code and identifiers. The wordmark is outlined
+   artwork (src/brand/logo.js), so MuseoModerno is not loaded here.
+
+   Each family is an alias with metric overrides, so a line of text sits optically centred
+   in a button, chip or input: the middle of the cap height lands on the middle of the
+   content box. With the cap height capH read from the font (OS/2 sCapHeight):
+     descent-override  = 24.9%
+     ascent-override   = capH + 24.9%
+     line-gap-override = 0
+   so the content box is capH + 0.498 em, about 1.2 em, with the caps in its middle.
+   Chromium rounds ascent and descent to whole pixels one by one; 24.9% rounds the 14 px
+   descent down, which keeps the capitals from landing a pixel high. It also keeps
+   descenders and accented capitals inside the box.
+
+   Kyiv Type Sans (Dmytro Rastvortsev, 2019) is free for any use and may not be modified,
+   so the variable TrueType file is loaded exactly as published, from design/fonts.
+   capH 700/1000; the wght axis runs 0 (Thin) to 1000 (Black), Regular is 350. */
+@font-face {
+  font-family: "Arc Kyiv";
+  src: url("../../../../../design/fonts/Kyiv Type Sans/KyivTypeSans-VarGX.ttf") format("truetype");
+  font-weight: 1 1000;
+  font-display: swap;
+  ascent-override: 94.9%;
+  descent-override: 24.9%;
+  line-gap-override: 0%;
+}
+
+/* Cascadia Mono (Windows): capH 1420/2048 = 0.6934, weight axis 200 to 700. */
+@font-face {
+  font-family: "Arc Cascadia";
+  src: local("Cascadia Mono");
+  font-weight: 200 700;
+  font-display: swap;
+  ascent-override: 94.24%;
+  descent-override: 24.9%;
+  line-gap-override: 0%;
+}

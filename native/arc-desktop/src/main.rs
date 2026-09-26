@@ -24,7 +24,7 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::window::{Icon, WindowBuilder};
 use wry::WebViewBuilder;
 
-const SNOGGO: &[u8] = include_bytes!("../assets/snoggo-icon.svg");
+const ICON: &[u8] = include_bytes!("../assets/arc-icon.svg");
 
 /// Shell events delivered to the event loop from WebView callbacks and the
 /// service-start thread.
@@ -512,10 +512,10 @@ fn credential_event_script(
     )
 }
 
-/// Rasterize the Snöggo mark to a `size`×`size` transparent RGBA buffer, cropped to
+/// Rasterize the "as" tile to a `size`×`size` transparent RGBA buffer, cropped to
 /// its bounding box so the mark fills the square with no white (or empty) padding.
 fn render_icon_rgba(size: u32) -> Option<Vec<u8>> {
-    let tree = resvg::usvg::Tree::from_data(SNOGGO, &resvg::usvg::Options::default()).ok()?;
+    let tree = resvg::usvg::Tree::from_data(ICON, &resvg::usvg::Options::default()).ok()?;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)?;
     let bbox = tree.root().abs_bounding_box();
     let scale = (size as f32 / bbox.width()).min(size as f32 / bbox.height());
@@ -526,7 +526,7 @@ fn render_icon_rgba(size: u32) -> Option<Vec<u8>> {
     Some(pixmap.data().to_vec())
 }
 
-fn snoggo_icon() -> Option<Icon> {
+fn window_icon() -> Option<Icon> {
     let size: u32 = 256;
     Icon::from_rgba(render_icon_rgba(size)?, size, size).ok()
 }
@@ -699,7 +699,7 @@ fn run() -> Result<(), String> {
     let mut window = WindowBuilder::new()
         .with_title(&title)
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 860.0));
-    if let Some(icon) = snoggo_icon() {
+    if let Some(icon) = window_icon() {
         window = window.with_window_icon(Some(icon));
     }
     let window = window
@@ -1426,18 +1426,14 @@ mod tests {
             (row_has(0) && row_has(size - 1)) || (col_has(0) && col_has(size - 1)),
             "mark must reach opposite icon edges (no margin)"
         );
-        // The puddles inside the mark are white and opaque, not see-through.
+        // The tile is opaque ink and the letters on it are paper, not see-through.
         let pixel = |x: u32, y: u32| {
             let i = ((y * size + x) * 4) as usize;
             (rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3])
         };
-        for (x, y) in [(40, 35), (32, 32), (70, 95)] {
-            assert_eq!(
-                pixel(x, y),
-                (255, 255, 255, 255),
-                "puddle at ({x},{y}) must be white"
-            );
-        }
-        assert_eq!(pixel(64, 64).3, 255, "the mark itself is opaque");
+        let middle: Vec<_> = (0..size).map(|x| pixel(x, size / 2)).collect();
+        assert!(middle.contains(&(0x11, 0x11, 0x11, 255)), "ink tile");
+        assert!(middle.contains(&(0xF7, 0xF5, 0xEF, 255)), "paper letters");
+        assert_eq!(pixel(4, size / 2).3, 255, "the tile itself is opaque");
     }
 }

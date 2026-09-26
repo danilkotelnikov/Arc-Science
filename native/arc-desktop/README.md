@@ -25,9 +25,9 @@ that is not a file is refused, never silently replaced.
 It does not install Python dependencies or overwrite an existing project configuration.
 
 A Rust desktop host for the existing local Python service and compiled React
-workbench, using a native WebView2 window on Windows and the Snöggo mark (the
-black mark with its inner puddles filled white, transparent outside) as window
-icon, executable icon and workbench header mark. The scientific worker is
+workbench, using a native WebView2 window on Windows and the "as" tile (the
+ink continuous-corner tile with paper letters, transparent outside) as window
+icon and executable icon. The scientific worker is
 deliberately retained; this is not a Rust rewrite of the scientific algorithms.
 
 The shipped executable is `Arc Science.exe`. Cargo cannot name a target with a
@@ -35,7 +35,7 @@ space, so the build produces `arc-science-desktop.exe` and the launcher copies i
 under the product name; `build.rs` embeds `assets/arc-science.ico` and the version
 block with the Windows SDK's `rc.exe` (found on `PATH`, via `ARC_RC_EXE`, or under
 `Windows Kitsin`), so no build crate is needed. Regenerate the icon after
-changing the mark with `python scripts/make-icon.py`.
+changing the logo with `python scripts/build-logo.py` and then `python scripts/make-icon.py`.
 
 ## Build and launch
 
@@ -130,9 +130,8 @@ process it starts; the service reports it in `/health` as `host_session.mode` (`
 otherwise `standalone`), a reused service never receives it, and the workbench derives
 "reused" from an owned service seen without a desktop session.
 This authenticates the trusted WebView, not arbitrary same-origin scripts; keep the
-service CSP and data/consent boundaries intact. See the
-[native session design](../../docs/hoh/2026-09-20-native-session-design.md) and its
-recorded real-window and fallback checks.
+service CSP and data/consent boundaries intact. The native session design and its recorded real-window and fallback checks are in the
+git history (`docs/hoh/2026-09-20-native-session-design.md` at commit f31a498).
 
 Main navigation stays on the configured scheme/IP/port. Same-origin `blob:` object
 URLs remain allowed for workbench downloads; other origins and file/data/script URLs

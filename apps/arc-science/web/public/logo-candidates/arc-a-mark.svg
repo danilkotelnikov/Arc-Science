@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
-  <title id="title">Arc A: open arc with a data point</title>
-  <desc>Open 270-degree arc, round caps, a solid dot in the gap.</desc>
-  <g id="mark" fill="none" stroke="currentColor" stroke-width="96" stroke-linecap="round">
-    <path id="arc" d="M 512 212 A 300 300 0 1 0 812 512"/>
-    <circle id="point" cx="724.1" cy="299.9" r="60" fill="currentColor" stroke="none"/>
-  </g>
-</svg>

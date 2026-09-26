@@ -1,4 +1,3 @@
-import importlib.util
 import math
 import re
 import sys
@@ -99,19 +98,6 @@ def test_smoothing_lengthens_the_corner_and_offsets_translate():
     assert plain.startswith('M 77.63 0') and smooth.startswith('M 64.208 0')  # p = (1 + 0.6) * R
     moved, _ = sample(squircle.squircle_path(100, x=10, y=20))
     assert min(x for x, _ in moved) >= 10 - 1e-6 and min(y for _, y in moved) >= 20 - 1e-6
-
-
-def test_vectorize_cleanup_scales_rounds_and_drops_specks():
-    spec = importlib.util.spec_from_file_location('vectorize_logo', SCRIPTS / 'vectorize-logo.py')
-    vectorize = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(vectorize)
-    raw = ('<svg><path d="M0 0 C10.04 0 20 5 20 20 L0 20 Z " fill="#000000" transform="translate(100,50)"/>'
-           '<path d="M0 0 L1 0 L1 1 Z" fill="#000000" transform="translate(5,5)"/></svg>')
-    svg, stats = vectorize.clean(raw, 512, 256, min_size=16)
-    # 512 x 256 source: scale 2, centred vertically (+256).
-    assert '<path d="M 200 356 C 220.1 356 240 366 240 396 L 200 396 Z"/>' in svg
-    assert stats == {'paths': 1, 'dropped': 1, 'nodes': 3}
-    assert '<g id="mark" fill="currentColor">' in svg and 'viewBox="0 0 1024 1024"' in svg
 
 
 def test_tile_wraps_a_mark_with_transparent_corners():

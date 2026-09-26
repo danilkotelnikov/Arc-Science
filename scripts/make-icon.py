@@ -1,14 +1,14 @@
-"""Build the Windows icon for the desktop from the Snöggo mark.
+"""Build the Windows icon for the desktop from the "as" tile.
 
 Each size is rasterized from the SVG with the repository's own resvg tool (so the
 result matches the window icon the shell renders at run time), then assembled into
-one multi-size .ico with Pillow. Run after changing native/arc-desktop/assets/snoggo-icon.svg:
+one multi-size .ico with Pillow. Run after scripts/build-logo.py rewrites native/arc-desktop/assets/arc-icon.svg:
 
     PYTHONUTF8=1 python scripts/make-icon.py [path/to/arc-svg2png.exe]
 
 Optional flags (the defaults reproduce the command above exactly):
 
-    --source design/logo/arc-a-mark.svg   rasterise another SVG
+    --source path/to/mark.svg             rasterise another SVG (design/logo/as/as-tile-light.svg)
     --tile [COLOR]                        set the source mark in white on a continuous-corner
                                           tile (default #2F5B7A), transparent outside the tile
     --out path/to/icon.ico                write somewhere other than the desktop asset
@@ -27,7 +27,7 @@ from PIL import Image
 from squircle import tile_svg
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / 'native' / 'arc-desktop' / 'assets' / 'snoggo-icon.svg'
+SOURCE = ROOT / 'native' / 'arc-desktop' / 'assets' / 'arc-icon.svg'
 TARGET = ROOT / 'native' / 'arc-desktop' / 'assets' / 'arc-science.ico'
 SIZES = (16, 24, 32, 48, 64, 128, 256)
 
@@ -43,7 +43,7 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description='Rasterise an SVG into a multi-size Windows .ico.')
     parser.add_argument('tool', nargs='?', type=Path,
                         default=ROOT / 'native' / 'arc-svg' / 'target' / 'release' / 'arc-svg2png.exe')
-    parser.add_argument('--source', type=Path, default=SOURCE, help='SVG to rasterise (default: the Snöggo icon)')
+    parser.add_argument('--source', type=Path, default=SOURCE, help='SVG to rasterise (default: the desktop tile)')
     parser.add_argument('--tile', nargs='?', const='#2F5B7A', metavar='COLOR',
                         help='wrap the source mark in a squircle tile of COLOR (default #2F5B7A)')
     parser.add_argument('--out', type=Path, default=TARGET, help='icon to write (default: the desktop asset)')

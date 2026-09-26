@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
-  <title id="title">Arc B: nested arcs with a node</title>
-  <desc>Two concentric upper half arcs over a base node.</desc>
-  <g id="mark" fill="none" stroke="currentColor" stroke-width="84" stroke-linecap="round">
-    <path id="arc-outer" d="M 136 688 A 376 376 0 0 1 888 688"/>
-    <path id="arc-inner" d="M 312 688 A 200 200 0 0 1 712 688"/>
-    <circle id="node" cx="512" cy="688" r="66" fill="currentColor" stroke="none"/>
-  </g>
-</svg>
