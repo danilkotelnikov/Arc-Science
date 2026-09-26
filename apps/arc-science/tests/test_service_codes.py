@@ -138,7 +138,8 @@ def test_every_engine_stop_names_a_registered_stop_code():
         assert isinstance(code, ast.Constant) and code.value in STOP_CODES, f'engine.py:{call.lineno}'
         used.add(code.value)
     assert used == {'plan_stop', 'no_observations', 'vision_required', 'no_actions', 'action_reused', 'planning_failed',
-                    'render_failed', 'call_limit', 'action_limit', 'round_limit'}
+                    'render_failed', 'call_limit', 'action_limit', 'round_limit',
+                    'token_limit', 'cost_limit', 'time_limit', 'budget_unmeasurable'}
 
 
 def run(request, agent=None):

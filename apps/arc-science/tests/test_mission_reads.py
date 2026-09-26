@@ -123,13 +123,16 @@ def test_repository_list_status_and_head_equal_the_full_parse(tmp_path, demo):
     for mid in reversed(ids):
         full = repo.get(mid)
         expected.append({'id': mid, 'goal': full['request']['goal'], 'mode': full['request'].get('mode', 'demo'),
-                         'status': full['state']['status'], 'revision': full['revision']})
+                         'status': full['state']['status'], 'revision': full['revision'],
+                         'round': full['state']['round'], 'max_rounds': full['request']['max_rounds']})
         assert repo.head(mid) == {'revision': full['revision'], 'status': full['state']['status'], 'round': full['state']['round']}
         assert repo.status(mid) == full['state']['status']
-    assert repo.list() == expected
+    listed = repo.list()
+    assert [{k: v for k, v in row.items() if k != 'updated_at'} for row in listed] == expected
+    assert all(isinstance(row['updated_at'], int) for row in listed)
     assert [item['status'] for item in expected] == ['ready', 'cancelled', 'completed']
     assert repo.head(ids[0])['round'] == demo.round > 0
-    assert repo.list(limit=1) == expected[:1]
+    assert repo.list(limit=1) == listed[:1]
 
 
 # --- route states ---

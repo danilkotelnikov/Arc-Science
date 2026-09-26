@@ -242,7 +242,7 @@ class SeatAgent:
     def seat(self,role):return self.seats.get(role,self.seats['reviewer'])
     def model_for(self,role):return self.seat(role).model_for(role)
     def take_provenance(self,role):
-        child=self.seat(role)
+        child=self.vision if role=='vision' else self.seat(role)
         return child.take_provenance(role) if hasattr(child,'take_provenance') else None
     async def propose(self,context):return await self.seats['planner'].propose(context)
     async def assess(self,role,context):return await self.seat(role).assess(role,context)

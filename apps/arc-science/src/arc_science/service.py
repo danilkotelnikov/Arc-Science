@@ -37,6 +37,7 @@ from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, d
 from .exploration.claim_scope import DERIVATION_VERSION as CLAIM_DERIVATION_VERSION, derive_claim_scope
 from .exploration.repository import MissionRepository, MissionFinished, RevisionConflict
 from .exploration.timeline import CURRENT_OP, MissionTimeline
+from .exploration.spend import running_minutes, spent
 from .exploration.capsule import export_capsule, verify_capsule
 from .exploration import release as release_ledger
 from .exploration.evidence import evidence_graph
@@ -956,6 +957,11 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             if os.environ.get('ARC_BIORENDER_READS')=='1':
                 try:biorender_configuration()
                 except Exception:raise api_error(409,'mission.biorender_unconfigured') from None
+            if request.max_cost_usd is not None:
+                # Fail closed: only the Claude Code CLI reports a cost per call.
+                unreported=[role for role,seat in live_seats(request.vision_review).items()
+                            if (seat.provider,seat.transport)!=('anthropic','cli')]
+                if unreported:raise api_error(409,'budget.cost_unreported',facts={'roles':unreported})
         try:
             row=repository.create(request,initialize(request),key=idempotency_key or uuid.uuid4().hex)
             memory_routes.schedule_capture(row['id'],MissionState.model_validate(row['state']))
@@ -980,7 +986,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         # Artifact manifests only: the image bytes are served by the artifact route, and
         # the export and verify paths read full artifacts from the repository.
         row,state=with_release(get(mid))
-        return manifest_view(row,state)
+        return {**manifest_view(row,state),'spent':spent(state,minutes=running_minutes(timeline.rows(mid)))}
 
     @app.get('/api/missions/{mid}/head',dependencies=[Depends(authorized)])
     async def mission_head(mid:str):
@@ -1005,6 +1011,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             # stall mission progress, status polling or cancellation.
             memory_routes.schedule_capture(mid,state)
         def cancelled():return repository.status(mid)=='cancelled'
+        # Minutes run across every start and resume, for the time budget.
+        def clock():return running_minutes(timeline.rows(mid))
         receipts={}   # op -> the receipt row the guard wrote for it; timeline linkage only
         def note(receipt):
             op=CURRENT_OP.get()
@@ -1115,9 +1123,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                         for name,binding in mcp.tools.items():
                             if name in tools:raise ValueError('Connector tool name collides: '+name)
                             tools[name]=guard_tool(binding,connector_destination(server_of[name]),'mcp')
-                        await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools,log=log)
+                        await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools,log=log,clock=clock)
                 else:
-                    await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools,log=log)
+                    await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools,log=log,clock=clock)
         except (MissionCancelled,RevisionConflict):pass
         except asyncio.CancelledError:raise
         except Exception as why:

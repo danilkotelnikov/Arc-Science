@@ -12,6 +12,7 @@ class Point(Record):
     y: float = Field(ge=-1e12, le=1e12)
 
 class MissionRequest(Versioned):
+    LATER_FIELDS = ('max_tokens', 'max_cost_usd', 'max_minutes')
     goal: str = Field(min_length=3, max_length=10000)
     mode: Literal['demo', 'live'] = 'demo'
     seed: int = Field(default=17, ge=0, le=2147483647)
@@ -23,6 +24,10 @@ class MissionRequest(Versioned):
     max_parallel: int = Field(default=3, ge=1, le=8)
     allow_egress: bool = False
     vision_review: bool = False
+    # Spend budgets (contract C2); None is no budget. Enforced before each model step.
+    max_tokens: int | None = Field(default=None, ge=1000, le=5_000_000)
+    max_cost_usd: float | None = Field(default=None, ge=0.01, le=500)
+    max_minutes: int | None = Field(default=None, ge=1, le=1440)
 
     @model_validator(mode='after')
     def egress_consent(self):
@@ -224,6 +229,7 @@ class VisualReport(VisualReply):
 
 
 class VisionRecord(Versioned):
+    LATER_FIELDS = ('transport',)
     candidate_digest: Digest
     reviewed_digests: tuple[Digest, ...] = Field(min_length=1, max_length=8)
     context_digest: Digest
@@ -233,6 +239,8 @@ class VisionRecord(Versioned):
     model: Identifier
     status: Literal['reserved', 'accepted', 'rejected']
     report_digest: Digest | None = None
+    # Per-call transport provenance (usage above all) of an accepted review.
+    transport: dict | None = None
 
     @model_validator(mode='after')
     def valid_status(self):

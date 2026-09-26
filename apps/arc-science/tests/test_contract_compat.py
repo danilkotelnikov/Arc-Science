@@ -47,7 +47,7 @@ def legacy_store(root: Path):
     MissionRepository(root / 'missions.db')
     with sqlite3.connect(root / 'missions.db') as db:
         for name, vector in VECTORS.items():
-            db.execute('INSERT INTO missions VALUES(?,?,?,?,?,?)',
+            db.execute('INSERT INTO missions(id,request,request_digest,state,revision,creation_key) VALUES(?,?,?,?,?,?)',
                        (vector['id'], raw(name, 'request'), vector['request_digest'], raw(name, 'state'),
                         vector['revision'], 'legacy-' + name))
             db.executemany('INSERT INTO mission_events VALUES(?,?,?,?,?)',

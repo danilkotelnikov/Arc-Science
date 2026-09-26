@@ -10,10 +10,32 @@ class Agent(Protocol):
 # stated side of the threshold. Fixed by this script, never tuned to the data.
 FIT_ERROR = {'tool':'polynomial_fit','metric':'validation_mse','threshold':.02,'direction':'above'}
 
+def estimate(role, context, payload):
+    """Fixture provenance: usage estimated from text length (about four characters a token)
+    so budgets work offline, flagged as an estimate; a fixture costs nothing."""
+    from ..contracts import canonical
+    return {'transport': 'fixture', 'role': role, 'outcome': 'ok', 'estimated': True, 'usage_source': 'fixture_estimate',
+            'usage': {'input_tokens': len(canonical(context)) // 4, 'output_tokens': len(canonical(payload)) // 4},
+            'cost_usd': 0.0}
+
+
 class DemoAgent:
     model = 'scripted-fixture-v1'
 
+    def take_provenance(self, role):
+        # Handed over once per call. A scripted subclass that overrides a call without the
+        # base method leaves nothing measured, and its record says so instead of guessing.
+        found = self.__dict__.get('_usage', {}).pop(role, None)
+        return found or {'transport': 'fixture', 'role': role, 'outcome': 'ok', 'usage': None}
+
+    def _estimate(self, role, context, payload):
+        self.__dict__.setdefault('_usage', {})[role] = estimate(role, context, payload)
+        return payload
+
     async def propose(self, context):
+        return self._estimate('planner', context, self._plan(context))
+
+    def _plan(self, context):
         if context['round']==0:
             return {'branches':[{'id':'linear','title':'Linear response','hypothesis':'A linear curve adequately describes the fixture.',
                     'falsifier':'Residual structure or substantially worse exploratory validation error than an alternative.','parents':[],
@@ -35,6 +57,9 @@ class DemoAgent:
                 'reason':'Exploratory fixture comparison completed. No biological or confirmatory claim is authorized.'}
 
     async def assess(self, role, context):
+        return self._estimate(role, context, self._assess(role, context))
+
+    def _assess(self, role, context):
         out=[]
         for o in context['observations']:
             if o['status']!='ok':
@@ -69,8 +94,10 @@ class DemoVisionAgent(DemoAgent):
             VisualFinding(artifact_digest=artifact.digest, severity='minor', category='legibility',
                           detail='Scripted fixture verdict: the default preset is flagged so that one presentation repair cycle runs.')
             for artifact in artifacts)
-        return VisualReport(candidate_digest=context['candidate_digest'],
-                            reviewed_digests=tuple(artifact.digest for artifact in artifacts),
-                            verdict='adequate' if repaired else 'issues', findings=findings,
-                            model=self.vision_model, round=context['round'], prompt_version=VISUAL_PROMPT_VERSION,
-                            context_digest=digest(context), input_context=context)
+        report = VisualReport(candidate_digest=context['candidate_digest'],
+                              reviewed_digests=tuple(artifact.digest for artifact in artifacts),
+                              verdict='adequate' if repaired else 'issues', findings=findings,
+                              model=self.vision_model, round=context['round'], prompt_version=VISUAL_PROMPT_VERSION,
+                              context_digest=digest(context), input_context=context)
+        self._estimate('vision', context, report.manifest())
+        return report

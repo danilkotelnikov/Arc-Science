@@ -30,6 +30,9 @@ class MissionRepository:
                 CREATE TABLE IF NOT EXISTS mission_events (
                     mission TEXT NOT NULL, revision INTEGER NOT NULL, state_digest TEXT NOT NULL,
                     previous TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY(mission,revision));''')
+            # When the row last changed, in epoch milliseconds; NULL for rows stored before it existed.
+            if 'updated_at' not in [c[1] for c in db.execute('PRAGMA table_info(missions)')]:
+                db.execute('ALTER TABLE missions ADD COLUMN updated_at INTEGER')
 
     @contextmanager
     def _connect(self):
@@ -56,7 +59,8 @@ class MissionRepository:
                 if old[2]!=rid:raise RevisionConflict('Creation key already used for a different request')
                 db.commit();return self._row(old)
             mid=uuid.uuid4().hex
-            db.execute('INSERT INTO missions VALUES(?,?,?,?,?,?)',(mid,q,rid,encoded,0,key))
+            db.execute('INSERT INTO missions(id,request,request_digest,state,revision,creation_key,updated_at) VALUES(?,?,?,?,?,?,?)',
+                       (mid,q,rid,encoded,0,key,int(time.time()*1000)))
             sha=digest([mid,0,digest(state),'0'*64])
             db.execute('INSERT INTO mission_events VALUES(?,?,?,?,?)',(mid,0,digest(state),'0'*64,sha))
             db.commit()
@@ -68,9 +72,11 @@ class MissionRepository:
     def list(self,limit=100):
         # json_extract reads the fields inside SQLite; the state is never parsed in Python.
         with self._connect() as db:
-            rows=db.execute("SELECT id,json_extract(request,'$.goal'),json_extract(request,'$.mode'),json_extract(state,'$.status'),revision "
+            rows=db.execute("SELECT id,json_extract(request,'$.goal'),json_extract(request,'$.mode'),json_extract(state,'$.status'),revision,"
+                            "json_extract(state,'$.round'),json_extract(request,'$.max_rounds'),updated_at "
                             'FROM missions ORDER BY rowid DESC LIMIT ?',(limit,)).fetchall()
-        return [{'id':i,'goal':g,'mode':'demo' if m is None else m,'status':s,'revision':r} for i,g,m,s,r in rows]
+        return [{'id':i,'goal':g,'mode':'demo' if m is None else m,'status':s,'revision':r,'round':n,'max_rounds':x,'updated_at':u}
+                for i,g,m,s,r,n,x,u in rows]
 
     def head(self,mid):
         """Revision, status and round without parsing the state in Python: the cheap poll."""
@@ -102,7 +108,7 @@ class MissionRepository:
             if state.request_digest!=old['request_digest']:raise RevisionConflict('Mission contract changed')
             previous=db.execute('SELECT hash FROM mission_events WHERE mission=? ORDER BY revision DESC LIMIT 1',(mid,)).fetchone()[0]
             rev=expected_revision+1;sha=digest([mid,rev,digest(state),previous])
-            db.execute('UPDATE missions SET state=?,revision=? WHERE id=?',(encoded,rev,mid))
+            db.execute('UPDATE missions SET state=?,revision=?,updated_at=? WHERE id=?',(encoded,rev,int(time.time()*1000),mid))
             db.execute('INSERT INTO mission_events VALUES(?,?,?,?,?)',(mid,rev,digest(state),previous,sha))
             db.commit()
         return self.get(mid)

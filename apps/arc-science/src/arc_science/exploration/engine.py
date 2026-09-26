@@ -6,6 +6,7 @@ call, so external metered or mutating services must not be inserted unmediated.
 """
 from __future__ import annotations
 import asyncio
+import time
 from .models import (MissionRequest, MissionState, Branch, Proposal, Reconciliation,
                      Observation, Assessed, Event, ModelRecord, VisionRecord, RepairCycle, VisualReport)
 from .tools import synthetic_data, execute_numeric, CATALOG, TOOL_VERSION
@@ -16,6 +17,7 @@ from .vision import VISUAL_PROMPT_VERSION, current_artifacts, required_visual_re
 from .catalog import (BIORENDER_CATALOG, BUILTIN_CATALOG, PUBLIC_CATALOG, TrustedPublicTools,
                       trusted_replay, trusted_version, validate_arguments, validate_catalog)
 from .evidence import validate_evidence
+from .spend import reports_usage, spent
 from ..contracts import digest
 
 # The vision_required cause of each reason required_visual_reason can return: a review that
@@ -40,10 +42,14 @@ def initialize(request: MissionRequest) -> MissionState:
     return MissionState(request_digest=digest(request), data_origin=origin, points=points,
                         dataset_digest=digest([p.model_dump(mode='json') for p in points]))
 
-async def explore(request: MissionRequest, agent, *, initial=None, emit=None, cancelled=None, extra_tools=None, log=None):
+async def explore(request: MissionRequest, agent, *, initial=None, emit=None, cancelled=None, extra_tools=None, log=None, clock=None):
+    # clock() -> minutes the mission has run, across resumes; the service reads it from the
+    # timeline. Without one, only this run is timed.
     # log('started', operation=..., ...) -> op and log('finished', op, outcome=..., ...) write the
     # operational timeline; the engine's state, reservations and commit order do not depend on it.
     log=log or (lambda phase,op=None,**fields:None)
+    began=time.monotonic()
+    clock=clock or (lambda:(time.monotonic()-began)/60)
     state=initial or initialize(request)
     if getattr(agent,'requires_egress',False) and not request.allow_egress:
         raise ValueError('Live model agents require explicit mission egress consent')
@@ -123,6 +129,34 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         if state.model_calls_used+number>request.max_model_calls: return False
         change(model_calls_used=state.model_calls_used+number);commit()
         return True
+    def over_budget():
+        # ponytail: checked before each model step (one planner call, two concurrent reviewer
+        # calls or one vision call), so a budget is overshot by at most one step's usage;
+        # reserve worst-case tokens per step if exact caps matter.
+        if request.max_tokens is None and request.max_cost_usd is None and request.max_minutes is None:return None
+        used=spent(state)
+        measured=sum(1 for r in state.model_records+state.vision_records if r.transport and reports_usage(r.transport.get('usage')))
+        if request.max_tokens is not None:
+            if not used['measured']:
+                return stop('needs_input','budget_unmeasurable','A model call reported no token usage, so the token budget cannot be enforced.',
+                            kind='tokens',limit=request.max_tokens,calls=used['calls'],measured_calls=measured)
+            tokens=used['input_tokens']+used['output_tokens']
+            if tokens>=request.max_tokens:
+                return stop('budget_exhausted','token_limit','Token budget reached; remaining alternatives are unresolved.',
+                            kind='tokens',spent=tokens,limit=request.max_tokens)
+        if request.max_cost_usd is not None:
+            if used['cost_usd'] is None:
+                return stop('needs_input','budget_unmeasurable','A model call reported no cost, so the cost budget cannot be enforced.',
+                            kind='cost_usd',limit=request.max_cost_usd,calls=used['calls'],measured_calls=measured)
+            if used['cost_usd']>=request.max_cost_usd:
+                return stop('budget_exhausted','cost_limit','Cost budget reached; remaining alternatives are unresolved.',
+                            kind='cost_usd',spent=used['cost_usd'],limit=request.max_cost_usd)
+        if request.max_minutes is not None:
+            minutes=clock()
+            if minutes>=request.max_minutes:
+                return stop('budget_exhausted','time_limit','Time budget reached; remaining alternatives are unresolved.',
+                            kind='minutes',spent=round(minutes,3),limit=request.max_minutes)
+        return None
     # A start or resume clears the previous stop's code; the next stop records its own.
     change(status='running',stop_code='',stop_facts={});commit()
     while state.round < request.max_rounds:
@@ -132,6 +166,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         if state.actions_used>=request.max_actions and committed_plan is None:
             return stop('budget_exhausted','action_limit','Action limit reached; untested alternatives remain unresolved.',
                         max_actions=request.max_actions,actions_used=state.actions_used)
+        if over_budget() is not None:return state
         op=None
         try:
             if committed_plan is None:
@@ -277,6 +312,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                         return stop('needs_input','vision_required','Required vision review has no configured vision seat.',cause='no_seat')
                     if state.model_calls_used+1>request.max_model_calls:
                         return stop('budget_exhausted','call_limit','Model-call limit reached before required visual review.',**calls_left('visual_review',1))
+                    if over_budget() is not None:return state
                     reservation=VisionRecord(candidate_digest=candidate,
                         reviewed_digests=batch_digests,
                         context_digest=digest(vcontext),input_context=vcontext,
@@ -289,6 +325,8 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                         report=VisualReport.model_validate(await asyncio.wait_for(
                             agent.review_visual(vcontext,batch),timeout=90))
                         validate_report(report,vcontext,batch,vision_model)
+                        # The call's usage is bound to its record; a live transport without one fails closed.
+                        vtransport=provenance('vision')
                     except Exception:
                         log('finished',op,outcome='error',detail='Missing, failed, malformed or unbound visual review.')
                         rejected=reservation.model_copy(update={'status':'rejected'})
@@ -297,7 +335,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                         event('visual_review_rejected','Missing, failed, malformed or unbound visual review; no success inferred.')
                         return stop('needs_input','vision_required','Required visual review failed or lacked exact artifact coverage.',cause='review_failed')
                     log('finished',op,outcome='ok')
-                    accepted=reservation.model_copy(update={'status':'accepted','report_digest':report.digest})
+                    accepted=reservation.model_copy(update={'status':'accepted','report_digest':report.digest,'transport':vtransport})
                     change(vision_records=state.vision_records[:-1]+(accepted,),
                            visual_reports=state.visual_reports+(report,),
                            repairs=with_outcome(state.repairs,batch_digests,report.verdict))
@@ -330,6 +368,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                        repairs=state.repairs+(RepairCycle(**cycle,artifact_digests=tuple(a.digest for a in repaired)),))
                 event('artifact_repaired',f"cycle {cycle['cycle']} ({preset}): "+', '.join(a.digest[:12] for a in repaired))
                 commit()
+        if over_budget() is not None:return state
         if not reserve_calls(2): return stop('budget_exhausted','call_limit','Insufficient remaining calls for the independent reconciliation roles.',
                                             **calls_left('reconcile',2))
         frozen=context()
