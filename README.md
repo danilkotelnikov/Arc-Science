@@ -41,6 +41,10 @@ renderer), NIH BioArt import, session memory and a prose check.
 | **Settings** | Model seats and credentials, connections, connectors, appearance and language. |
 | **Diagnostics** | Readiness of every seat and of the service, with the reasons. |
 
+A mission's claims, each narrowed to what its evidence supports:
+
+![Claim scope of a finished mission](docs/images/claims-en.png)
+
 Details of each workspace are in the [guide](docs/guide.md).
 
 ## Install and run (Windows)
@@ -108,8 +112,10 @@ generated from geometry by `scripts/build-logo.py` and `scripts/make-icon.py`
 ## Design
 
 Blockprint: ink outlines, square corners and one offset shadow for the primary action of a
-view, on eight switchable palettes. Text is set in Kyiv Type Sans; the wordmark is
+view, on eight switchable palettes (Dark academy below). Text is set in Kyiv Type Sans; the wordmark is
 MuseoModerno Black. Components come from HeroUI v3, icons from Gravity UI.
+
+![The workbench on the Dark academy palette](docs/images/research-dark.png)
 
 ## License
 
