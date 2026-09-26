@@ -16,7 +16,8 @@ import httpx
 import json
 from pydantic import BaseModel, Field
 from fastapi import Body, FastAPI, Depends, Header, Response
-from fastapi.responses import FileResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .contracts import digest
@@ -700,13 +701,20 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     @app.middleware('http')
     async def security_headers(request,call_next):
         if request.headers.get('content-length','0').isdigit() and int(request.headers.get('content-length','0'))>1024*1024:
-            return Response(status_code=413)
+            return JSONResponse({'detail':api_error(413,'request.too_large',facts={'limit_bytes':1024*1024}).detail},status_code=413)
         response=await call_next(request)
         response.headers['X-Content-Type-Options']='nosniff'
         response.headers['Referrer-Policy']='no-referrer'
         response.headers['Cache-Control']='no-store'
         response.headers.setdefault('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
         return response
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request,why):
+        # A body or query that fails validation is refused before any route runs; the
+        # facts name each failing field and never echo its value.
+        errors=[{'loc':list(e.get('loc',())),'type':e.get('type',''),'msg':e.get('msg','')} for e in why.errors()]
+        return JSONResponse({'detail':api_error(422,'request.invalid',facts={'errors':errors}).detail},status_code=422)
 
     def get(mid):
         try:return repository.get(mid)
@@ -1115,7 +1123,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         except Exception as why:
             fresh=repository.get(mid)
             if fresh['state']['status']!='cancelled':
-                error=MissionState.model_validate({**fresh['state'],'status':'error','stop_reason':'Service execution failed; inspect configuration. No success inferred.'})
+                error=MissionState.model_validate({**fresh['state'],'status':'error','stop_reason':'Service execution failed; inspect configuration. No success inferred.',
+                                                  'stop_code':'service_failed','stop_facts':{}})
                 with suppress(RevisionConflict):repository.save(mid,error,expected_revision=fresh['revision'])
                 timeline.record(mid,operation='stop',role='service',source='worker',round=fresh['state']['round'],outcome='error',
                                 detail=redact(str(why))[:300] or 'Service execution failed')

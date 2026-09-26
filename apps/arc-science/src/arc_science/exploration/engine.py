@@ -18,6 +18,16 @@ from .catalog import (BIORENDER_CATALOG, BUILTIN_CATALOG, PUBLIC_CATALOG, Truste
 from .evidence import validate_evidence
 from ..contracts import digest
 
+# The vision_required cause of each reason required_visual_reason can return: a review that
+# found problems is recorded as such, never as a coverage gap.
+VISUAL_CAUSES = {
+    'Required visual review has no generated fit artifacts to inspect.': 'no_artifacts',
+    'Required visual review contains blocking findings; human input is required.': 'blocking_findings',
+    'Required visual review reported issues or uncertainty; human input is required.': 'not_adequate',
+    'Required visual review is missing exact coverage for one or more generated artifacts.': 'coverage',
+    'Required visual review did not return an accepted artifact-bound report.': 'record_not_accepted',
+}
+
 class MissionCancelled(RuntimeError): pass
 
 class ProposalRejected(ValueError):
@@ -113,7 +123,8 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         if state.model_calls_used+number>request.max_model_calls: return False
         change(model_calls_used=state.model_calls_used+number);commit()
         return True
-    change(status='running');commit()
+    # A start or resume clears the previous stop's code; the next stop records its own.
+    change(status='running',stop_code='',stop_facts={});commit()
     while state.round < request.max_rounds:
         check_cancel()
         committed_plan=next((record for record in state.model_records
@@ -168,7 +179,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             if not state.observations: return stop('needs_input','no_observations',plan.reason or 'More evidence or tools are required.')
             if request.vision_review:
                 reason=required_visual_reason(state.artifacts,state.visual_reports,state.vision_records)
-                if reason:return stop('needs_input','vision_required',reason,cause='coverage')
+                if reason:return stop('needs_input','vision_required',reason,cause=VISUAL_CAUSES.get(reason,'incomplete'))
             return stop('completed','plan_stop',plan.reason or 'Exploratory planning stopped; human review is still required.')
         if not plan.actions: return stop('needs_input','no_actions','No executable actions proposed; additional data or tools are required.')
         actions=[]

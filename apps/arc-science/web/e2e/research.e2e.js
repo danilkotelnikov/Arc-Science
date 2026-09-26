@@ -120,7 +120,9 @@ test('the release ledger withholds the capsule until the mission is verified', a
   const missionId = await selectedMissionId(page);
   const refused = await request.get(`/api/missions/${missionId}/capsule`, {headers: {Authorization: `Bearer ${E2E_TOKEN}`}});
   expect(refused.status()).toBe(409);
-  expect((await refused.json()).detail).toContain('replay_integrity:unknown');
+  const blocked = (await refused.json()).detail;
+  expect(blocked.code).toBe('release.blocked');
+  expect(blocked.detail).toContain('replay_integrity:unknown');
   await results.getByRole('button', {name: 'Replay and verify'}).click();
   await expect(ledger).toContainText('Release decision: Eligible for human review');
   await expect(results.getByRole('button', {name: 'Export replay archive (.zip)'})).toBeEnabled();

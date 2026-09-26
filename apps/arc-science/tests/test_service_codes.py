@@ -286,3 +286,69 @@ def test_a_ledger_from_before_reason_codes_gains_the_column(tmp_path):
     assert sorted(r['reason_code'] for r in reopened.receipts(mission_id='m')) == ['', 'call.failed']
     with sqlite3.connect(path) as db, pytest.raises(sqlite3.DatabaseError, match='append-only'):
         db.execute("UPDATE receipts SET reason='x'")
+
+
+# --- every stop path records a current code; malformed requests are coded too ---
+
+def test_the_worker_failure_records_its_own_code_over_a_stale_one(tmp_path, monkeypatch):
+    async def failing(request, agent, *, initial, emit, **_):
+        # A code an earlier pause left behind, then a failure outside the engine's stops.
+        emit(initial.model_copy(update={'status': 'running', 'stop_code': 'paused_by_operator', 'stop_facts': {'actor': 'operator:x'}}))
+        raise ValueError('Connector tool name collides: x')
+    monkeypatch.setattr(service, 'explore', failing)
+    with TestClient(service.create_app(data_dir=tmp_path, token=TOKEN)) as c:
+        mid = c.post('/api/missions', headers=AUTH, json={'goal': 'Worker failure', 'max_rounds': 1}).json()['id']
+        assert c.post(f'/api/missions/{mid}/start', headers=AUTH).status_code == 202
+        state = finished(c, mid)['state']
+    assert state['status'] == 'error' and state['stop_reason'].startswith('Service execution failed')
+    # Empty facts are a later field at its default, so the stored state omits them.
+    assert (state['stop_code'], state.get('stop_facts', {})) == ('service_failed', {})
+    assert 'service_failed' in STOP_CODES
+
+
+def test_starting_or_resuming_clears_the_previous_stop_code():
+    from arc_science.exploration.engine import initialize
+    request = MissionRequest(goal='Resume clears the code', max_rounds=1)
+    stale = initialize(request).model_copy(update={'stop_code': 'paused_by_operator', 'stop_facts': {'actor': 'operator:x'}})
+    seen = []
+    asyncio.run(explore(request, DemoAgent(), initial=stale, emit=seen.append))
+    assert (seen[0].status, seen[0].stop_code, seen[0].stop_facts) == ('running', '', {})
+
+
+def test_every_visual_gate_reason_has_its_own_cause():
+    from arc_science.exploration import engine, vision
+    tree = ast.parse(Path(vision.__file__).read_text(encoding='utf-8'))
+    gate = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'required_visual_reason')
+    reasons = {n.value.value for n in ast.walk(gate) if isinstance(n, ast.Return) and isinstance(n.value, ast.Constant) and n.value.value}
+    assert len(reasons) == 5 and set(engine.VISUAL_CAUSES) == reasons
+    assert set(engine.VISUAL_CAUSES.values()) == {'no_artifacts', 'blocking_findings', 'not_adequate', 'coverage', 'record_not_accepted'}
+    assert 'found problems' in STOP_CODES['vision_required']
+
+
+def test_a_blocking_visual_finding_is_not_recorded_as_a_coverage_gap():
+    from arc_science.contracts import digest
+    from arc_science.exploration.agents import DemoVisionAgent
+    from arc_science.exploration.models import VisualFinding, VisualReport
+    from arc_science.exploration.vision import VISUAL_PROMPT_VERSION
+
+    class Blocking(DemoVisionAgent):
+        async def review_visual(self, context, artifacts):
+            return VisualReport(candidate_digest=context['candidate_digest'], reviewed_digests=tuple(a.digest for a in artifacts),
+                                verdict='issues', model=self.vision_model, round=context['round'], prompt_version=VISUAL_PROMPT_VERSION,
+                                findings=tuple(VisualFinding(artifact_digest=a.digest, severity='blocking', category='axes',
+                                                             detail='Axes are illegible.') for a in artifacts),
+                                context_digest=digest(context), input_context=context)
+    state = run(MissionRequest(goal='Blocking review', vision_review=True), Blocking())
+    assert state.stop_code == 'vision_required', (state.stop_code, state.stop_reason)
+    assert state.stop_facts == {'cause': 'blocking_findings'}, state.stop_reason
+
+
+def test_a_malformed_or_oversized_request_is_refused_with_a_code(tmp_path):
+    with TestClient(service.create_app(data_dir=tmp_path, token=TOKEN)) as c:
+        bad = c.post('/api/missions', headers=AUTH, json={'goal': 'x'})
+        assert bad.status_code == 422
+        detail = bad.json()['detail']
+        assert detail['code'] == 'request.invalid' and detail['detail'] == ERROR_CODES['request.invalid']
+        assert detail['facts']['errors'][0]['loc'] == ['body', 'goal'] and detail['facts']['errors'][0]['type'] == 'string_too_short'
+        big = c.post('/api/missions', headers={**AUTH, 'Content-Type': 'application/json'}, content=b'{"goal":"' + b'a' * (1024 * 1024) + b'"}')
+        assert big.status_code == 413 and big.json()['detail']['code'] == 'request.too_large'

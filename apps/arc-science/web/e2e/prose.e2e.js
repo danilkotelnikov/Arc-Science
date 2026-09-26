@@ -45,7 +45,7 @@ test('detection is refused without consent and the workspace names the recipient
   // The service itself refuses a request that lacks consent; nothing is audited or sent.
   const refused = await request.post('/api/prose/detect', {headers: {Authorization: `Bearer ${E2E_TOKEN}`}, data: {text: TEXT}});
   expect(refused.status()).toBe(422);
-  expect((await refused.json()).detail.code).toBe('consent_required');
+  expect((await refused.json()).detail.code).toBe('prose.consent_required');
   const rules = await (await request.get('/api/prose/rules', {headers: {Authorization: `Bearer ${E2E_TOKEN}`}})).json();
   expect(rules.detection.recipient).toBe('api.edgeshop.ai');
   expect(rules.rewrite.egress).toBe(false);

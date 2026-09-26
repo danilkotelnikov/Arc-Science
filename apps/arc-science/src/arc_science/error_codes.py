@@ -3,7 +3,7 @@
 An HTTP refusal is {code, detail, facts}: `code` is '<area>.<reason>' from ERROR_CODES,
 `detail` the English sentence (the registry's, or a more specific one from the route) and
 `facts` the variable parts a page needs to say it in another language. STOP_CODES names
-why a mission stopped; the engine and the repository record one in state.stop_code with
+why a mission stopped; the engine, the repository and the service worker record one in state.stop_code with
 its facts beside the English stop_reason."""
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from fastapi import HTTPException
 
 ERROR_CODES = {
     'auth.required': 'Authentication required',
+    'request.invalid': 'The request does not match the expected fields',
+    'request.too_large': 'The request body is larger than 1 MiB',
     # Prose control: one code per ProseRefused reason, plus the seat prerequisites.
     'prose.audit_key': 'The prose audit key is not available',
     'prose.bounds': 'The text is outside the accepted bounds',
@@ -71,7 +73,7 @@ ERROR_CODES = {
 STOP_CODES = {
     'plan_stop': 'The planner stopped the exploration',
     'no_observations': 'The planner stopped before any observation',
-    'vision_required': 'Required visual review is missing, failed or not possible',
+    'vision_required': 'Required visual review is missing, failed, not possible or found problems',
     'no_actions': 'The planner proposed no executable action',
     'action_reused': 'An action ID was reused with different inputs',
     'planning_failed': 'Planning failed validation or provider execution',
@@ -82,6 +84,7 @@ STOP_CODES = {
     'paused_by_operator': 'Paused by the operator',
     'cancelled': 'Cancelled by the operator',
     'interrupted': 'The service restarted while the mission ran',
+    'service_failed': 'Service execution failed outside the engine; no success is inferred',
 }
 
 
