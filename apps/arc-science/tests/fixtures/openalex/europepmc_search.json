@@ -1,0 +1,5 @@
+{"version": "6.9", "hitCount": 3, "request": {"queryString": "retraction fixture", "resultType": "core"}, "resultList": {"result": [
+  {"id": "9500042", "source": "MED", "pmid": "9500042", "doi": "10.1016/S0140-6736(97)11096-0", "title": "Ileal-lymphoid-nodular hyperplasia, non-specific colitis, and pervasive developmental disorder in children.", "pubYear": "1998"},
+  {"id": "26017442", "source": "MED", "pmid": "26017442", "doi": "10.1038/nature14539", "title": "Deep learning.", "pubYear": "2015"},
+  {"id": "PPR000001", "source": "PPR", "title": "A preprint record without a DOI.", "pubYear": "2026"}
+]}}

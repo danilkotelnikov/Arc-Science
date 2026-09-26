@@ -30,7 +30,32 @@ def public_tools(client):
         if not isinstance(records,list):raise ValueError('Invalid literature result')
         return {'endpoint':endpoint,'query':arguments['query'],'response_sha256':sha,
                 'hit_count':data.get('hitCount'),'records':records[:5],
-                'scope':'retrieval_only_not_claim_verification','source':'Europe PMC'}
+                'scope':'retrieval_only_not_claim_verification','source':'Europe PMC',
+                'retraction_check':await retractions(records[:5])}
+
+    async def retractions(records):
+        """OpenAlex is_retracted for the DOIs of the returned works, inside the same granted
+        call; only those public DOIs are sent. A failed lookup never fails the search: it is
+        recorded as not done, and a work without a usable DOI stays unchecked."""
+        endpoint='https://api.openalex.org/works'
+        dois,unchecked=[],[]
+        for record in records:
+            doi=record.get('doi') if isinstance(record,dict) else None
+            if isinstance(doi,str) and doi.strip() and not set(doi)&set('|,'):dois.append(doi.strip().lower())
+            else:unchecked.append(str(record.get('id') if isinstance(record,dict) else '')[:80])
+        dois=sorted(set(dois))
+        check={'source':'OpenAlex','endpoint':endpoint,'status':'ok','checked':[],'retracted':[],'unchecked':unchecked}
+        if not dois:return check
+        try:
+            data,sha=await get(endpoint,{'filter':'doi:'+'|'.join(dois),'select':'doi,is_retracted','per-page':25})
+            found={}
+            for work in data.get('results') or ():
+                doi=str(work.get('doi') or '').lower().removeprefix('https://doi.org/')
+                if isinstance(work.get('is_retracted'),bool):found[doi]=work['is_retracted']
+        except Exception:
+            return {**check,'status':'error','unchecked':unchecked+dois}
+        return {**check,'response_sha256':sha,'checked':[d for d in dois if d in found],
+                'retracted':[d for d in dois if found.get(d) is True],'unchecked':unchecked+[d for d in dois if d not in found]}
 
     async def pdb(arguments):
         validate_arguments('pdb_metadata', arguments, PUBLIC_CATALOG)

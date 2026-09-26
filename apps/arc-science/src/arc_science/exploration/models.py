@@ -351,7 +351,7 @@ class Change(Versioned):
 CheckState = Literal['satisfied', 'failed', 'unknown', 'error', 'stale', 'not_applicable']
 MissionCheck = Literal['operational_status', 'event_chain_integrity', 'replay_integrity',
                        'numerical_reproduction', 'artifact_reproduction', 'evidence_graph',
-                       'reconciliation', 'visual_review', 'claim_scope']
+                       'reconciliation', 'visual_review', 'claim_scope', 'claim_rungs']
 
 class ReleaseCheck(Record):
     name: MissionCheck
