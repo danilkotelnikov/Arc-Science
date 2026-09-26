@@ -413,15 +413,20 @@ def _regular_artifact(directory_fd: int, basename: str, limit: int) -> bytes:
     return _read_regular_at(directory_fd, basename, limit, "Asset artifact")
 
 
-def import_vector(source: Path, project_dir: Path, provenance: dict, *, expected_sha256: str | None = None) -> Path:
-    """Return immutable assets/<asset-id>/asset.json after source/proof validation."""
+def import_vector(source: Path, project_dir: Path, provenance: dict, *, expected_sha256: str | None = None,
+                  kind: str | None = None) -> Path:
+    """Return immutable assets/<asset-id>/asset.json after source/proof validation.
+
+    kind ('svg' or 'pdf') overrides the suffix, e.g. for a PDF-compatible .ai file."""
+    if kind not in (None, "svg", "pdf"):
+        raise ValueError("Vector source kind must be svg or pdf")
     source = Path(source)
     project_dir = _absolute_path(Path(project_dir))
     provenance = _validate_provenance(provenance)
     data = _read_regular(source, _SOURCE_LIMIT)
     if expected_sha256 is not None and (not _valid_hash(expected_sha256) or _sha256(data) != expected_sha256):
         raise ValueError("Source hash does not match verified import receipt")
-    extension = source.suffix.lower()
+    extension = "." + kind if kind else source.suffix.lower()
     content_kind, preview, pixel_digest, width, height = _convert(extension, data)
     source_name = "source" + extension
     media_type = "image/svg+xml" if extension == ".svg" else "application/pdf"

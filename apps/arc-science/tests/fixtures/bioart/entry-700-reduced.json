@@ -1,0 +1,251 @@
+{
+ "derivation": "Reduced data from public https://bioart.niaid.nih.gov/bioart/700 captured 2026-09-26 through the system proxy; source SHA256 06a8b4ed4afec87225858ed421affe315069cdacd12b4ac7672b7353c13c9d97. React presentation properties omitted; no asset bytes captured.",
+ "records": [
+  {
+   "children": "BIOART-000700"
+  },
+  {
+   "variant": "h4",
+   "children": "Toll-like Receptor"
+  },
+  {
+   "carouselItems": [
+    {
+     "fileId": 784257,
+     "fileFormat": "PNG",
+     "bioartFileGroupId": 2471,
+     "caption": "Toll Like Receptor",
+     "srcImg": "/api/bioarts/700/files/784257"
+    },
+    {
+     "fileId": 784261,
+     "fileFormat": "PNG",
+     "bioartFileGroupId": 2472,
+     "caption": "Red",
+     "srcImg": "/api/bioarts/700/files/784261"
+    },
+    {
+     "fileId": 784265,
+     "fileFormat": "PNG",
+     "bioartFileGroupId": 2473,
+     "caption": "Yellow",
+     "srcImg": "/api/bioarts/700/files/784265"
+    },
+    {
+     "fileId": 784269,
+     "fileFormat": "PNG",
+     "bioartFileGroupId": 2474,
+     "caption": "Orange",
+     "srcImg": "/api/bioarts/700/files/784269"
+    },
+    {
+     "fileId": 784273,
+     "fileFormat": "PNG",
+     "bioartFileGroupId": 2475,
+     "caption": "Green",
+     "srcImg": "/api/bioarts/700/files/784273"
+    },
+    {
+     "fileId": 784277,
+     "fileFormat": "PNG",
+     "bioartFileGroupId": 2476,
+     "caption": "Blue",
+     "srcImg": "/api/bioarts/700/files/784277"
+    },
+    {
+     "fileId": 784281,
+     "fileFormat": "PNG",
+     "bioartFileGroupId": 2477,
+     "caption": "Color",
+     "srcImg": "/api/bioarts/700/files/784281"
+    },
+    {
+     "fileId": 784285,
+     "fileFormat": "PNG",
+     "bioartFileGroupId": 2478,
+     "caption": "Pink",
+     "srcImg": "/api/bioarts/700/files/784285"
+    },
+    {
+     "fileId": 784290,
+     "fileFormat": "PNG",
+     "bioartFileGroupId": 2479,
+     "caption": "Brown",
+     "srcImg": "/api/bioarts/700/files/784290"
+    },
+    {
+     "fileId": 784293,
+     "fileFormat": "PNG",
+     "bioartFileGroupId": 2480,
+     "caption": "Black and White",
+     "srcImg": "/api/bioarts/700/files/784293"
+    },
+    {
+     "fileId": 784297,
+     "fileFormat": "PNG",
+     "bioartFileGroupId": 2481,
+     "caption": "Grey",
+     "srcImg": "/api/bioarts/700/files/784297"
+    }
+   ]
+  },
+  {
+   "filemapping": {
+    "2471": {
+     "EPS": 784254,
+     "SVG": 784256,
+     "PNG": 784257,
+     "AI": 784258
+    },
+    "2472": {
+     "EPS": 784259,
+     "SVG": 784260,
+     "PNG": 784261,
+     "AI": 784262
+    },
+    "2473": {
+     "EPS": 784263,
+     "SVG": 784264,
+     "PNG": 784265,
+     "AI": 784266
+    },
+    "2474": {
+     "EPS": 784267,
+     "SVG": 784268,
+     "PNG": 784269,
+     "AI": 784270
+    },
+    "2475": {
+     "EPS": 784271,
+     "SVG": 784272,
+     "PNG": 784273,
+     "AI": 784274
+    },
+    "2476": {
+     "EPS": 784275,
+     "SVG": 784276,
+     "PNG": 784277,
+     "AI": 784278
+    },
+    "2477": {
+     "EPS": 784279,
+     "SVG": 784280,
+     "PNG": 784281,
+     "AI": 784282
+    },
+    "2478": {
+     "EPS": 784283,
+     "SVG": 784284,
+     "PNG": 784285,
+     "AI": 784286
+    },
+    "2479": {
+     "EPS": 784287,
+     "SVG": 784288,
+     "AI": 784289,
+     "PNG": 784290
+    },
+    "2480": {
+     "EPS": 784291,
+     "SVG": 784292,
+     "PNG": 784293,
+     "AI": 784294
+    },
+    "2481": {
+     "EPS": 784295,
+     "SVG": 784296,
+     "PNG": 784297,
+     "AI": 784298
+    }
+   }
+  },
+  {
+   "children": [
+    "Licensing: ",
+    [
+     "$",
+     "$Ld",
+     null,
+     {
+      "href": "/faqs#usage-restrictions-bioart",
+      "children": "Public Domain"
+     }
+    ]
+   ]
+  },
+  {
+   "children": [
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "subtitle2",
+      "children": " Cite This Entry"
+     }
+    ],
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "subtitle1",
+      "children": [
+       "NIAID Visual & Medical Arts",
+       ". (",
+       "6/12/2026",
+       "). ",
+       "Toll-like Receptor",
+       ". NIAID NIH BIOART Source. bioart.niaid.nih.gov/bioart/",
+       700
+      ]
+     }
+    ]
+   ]
+  },
+  {
+   "children": [
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "subtitle2",
+      "children": "Collection"
+     }
+    ],
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "body1",
+      "children": "NIAID Visual & Medical Arts"
+     }
+    ]
+   ]
+  },
+  {
+   "children": [
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "subtitle2",
+      "children": "Creator"
+     }
+    ],
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "body1",
+      "children": "Ryan Kissinger"
+     }
+    ]
+   ]
+  }
+ ]
+}

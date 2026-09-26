@@ -53,14 +53,15 @@ def test_untyped_prefixed_svg_preserves_bytes_and_missing_type_with_existing_eli
     assert len(calls)==2
 
 
-def test_observed_viewbox_style_and_metadata_shape_remains_download_only(tmp_path):
+def test_observed_viewbox_style_and_metadata_shape_previews_but_does_not_import(tmp_path):
     client,_=_client(tmp_path,SOURCE_SVG)
     receipt=client.fetch(18,64,'SVG')
     value=client.verify(receipt.receipt_path)
     assert value['source_content_type'] is None
     assert receipt.source_path.read_bytes()==SOURCE_SVG
     assert value['sha256']==hashlib.sha256(SOURCE_SVG).hexdigest()
-    assert value['preview_eligible'] is False and value['import_eligible'] is False
+    # Preview needs only the passive intake check; import stays with the allowlist importer.
+    assert value['preview_eligible'] is True and value['import_eligible'] is False
     assert 'dimensions' in value['limitation']
     with pytest.raises(ValueError,match='eligible'):
         client.import_asset(receipt.receipt_path,tmp_path/'project')
@@ -157,10 +158,11 @@ def test_isolated_file_request_transfers_observed_missing_type(tmp_path,monkeypa
     assert len(calls)==2
 
 
-@pytest.mark.parametrize('mimes',[{'image/png'},{'application/octet-stream'}])
-def test_untyped_non_svg_downloads_stay_rejected(tmp_path,mimes):
+@pytest.mark.parametrize('mimes,match',[({'image/png'},'magic'),({'application/octet-stream'},'MIME')])
+def test_untyped_svg_bytes_are_refused_for_other_or_unknown_formats(tmp_path,mimes,match):
+    # Missing Content-Type is accepted per requested format by magic bytes only.
     client,_=_client(tmp_path,SAFE_SVG)
-    with pytest.raises(ValueError,match='MIME'):
+    with pytest.raises(ValueError,match=match):
         client._request('/api/bioarts/18/files/626860',1024,mimes)
 
 

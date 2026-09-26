@@ -1,0 +1,140 @@
+{
+ "derivation": "Reduced data from public https://bioart.niaid.nih.gov/bioart/300 captured 2026-09-26 through the system proxy; source SHA256 ea20f1397e7b348b7e013f06d2f9cb84c39f3e0e71a4a29bb3dd5d80e3a16d7c. React presentation properties omitted; no asset bytes captured.",
+ "records": [
+  {
+   "children": "BIOART-000300"
+  },
+  {
+   "variant": "h4",
+   "children": "Lipid Bilayer Brush"
+  },
+  {
+   "carouselItems": [
+    {
+     "fileId": 651048,
+     "fileFormat": "JPG",
+     "bioartFileGroupId": 1034,
+     "caption": "Lipid Bilayer Brush",
+     "srcImg": "/api/bioarts/300/files/651048"
+    }
+   ]
+  },
+  {
+   "filemapping": {
+    "1034": {
+     "AI": 631662
+    }
+   }
+  },
+  {
+   "children": [
+    "Licensing: ",
+    [
+     "$",
+     "$Ld",
+     null,
+     {
+      "href": "/faqs#usage-restrictions-bioart",
+      "children": "Public Domain"
+     }
+    ]
+   ]
+  },
+  {
+   "children": [
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "subtitle2",
+      "children": " Cite This Entry"
+     }
+    ],
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "subtitle1",
+      "children": [
+       "NIAID Visual & Medical Arts",
+       ". (",
+       "10/7/2024",
+       "). ",
+       "Lipid Bilayer Brush",
+       ". NIAID NIH BIOART Source. bioart.niaid.nih.gov/bioart/",
+       300
+      ]
+     }
+    ]
+   ]
+  },
+  {
+   "children": [
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "subtitle2",
+      "children": "Collection"
+     }
+    ],
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "body1",
+      "children": "NIAID Visual & Medical Arts"
+     }
+    ]
+   ]
+  },
+  {
+   "children": [
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "subtitle2",
+      "children": "Creator"
+     }
+    ],
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "body1",
+      "children": "Ryan Kissinger"
+     }
+    ]
+   ]
+  },
+  {
+   "children": [
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "subtitle2",
+      "children": "Credit"
+     }
+    ],
+    [
+     "$",
+     "$L10",
+     null,
+     {
+      "variant": "body1",
+      "children": "Courtesy of NIAID"
+     }
+    ]
+   ]
+  }
+ ]
+}
