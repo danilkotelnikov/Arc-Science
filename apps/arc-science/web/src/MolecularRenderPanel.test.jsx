@@ -3,6 +3,7 @@ import {beforeEach, afterEach, expect, test, vi} from 'vitest';
 import {act, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import MolecularWorkspace from './MolecularWorkspace';
+import {I18nProvider} from './i18n/index.jsx';
 
 // Mol* needs WebGL and a browser; the unit tests stand in a stub for the lazy chunk.
 const viewerProbe = vi.hoisted(() => ({mounts: 0}));
@@ -10,7 +11,7 @@ vi.mock('./MolecularViewer', async () => {
   const React = await vi.importActual('react');
   return {default: ({source, scene, stage}) => {
     const [instance] = React.useState(() => ++viewerProbe.mounts);
-    return <div data-testid="viewer" data-instance={instance}>viewer {source.filename}{source.origin === 'job' ? ' (fetched)' : ' (upload)'}{scene ? ' · ' + scene.contacts.length + ' ' + scene.state + ' contacts' : ''}{stage ? ' · ' + stage : ''}</div>;
+    return <div data-testid="viewer" data-instance={instance}>viewer {source.filename}{source.origin === 'job' ? ' (fetched)' : ' (upload)'}{scene ? ', ' + scene.contacts.length + ' ' + scene.state + ' contacts' : ''}{stage ? ', ' + stage : ''}</div>;
   }};
 });
 const EMPTY = 'Choose a coordinate file or a saved render to view it.';
@@ -82,18 +83,21 @@ test('loads explicitly and submits coordinates, author chains and reproducible d
   expect(sent.options.headers.Authorization).toBe('Bearer operator');
   expect(JSON.parse(sent.options.body)).toEqual({filename:'complex.cif',source_text:'data_complex\n# coordinates',antibody_chains:['A','B'],antigen_chains:['C'],assembly:'asymmetric_unit',model_index:0,cutoff:4,width:1400,samples:96,seed:23});
   // A chosen preset travels with the request; the default is left to the service.
-  await user.click(screen.getByText('Assembly & render settings'));
-  expect(screen.getByLabelText('Render preset')).toHaveDisplayValue('default (publication dark)');
-  await user.selectOptions(screen.getByLabelText('Render preset'),'grayscale');
+  await user.click(screen.getByRole('button',{name:'Assembly and render settings'}));
+  const preset=()=>screen.getByRole('button',{name:/Render preset/});
+  expect(preset()).toHaveTextContent('default (publication dark)');
+  await user.click(preset());
+  await user.click(await screen.findByRole('option',{name:'grayscale'}));
+  expect(preset()).toHaveTextContent('grayscale');
   expect(screen.getByText('Two greys, for print without colour.')).toBeInTheDocument();
   expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
 });
 
 test('completed render uses authenticated artifacts while preserving the same viewer',async()=>{
   jobs=[completed];const user=userEvent.setup();const rendered=render(<Harness/>);await loadPanel(user);
-  await user.click(screen.getByRole('button',{name:'completed · complex.cif'}));
+  await user.click(screen.getByRole('button',{name:'complex.cif, completed'}));
   const viewer = await screen.findByTestId('viewer');
-  expect(viewer).toHaveTextContent('viewer complex.cif (fetched) · 1 verified contacts · render complete');
+  expect(viewer).toHaveTextContent('viewer complex.cif (fetched), 1 verified contacts, render complete');
   const instance = viewer.dataset.instance;
   expect(await screen.findByRole('img',{name:'Rendered molecular collage: complex.cif'})).toHaveAttribute('src','blob:molecular');
   expect(screen.getByTestId('viewer').dataset.instance).toBe(instance);
@@ -113,7 +117,7 @@ test('completed render uses authenticated artifacts while preserving the same vi
   expect(screen.getByRole('button',{name:'View selected render'})).toBeInTheDocument();
   // Closing the render details leaves the already-mounted viewer on the render's coordinates and contacts.
   expect(screen.queryByRole('img',{name:'Rendered molecular collage: complex.cif'})).not.toBeInTheDocument();
-  expect(screen.getByTestId('viewer')).toHaveTextContent('viewer complex.cif (fetched) · 1 verified contacts · render complete');
+  expect(screen.getByTestId('viewer')).toHaveTextContent('viewer complex.cif (fetched), 1 verified contacts, render complete');
   expect(screen.getByTestId('viewer').dataset.instance).toBe(instance);
   expect(calls.find(call=>call.path==='/api/molecular/renders/job-1/source').options.headers.Authorization).toBe('Bearer operator');
   expect(calls.every(call=>!call.path.includes('/api/examples/'))).toBe(true);
@@ -122,18 +126,37 @@ test('completed render uses authenticated artifacts while preserving the same vi
 
 test('the package catalogue reports what each probe observed, never more',async()=>{
   const user=userEvent.setup();render(<Harness/>);await openPanel(user);
-  await user.click(screen.getByText('Packages'));
+  await user.click(screen.getByRole('button',{name:'Packages'}));
   await user.click(screen.getByRole('button',{name:'Check packages'}));
   const report=within(await screen.findByLabelText('Software catalogue'));
-  expect(report.getByText(/1 present · 1 seen indirectly · 1 absent · 1 not probed · 4 known/)).toBeInTheDocument();
-  expect(report.getByText(/present \(import, host python: 2025\.09\.1\)/)).toBeInTheDocument();
-  expect(report.getByText(/absent \(not on PATH\)/)).toBeInTheDocument();
+  const fact=label=>report.getByText(label,{selector:'dt'}).nextElementSibling;
+  for(const [label,count] of [['Present','1'],['Seen indirectly','1'],['Absent','1'],['Not probed','1'],['Known','4']])expect(fact(label)).toHaveTextContent(count);
+  const row=name=>within(report.getByRole('row',{name}));
+  expect(row('RDKit').getByText('present')).toBeInTheDocument();
+  expect(row('RDKit').getByText('import, host python: 2025.09.1')).toBeInTheDocument();
+  expect(row('Open Babel').getByText('absent')).toBeInTheDocument();
+  expect(row('Open Babel').getByText('not on PATH')).toBeInTheDocument();
   // An environment seen is said to be exactly that, never the package.
-  expect(report.getByText(/environment seen \(conda env SE3nv exists; the package itself was not observed\)/)).toBeInTheDocument();
-  expect(report.getByText(/not probed \(bundled viewer in this workbench\)/)).toBeInTheDocument();
+  expect(row('RFdiffusion').getByText('environment seen')).toBeInTheDocument();
+  expect(row('RFdiffusion').getByText('conda env SE3nv exists; the package itself was not observed')).toBeInTheDocument();
+  expect(row('RFdiffusion').queryByText('present')).not.toBeInTheDocument();
+  expect(row('Mol*').getByText('not probed')).toBeInTheDocument();
+  expect(row('Mol*').getByText('bundled viewer in this workbench')).toBeInTheDocument();
+  expect(row('Mol*').queryByText('present')).not.toBeInTheDocument();
   expect(calls.find(c=>c.path.startsWith('/api/molecular/catalogue')).options.headers.Authorization).toBe('Bearer operator');
   await user.click(screen.getByRole('button',{name:'Check again'}));
   await waitFor(()=>expect(calls.filter(c=>c.path==='/api/molecular/catalogue/refresh'&&c.options.method==='POST')).toHaveLength(1));
+});
+
+test('a failed render selection is reported beside the render list it was chosen from',async()=>{
+  jobs=[completed];const original=fetch.getMockImplementation();
+  fetch.mockImplementation((path,options)=>path==='/api/molecular/renders/job-1'?Promise.resolve(new Response('',{status:500})):original(path,options));
+  const user=userEvent.setup();render(<Harness/>);await loadPanel(user);
+  await user.click(screen.getByRole('button',{name:'complex.cif, completed'}));
+  const alert=await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('Request failed (500)');
+  expect(within(screen.getByRole('region',{name:'Recent renders'})).getByRole('alert')).toBe(alert);
+  expect(within(screen.getByRole('region',{name:'Render locally'})).queryByRole('alert')).not.toBeInTheDocument();
 });
 
 test('shows unavailable runtime while retained completed renders remain available',async()=>{
@@ -141,7 +164,7 @@ test('shows unavailable runtime while retained completed renders remain availabl
   const user=userEvent.setup();render(<Harness/>);await openPanel(user);await user.click(screen.getByRole('button',{name:'Load renders'}));
   expect(await screen.findByText('Blender Python is not configured.')).toBeInTheDocument();
   expect(screen.getByRole('button',{name:'Render structure'})).toBeDisabled();
-  await user.click(screen.getByRole('button',{name:'completed · complex.cif'}));
+  await user.click(screen.getByRole('button',{name:'complex.cif, completed'}));
   expect(await screen.findByRole('img',{name:'Rendered molecular collage: complex.cif'})).toBeInTheDocument();
 });
 
@@ -152,7 +175,7 @@ test('cancels a pending render and renders server failures without exposing an a
   expect(await screen.findByText('Render status: cancelled')).toBeInTheDocument();
   expect(screen.queryByRole('button',{name:'Cancel render'})).not.toBeInTheDocument();
   jobs=[{...completed,status:'failed',error:'Selected antigen chain was not found.',assets:{},contact_pairs:null}];
-  await user.click(screen.getByRole('button',{name:'Refresh renders'}));await user.click(await screen.findByRole('button',{name:'failed · complex.cif'}));
+  await user.click(screen.getByRole('button',{name:'Refresh renders'}));await user.click(await screen.findByRole('button',{name:'complex.cif, failed'}));
   expect(await screen.findByRole('alert')).toHaveTextContent('Selected antigen chain was not found.');
   expect(screen.queryByRole('img',{name:'Rendered molecular collage: complex.cif'})).not.toBeInTheDocument();
 });
@@ -161,13 +184,13 @@ test('token changes clear protected state and suppress an obsolete authenticated
   jobs=[completed];let finish;
   const original=fetch.getMockImplementation();
   fetch.mockImplementation((path,options)=>path===assets['collage.png'].url?new Promise(resolve=>{calls.push({path,options});finish=()=>resolve(new Response('private old image'));}):original(path,options));
-  const user=userEvent.setup();render(<Harness/>);await loadPanel(user);await user.click(screen.getByRole('button',{name:'completed · complex.cif'}));
+  const user=userEvent.setup();render(<Harness/>);await loadPanel(user);await user.click(screen.getByRole('button',{name:'complex.cif, completed'}));
   await waitFor(()=>expect(finish).toBeTypeOf('function'));
   await user.clear(screen.getByLabelText('Operator token'));
   await user.type(screen.getByLabelText('Operator token'),'different');
   await act(async()=>finish());
   expect(screen.queryByRole('img',{name:'Rendered molecular collage: complex.cif'})).not.toBeInTheDocument();
-  expect(screen.queryByRole('button',{name:'completed · complex.cif'})).not.toBeInTheDocument();
+  expect(screen.queryByRole('button',{name:'complex.cif, completed'})).not.toBeInTheDocument();
   expect(screen.getByRole('status')).toHaveTextContent(EMPTY);
   expect(URL.createObjectURL).not.toHaveBeenCalled();
   expect(calls.find(call=>call.path===assets['collage.png'].url).options.signal.aborted).toBe(true);
@@ -175,7 +198,7 @@ test('token changes clear protected state and suppress an obsolete authenticated
 
 test('polling stops on unmount',async()=>{
   jobs=[submitted];const user=userEvent.setup();const rendered=render(<Harness/>);await loadPanel(user);
-  await user.click(screen.getByRole('button',{name:'queued · complex.cif'}));await screen.findByText('Render status: queued');
+  await user.click(screen.getByRole('button',{name:'complex.cif, queued'}));await screen.findByText('Render status: queued');
   rendered.unmount();const before=calls.length;
   await act(async()=>new Promise(resolve=>setTimeout(resolve,1700)));expect(calls).toHaveLength(before);
 });
@@ -184,10 +207,10 @@ test('reselecting an active render restarts polling after a status request fails
   jobs=[submitted];const original=fetch.getMockImplementation();let failPoll=false;
   fetch.mockImplementation((path,options)=>path==='/api/molecular/renders/job-1'&&failPoll?Promise.resolve(new Response('',{status:503})):original(path,options));
   const user=userEvent.setup();render(<Harness/>);await loadPanel(user);
-  await user.click(screen.getByRole('button',{name:'queued · complex.cif'}));await screen.findByText('Render status: queued');
+  await user.click(screen.getByRole('button',{name:'complex.cif, queued'}));await screen.findByText('Render status: queued');
   failPoll=true;
   expect(await screen.findByRole('alert',{}, {timeout:2500})).toHaveTextContent('Status unavailable');failPoll=false;
-  await user.click(screen.getByRole('button',{name:'queued · complex.cif'}));await waitFor(()=>expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+  await user.click(screen.getByRole('button',{name:'complex.cif, queued'}));await waitFor(()=>expect(screen.queryByRole('alert')).not.toBeInTheDocument());
   jobs=[completed];
   expect(await screen.findByText('Render status: completed',{}, {timeout:2500})).toBeInTheDocument();
   expect(await screen.findByRole('img',{name:'Rendered molecular collage: complex.cif'})).toBeInTheDocument();
@@ -202,9 +225,9 @@ test('an obsolete poll cannot overwrite a more recent render selection',async()=
     return original(path,options);
   });
   const user=userEvent.setup();render(<Harness/>);await loadPanel(user);
-  await user.click(screen.getByRole('button',{name:'queued · complex.cif'}));await screen.findByText('Render status: queued');
+  await user.click(screen.getByRole('button',{name:'complex.cif, queued'}));await screen.findByText('Render status: queued');
   delayPoll=true;await waitFor(()=>expect(finish).toBeTypeOf('function'),{timeout:2500});
-  await user.click(screen.getByRole('button',{name:'failed · other.pdb'}));await screen.findByText('Other file is invalid.');
+  await user.click(screen.getByRole('button',{name:'other.pdb, failed'}));await screen.findByText('Other file is invalid.');
   await act(async()=>finish());
   expect(screen.getByRole('heading',{name:'other.pdb'})).toBeInTheDocument();
   expect(screen.queryByRole('img',{name:'Rendered molecular collage: complex.cif'})).not.toBeInTheDocument();
@@ -214,7 +237,7 @@ test('an obsolete poll cannot overwrite a more recent render selection',async()=
 test('a failed authenticated preview can be retried without submitting a new render',async()=>{
   jobs=[completed];const original=fetch.getMockImplementation();let unavailable=true;
   fetch.mockImplementation((path,options)=>path===assets['collage.png'].url&&unavailable?Promise.resolve(new Response('',{status:503})):original(path,options));
-  const user=userEvent.setup();render(<Harness/>);await loadPanel(user);await user.click(screen.getByRole('button',{name:'completed · complex.cif'}));
+  const user=userEvent.setup();render(<Harness/>);await loadPanel(user);await user.click(screen.getByRole('button',{name:'complex.cif, completed'}));
   expect(await screen.findByRole('alert')).toHaveTextContent('503');unavailable=false;
   await user.click(screen.getByRole('button',{name:'Retry preview'}));
   expect(await screen.findByRole('img',{name:'Rendered molecular collage: complex.cif'})).toBeInTheDocument();
@@ -225,8 +248,8 @@ test('a render can be declared a change of the selected completed render, and th
   jobs=[{...completed,settings:{antibody_chains:['A','B'],antigen_chains:['C'],assembly:'asymmetric_unit',model_index:0,cutoff:4,width:1400,samples:96,seed:23}}];
   submitted={...submitted,id:'job-1',change:{base_job:'job-1',declared_effects:['presentation','scientific_depiction'],derived_effects:['presentation'],changed_fields:['width'],required_checks:['geometry','readability']}};
   const user=userEvent.setup();render(<Harness/>);await loadPanel(user);
-  await user.click(screen.getByRole('button',{name:'completed · complex.cif'}));
-  await user.click(screen.getByRole('button',{name:'Render structure'}).closest('form').querySelector('summary'));
+  await user.click(screen.getByRole('button',{name:'complex.cif, completed'}));
+  await user.click(screen.getByRole('button',{name:'Assembly and render settings'}));
   await user.click(screen.getByLabelText(/Render as a declared change of job-1/));
   await user.click(screen.getByLabelText('Presentation (width, samples, seed, preset)'));
   await user.click(screen.getByLabelText('Scientific depiction (chains, assembly, model, an envelope or stick preset)'));
@@ -236,7 +259,12 @@ test('a render can be declared a change of the selected completed render, and th
   await screen.findByText('Render status: queued');
   const sent=JSON.parse(calls.find(call=>call.path==='/api/molecular/renders'&&call.options.method==='POST').options.body);
   expect(sent.base_job).toBe('job-1');expect(sent.declared_effects).toEqual(['presentation','scientific_depiction']);expect(sent.width).toBe(1600);
-  expect(screen.getByText(/Change of render job-1/)).toHaveTextContent('Declared: presentation, scientific depiction. Derived by the server: presentation (changed: width). Required checks: geometry, readability.');
+  const record=within(screen.getByRole('group',{name:/Change of render job-1/}));
+  const fact=label=>record.getByText(label,{selector:'dt'}).nextElementSibling;
+  expect(fact('Declared')).toHaveTextContent(/^presentation, scientific depiction$/);
+  expect(fact('Derived by the server')).toHaveTextContent(/^presentation$/);
+  expect(fact('Changed fields')).toHaveTextContent(/^width$/);
+  expect(fact('Required checks')).toHaveTextContent(/^geometry, readability$/);
 });
 
 test('locked controls say what unlocks them, next to the control',async()=>{
@@ -295,8 +323,18 @@ test('a failed package check is reported inside Packages, not in the shared aler
   const original=fetch.getMockImplementation();
   fetch.mockImplementation((path,options)=>path.startsWith('/api/molecular/catalogue')?Promise.resolve(new Response('',{status:503})):original(path,options));
   const user=userEvent.setup();render(<Harness/>);await openPanel(user);
-  await user.click(screen.getByText('Packages'));await user.click(screen.getByRole('button',{name:'Check packages'}));
+  await user.click(screen.getByRole('button',{name:'Packages'}));await user.click(screen.getByRole('button',{name:'Check packages'}));
   const alert=await screen.findByRole('alert');
   expect(alert).toHaveTextContent('Package check failed: Request failed (503)');
-  expect(alert.closest('details')).toHaveTextContent('Packages');
+  expect(alert.closest('[data-slot="disclosure"]')).toHaveTextContent('Packages');
+  expect(within(screen.getByRole('complementary',{name:'Molecular render controls'})).queryByRole('alert')).not.toBeInTheDocument();
+});
+
+test('the workspace reads in Russian inside a Russian provider',async()=>{
+  render(<I18nProvider locale="ru"><Harness initialToken=""/></I18nProvider>);
+  expect(await screen.findByRole('heading',{name:'Локальный рендер'})).toBeInTheDocument();
+  const controls=within(screen.getByRole('complementary',{name:'Управление молекулярным рендером'}));
+  expect(controls.getByRole('button',{name:'Загрузить рендеры'})).toBeDisabled();
+  expect(controls.getByLabelText('Файл координат')).toBeDisabled();
+  expect(within(screen.getByRole('region',{name:'Молекулярное изображение'})).getByRole('status')).toHaveTextContent('Выберите файл координат или сохранённый рендер, чтобы открыть его.');
 });

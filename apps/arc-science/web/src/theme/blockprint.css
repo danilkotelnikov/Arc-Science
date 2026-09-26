@@ -2,31 +2,35 @@
    Import after @heroui/styles. Colours come from applyPalette() as inline custom
    properties on <html>; the values below are first-paint fallbacks and derived tokens.
    Component overrides live in @layer components (HeroUI's documented override point),
-   so Tailwind utilities on a component still win. Focus and fonts stay unlayered. */
+   so Tailwind utilities on a component still win. Focus, fonts, icon sizing and optical
+   trims stay unlayered. The faces live in fonts.css; motion lives in motion.css.
+   Grid: 4 px. Controls are 40 px tall (32 small, 24 for chips and status labels), border
+   box included, so a thinner outline (Kyoto) never moves them off the grid; text line
+   heights are multiples of 4. Colour: accent marks the one primary action of a view,
+   focus, and selection (bars, not fills); status colours appear as small square marks
+   beside a text label. */
 
-@font-face {
-  font-family: "HSE Sans";
-  src: local("HSE Sans"), local("HSE Sans Regular"), local("HSESans-Regular");
-  font-weight: 400;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "HSE Sans";
-  src: local("HSE Sans SemiBold"), local("HSESans-SemiBold");
-  font-weight: 600;
-  font-display: swap;
-}
+@import "./fonts.css";
 
 :root,
 [data-theme] {
-  --font-sans: "HSE Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "Cascadia Mono", ui-monospace, Consolas, monospace;
+  /* Kyiv Type Sans covers Latin and Cyrillic, so one stack serves both languages. */
+  --bp-font-body: "Arc Kyiv", "Segoe UI Variable Text", system-ui, sans-serif;
+  --bp-font-mono: "Arc Cascadia", ui-monospace, Consolas, monospace;
 
   --bp-ink: var(--foreground);
   --bp-shadow: var(--foreground);
   --bp-outline: 2px;
+  /* The outline as drawn: whole pixels, so Kyoto's 1.5 px draws as 1 px at every zoom
+     (Chromium already snaps it so at 1x) and boxes keep whole-pixel edges. Paddings of
+     outlined blocks subtract it, so content starts on the grid whatever the outline. */
+  --bp-line: round(down, var(--bp-outline), 1px);
   --bp-offset: 4px;
+  /* Selection bar and status mark sizes. */
+  --bp-bar: 3px;
+  --bp-mark: 8px;
+  /* Cap height of the interface face (fonts.css), in the element's own em. */
+  --bp-cap: 0.7em;
   --bp-accent2: var(--accent);
   --bp-accent2-foreground: var(--accent-foreground);
   /* applyPalette() replaces these with the contrast-tested hex values. */
@@ -37,8 +41,8 @@
 
   --radius: 0;
   --field-radius: 0;
-  --border-width: var(--bp-outline);
-  --field-border-width: var(--bp-outline);
+  --border-width: var(--bp-line);
+  --field-border-width: var(--bp-line);
   --field-border: var(--bp-ink);
   /* No shadow by default. Offsets are opt-in: .bp-block--primary, .button--primary and the
      open overlays below. A zero offset paints nothing, so Kyoto (offset 0) gets none. */
@@ -57,9 +61,51 @@
 }
 
 body {
-  font-family: var(--font-sans);
   background: var(--background);
   color: var(--foreground);
+}
+
+body {
+  --font-sans: var(--bp-font-body);
+  --font-mono: var(--bp-font-mono);
+  font-family: var(--bp-font-body);
+  font-weight: 400;
+}
+
+:where(code, kbd, pre, samp, .bp-num) {
+  font-family: var(--bp-font-mono);
+}
+
+/* Optical centring. fonts.css gives every face metric overrides that put the middle of
+   the capitals on the middle of the line box, so text centred in a control is centred on
+   its caps. Where the label is an element of its own (a flex item, a table cell),
+   text-box also trims the line to cap height and baseline, which holds even for a face
+   without the overrides. Bare text directly inside a flex control (Button, Tab, Toggle)
+   is an anonymous flex item that text-box cannot reach; the overrides centre it. */
+@supports (text-box: trim-both cap alphabetic) {
+  :is(.chip__label, .select__value, .ar-rail-label, .bp-label, .table__column) {
+    text-box: trim-both cap alphabetic;
+  }
+}
+
+/* Icons: a box of 1.6 cap heights (16 px beside 14 px text), centred on the cap band. */
+:is(.button, .toggle-button, .chip, .tabs__tab, .bp-status, .ar-row--tight) > svg {
+  width: round(nearest, calc(var(--bp-cap) * 1.6), 2px);
+  height: round(nearest, calc(var(--bp-cap) * 1.6), 2px);
+  flex: none;
+  align-self: center;
+  margin-block: 0;
+}
+
+/* A heading that opens a block starts at its cap line. With the fonts.css overrides the
+   cap top sits (1lh - 1.2em) / 2 + 0.25em below the top of the line box; a relative
+   shift by that much puts the capitals on the padding edge and moves nothing else.
+   A card header moves with its title; app.css gives it the title's size, so the
+   same sum holds for it. */
+:is(.bp-panel, .bp-block) > :is(h1, h2, h3):first-child,
+.card > .card__header:first-child {
+  position: relative;
+  inset-block-start: calc((1.2em - 1lh) / 2 - 0.25em);
 }
 
 /* Focus: a 3px ring outside the element, separate from the offset shadow. HeroUI's
@@ -94,21 +140,52 @@ body {
 @layer components {
   /* Card */
   .card:not(.card--transparent) {
-    border: var(--bp-outline) solid var(--bp-ink);
-    padding: 24px;
+    border: var(--bp-line) solid var(--bp-ink);
+    padding: calc(24px - var(--bp-line));
   }
 
   /* Button */
   .button:not(.button--ghost) {
-    border: var(--bp-outline) solid var(--bp-ink);
+    border: var(--bp-line) solid var(--bp-ink);
   }
 
   .button {
+    height: 40px;
     font-weight: 600;
+  }
+
+  .button--sm {
+    height: 32px;
+  }
+
+  .button--icon-only {
+    width: 40px;
+  }
+
+  .button--icon-only.button--sm {
+    width: 32px;
+  }
+
+  /* Only the primary action moves on press; the rest change colour, never scale. */
+  .button:active,
+  .button[data-pressed="true"],
+  .toggle-button:active,
+  .toggle-button[data-pressed="true"],
+  .list-box-item:active,
+  .list-box-item[data-pressed="true"] {
+    transform: none;
   }
 
   .button--secondary {
     --button-fg: var(--default-foreground);
+  }
+
+  /* Destructive, but quiet until it matters: danger text in an outlined button. */
+  .button--danger {
+    --button-bg: var(--surface);
+    --button-bg-hover: var(--surface);
+    --button-bg-pressed: var(--surface);
+    --button-fg: var(--danger);
   }
 
   .button--primary {
@@ -145,12 +222,19 @@ body {
     background: transparent;
   }
 
+  /* The rule is painted inside the 40 px tab row rather than added below it, and the
+     label centres on the space above the rule. */
   .tabs[data-orientation="horizontal"] > .tabs__list-container {
-    border-bottom: var(--bp-outline) solid var(--bp-ink);
+    box-shadow: inset 0 calc(-1 * var(--bp-line)) 0 var(--bp-ink);
+  }
+
+  .tabs[data-orientation="horizontal"] > .tabs__list-container .tabs__tab {
+    height: 40px;
+    padding-block-end: var(--bp-line);
   }
 
   .tabs[data-orientation="vertical"] > .tabs__list-container {
-    border-inline-start: var(--bp-outline) solid var(--bp-ink);
+    border-inline-start: var(--bp-line) solid var(--bp-ink);
   }
 
   .tabs[data-orientation] > .tabs__list-container .tabs__list {
@@ -178,26 +262,87 @@ body {
     height: 100%;
   }
 
-  /* Chip */
+  /* A panel's content starts on the tab row's left edge; the space above it is the
+     screen's to set (a pt-* class). */
+  .tabs__panel {
+    padding-inline: 0;
+    padding-block-end: 0;
+  }
+
+  /* Chip: 24 px, 20 small. A coloured chip keeps the surface and shows its hue as a
+     square mark before the label. */
   .chip {
-    border: var(--bp-outline) solid var(--bp-ink);
+    height: 24px;
+    padding-block: 0;
+    line-height: 16px;
+    border: var(--bp-line) solid var(--bp-ink);
     font-weight: 600;
   }
 
-  /* Table: ink frame, 2px rule under the header, 1px rules between rows */
-  .table-root {
-    border: var(--bp-outline) solid var(--bp-ink);
+  .chip--sm {
+    height: 20px;
   }
 
+  .chip:is(.chip--accent, .chip--success, .chip--warning, .chip--danger) {
+    --chip-bg: var(--surface);
+    --chip-fg: var(--foreground);
+  }
+
+  .chip:is(.chip--accent, .chip--success, .chip--warning, .chip--danger)::before {
+    content: "";
+    flex: none;
+    width: var(--bp-mark);
+    height: var(--bp-mark);
+    margin-inline: 2px 4px;
+    background: var(--bp-mark-color);
+  }
+
+  .chip--accent { --bp-mark-color: var(--accent); }
+  .chip--success { --bp-mark-color: var(--success); }
+  .chip--warning { --bp-mark-color: var(--warning); }
+  .chip--danger { --bp-mark-color: var(--danger); }
+
+  /* Kbd sits inside a 40 px button: 24 px keeps it on the grid. */
+  .kbd {
+    height: 24px;
+  }
+
+  /* Fields and select triggers: 40 px, border box. */
+  .input,
+  .number-field__group {
+    height: 40px;
+  }
+
+  .select__trigger {
+    height: 40px;
+    min-height: 40px;
+    padding-block: 0;
+    align-items: center;
+  }
+
+  .toggle-button {
+    height: 40px;
+  }
+
+  /* Table: ink frame, a 40 px header with a 2 px rule, 1 px rules between rows drawn
+     inside the cells so a row stays a whole number of grid steps. */
+  .table-root {
+    border: var(--bp-line) solid var(--bp-ink);
+  }
+
+  /* No padding but the part of a 2 px outline a thinner one leaves: the frame stays a
+     whole number of grid steps whatever the palette's outline. */
   .table-root--primary {
     background: var(--surface);
-    padding: 0;
+    padding: calc(2px - var(--bp-line));
   }
 
   .table__column {
+    height: 40px;
+    padding-block: 0;
     color: var(--foreground);
     font-weight: 600;
-    border-bottom: var(--bp-outline) solid var(--bp-ink);
+    border-bottom: var(--bp-line) solid var(--bp-ink);
   }
 
   .table__column::after {
@@ -205,15 +350,22 @@ body {
   }
 
   .table-root .table__row .table__cell {
-    border-bottom: 1px solid var(--bp-ink);
+    border-bottom: 0;
+    box-shadow: inset 0 -1px 0 var(--bp-ink);
   }
 
   .table-root .table__body .table__row:last-child .table__cell {
-    border-bottom: 0;
+    box-shadow: none;
   }
 
   /* Overlays: outline; an open modal, drawer or popover is the primary block at that moment,
      so it also carries a smaller 3px offset. Tooltips stay flat. */
+  /* HeroUI breaks tooltip words anywhere; words stay whole and only long tokens break. */
+  .tooltip {
+    word-break: normal;
+    overflow-wrap: break-word;
+  }
+
   .modal__dialog,
   .alert-dialog__dialog,
   .drawer__dialog,
@@ -222,7 +374,7 @@ body {
   .dropdown__popover,
   .select__popover,
   .combo-box__popover {
-    border: var(--bp-outline) solid var(--bp-ink);
+    border: var(--bp-line) solid var(--bp-ink);
   }
 
   .modal__dialog,
@@ -246,15 +398,21 @@ body {
     --toggle-button-bg-selected-hover: var(--foreground);
     --toggle-button-bg-selected-pressed: var(--foreground);
     --toggle-button-fg-selected: var(--background);
-    border: var(--bp-outline) solid var(--bp-ink);
+    border: var(--bp-line) solid var(--bp-ink);
     font-weight: 600;
   }
 
   .toggle-button-group {
-    border: var(--bp-outline) solid var(--bp-ink);
+    border: var(--bp-line) solid var(--bp-ink);
+  }
+
+  /* One outline for the whole group: 40 px with the border, the items fill it. */
+  .toggle-button-group--horizontal {
+    height: 40px;
   }
 
   .toggle-button-group .toggle-button {
+    height: 100%;
     border: 0;
   }
 
@@ -271,7 +429,7 @@ body {
   .toggle-button-group--horizontal .toggle-button-group__separator {
     inset-inline-start: 0;
     top: 0;
-    width: var(--bp-outline);
+    width: var(--bp-line);
     height: 100%;
   }
 
@@ -279,21 +437,64 @@ body {
     inset-inline-start: 0;
     top: 0;
     width: 100%;
-    height: var(--bp-outline);
+    height: var(--bp-line);
   }
 
-  /* Switch, slider, meter, progress: hollow tracks with an ink ring, so each fill (accent,
-     success) sits on the page colour it is contrast-tested against. The off switch shows
-     an ink thumb; the on thumb stays accent-foreground on accent. */
+  /* Switch, slider, meter, progress: hollow tracks with an ink ring, so each fill sits on
+     the page colour it is contrast-tested against. A switch or slider is a selection, so
+     it fills with ink like a selected toggle, not with accent: the off switch shows an ink
+     thumb, the on switch an ink track with a page-coloured thumb. The meter keeps its
+     status hue as a thin bar beside its number. */
   .switch {
     --switch-control-bg: transparent;
+  }
+
+  .switch[data-selected="true"] {
+    --switch-control-bg: var(--bp-ink);
+  }
+
+  /* The thumb travels by translate (see motion.css); its margin stays put. 0.875rem is
+     HeroUI's travel for the medium switch: 100% of 2.5rem less 1.5rem, less the 0.125rem start. */
+  .switch .switch__thumb,
+  .switch[data-selected="true"] .switch__thumb {
+    margin-inline-start: 0.125rem;
+  }
+
+  .switch[data-selected="true"] .switch__thumb {
+    translate: 0.875rem 0;
+    background-color: var(--background);
+    box-shadow: none;
+  }
+
+  .slider .slider__fill {
+    background-color: var(--bp-ink);
+  }
+
+  /* HeroUI paints the track's end borders (half a thumb each, the room the thumb travels
+     in) in accent where the fill reaches them; they belong to the fill. Same specificity
+     as HeroUI's rule, later in the layer. */
+  .slider[data-orientation="horizontal"] .slider__track[data-fill-start="true"] {
+    border-inline-start-color: var(--bp-ink);
+  }
+
+  .slider[data-orientation="horizontal"] .slider__track[data-fill-end="true"] {
+    border-inline-end-color: var(--bp-ink);
+  }
+
+  .slider .slider__thumb {
+    background-color: var(--bp-ink);
+  }
+
+  .slider .slider__thumb::after {
+    background-color: var(--background);
+    box-shadow: none;
   }
 
   .switch__control,
   .slider__track,
   .meter__track,
   .progress-bar__track {
-    box-shadow: 0 0 0 var(--bp-outline) var(--bp-ink);
+    box-shadow: 0 0 0 var(--bp-line) var(--bp-ink);
   }
 
   /* Same two-class specificity as HeroUI's track colour, and later in the layer. */
@@ -318,8 +519,8 @@ body {
   .bp-panel,
   .bp-block,
   .bp-block--primary {
-    border: var(--bp-outline) solid var(--bp-ink);
-    padding: 24px;
+    border: var(--bp-line) solid var(--bp-ink);
+    padding: calc(24px - var(--bp-line));
     background: var(--surface);
     color: var(--foreground);
   }
@@ -328,11 +529,18 @@ body {
     box-shadow: var(--bp-offset) var(--bp-offset) 0 0 var(--bp-shadow);
   }
 
-  /* Rail: the current item is an accent2 block behind a 4px ink bar. */
-  .bp-rail-item[aria-current="page"] {
-    background-color: var(--bp-accent2);
-    color: var(--bp-accent2-foreground);
-    box-shadow: inset 4px 0 0 var(--bp-ink);
+  /* Selection is a bar, not a fill: the current rail item and the selected list item take
+     the surface and an accent bar on the inline-start edge. */
+  .bp-rail-item[aria-current="page"],
+  .list-box-item[data-selected="true"] {
+    background-color: var(--surface);
+    color: var(--foreground);
+    box-shadow: inset var(--bp-bar) 0 0 var(--accent);
+  }
+
+  /* A selected block (the palette or logo in use) carries the same bar inside its outline. */
+  .bp-panel[data-selected="true"] {
+    box-shadow: inset var(--bp-bar) 0 0 var(--accent);
   }
 
   .bp-rule-cols {
@@ -354,7 +562,7 @@ body {
   }
 
   .bp-rule-cols > * + * {
-    border-inline-start: var(--bp-outline) solid var(--bp-ink);
+    border-inline-start: var(--bp-line) solid var(--bp-ink);
   }
 
   @media (max-width: 640px) {
@@ -368,7 +576,7 @@ body {
 
     .bp-rule-cols > * + * {
       border-inline-start: 0;
-      border-top: var(--bp-outline) solid var(--bp-ink);
+      border-top: var(--bp-line) solid var(--bp-ink);
     }
   }
 
@@ -404,31 +612,37 @@ body {
   .bp-density-4 { --bp-level: 4; background: var(--bp-density-4); }
   .bp-density-5 { --bp-level: 5; background: var(--success); color: var(--success-foreground); }
 
-  /* Status label, inverted */
+  /* Status label: 24 px, ink outline on the surface, the state as a square mark before
+     the words. Unknown is a hollow mark, so no state rests on hue alone. */
   .bp-status {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    border: var(--bp-outline) solid var(--bp-ink);
+    gap: 6px;
+    height: 24px;
+    padding: 0 8px 0 6px;
+    border: var(--bp-line) solid var(--bp-ink);
     font-size: 12px;
     line-height: 16px;
     font-weight: 600;
-    background: var(--foreground);
-    color: var(--background);
+    background: var(--surface);
+    color: var(--foreground);
   }
 
-  .bp-status[data-state="ready"] { background: var(--success); color: var(--success-foreground); }
-  .bp-status[data-state="not_tested"] { background: var(--muted); color: var(--background); }
-  .bp-status[data-state="failed"] { background: var(--danger); color: var(--danger-foreground); }
-  .bp-status[data-state="blocked"] { background: var(--warning); color: var(--warning-foreground); }
-  .bp-status[data-state="unknown"] { background: var(--foreground); color: var(--background); }
-}
+  .bp-status::before {
+    content: "";
+    flex: none;
+    width: var(--bp-mark);
+    height: var(--bp-mark);
+    background: var(--bp-mark-color, var(--foreground));
+  }
 
-@media (prefers-reduced-motion: reduce) {
-  [data-palette] *,
-  [data-palette] *::before,
-  [data-palette] *::after {
-    transition: none !important;
+  .bp-status[data-state="ready"] { --bp-mark-color: var(--success); }
+  .bp-status[data-state="not_tested"] { --bp-mark-color: var(--muted); }
+  .bp-status[data-state="failed"] { --bp-mark-color: var(--danger); }
+  .bp-status[data-state="blocked"] { --bp-mark-color: var(--warning); }
+
+  .bp-status[data-state="unknown"]::before {
+    background: transparent;
+    box-shadow: inset 0 0 0 2px var(--foreground);
   }
 }

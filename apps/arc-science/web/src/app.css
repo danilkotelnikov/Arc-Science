@@ -1,0 +1,154 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+@import "./theme/blockprint.css";
+@import "./theme/motion.css";
+
+/* Workbench layout: the shell grid, the rail, the type scale and the few panes HeroUI
+   does not lay out. Everything visual comes from blockprint.css and the palette. Every
+   height, padding and gap is a multiple of 4 px (the rule in blockprint.css). */
+
+* { box-sizing: border-box; }
+body { margin: 0; font-size: 14px; line-height: 20px; }
+
+/* The lockup takes its colours from the palette: a white tile with ink letters on a light
+   palette, a near-black tile with the palette's light ink on a dark one (the two colourways
+   of design/logo/as/as-logo-production-*.svg). */
+:root {
+  --logo-tile: #FFFFFF;
+  --logo-letters: var(--foreground);
+  --logo-word: var(--foreground);
+}
+:root[data-theme="dark"] { --logo-tile: #111111; }
+.ar-brand { display: block; flex: none; height: 32px; width: auto; }
+.ar-brand-tile { fill: var(--logo-tile); }
+.ar-brand-letters { fill: var(--logo-letters); }
+.ar-brand-word { fill: var(--logo-word); }
+
+.ar-shell { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 100vh; }
+
+/* One 40 px row of controls, wrapping into more rows: 12 above, 12 below counting the
+   rule, 64 in all. */
+.ar-header {
+  display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap;
+  padding: 12px 24px calc(12px - var(--bp-line)); border-bottom: var(--bp-line) solid var(--bp-ink);
+}
+.ar-header .select { flex-direction: row; align-items: center; gap: 8px; }
+.ar-header .select > .select__trigger { flex: 1 1 auto; min-width: 0; }
+.ar-header-end { margin-inline-start: auto; display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
+.ar-palette { min-width: 200px; width: max-content; }
+.ar-token { display: flex; align-items: center; gap: 8px; }
+.ar-token .input { width: 220px; }
+.ar-download { margin: 0; padding: 0 8px; font-size: 12px; line-height: 16px; border-inline-start: var(--bp-bar) solid var(--success); }
+.ar-download[data-tone="alert"] { border-inline-start-color: var(--danger); }
+
+.ar-body { display: grid; grid-template-columns: 196px minmax(0, 1fr); min-height: 0; }
+/* The rail starts 24 below the header, as the main column does, so both first blocks
+   share a top edge. */
+.ar-rail {
+  display: flex; flex-direction: column; gap: 4px; padding: 24px 12px 16px;
+  border-inline-end: var(--bp-line) solid var(--bp-ink);
+}
+.ar-rail .button { justify-content: flex-start; width: 100%; }
+/* 4 + 7 + 2 + 7 + 4 = 24 between items keeps the rail on the 4 px grid. */
+.ar-rail .separator { height: 2px; margin-block: 7px; }
+/* break-word, not anywhere: long words still wrap, but intrinsic widths stay word-based,
+   so table columns keep sensible minimums. */
+.ar-main { min-width: 0; padding: 24px; overflow-wrap: break-word; }
+.ar-main > div:not([hidden]) { display: flex; flex-direction: column; gap: 24px; }
+
+/* Tailwind preflight clears heading and list styles; the workbench needs a scale. */
+.ar-main h1 { font-size: 24px; line-height: 32px; font-weight: 600; }
+.ar-main h2 { font-size: 18px; line-height: 24px; font-weight: 600; }
+.ar-main h3 { font-size: 15px; line-height: 24px; font-weight: 600; }
+.ar-main .card > .card__header:first-child { font-size: 15px; line-height: 24px; }
+.ar-main .card__header { row-gap: 8px; }
+.ar-main .card__description { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+.ar-main li + li { margin-block-start: 8px; }
+.ar-main p + p { margin-block-start: 4px; }
+.ar-main .switch { flex-direction: row; align-items: center; gap: 8px; }
+.ar-main .tabs__tab { white-space: nowrap; overflow-wrap: normal; }
+.ar-main pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 16px; }
+
+@media (max-width: 900px) {
+  .ar-body { grid-template-columns: 64px minmax(0, 1fr); }
+  .ar-rail { padding: 16px 8px; align-items: stretch; }
+  .ar-rail .button { justify-content: center; }
+  .ar-rail-label {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+  .ar-main { padding: 16px; }
+}
+
+/* A workspace's opening lines; actions sit at the end of the title row. */
+.ar-page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.ar-lead { max-width: 72ch; color: var(--muted); }
+
+.ar-stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.ar-stack--tight { gap: 8px; }
+.ar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; }
+/* An icon belongs on the line of the text it marks, never on one of its own. */
+.ar-row--tight { flex-wrap: nowrap; gap: 8px; }
+.ar-row--tight > svg { flex: none; }
+.ar-nowrap { white-space: nowrap; }
+.ar-note { font-size: 12px; line-height: 16px; color: var(--muted); }
+.ar-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+.ar-board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.ar-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.ar-split { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 24px; align-items: start; }
+.ar-list { display: flex; flex-direction: column; gap: 12px; }
+@media (max-width: 1000px) {
+  .ar-board, .ar-pair, .ar-split { grid-template-columns: minmax(0, 1fr); }
+}
+/* Side by side, items start on the same line, whatever the p + p rule above adds. */
+.ar-pair > p + p,
+.ar-row > p + p { margin-block-start: 0; }
+
+/* Facts: label over value in a wrapping grid, the reading form of a record. */
+.ar-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 12px 24px; margin: 0; }
+.ar-facts dt { font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.02em; }
+.ar-facts dd { margin: 0; }
+
+/* Route lanes: a 40 px ruled header per lane; the lane's hue is a bar at the start, so the
+   three read apart without a block of colour. */
+.ar-lane {
+  display: flex; align-items: center; height: 40px;
+  margin: 0; padding: 0 12px 0 16px; font-size: 12px; line-height: 16px; font-weight: 600;
+  letter-spacing: 0.02em; border: var(--bp-line) solid var(--bp-ink);
+  background: var(--surface); color: var(--foreground);
+  box-shadow: inset 4px 0 0 var(--ar-lane);
+}
+.ar-lane--focused { --ar-lane: var(--accent); }
+.ar-lane--warm { --ar-lane: var(--bp-accent2); }
+.ar-lane--parked { --ar-lane: var(--muted); }
+
+/* A tagged line: the status mark of blockprint.css, one hue per value of data-tone. */
+.ar-tag { display: inline-flex; align-items: center; gap: 6px; }
+.ar-tag::before { content: ""; flex: none; width: var(--bp-mark); height: var(--bp-mark); background: var(--ar-tag, var(--muted)); }
+.ar-tag[data-tone="success"] { --ar-tag: var(--success); }
+.ar-tag[data-tone="warning"] { --ar-tag: var(--warning); }
+.ar-tag[data-tone="danger"] { --ar-tag: var(--danger); }
+.ar-tag[data-tone="accent"] { --ar-tag: var(--accent); }
+
+/* Palette swatches beside a palette name, centred on its capitals. */
+.ar-swatches { margin-inline-end: 8px; }
+.ar-swatches > span {
+  display: inline-block; width: 12px; height: 12px; margin-inline-end: 2px;
+  border: 1px solid currentColor; vertical-align: calc(0.35em - 6px);
+}
+
+/* The lock notice (LockNotice.jsx): an alert with its action under the words. */
+.bp-lock .bp-lock-action { margin-block-start: 8px; align-self: flex-start; }
+.bp-lock--compact { padding-block: 8px; }
+
+/* Code and long identifiers wrap inside their block instead of widening the page. */
+.ar-code {
+  margin: 0; padding: calc(12px - var(--bp-line)); white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: var(--font-mono); font-size: 12px; line-height: 16px;
+  border: var(--bp-line) solid var(--bp-ink); background: var(--surface-secondary);
+}
+.table__cell { overflow-wrap: normal; }
+.ar-table-scroll { overflow-x: auto; max-width: 100%; }

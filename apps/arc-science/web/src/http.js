@@ -1,20 +1,25 @@
 export const NATIVE_SESSION = '__ARC_NATIVE_SESSION__';
 
 // One voice for every locked, expired and offline state. Each workspace shows one
-// card (title + text) beside the action it gates, and the same short alert line.
-export const SESSION_COPY = {
-  locked: {title: 'Operator token required', text: 'Enter your operator token in the header. It comes from `arc-science token --data <data directory>` (an owner-only file in the data directory).'},
-  expired: {title: 'Token not accepted', text: 'Enter a current operator token in the header and retry.'},
-  nativeExpired: {title: 'Desktop session not accepted', text: 'Switch to an operator token in the header and retry.'},
-  offline: {title: 'Arc Science is not reachable', text: 'Start the local service, then retry.'},
-};
-const DRAFT = ' Your draft stays in this window.';
+// card (title + text, dictionary keys session.<id>.*) beside the action it gates, and
+// the same short alert line.
+export const SESSION_CARDS = ['locked', 'expired', 'nativeExpired', 'offline'];
+
 /** The card for the current state: no token, a rejected token, or a rejected desktop
- * session. Workspaces that hold unsent input say so; the others do not. */
+ * session, as {id, draft}. Workspaces that hold unsent input say so; the others do not. */
 export function sessionState(token, authExpired, {draft = true} = {}) {
-  const card = !token ? SESSION_COPY.locked : authExpired ? (token === NATIVE_SESSION ? SESSION_COPY.nativeExpired : SESSION_COPY.expired) : null;
-  return card && draft ? {...card, text: card.text + DRAFT} : card;
+  const id = !token ? 'locked' : authExpired ? (token === NATIVE_SESSION ? 'nativeExpired' : 'expired') : null;
+  return id ? {id, draft} : null;
 }
+
+/** A card's title and text in the current language. */
+export function sessionCopy(card, t) {
+  const text = t(`session.${card.id}.text`);
+  return {title: t(`session.${card.id}.title`), text: card.draft ? text + ' ' + t('session.draft') : text};
+}
+
+/** The one-line form of a card, for the alert beside a failed action. */
+export const sessionLine = (id, t) => t(`session.${id}.title`) + '. ' + t(`session.${id}.text`);
 
 function headerEntries(headers) {
   if (!headers) return [];

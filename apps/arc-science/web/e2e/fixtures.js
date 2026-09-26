@@ -9,7 +9,7 @@ export const STORED_MISSION_KEY = 'arc.research.mission';
 
 /** The id of the mission the results pane shows ("Selected mission: <id>"). */
 export async function selectedMissionId(page) {
-  return (await page.locator('.eyebrow').filter({hasText: 'Selected mission:'}).textContent()).split(': ')[1].trim();
+  return page.getByRole('region', {name: 'Research results'}).locator('[data-mission-id]').getAttribute('data-mission-id');
 }
 
 /** Tokens travel in memory and request headers only, never in a URL or a query string. */
@@ -28,7 +28,9 @@ export function watchForTokenLeaks(page, ...tokens) {
 /** Open a workspace from the navigation and wait for its landmark. */
 export async function openWorkspace(page, name, landmark) {
   await page.getByRole('navigation', {name: 'Workspaces'}).getByRole('button', {name}).click();
-  await expect(page.getByRole('region', {name: landmark}).or(page.getByLabel(landmark)).first()).toBeVisible();
+  // Exact names, and only what is on screen: every workspace stays mounted, and 'Settings'
+  // would otherwise also match Research's hidden 'Execution settings' panel.
+  await expect(page.getByRole('region', {name: landmark, exact: true}).or(page.getByLabel(landmark, {exact: true})).filter({visible: true}).first()).toBeVisible();
 }
 
 /** Create and start an offline (demo) mission; returns when the run reaches a final status. */
@@ -37,9 +39,10 @@ export async function runDemoMission(page, {goal, rounds = 5, vision = false} = 
   await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await page.getByLabel('Research goal').fill(goal ?? 'E2E: explore the response curve of the offline fixture.');
   await page.getByText('Execution settings', {exact: true}).click();
-  await page.getByLabel('Model source').selectOption('demo');
+  await page.getByLabel('Model source').click();
+  await page.getByRole('option', {name: /^Offline fixture/}).click();
   await page.getByLabel('Round limit').fill(String(rounds));
-  if (vision) await page.getByLabel(/Require configured visual review/).check();
+  if (vision) await page.getByLabel(/Require configured visual review/).check({force: true}); // HeroUI draws the box over its hidden input; the click lands inside the same label
   await page.getByRole('button', {name: 'Create and start'}).click();
   const status = page.getByRole('region', {name: 'Research results'}).locator('.status-label');
   await expect(status).toHaveText(/completed|budget exhausted|needs input|cancelled|error/, {timeout: 120_000});

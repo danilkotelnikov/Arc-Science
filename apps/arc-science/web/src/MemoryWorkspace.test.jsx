@@ -1,12 +1,14 @@
 import React from 'react';
 import {afterEach, beforeEach, expect, test, vi} from 'vitest';
-import {act, render, screen, waitFor} from '@testing-library/react';
+import {act, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import MemoryWorkspace from './MemoryWorkspace';
+import {I18nProvider} from './i18n/index.jsx';
 
 const json = data => new Response(JSON.stringify(data), {headers: {'Content-Type': 'application/json'}});
 const health = {protocol: 'arc-memory/1', sqlite: '3.53.2', retrieval_modes: ['lexical'], capture: {status: 'ready', pending: 0, last_error: null}};
 const record = {record_id: 'record-1', session_id: 'private-session', role: 'planner', seq: 1, compaction_epoch: 0, text: 'Private remembered finding', trust: 'model_output', content_digest: 'a'.repeat(64)};
+const sessionOption = () => screen.findByRole('option', {name: /private-session/});
 let removed;
 
 beforeEach(() => {
@@ -24,12 +26,12 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 test('defaults to lexical and explains unavailable semantic modes from health', async () => {
   const user = userEvent.setup(); render(<MemoryWorkspace token="private-token" setToken={vi.fn()}/>);
-  expect(screen.getByLabelText('Search mode')).toHaveValue('lexical');
-  expect(screen.getByRole('option', {name: /Semantic/})).toBeDisabled();
+  expect(screen.getByRole('radio', {name: 'Keyword (lexical)'})).toBeChecked();
+  expect(screen.getByRole('radio', {name: /Semantic/})).toBeDisabled();
   expect(screen.queryByText(/embedding model/)).not.toBeInTheDocument(); // not asserted before health answers
   await user.click(screen.getByRole('button', {name: 'Load sessions'}));
   expect(await screen.findByText(/Semantic and hybrid search need an embedding model/)).toBeInTheDocument();
-  expect(screen.getByRole('option', {name: /Hybrid/})).toBeDisabled();
+  expect(screen.getByRole('radio', {name: /Hybrid/})).toBeDisabled();
   expect(screen.queryByText(/Search modes available/)).not.toBeInTheDocument();
   await user.type(screen.getByLabelText('Search memory'), 'remembered');
   await user.click(screen.getByRole('button', {name: 'Search'}));
@@ -45,12 +47,12 @@ test('health enables only advertised retrieval and shows degraded capture with p
   fetch.mockImplementation((path, options) => path.endsWith('/health') ? Promise.resolve(json({...health, retrieval_modes: ['lexical', 'semantic'], capture: {status: 'degraded', pending: 2, last_error: 'Capture worker unavailable'}})) : original(path, options));
   const user = userEvent.setup(); render(<MemoryWorkspace token="operator" setToken={vi.fn()}/>);
   await user.click(screen.getByRole('button', {name: 'Load sessions'}));
-  expect(await screen.findByText(/Session capture: degraded · 2 captures waiting/)).toBeInTheDocument();
+  expect(await screen.findByText('Session capture: degraded, 2 captures waiting')).toBeInTheDocument();
   expect(screen.getByText('Last capture error: Capture worker unavailable')).toBeInTheDocument();
-  expect(screen.getByText('Search modes available: lexical, semantic.')).toBeInTheDocument();
-  expect(screen.getByRole('option', {name: 'Semantic (by meaning)'})).not.toBeDisabled();
-  expect(screen.getByRole('option', {name: /Hybrid/})).toBeDisabled();
-  await user.selectOptions(screen.getByLabelText('Search mode'), 'semantic');
+  expect(screen.getByText('Search modes available: keyword, semantic.')).toBeInTheDocument();
+  expect(screen.getByRole('radio', {name: 'Semantic (by meaning)'})).not.toBeDisabled();
+  expect(screen.getByRole('radio', {name: /Hybrid/})).toBeDisabled();
+  await user.click(screen.getByRole('radio', {name: 'Semantic (by meaning)'}));
   await user.type(screen.getByLabelText('Search memory'), 'finding');
   await user.click(screen.getByRole('button', {name: 'Search'}));
   await screen.findByText('Private remembered finding');
@@ -60,17 +62,44 @@ test('health enables only advertised retrieval and shows degraded capture with p
 test('explicit scope switches between all sessions and the selected session', async () => {
   const user = userEvent.setup(); render(<MemoryWorkspace token="operator" setToken={vi.fn()}/>);
   await user.click(screen.getByRole('button', {name: 'Load sessions'}));
-  await user.click(await screen.findByRole('button', {name: /private-session · 1 record ·/}));
+  expect(screen.getByRole('radio', {name: 'Selected session (open a session first)'})).toBeDisabled();
+  await user.click(await sessionOption());
   await screen.findByText('Private remembered finding');
-  expect(screen.getByLabelText('Search scope')).toHaveValue('all');
+  expect(screen.getByRole('radio', {name: 'All sessions'})).toBeChecked();
   await user.type(screen.getByLabelText('Search memory'), 'finding');
-  await user.selectOptions(screen.getByLabelText('Search scope'), 'selected');
+  await user.click(screen.getByRole('radio', {name: 'Selected session'}));
   await user.click(screen.getByRole('button', {name: 'Search'}));
-  await screen.findByText(/Search · lexical · private-session/);
-  await user.selectOptions(screen.getByLabelText('Search scope'), 'all');
+  await screen.findByText('Keyword search, session private-session');
+  await user.click(screen.getByRole('radio', {name: 'All sessions'}));
   await user.click(screen.getByRole('button', {name: 'Search'}));
-  await screen.findByText(/Search · lexical · all sessions/);
+  await screen.findByText('Keyword search, all sessions');
   expect(fetch.mock.calls.filter(([path]) => path.endsWith('/search')).map(([, options]) => JSON.parse(options.body).session)).toEqual(['private-session', null]);
+});
+
+test('each hit shows its session, role, match and provenance, and a press on the open session reloads it', async () => {
+  const original = fetch.getMockImplementation();
+  const when = Date.UTC(2026, 8, 20, 10, 30);
+  fetch.mockImplementation((path, options) => path.endsWith('/search')
+    ? Promise.resolve(json([{record: {...record, wall_time_ms: when}, reason: 'lexical', score: 1}])) : original(path, options));
+  const user = userEvent.setup(); render(<MemoryWorkspace token="operator" setToken={vi.fn()}/>);
+  await user.click(screen.getByRole('button', {name: 'Load sessions'}));
+  const option = await sessionOption();
+  expect(option).toHaveTextContent('1 record, compaction epochs 0–0');
+  await user.click(option);
+  await screen.findByText('Private remembered finding');
+  await user.type(screen.getByLabelText('Search memory'), 'finding');
+  await user.click(screen.getByRole('button', {name: 'Search'}));
+  const hit = (await screen.findByText('Private remembered finding')).closest('article');
+  expect(within(hit).getByRole('heading', {name: 'Planner'})).toBeInTheDocument();
+  expect(hit).toHaveTextContent('private-session');
+  expect(hit).toHaveTextContent('Matched by keyword, score 1.000, compaction epoch 0, trust: model output');
+  expect(within(hit).getByText((_, element) => element?.tagName === 'TIME')).toHaveAttribute('datetime', new Date(when).toISOString());
+  expect(screen.getByText('1 result')).toBeInTheDocument();
+  // The open session stays selected; pressing it again returns from the hits to its records.
+  expect(option).toHaveAttribute('aria-selected', 'true');
+  await user.click(option);
+  expect(await screen.findByText('Captured records')).toBeInTheDocument();
+  expect(fetch.mock.calls.filter(([path]) => path.includes('/sessions/'))).toHaveLength(2);
 });
 
 test('a failed refresh does not keep reporting the previous healthy capture state', async () => {
@@ -86,13 +115,13 @@ test('a failed refresh does not keep reporting the previous healthy capture stat
 test('intentional removal refreshes records and sidebar counts and excludes later search hits', async () => {
   const user = userEvent.setup(); render(<MemoryWorkspace token="operator" setToken={vi.fn()}/>);
   await user.click(screen.getByRole('button', {name: 'Load sessions'}));
-  await user.click(await screen.findByRole('button', {name: /private-session · 1 record ·/}));
+  await user.click(await sessionOption());
   await screen.findByText('Private remembered finding');
   expect(fetch.mock.calls.some(([path]) => path.endsWith('/disable'))).toBe(false);
   await user.click(screen.getByRole('button', {name: 'Remove from retrieval: record 1'}));
   expect(await screen.findByText(/Removed from retrieval/)).toBeInTheDocument();
   expect(screen.queryByText('Private remembered finding')).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', {name: /private-session · 1 record ·/})).not.toBeInTheDocument();
+  expect(screen.queryByRole('option', {name: /private-session/})).not.toBeInTheDocument();
   expect(screen.getByText('0 loaded')).toBeInTheDocument();
   await user.type(screen.getByLabelText('Search memory'), 'finding');
   await user.click(screen.getByRole('button', {name: 'Search'}));
@@ -103,7 +132,7 @@ test('token change clears private state and rejects an old response even during 
   const user = userEvent.setup(); const setToken = vi.fn();
   const {rerender} = render(<MemoryWorkspace token="old-token" setToken={setToken}/>);
   await user.click(screen.getByRole('button', {name: 'Load sessions'}));
-  await user.click(await screen.findByRole('button', {name: /private-session · 1 record ·/}));
+  await user.click(await sessionOption());
   await screen.findByText('Private remembered finding');
   let finish;
   fetch.mockImplementationOnce(async () => ({ok: true, json: () => new Promise(resolve => { finish = resolve; })}));
@@ -115,7 +144,7 @@ test('token change clears private state and rejects an old response even during 
   expect(signal.aborted).toBe(true);
   expect(screen.getByLabelText('Search memory')).toHaveValue('sensitive query');
   expect(screen.queryByText('Private remembered finding')).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', {name: /private-session/})).not.toBeInTheDocument();
+  expect(screen.queryByRole('option', {name: /private-session/})).not.toBeInTheDocument();
   await act(async () => finish([{record, reason: 'lexical', score: 1}]));
   expect(screen.queryByText('Private remembered finding')).not.toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -175,11 +204,13 @@ test('a large session uses bounded inclusive pages and shows loaded and total co
   });
   const user = userEvent.setup(); render(<MemoryWorkspace token="operator" setToken={vi.fn()}/>);
   await user.click(screen.getByRole('button', {name: 'Load sessions'}));
-  await user.click(await screen.findByRole('button', {name: /private-session · 1205 records/}));
+  const option = await sessionOption();
+  expect(option).toHaveTextContent('1,205 records, compaction epochs 0–5');
+  await user.click(option);
   expect(await screen.findByText('Finding 199')).toBeInTheDocument();
   expect(screen.queryByText('Finding 200')).not.toBeInTheDocument();
   expect(screen.getByText('199 loaded')).toBeInTheDocument();
-  expect(screen.getByText(/1205 retrievable records/)).toBeInTheDocument();
+  expect(screen.getByText(/Sequence 0–199 \(inclusive\), 1,205 retrievable records/)).toBeInTheDocument();
   expect(screen.getByRole('button', {name: 'Previous records'})).toBeDisabled();
   await user.click(screen.getByRole('button', {name: 'Next records'}));
   expect(await screen.findByText('Finding 200')).toBeInTheDocument();
@@ -207,11 +238,11 @@ test('an oversized page preserves range controls so the user can narrow and retr
   });
   const user = userEvent.setup(); render(<MemoryWorkspace token="operator" setToken={vi.fn()}/>);
   await user.click(screen.getByRole('button', {name: 'Load sessions'}));
-  await user.click(await screen.findByRole('button', {name: /private-session · 1 record ·/}));
+  await user.click(await sessionOption());
   expect(await screen.findByRole('alert')).toHaveTextContent('narrower sequence range');
   expect(screen.getByText('Captured records')).toBeInTheDocument();
   expect(screen.queryByText(/0 loaded/)).not.toBeInTheDocument();
-  await user.click(screen.getByText('Record range'));
+  await user.click(screen.getByRole('button', {name: 'Record range'}));
   await user.clear(screen.getByLabelText('From sequence (inclusive)'));
   await user.type(screen.getByLabelText('From sequence (inclusive)'), '1');
   await user.clear(screen.getByLabelText('To sequence (inclusive)'));
@@ -232,14 +263,15 @@ test('an oversized page preserves range controls so the user can narrow and retr
 test('a rejected token while removing a record disables removal and shows the lock notice once', async () => {
   const user = userEvent.setup(); render(<MemoryWorkspace token="operator" setToken={vi.fn()}/>);
   await user.click(screen.getByRole('button', {name: 'Load sessions'}));
-  await user.click(await screen.findByRole('button', {name: /private-session · 1 record ·/}));
+  await user.click(await sessionOption());
   await screen.findByText('Private remembered finding');
   const remove = screen.getByRole('button', {name: 'Remove from retrieval: record 1'});
   expect(remove).toHaveTextContent('Remove from retrieval');
   fetch.mockImplementationOnce(async () => new Response(JSON.stringify({detail: 'bad token'}), {status: 401, headers: {'Content-Type': 'application/json'}}));
   await user.click(remove);
-  const title = await screen.findByText('Token not accepted', {selector: 'strong'});
-  expect(title.closest('.unlock-card')).toHaveAttribute('data-tone', 'error');
+  const title = await screen.findByText('Token not accepted');
+  expect(title.closest('[role="status"]')).toHaveAttribute('data-tone', 'error');
+  // The notice sits with the sessions action it gates.
   expect(title.closest('aside')).toContainElement(screen.getByRole('button', {name: 'Load sessions'}));
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.getAllByText(/Token not accepted/)).toHaveLength(1);
@@ -252,9 +284,9 @@ test('invalid ranges do not issue requests and credential changes reject an old 
   const user = userEvent.setup(); const setToken = vi.fn();
   const {rerender} = render(<MemoryWorkspace token="old-token" setToken={setToken}/>);
   await user.click(screen.getByRole('button', {name: 'Load sessions'}));
-  await user.click(await screen.findByRole('button', {name: /private-session · 1 record ·/}));
+  await user.click(await sessionOption());
   await screen.findByText('Private remembered finding');
-  await user.click(screen.getByText('Record range'));
+  await user.click(screen.getByRole('button', {name: 'Record range'}));
   await user.clear(screen.getByLabelText('To sequence (inclusive)'));
   await user.type(screen.getByLabelText('To sequence (inclusive)'), '1000');
   await user.click(screen.getByRole('button', {name: 'Load record range'}));
@@ -273,4 +305,14 @@ test('invalid ranges do not issue requests and credential changes reject an old 
   await act(async () => finish([record]));
   expect(screen.queryByText('Private remembered finding')).not.toBeInTheDocument();
   expect(screen.queryByText('Record range')).not.toBeInTheDocument();
+});
+
+test('reads in Russian, with the lock notice and every control translated', () => {
+  render(<I18nProvider locale="ru"><MemoryWorkspace token="" setToken={vi.fn()}/></I18nProvider>);
+  expect(screen.getByRole('heading', {level: 1})).toHaveTextContent('Прошлые сеансы');
+  expect(screen.getByRole('button', {name: 'Загрузить сеансы'})).toBeDisabled();
+  expect(screen.getByRole('button', {name: 'Найти'})).toBeDisabled();
+  expect(screen.getByRole('radiogroup', {name: 'Режим поиска'})).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Нужен токен оператора');
+  expect(document.body).not.toHaveTextContent(/memory\./);
 });

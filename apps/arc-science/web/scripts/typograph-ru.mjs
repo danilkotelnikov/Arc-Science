@@ -3,7 +3,9 @@
 // precedes a word, before the particles же/ли/бы and before an em dash. The text
 // inside {placeholders} is never touched. Idempotent.
 // CLI: node scripts/typograph-ru.mjs <file.js> checks a flat `export default`
-// dictionary and exits 1 when any string would change.
+// dictionary and exits 1 when any string would change. With --fix it rewrites every
+// one-line 'key': 'value' entry of the file in place instead, writing U+00A0 as  .
+import {readFileSync, writeFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
@@ -44,9 +46,27 @@ export default typographRu;
 
 const visible = s => JSON.stringify(s).replace(/\u00A0/g, '\\u00A0');
 
+// A single-quoted JS literal for a value, with the no-break space written as an escape.
+const literal = s => "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/ /g, '\\u00A0') + "'";
+const ENTRY = /^(\s*'[^'\n]+'\s*:\s*)('(?:[^'\\\n]|\\.)*')(,?\s*(?:\/\/.*)?)$/gm;
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const file = process.argv[2];
-  if (!file) { console.error('Usage: node scripts/typograph-ru.mjs <file.js>'); process.exit(2); }
+  const fix = process.argv.includes('--fix');
+  const file = process.argv.slice(2).find(arg => arg !== '--fix');
+  if (!file) { console.error('Usage: node scripts/typograph-ru.mjs [--fix] <file.js>'); process.exit(2); }
+  if (fix) {
+    let changed = 0;
+    const text = readFileSync(file, 'utf8').replace(ENTRY, (all, head, quoted, tail) => {
+      const value = Function('"use strict"; return ' + quoted)();
+      const fixed = typographRu(value);
+      if (fixed === value) return all;
+      changed++;
+      return head + literal(fixed) + tail;
+    });
+    writeFileSync(file, text);
+    console.log(`${file}: ${changed} strings fixed`);
+    process.exit(0);
+  }
   const dict = (await import(pathToFileURL(resolve(file)).href)).default ?? {};
   let violations = 0;
   for (const [key, value] of Object.entries(dict)) {

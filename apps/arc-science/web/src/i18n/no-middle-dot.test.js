@@ -5,13 +5,12 @@ import {fileURLToPath} from 'node:url';
 
 // jsdom replaces the global URL, so resolve the web root from the file path string.
 const web = join(dirname(fileURLToPath(import.meta.url)), '../..');
-// Every S0 path: UI sources, the typograph, logo SVGs and the Python logo tooling.
+// Every UI source: the workbench, its scripts and public files, the logo and its tooling.
 const ROOTS = [
-  'src/i18n', 'src/theme', 'src/mockup', 'mockup.html', 'scripts/typograph-ru.mjs', 'public/logo-candidates',
-  '../../../design/logo', '../../../scripts/make-icon.py', '../../../scripts/vectorize-logo.py',
-  '../../../scripts/squircle.py', '../tests/test_squircle.py', '../THIRD_PARTY_NOTICES.md',
+  'src', 'index.html', 'scripts', 'public', 'e2e', '../../../design/logo', '../../../scripts/build-logo.py',
+  '../../../scripts/make-icon.py', '../../../scripts/squircle.py', '../THIRD_PARTY_NOTICES.md',
 ];
-const TEXT = /\.(m?js|jsx|css|html|svg|json|md|py)$/;
+const TEXT = /\.(m?js|jsx|css|html|svg|json|md|py|txt)$/;
 
 function files(path) {
   if (!existsSync(path)) return [];

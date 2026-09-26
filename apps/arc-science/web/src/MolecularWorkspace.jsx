@@ -1,6 +1,10 @@
 import React, {Suspense, lazy, useCallback, useEffect, useState} from 'react';
-import MolecularRenderPanel, {MolecularRenderResult, stageLine} from './MolecularRenderPanel';
+import {EmptyState} from '@heroui/react/empty-state';
+import MolecularRenderPanel, {MolecularPackages, MolecularRenderResult, stageLine, statusWord} from './MolecularRenderPanel';
 import {apiFetch} from './http';
+import {useI18n} from './i18n/index.jsx';
+import {Block, PageHead, useFirstEntry} from './ui.jsx';
+import './molecules/molecules.css';
 
 async function sha256Hex(text) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
@@ -15,6 +19,8 @@ const hasContacts = job => job?.status === 'completed' || (job?.stages || []).so
 // at once, a selected render's coordinates when it is picked, and the pipeline's
 // contacts the moment they are computed. No packaged example is served.
 export default function MolecularWorkspace({token, setToken}) {
+  const {t} = useI18n();
+  const enter = useFirstEntry('molecules');
   const [renderSelection, setRenderSelection] = useState(null), [showRender, setShowRender] = useState(false);
   const [source, setSource] = useState(null), [scene, setScene] = useState(null), [defaults, setDefaults] = useState(null);
   const updateRender = useCallback(job => setRenderSelection({token, job}), [token]);
@@ -64,19 +70,24 @@ export default function MolecularWorkspace({token, setToken}) {
     return () => controller.abort();
   }, [token, renderJob?.id, renderJob?.status, (renderJob?.stages || []).length]);
   const overlay = scene && renderJob && scene.job === renderJob.id && source?.job === renderJob.id ? scene : null;
-  const stage = renderJob && source?.job === renderJob.id ? (renderJob.status === 'completed' ? 'render complete' : stageLine(renderJob) || 'render ' + String(renderJob.status).replace(/_/g, ' ')) : '';
-  return <div className="molecular-workspace">
-    <aside className="inspector" aria-label="Molecular render controls">
-      <p className="eyebrow">MOLECULAR WORKBENCH</p><h1>Your structure</h1>
-      <p className="muted">Render an antibody–antigen complex from your own coordinates with the local pipeline.</p>
-      <MolecularRenderPanel token={token} setToken={setToken} onJobChange={updateRender} onShowJob={setShowRender} onSource={setSource} showRender={showRender}/>
-    </aside>
-    <section className="figure-workspace" aria-label="Molecular figure">
-      {source ? <Suspense fallback={<div className="workspace-message"><p role="status">Loading the viewer…</p></div>}>
-          <MolecularViewer source={source} scene={overlay} defaults={defaults} stage={stage}/>
-        </Suspense>
-        : <div className="workspace-message"><p role="status">Choose a coordinate file or a saved render to view it.</p></div>}
-      {showRender && renderJob && <MolecularRenderResult key={token + ':' + renderJob.id} token={token} job={renderJob} onReturn={() => setShowRender(false)}/>}
-    </section>
+  const stage = renderJob && source?.job === renderJob.id
+    ? (renderJob.status === 'completed' ? t('molecules.stage.complete') : stageLine(renderJob, t) || t('molecules.stage.status', {status: statusWord(renderJob.status, t)}))
+    : '';
+  const message = text => <Block><EmptyState className="ar-mol-empty" role="status">{text}</EmptyState></Block>;
+  return <div className="ar-mol" data-enter={enter}>
+    <PageHead kicker={t('molecules.kicker')} title={t('molecules.title')} lead={t('molecules.lead')}/>
+    <div className="ar-mol-split">
+      <aside aria-label={t('molecules.controls.label')}>
+        <MolecularRenderPanel token={token} setToken={setToken} onJobChange={updateRender} onShowJob={setShowRender} onSource={setSource} showRender={showRender}/>
+      </aside>
+      <section className="ar-stack" aria-label={t('molecules.figure.label')}>
+        {source ? <Suspense fallback={message(t('molecules.figure.loading'))}>
+            <MolecularViewer source={source} scene={overlay} defaults={defaults} stage={stage}/>
+          </Suspense>
+          : message(t('molecules.figure.empty'))}
+        {showRender && renderJob && <MolecularRenderResult key={token + ':' + renderJob.id} token={token} job={renderJob} onReturn={() => setShowRender(false)}/>}
+      </section>
+    </div>
+    <MolecularPackages key={token} token={token}/>
   </div>;
 }

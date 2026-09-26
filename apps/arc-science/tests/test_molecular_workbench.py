@@ -31,8 +31,8 @@ def test_diagnostics_policy_is_unchanged(client):
 def test_home_serves_compiled_ui_with_the_empty_workbench(client):
     page = client.get('/')
     assert page.status_code == 200
-    assert 'href="/snoggo-mark.svg"' in page.text
-    assert client.get('/snoggo-mark.svg').status_code == 200
+    assert 'href="/favicon.svg"' in page.text
+    assert client.get('/favicon.svg').status_code == 200
     script = re.search(r'<script[^>]+src="([^"]+)"', page.text)
     assert script is not None
     response = client.get(script.group(1))

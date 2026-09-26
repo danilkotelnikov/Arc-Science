@@ -57,7 +57,8 @@ export const PALETTES = [
       success: '#2E6B3F', successForeground: '#FFFFFF', warning: '#A68124', warningForeground: '#0E0E0E',
       danger: '#9B2226', dangerForeground: '#FFFFFF',
       border: '#0E0E0E', separator: '#8A806C', focus: '#1F6F5C',
-      fieldBackground: '#FFFFFF', fieldForeground: '#0E0E0E', ink: '#0E0E0E', shadow: '#0E0E0E',
+      // Fields: a warm white. Pure white stands out from this cream page as a colour of its own.
+      fieldBackground: '#FFFCF5', fieldForeground: '#0E0E0E', ink: '#0E0E0E', shadow: '#0E0E0E',
       accentText: '#856401', accent2Text: '#1F6F5C',
     },
   },

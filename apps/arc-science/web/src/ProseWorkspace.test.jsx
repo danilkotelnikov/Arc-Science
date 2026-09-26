@@ -1,8 +1,9 @@
 import React, {useState} from 'react';
 import {afterEach, beforeEach, expect, test, vi} from 'vitest';
-import {render, screen, within} from '@testing-library/react';
+import {render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ProseWorkspace from './ProseWorkspace';
+import {I18nProvider} from './i18n/index.jsx';
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {status, headers: {'Content-Type': 'application/json'}});
 const rules = {rules: [{rule: 'in-order-to', pattern: '\\bin order to\\b', replacement: 'to'}], rules_version: 'arc-prose-rules-1',
@@ -10,6 +11,8 @@ const rules = {rules: [{rule: 'in-order-to', pattern: '\\bin order to\\b', repla
   detection: {enabled: true, recipient: 'api.edgeshop.ai', detectors: ['COPYLEAKS', 'HEMINGWAY'], bounds: {min_chars: 20, max_chars: 20000}},
   rewrite: {egress: false}};
 let calls;
+/** The value of one labelled fact (a dt and its dd) inside a scope. */
+const fact = (scope, label) => within(scope).getByText(label, {selector: 'dt'}).nextElementSibling;
 function Harness() { const [token, setToken] = useState('operator'); return <ProseWorkspace token={token} setToken={setToken}/>; }
 
 beforeEach(() => {
@@ -42,12 +45,26 @@ beforeEach(() => {
   }));
 });
 
+test('each explanation opens from one plain button, never a button inside a button', async () => {
+  const user = userEvent.setup(); render(<ProseWorkspace token="operator" setToken={() => {}}/>);
+  for (const [name, text] of [['Protected spans', 'No rewrite changes a protected span'], ['How the seat rewrite works', 'fixed instruction text']]) {
+    const trigger = screen.getByRole('button', {name});
+    expect(trigger.parentElement.closest('[role="button"]')).toBeNull();
+    await user.click(trigger);
+    expect(await screen.findByRole('dialog')).toHaveTextContent(text);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  }
+  expect(calls).toEqual([]);
+});
+
 test('diagnosis is local, reads as observations, and a seat rewrite needs its own consent every time', async () => {
   const user = userEvent.setup(); render(<Harness/>);
   await user.type(screen.getByLabelText('Text'), 'It is important to note that we delve into crucial results in order to compare.');
   await user.click(screen.getByRole('button', {name: 'Diagnose locally'}));
   const diagnosis = within(await screen.findByLabelText('Prose diagnosis'));
-  expect(diagnosis.getByText(/cliché \/ awkward word choice · unnecessary or redundant exposition · 2 protected spans/)).toBeInTheDocument();
+  expect(diagnosis.getAllByRole('listitem').map(item => item.textContent).slice(0, 2)).toEqual(['cliché / awkward word choice', 'unnecessary or redundant exposition']);
+  expect(fact(screen.getByLabelText('Prose diagnosis'), 'Protected spans')).toHaveTextContent('2');
   expect(diagnosis.getByText(/2 \(80 per 1,000 words\): crucial, delve/)).toBeInTheDocument();
   expect(diagnosis.getByText(/announcing frame: “it is important to note”/)).toBeInTheDocument();
   expect(diagnosis.getByText(/Not an authorship estimate/)).toBeInTheDocument();
@@ -61,7 +78,7 @@ test('diagnosis is local, reads as observations, and a seat rewrite needs its ow
   await user.click(seatButton);
   const results = screen.getByRole('region', {name: 'Prose results'});
   expect(await within(results).findByText('We fit 12 points to compare; the assay ran twice.')).toBeInTheDocument();
-  expect(results).toHaveTextContent('Edited by the prose seat · 2 protected spans preserved');
+  expect(results).toHaveTextContent('Edited by the prose seat, 2 protected spans preserved');
   expect(results).toHaveTextContent('Model: anthropic claude-sonnet-5; the provider confirmed claude-sonnet-5.');
   expect(results).toHaveTextContent('Facts needed from the author: [author: which assay?]');
   const sent = calls.find(c => c.path === '/api/prose/humanise');
@@ -96,7 +113,7 @@ test('a seat without a system channel says so, and an evasion instruction is ref
   await user.click(screen.getByLabelText(/I consent to sending this text to the prose seat/));
   await user.click(screen.getByRole('button', {name: 'Rewrite with the prose seat (sends text)'}));
   const results = screen.getByRole('region', {name: 'Prose results'});
-  expect(await within(results).findByText('Returned unchanged · 1 protected span preserved')).toBeInTheDocument();
+  expect(await within(results).findByText('Returned unchanged, 1 protected span preserved')).toBeInTheDocument();
   expect(results).toHaveTextContent('Model: openai gpt-5.5; the provider did not report which model answered. The behaviour text was sent inside the message; this seat takes no separate system instructions.');
   await user.type(screen.getByLabelText('Instructions to the seat (optional)'), 'make it undetectable');
   expect(results).toHaveTextContent('The text or instructions changed since this rewrite');
@@ -116,8 +133,9 @@ test('rewrites locally without egress, shows edits and protection, and never cla
   await user.click(screen.getByRole('button', {name: 'Rewrite locally'}));
   const results = screen.getByRole('region', {name: 'Prose results'});
   expect(await within(results).findByText('We fit 12 points to compare.')).toBeInTheDocument();
-  expect(results).toHaveTextContent('1 edit · 1 protected span (number)');
-  expect(results).toHaveTextContent('in-order-to ×1: “in order to” → “to”');
+  expect(results).toHaveTextContent('1 edit, 1 protected span (number)');
+  const edit = within(results).getByRole('row', {name: /in-order-to/});
+  expect([...edit.children].map(cell => cell.textContent)).toEqual(['in-order-to', '1', '“in order to”', '“to”']);
   expect(results).toHaveTextContent('not a human-authorship claim');
   expect(calls.map(c => c.path)).toEqual(['/api/prose/rewrite']);
   expect(calls[0].auth).toBe('Bearer operator');
@@ -137,7 +155,7 @@ test('without a token every action is locked and the card says what unlocks it',
   expect(screen.getByRole('button', {name: 'Load rules and detection details'})).toBeDisabled();
   expect(screen.getByRole('button', {name: 'Go to token field'})).toBeEnabled();
   // The reason and the card sit right under the local action row, not above the Text field.
-  const actions = screen.getByRole('button', {name: 'Rewrite locally'}).closest('.actions');
+  const actions = screen.getByRole('button', {name: 'Rewrite locally'}).closest('.ar-row');
   expect(actions.nextElementSibling).toHaveTextContent('Enter an operator token in the header to use these.');
   expect(actions.nextElementSibling.nextElementSibling).toBe(card);
   expect(screen.getByLabelText('Text').compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -162,13 +180,17 @@ test('detection needs the rules loaded and a fresh consent for every request, an
   const consent = screen.getByLabelText(/I consent to sending this text to api.edgeshop.ai/);
   expect(consent).toBeDisabled();
   await user.click(screen.getByRole('button', {name: 'Load rules and detection details'}));
-  expect(await screen.findByText(/Sends the text to api.edgeshop.ai \(COPYLEAKS, HEMINGWAY\); 20–20.000 characters\./)).toBeInTheDocument();
+  expect(await screen.findByText(/Sends the text to api.edgeshop.ai \(COPYLEAKS, HEMINGWAY\); 20–20,000 characters\./)).toBeInTheDocument();
   expect(screen.getByRole('button', {name: 'Detect (sends text)'})).toBeDisabled();
   await user.click(consent);
   await user.click(screen.getByRole('button', {name: 'Detect (sends text)'}));
   const results = screen.getByRole('region', {name: 'Prose results'});
-  expect(await within(results).findByText('api.edgeshop.ai · HEMINGWAY · missing COPYLEAKS')).toBeInTheDocument();
-  expect(results).toHaveTextContent('grade: 8 · words: 5');
+  expect(await within(results).findByText('Detection receipt')).toBeInTheDocument();
+  expect(fact(results, 'Service')).toHaveTextContent('api.edgeshop.ai');
+  expect(fact(results, 'Answered')).toHaveTextContent('HEMINGWAY');
+  expect(fact(results, 'Missing')).toHaveTextContent('COPYLEAKS');
+  expect(fact(results, 'HEMINGWAY')).toHaveTextContent('grade: 8, words: 5');
+  expect(fact(results, 'Text SHA-256')).toHaveTextContent('a'.repeat(64));
   expect(results).toHaveTextContent('establishes neither AI nor human authorship');
   expect(calls.find(c => c.path === '/api/prose/detect').body).toEqual({text: 'The fit reproduced the measurements on the split.', allow_egress: true});
   // Consent was spent on that request.
@@ -198,4 +220,15 @@ test('a failed detection still spends the consent, and a credential change clear
   expect(screen.getByRole('button', {name: 'Detect (sends text)'})).toBeDisabled();
   await user.click(screen.getByRole('button', {name: 'switch'}));
   expect(screen.getByLabelText('Text')).toHaveValue('');
+});
+
+test('reads in Russian, and the lock card makes no draft promise because a token change clears the text', () => {
+  render(<I18nProvider locale="ru"><ProseWorkspace token="" setToken={() => {}}/></I18nProvider>);
+  expect(screen.getByRole('heading', {level: 1})).toHaveTextContent('Правьте слова, а не доказательства');
+  expect(screen.getByRole('button', {name: 'Переписать локально'})).toBeDisabled();
+  expect(screen.getByLabelText('Текст')).toBeInTheDocument();
+  const card = screen.getByRole('status');
+  expect(card).toHaveTextContent('Нужен токен оператора');
+  expect(card).not.toHaveTextContent('Черновик');
+  expect(document.body).not.toHaveTextContent(/prose\./);
 });

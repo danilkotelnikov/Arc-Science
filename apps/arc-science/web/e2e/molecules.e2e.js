@@ -41,9 +41,12 @@ test('a chosen coordinate file is shown in the viewer at once, with its settings
   const status = await viewer.getByRole('status').textContent();
   test.skip(/could not start/.test(status), 'no WebGL in this browser: ' + status);
   await expect(viewer.locator('canvas')).toBeVisible();
-  await viewer.getByLabel('Representation').selectOption('ball_and_stick');
-  await viewer.getByLabel('Colouring').selectOption('element');
-  await viewer.getByLabel('Background').selectOption('black');
+  // Each setting is a HeroUI Select: open it by its label, then pick the option from the list.
+  for (const [label, option] of [['Representation', 'ball and stick'], ['Colouring', 'element'], ['Background', 'black']]) {
+    await viewer.getByRole('button', {name: label}).click();
+    await page.getByRole('option', {name: option, exact: true}).click();
+    await expect(viewer.getByRole('button', {name: label})).toContainText(option);
+  }
   await expect(viewer.getByRole('status')).toContainText('Loaded 9 atoms');
   // The viewer sends nothing anywhere: no molecular request was made for the upload.
   expect(await page.evaluate(() => performance.getEntriesByType('resource').filter(e => e.name.includes('/api/molecular/')).length)).toBe(0);
@@ -58,9 +61,9 @@ test('a chosen coordinate file is shown in the viewer at once, with its settings
 
 test('a finished download reported by the native shell is announced in the header and expires', async ({page}) => {
   await page.goto('/');
-  await expect(page.locator('.download-notice')).toHaveCount(0);
+  await expect(page.locator('.ar-download')).toHaveCount(0);
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('arc-download', {detail: {file: 'job-1-collage.png', folder: 'C:\\Users\\lab\\Downloads', success: true}})));
-  const notice = page.locator('.download-notice');
+  const notice = page.locator('.ar-download');
   await expect(notice).toHaveAttribute('role', 'status');
   await expect(notice).toHaveText('Saved job-1-collage.png in C:\\Users\\lab\\Downloads');
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('arc-download', {detail: {file: 'job-1-contacts.csv', folder: null, success: false}})));

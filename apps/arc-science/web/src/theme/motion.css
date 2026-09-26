@@ -1,0 +1,321 @@
+/* Blockprint motion. Every transition and animation the workbench declares lives in this
+   file (motion.test.js keeps it that way), so the tokens below are the whole vocabulary.
+   HeroUI brings its own transitions; this file retimes the ones that show and, under
+   reduced motion, stops those that move (motion.test.js checks the computed styles).
+   Character: short and mechanical, no bounce, no overshoot. Only transform, translate,
+   scale and opacity move; colour, background-color and border-color change on state;
+   box-shadow moves only on small controls (the primary button's offset).
+   Levels: full; reduced (prefers-reduced-motion, or data-motion="reduced" from
+   Settings > Appearance): nothing travels, turns or scales, fades last at most 100 ms;
+   off (data-motion="off"): nothing animates. crossFade() in motion.js skips view
+   transitions when motion is off. */
+
+:root {
+  --bp-motion-press: 90ms;   /* press into the offset */
+  --bp-motion-lift: 150ms;   /* transform on hover or selection: primary lift, switch thumb */
+  --bp-motion-state: 150ms;  /* colour and opacity on hover, selection, focus */
+  --bp-motion-panel: 220ms;  /* fades of panels, drawers, modals, popovers, list entry */
+  --bp-motion-slide: 220ms;  /* travel of the same, and of the tab indicator */
+  --bp-stagger: 30ms;        /* between list items on a screen's first mount, six steps at most */
+  --bp-rise: 4px;            /* entry travel of list items, modals and popovers */
+  --bp-slide: 16px;          /* entry travel of a drawer or toast */
+  --bp-ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --bp-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --bp-ease-press: linear;
+}
+
+@layer components {
+  /* State changes of controls: colour only. */
+  .button,
+  .toggle-button,
+  .list-box-item,
+  .select__trigger,
+  .accordion__trigger,
+  .link,
+  .chip,
+  .input,
+  .textarea,
+  .number-field__group,
+  .switch__control {
+    transition-property: color, background-color, border-color;
+    transition-duration: var(--bp-motion-state);
+    transition-timing-function: var(--bp-ease-out);
+  }
+
+  .tabs__tab {
+    transition-property: color, background-color, opacity;
+    transition-duration: var(--bp-motion-state);
+    transition-timing-function: var(--bp-ease-out);
+  }
+
+  /* The primary action lifts on hover and presses into its offset on press. Transform and
+     the shadow share one timing, so the shadow's far corner stays put. */
+  .button--primary {
+    transition-property: transform, box-shadow, color, background-color, border-color;
+    transition-duration: var(--bp-motion-lift), var(--bp-motion-lift), var(--bp-motion-state), var(--bp-motion-state), var(--bp-motion-state);
+    transition-timing-function: var(--bp-ease-out);
+  }
+
+  .button--primary:active,
+  .button--primary[data-pressed="true"] {
+    transition-duration: var(--bp-motion-press);
+    transition-timing-function: var(--bp-ease-press);
+  }
+
+  /* The tab indicator slides; its width snaps, so only translate is carried over. */
+  .tabs__indicator {
+    transition-property: translate;
+    transition-duration: var(--bp-motion-slide);
+    transition-timing-function: var(--bp-ease-out);
+  }
+
+  /* Switch: the thumb travels by translate (blockprint.css positions it), not by margin. */
+  .switch__thumb {
+    transition-property: translate, background-color;
+    transition-duration: var(--bp-motion-lift), var(--bp-motion-state);
+    transition-timing-function: var(--bp-ease-out);
+  }
+
+  /* Two classes, as HeroUI's own thumb rule has, so this one wins. */
+  .slider .slider__thumb,
+  .slider .slider__thumb::after {
+    transition-property: transform, background-color, box-shadow;
+    transition-duration: var(--bp-motion-state);
+    transition-timing-function: var(--bp-ease-out);
+  }
+
+  .accordion__indicator {
+    transition-property: transform;
+    transition-duration: var(--bp-motion-lift);
+    transition-timing-function: var(--bp-ease-out);
+  }
+
+  /* An accordion panel fades; its height snaps instead of animating layout. */
+  .accordion__panel {
+    transition-property: opacity;
+    transition-duration: var(--bp-motion-panel);
+    transition-timing-function: var(--bp-ease-out);
+  }
+
+  /* Overlays run HeroUI's enter and exit keyframes; these set their timing and take the
+     zoom out, leaving opacity and a short travel. Doubled classes outrank HeroUI's
+     placement variants. */
+  .modal__backdrop.modal__backdrop[data-entering="true"],
+  .modal__container.modal__container[data-entering="true"],
+  .popover.popover[data-entering="true"],
+  .select__popover.select__popover[data-entering="true"],
+  .combo-box__popover.combo-box__popover[data-entering="true"],
+  .dropdown__popover.dropdown__popover[data-entering="true"],
+  .tooltip.tooltip[data-entering="true"] {
+    --tw-animation-duration: var(--bp-motion-panel);
+    --tw-ease: var(--bp-ease-out);
+    --tw-enter-scale: 1;
+  }
+
+  .modal__container.modal__container[data-entering="true"] {
+    --tw-enter-translate-y: var(--bp-rise);
+  }
+
+  .modal__backdrop.modal__backdrop[data-exiting="true"],
+  .modal__container.modal__container[data-exiting="true"],
+  .popover.popover[data-exiting="true"],
+  .select__popover.select__popover[data-exiting="true"],
+  .combo-box__popover.combo-box__popover[data-exiting="true"],
+  .dropdown__popover.dropdown__popover[data-exiting="true"],
+  .tooltip.tooltip[data-exiting="true"] {
+    --tw-animation-duration: var(--bp-motion-state);
+    --tw-ease: var(--bp-ease-in);
+    --tw-exit-scale: 1;
+  }
+
+  /* Drawer: the backdrop fades, the dialog fades in over a short slide from its edge. */
+  .drawer__backdrop {
+    transition-property: opacity;
+    transition-duration: var(--bp-motion-panel);
+    transition-timing-function: var(--bp-ease-out);
+  }
+
+  .drawer__backdrop[data-exiting="true"] {
+    transition-duration: var(--bp-motion-state);
+    transition-timing-function: var(--bp-ease-in);
+  }
+
+  .drawer__dialog {
+    transition-property: opacity, translate;
+    transition-duration: var(--bp-motion-panel), var(--bp-motion-slide);
+    transition-timing-function: var(--bp-ease-out);
+  }
+
+  [data-exiting="true"] .drawer__dialog {
+    transition-duration: var(--bp-motion-state);
+    transition-timing-function: var(--bp-ease-in);
+  }
+
+  .drawer__content:is([data-entering="true"], [data-exiting="true"]) .drawer__dialog {
+    opacity: 0;
+  }
+
+  .drawer__content--right:is([data-entering="true"], [data-exiting="true"]) .drawer__dialog { translate: var(--bp-slide) 0; }
+  .drawer__content--left:is([data-entering="true"], [data-exiting="true"]) .drawer__dialog { translate: calc(-1 * var(--bp-slide)) 0; }
+  .drawer__content--bottom:is([data-entering="true"], [data-exiting="true"]) .drawer__dialog { translate: 0 var(--bp-slide); }
+  .drawer__content--top:is([data-entering="true"], [data-exiting="true"]) .drawer__dialog { translate: 0 calc(-1 * var(--bp-slide)); }
+
+  /* Toasts move by transform and fade; their height snaps. */
+  .toast {
+    transition-property: transform, opacity;
+    transition-duration: var(--bp-motion-slide), var(--bp-motion-panel);
+    transition-timing-function: var(--bp-ease-out);
+  }
+}
+
+/* Entry stagger: block lists rise into place the first time a screen mounts (the screen
+   root carries data-enter only then). Delays stop after six steps. The fill runs
+   backwards only: an item waits hidden through its delay, and a finished rise lets go
+   instead of staying applied in every later style pass. */
+@keyframes bp-rise {
+  from {
+    opacity: 0;
+    translate: 0 var(--bp-rise);
+  }
+}
+
+[data-enter] :is(.ar-board, .ar-pair, .ar-list, .bp-rule-cols) > * {
+  animation: bp-rise var(--bp-motion-panel) var(--bp-ease-out) backwards;
+}
+
+[data-enter] :is(.ar-board, .ar-pair, .ar-list, .bp-rule-cols) > :nth-child(2) { animation-delay: var(--bp-stagger); }
+[data-enter] :is(.ar-board, .ar-pair, .ar-list, .bp-rule-cols) > :nth-child(3) { animation-delay: calc(2 * var(--bp-stagger)); }
+[data-enter] :is(.ar-board, .ar-pair, .ar-list, .bp-rule-cols) > :nth-child(4) { animation-delay: calc(3 * var(--bp-stagger)); }
+[data-enter] :is(.ar-board, .ar-pair, .ar-list, .bp-rule-cols) > :nth-child(5) { animation-delay: calc(4 * var(--bp-stagger)); }
+[data-enter] :is(.ar-board, .ar-pair, .ar-list, .bp-rule-cols) > :nth-child(n + 6) { animation-delay: calc(5 * var(--bp-stagger)); }
+
+/* Palette and font changes cross-fade (crossFade() in motion.js). A tab or screen change
+   does not: a tab's indicator slides and a new panel or screen rises in, and a snapshot
+   of the page would only cover both. HeroUI unnames the root (view-transition-name: none) so that
+   its own transitions leave the page alone; a cross-fade names it back while it runs. */
+:root[data-cross-fade] {
+  view-transition-name: root;
+}
+
+/* The page is opaque, so fading the new view in over a still old one is the same blend as
+   the default pair of fades, at half the compositing: one moving layer and no
+   plus-lighter mix. */
+@keyframes bp-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+::view-transition-group(root) {
+  animation-duration: var(--bp-motion-state);
+  animation-timing-function: var(--bp-ease-out);
+}
+
+::view-transition-old(root) {
+  animation: none;
+}
+
+::view-transition-new(root) {
+  animation: bp-fade-in var(--bp-motion-state) var(--bp-ease-out);
+  mix-blend-mode: normal;
+}
+
+/* The cross-fade carries the whole change. A new palette would otherwise also start every
+   control's own colour transition underneath it, a second fade that restyles the page in
+   every frame of the first. The list names the elements that carry a colour transition on
+   the workbench's screens (ours above and HeroUI's), not `*`: switching a rule for every
+   element on and off would restyle the whole page twice per cross-fade. */
+:root:active-view-transition :is(.button, .toggle-button, .list-box-item, .list-box-item__indicator, .select__trigger, .select__indicator, .accordion__trigger, .popover__trigger, .link, .chip, .input, .textarea, .number-field__group, .number-field__increment-button, .number-field__decrement-button, .checkbox__control, .switch__control, .switch__thumb, .slider__thumb, .tabs__tab, svg) {
+  transition: none !important;
+}
+
+/* A popover closed by a choice that repaints the page leaves with the old page inside the
+   cross-fade; running its own exit as well would only hold the transition's frame back. */
+:root:active-view-transition :is(.select__popover, .popover, .combo-box__popover, .dropdown__popover)[data-exiting="true"] {
+  animation: none;
+}
+
+/* Reduced: no travel, no scale, fades of 100 ms at most. */
+:root[data-motion="reduced"] {
+  --bp-motion-press: 0ms;
+  --bp-motion-lift: 0ms;
+  --bp-motion-state: 100ms;
+  --bp-motion-panel: 100ms;
+  --bp-motion-slide: 0ms;
+  --bp-stagger: 0ms;
+  --bp-rise: 0px;
+  --bp-slide: 0px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="off"]) {
+    --bp-motion-press: 0ms;
+    --bp-motion-lift: 0ms;
+    --bp-motion-state: 100ms;
+    --bp-motion-panel: 100ms;
+    --bp-motion-slide: 0ms;
+    --bp-stagger: 0ms;
+    --bp-rise: 0px;
+    --bp-slide: 0px;
+  }
+
+  :root:not([data-motion="off"]) :is([data-entering="true"], [data-exiting="true"]) {
+    --tw-enter-translate-x: 0px !important;
+    --tw-enter-translate-y: 0px !important;
+    --tw-exit-translate-x: 0px !important;
+    --tw-exit-translate-y: 0px !important;
+    --tw-enter-scale: 1 !important;
+    --tw-exit-scale: 1 !important;
+    --tw-animation-duration: 100ms !important;
+  }
+}
+
+/* HeroUI's keyframes read these variables, so a reduced overlay only fades. */
+:root[data-motion="reduced"] :is([data-entering="true"], [data-exiting="true"]) {
+  --tw-enter-translate-x: 0px !important;
+  --tw-enter-translate-y: 0px !important;
+  --tw-exit-translate-x: 0px !important;
+  --tw-exit-translate-y: 0px !important;
+  --tw-enter-scale: 1 !important;
+  --tw-exit-scale: 1 !important;
+  --tw-animation-duration: 100ms !important;
+}
+
+/* HeroUI's indicators turn, slide and scale on timings of their own (the select and
+   accordion chevrons, the list and checkbox marks, the slider thumb), and HeroUI stops
+   only some of them for prefers-reduced-motion. Reduced, they change colour and opacity
+   only and the rest snaps. Unlayered, these outrank HeroUI's layered rules. */
+:root[data-motion="reduced"] :is(.select__indicator, .accordion__indicator, .slider__thumb, .list-box-item__indicator, .list-box-item__indicator svg, .checkbox__control, .checkbox__indicator svg),
+:root[data-motion="reduced"] .slider__thumb::after,
+:root[data-motion="reduced"] .checkbox__control::before {
+  transition-property: color, background-color, border-color, opacity;
+  transition-duration: var(--bp-motion-state);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="off"]) :is(.select__indicator, .accordion__indicator, .slider__thumb, .list-box-item__indicator, .list-box-item__indicator svg, .checkbox__control, .checkbox__indicator svg),
+  :root:not([data-motion="off"]) .slider__thumb::after,
+  :root:not([data-motion="off"]) .checkbox__control::before {
+    transition-property: color, background-color, border-color, opacity;
+    transition-duration: var(--bp-motion-state);
+  }
+}
+
+/* Off: nothing animates, HeroUI's own transitions and keyframes included. */
+:root[data-motion="off"] {
+  --bp-motion-press: 0ms;
+  --bp-motion-lift: 0ms;
+  --bp-motion-state: 0ms;
+  --bp-motion-panel: 0ms;
+  --bp-motion-slide: 0ms;
+  --bp-stagger: 0ms;
+  --bp-rise: 0px;
+  --bp-slide: 0px;
+}
+
+:root[data-motion="off"] *,
+:root[data-motion="off"] *::before,
+:root[data-motion="off"] *::after {
+  transition: none !important;
+  animation: none !important;
+}

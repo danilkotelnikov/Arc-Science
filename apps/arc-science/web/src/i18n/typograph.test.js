@@ -6,13 +6,14 @@ import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import typographRuDefault, {typographRu} from '../../scripts/typograph-ru.mjs';
 import ru from './ru.js';
-import mockupRu from '../mockup/strings.ru.js';
 
 const NB = '\u00A0';
 // jsdom replaces the global URL, so resolve paths from the file path string.
 const here = dirname(fileURLToPath(import.meta.url));
 const script = join(here, '../../scripts/typograph-ru.mjs');
-const DICTS = {'ru.js': [join(here, 'ru.js'), ru], 'mockup/strings.ru.js': [join(here, '../mockup/strings.ru.js'), mockupRu]};
+// ru.js merges every area dictionary; the CLI check reads each file on its own.
+const AREAS = ['research', 'memory', 'molecules', 'bioart', 'prose', 'settings', 'diagnostics'];
+const DICTS = {'ru.js': [join(here, 'ru.js'), ru], ...Object.fromEntries(AREAS.map(area => [`${area}.ru.js`, [join(here, `${area}.ru.js`), {}]]))};
 
 describe('typographRu', () => {
   it('exports the same function by name and by default', () => {

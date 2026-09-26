@@ -1,10 +1,20 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {Button} from '@heroui/react/button';
+import {Description} from '@heroui/react/description';
+import {Input} from '@heroui/react/input';
+import {Label} from '@heroui/react/label';
+import {ListBox} from '@heroui/react/list-box';
+import {Select} from '@heroui/react/select';
+import {Switch} from '@heroui/react/switch';
+import {TextField} from '@heroui/react/textfield';
 import {PluginContext} from 'molstar/lib/mol-plugin/context';
 import {DefaultPluginSpec} from 'molstar/lib/mol-plugin/spec';
 import {PluginCommands} from 'molstar/lib/mol-plugin/commands';
 import {MolScriptBuilder as MS} from 'molstar/lib/mol-script/language/builder';
 import {Color} from 'molstar/lib/mol-util/color';
+import {useI18n} from './i18n/index.jsx';
+import {GravityIcon} from './theme/gravity-icons.jsx';
+import {Block, Kicker} from './ui.jsx';
 
 // A headless Mol* (MIT) viewer on one canvas, loaded as its own chunk. It draws the
 // coordinates the operator uploaded, exactly as they are, and overlays the residue
@@ -15,7 +25,7 @@ export const REPRESENTATIONS = {cartoon: 'cartoon', surface: 'molecular-surface'
 export const COLOURINGS = {chain: 'chain-id', element: 'element-symbol', residue: 'residue-name', secondary_structure: 'secondary-structure', bfactor: 'uncertainty', uniform: 'uniform'};
 const BACKGROUNDS = {white: 0xffffff, black: 0x000000, transparent: 0xffffff};
 const QUALITIES = ['auto', 'high', 'medium', 'low'];
-const OPTION_LABELS = {bfactor: 'B-factor'};
+const NO_WEBGL = 'molecules.viewer.no_webgl';
 const CONTACT_COLOUR = 0xd9480f;
 export const DEFAULTS = {representation: 'cartoon', colouring: 'chain', assembly: 'asymmetric_unit', background: 'white', quality: 'auto', spin: false, contacts: true, waters: false};
 
@@ -48,10 +58,13 @@ function residueExpression(residues) {
 }
 
 export default function MolecularViewer({source, scene, defaults, stage}) {
+  const {t} = useI18n();
   const canvasRef = useRef(null), containerRef = useRef(null), plugin = useRef(null), loaded = useRef(null);
   const structureRef = useRef(null), atomCount = useRef(0), contacts = useRef(null), renderSeq = useRef(0), contactSeq = useRef(0), mutationQueue = useRef(Promise.resolve());
   const [settings, setSettings] = useState({...DEFAULTS, ...(defaults || {})});
-  const [status, setStatus] = useState('Starting the viewer…'), [ready, setReady] = useState(false), [error, setError] = useState('');
+  // The status is a list of [key, vars] parts and the error a [key, detail] pair, so a
+  // change of language rewords what is already on screen.
+  const [status, setStatus] = useState([['molecules.viewer.starting']]), [ready, setReady] = useState(false), [error, setError] = useState(null);
   const [structureRevision, setStructureRevision] = useState(0);
   const sourceText = source?.text || '', sourceFilename = source?.filename || '';
   useEffect(() => { setSettings(current => ({...current, ...(defaults || {})})); }, [defaults]);
@@ -63,10 +76,10 @@ export default function MolecularViewer({source, scene, defaults, stage}) {
       try {
         await context.init();
         const ok = await context.initViewerAsync(canvasRef.current, containerRef.current);
-        if (!ok) throw new Error('WebGL is not available in this window.');
+        if (!ok) throw new Error(NO_WEBGL);
         if (disposed) { context.dispose(); return; }
-        plugin.current = context; setReady(true); setStatus('Viewer ready.');
-      } catch (reason) { if (!disposed) setError('The viewer could not start: ' + reason.message); }
+        plugin.current = context; setReady(true); setStatus([['molecules.viewer.ready']]);
+      } catch (reason) { if (!disposed) setError(['molecules.viewer.start_failed', reason.message]); }
     })();
     return () => { disposed = true; plugin.current = null; context.dispose(); };
   }, []);
@@ -94,7 +107,7 @@ export default function MolecularViewer({source, scene, defaults, stage}) {
     return enqueueMutation(async () => { try {
       const isCurrent = () => sequence === renderSeq.current && plugin.current === context;
       if (!isCurrent()) return;
-      setError('');
+      setError(null);
       const sameCoordinates = loaded.current === sourceText;
       const snapshot = sameCoordinates ? context.canvas3d?.camera?.getSnapshot?.() : null;
       await removeContacts(context, isCurrent);
@@ -130,11 +143,11 @@ export default function MolecularViewer({source, scene, defaults, stage}) {
       if (!isCurrent()) return;
       const atoms = structure.data?.elementCount ?? 0;
       loaded.current = sourceText; atomCount.current = atoms; structureRef.current = structure; setStructureRevision(value => value + 1);
-      setStatus('Loaded ' + atoms + ' atoms.');
+      setStatus([['molecules.viewer.loaded', {count: atoms}]]);
       if (snapshot) await PluginCommands.Camera.SetSnapshot(context, {snapshot, durationMs: 0});
       else await PluginCommands.Camera.Reset(context, {});
     } catch (reason) {
-      if (sequence === renderSeq.current && plugin.current === context) setError('The coordinates could not be shown: ' + (reason?.message || String(reason)));
+      if (sequence === renderSeq.current && plugin.current === context) setError(['molecules.viewer.show_failed', reason?.message || String(reason)]);
     } });
   }, [sourceText, enqueueMutation, removeContacts, settings.representation, settings.colouring, settings.assembly, settings.model_index, settings.quality, settings.waters]);
 
@@ -145,7 +158,7 @@ export default function MolecularViewer({source, scene, defaults, stage}) {
     return enqueueMutation(async () => { try {
       const isCurrent = () => sequence === contactSeq.current && plugin.current === context && structureRef.current === currentStructure;
       if (!isCurrent()) return;
-      setError('');
+      setError(null);
       await removeContacts(context, isCurrent);
       if (!isCurrent()) return;
       const residues = settings.contacts ? contactResidues(scene) : [];
@@ -161,11 +174,12 @@ export default function MolecularViewer({source, scene, defaults, stage}) {
       if (!isCurrent()) return;
       contacts.current = {component, representation};
       // Provisional contacts come from the pipeline while it still renders; verified ones once it has finished.
-      const origin = scene?.state === 'verified' ? 'verified contacts (render finished)' : 'provisional contacts (render still running)';
+      const origin = scene?.state === 'verified' ? 'verified' : 'provisional';
       const count = residues.length;
-      setStatus('Loaded ' + atomCount.current + ' atoms.' + (count ? ' ' + count + (count === 1 ? ' contact residue' : ' contact residues') + ' highlighted from ' + origin + '; coordinates unchanged.' : scene ? ' No ' + origin + '; coordinates unchanged.' : ''));
+      setStatus([['molecules.viewer.loaded', {count: atomCount.current}],
+        ...(count ? [['molecules.viewer.contacts.' + origin, {count}]] : scene ? [['molecules.viewer.contacts.none_' + origin]] : [])]);
     } catch (reason) {
-      if (sequence === contactSeq.current && plugin.current === context) setError('The contact overlay could not be updated: ' + (reason?.message || String(reason)));
+      if (sequence === contactSeq.current && plugin.current === context) setError(['molecules.viewer.overlay_failed', reason?.message || String(reason)]);
     } });
   }, [scene, enqueueMutation, removeContacts, settings.contacts]);
 
@@ -194,24 +208,50 @@ export default function MolecularViewer({source, scene, defaults, stage}) {
       const link = document.createElement('a'); link.href = url; link.download = (source?.filename || 'structure').replace(/\.[^.]+$/, '') + '-view.png';
       document.body.appendChild(link);
       try { link.click(); } finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
-    } catch (reason) { setError('Screenshot failed: ' + reason.message); }
+    } catch (reason) { setError(['molecules.viewer.screenshot_failed', reason.message]); }
   }
-  const select = (key, options, label) => <label>{label}<select aria-label={label} value={settings[key]} onChange={e => set(key, e.target.value)}>
-    {options.map(v => <option key={v} value={v}>{OPTION_LABELS[v] || v.replace(/_/g, ' ')}</option>)}</select></label>;
-  return <div className="viewer" role="group" aria-label="Molecular viewer">
-    <div className="viewer-canvas" ref={containerRef}><canvas ref={canvasRef}/></div>
-    <div className="viewer-controls">
-      {select('representation', Object.keys(REPRESENTATIONS), 'Representation')}
-      {select('colouring', Object.keys(COLOURINGS), 'Colouring')}
-      {select('background', Object.keys(BACKGROUNDS), 'Background')}
-      {select('quality', QUALITIES, 'Quality')}
-      <label>Viewer assembly (press Enter to apply)<input aria-label="Viewer assembly (press Enter to apply)" value={assemblyDraft} onChange={e => setAssemblyDraft(e.target.value)} onBlur={commitAssembly} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitAssembly(); } }}/></label>
-      <label className="check"><input type="checkbox" checked={!!settings.contacts} onChange={e => set('contacts', e.target.checked)}/>Show contacts</label>
-      <label className="check"><input type="checkbox" checked={!!settings.waters} onChange={e => set('waters', e.target.checked)}/>Show waters</label>
-      <label className="check"><input type="checkbox" checked={!!settings.spin} onChange={e => set('spin', e.target.checked)}/>Spin</label>
-      <Button variant="ghost" size="sm" isDisabled={!ready} onPress={() => plugin.current && PluginCommands.Camera.Reset(plugin.current, {})}>Reset view</Button>
-      <Button variant="ghost" size="sm" isDisabled={!ready || !loaded.current} onPress={screenshot}>Save view as PNG</Button>
+  const choose = (key, options) => (
+    <Select value={settings[key]} onChange={value => { if (value != null) set(key, String(value)); }}>
+      <Label>{t('molecules.viewer.' + key)}</Label>
+      <Select.Trigger><Select.Value/><Select.Indicator/></Select.Trigger>
+      <Select.Popover>
+        <ListBox>
+          {options.map(v => <ListBox.Item key={v} id={v} textValue={t('molecules.option.' + v)}>{t('molecules.option.' + v)}<ListBox.ItemIndicator/></ListBox.Item>)}
+        </ListBox>
+      </Select.Popover>
+    </Select>
+  );
+  const toggle = key => (
+    <Switch key={key} isSelected={!!settings[key]} onChange={value => set(key, value)}>
+      <Switch.Content><Switch.Control><Switch.Thumb/></Switch.Control>{t('molecules.viewer.' + key)}</Switch.Content>
+    </Switch>
+  );
+  const line = error ? t(error[0], {detail: error[1] === NO_WEBGL ? t(NO_WEBGL) : error[1]}) : status.map(([key, vars]) => t(key, vars)).join(' ');
+  return <Block className="ar-stack" role="group" aria-label={t('molecules.viewer.label')}>
+    <div className="ar-mol-head">
+      <div className="ar-stack ar-stack--tight"><Kicker>{t('molecules.viewer.kicker')}</Kicker><h2>{sourceFilename}</h2></div>
+      <div className="ar-row">
+        <Button variant="secondary" size="sm" isDisabled={!ready} onPress={() => plugin.current && PluginCommands.Camera.Reset(plugin.current, {})}>
+          <GravityIcon name="arrow-rotate-left"/>{t('molecules.viewer.reset')}
+        </Button>
+        <Button variant="secondary" size="sm" isDisabled={!ready || !loaded.current} onPress={screenshot}>
+          <GravityIcon name="download"/>{t('molecules.viewer.save')}
+        </Button>
+      </div>
     </div>
-    <p className="field-note" role="status">{error || status}{stage ? ' · ' + stage : ''}</p>
-  </div>;
+    <div className="ar-mol-canvas" ref={containerRef}><canvas ref={canvasRef}/></div>
+    <p className="ar-note" role="status">{line}{stage ? <> <span className="ar-mol-stage">{stage}</span></> : null}</p>
+    <div className="ar-mol-fields">
+      {choose('representation', Object.keys(REPRESENTATIONS))}
+      {choose('colouring', Object.keys(COLOURINGS))}
+      {choose('background', Object.keys(BACKGROUNDS))}
+      {choose('quality', QUALITIES)}
+      <TextField value={assemblyDraft} onChange={setAssemblyDraft} onBlur={commitAssembly} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitAssembly(); } }}>
+        <Label>{t('molecules.viewer.assembly')}</Label>
+        <Input/>
+        <Description>{t('molecules.viewer.assembly_note')}</Description>
+      </TextField>
+    </div>
+    <div className="ar-row">{['contacts', 'waters', 'spin'].map(toggle)}</div>
+  </Block>;
 }

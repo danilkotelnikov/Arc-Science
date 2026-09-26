@@ -4,13 +4,16 @@ import {render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import DiagnosticsWorkspace from './DiagnosticsWorkspace';
 import {NATIVE_SESSION} from './http';
+import {I18nProvider} from './i18n/index.jsx';
 
 function json(data, init = {}) {
   return new Response(JSON.stringify(data), {status: init.status || 200, headers: {'Content-Type': 'application/json'}});
 }
+// Times read the way the page writes them: a medium date and a short time.
+const when = seconds => new Intl.DateTimeFormat('en', {dateStyle: 'medium', timeStyle: 'short'}).format(seconds * 1000).replace(/\s+/g, ' ');
 const health = () => json({status: 'ready', version: '0.6.0', deployment: 'single-trust-domain'});
 const seat = (role, label, state, code, meaning, next_action = null, extra = {}) => ({role, label, state, code, facts: {}, verification: {status: 'not_tested'}, meaning, next_action, source: 'settings revision abcdef123456', ...extra});
-const PROBED_AT = 1_699_999_000, PROBED = new Date(PROBED_AT * 1000).toLocaleString();
+const PROBED_AT = 1_699_999_000, PROBED = when(PROBED_AT);
 const ROLES = [{role: 'planner', label: 'Planner', purpose: 'proposes branches and actions'}, {role: 'reviewer', label: 'Reviewer (QA)', purpose: 'assesses'}, {role: 'falsifier', label: 'Falsifier', purpose: 'assesses with the brief to refute'}, {role: 'vision', label: 'Vision', purpose: 'reviews images'}, {role: 'prose', label: 'Prose', purpose: 'edits text'}];
 const readiness = (kind = 'token') => ({
   checked_at: 1_700_000_000,
@@ -33,6 +36,9 @@ const readiness = (kind = 'token') => ({
   public_reads: {enabled: false},
 });
 const card = title => screen.getByRole('heading', {name: title, level: 3}).closest('article');
+// The value beside a label in a Facts list.
+const fact = (container, label) => within(container).getByText(label, {selector: 'dt'}).nextElementSibling;
+const region = name => screen.getByRole('region', {name});
 // The /api/diagnostics document of §4: every section names its source and its read time.
 const READ_AT = 1_700_000_100;
 const section = (source, state, code, meaning, next_action, facts) => ({source, checked_at: READ_AT, state, code, meaning, next_action, ...facts});
@@ -40,7 +46,7 @@ const diagnostics = () => ({
   checked_at: READ_AT,
   note: 'Local reads only: no model call, no connector start, no render. Each section names its source.',
   storage: section('missions.db, grants.db and timeline.db in the data directory; memory capture status from the service', 'ready', 'storage.verified',
-    '3 of 3 missions verified · sqlite ok (missions, grants, timeline) · memory capture unconfigured', null,
+    '3 of 3 missions verified, sqlite ok (missions, grants, timeline), memory capture unconfigured', null,
     {missions: {total: 3, checked: 3, verified: 3, broken: [], limit: 200}, sqlite: {'missions.db': 'ok', 'grants.db': 'ok', 'timeline.db': 'ok'}, memory_capture: {status: 'unconfigured', pending: 0, last_error: 'Native memory worker is not configured'}}),
   jobs: section('molecular job records (molecular/<id>/job.json) held by the service', 'failed', 'jobs.failed', '2 of 4 molecular renders failed or were interrupted', 'Retry a render below, or render again from Molecules',
     {total: 4, failed: [
@@ -68,6 +74,14 @@ describe('DiagnosticsWorkspace', () => {
     expect(document.body.textContent).not.toMatch(/paste/i);
     expect(screen.queryByText(/Operator checks need a token|Load capabilities/)).not.toBeInTheDocument();
 
+    // The summary names each area with the same state mark its card carries.
+    const status = region('Status');
+    expect(fact(status, 'Service')).toHaveTextContent('Ready');
+    expect(fact(status, 'Session')).toHaveTextContent('Ready');
+    expect(fact(status, 'Seats')).toHaveTextContent('Failed');
+    expect(fact(status, 'Seats').querySelector('.bp-status')).toHaveAttribute('data-state', 'failed');
+    expect(fact(status, 'Connectors')).toHaveTextContent('Not tested');
+
     expect(card('Session')).toHaveAttribute('data-state', 'ready');
     expect(card('Session')).toHaveTextContent('Desktop session');
     expect(card('Session')).toHaveTextContent('The desktop shell signed this request.');
@@ -76,29 +90,36 @@ describe('DiagnosticsWorkspace', () => {
     expect(card('Settings')).not.toHaveTextContent('abcdef1234567890');
     expect(card('Settings')).toHaveTextContent('C:/data/settings.json');
 
-    const table = screen.getByRole('table', {name: 'Seat readiness'});
+    const table = screen.getByRole('grid', {name: 'Seat readiness'});
     expect(within(table).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Seat', 'Readiness', 'Last probe']);
     const seats = within(table).getAllByRole('row').slice(1);
     expect(seats).toHaveLength(5);
+    const probe = row => within(row).getAllByRole('gridcell')[1];
     expect(seats[0]).toHaveTextContent('Planner');
     expect(seats[0]).toHaveTextContent('Ready');
     expect(seats[0]).not.toHaveTextContent('Next:');
     // The third column is the verification as readiness reports it, plus a CLI seat's login fact.
-    expect(within(seats[0]).getAllByRole('cell')[1]).toHaveTextContent('Last probe ' + PROBED + ' · answering model claude-sonnet-5 · identity verified Signed in via claude.cmd (claude.ai)');
+    expect(probe(seats[0])).toHaveTextContent('Last probe ' + PROBED + ', answering model claude-sonnet-5, identity verified');
+    expect(probe(seats[0])).toHaveTextContent('Signed in via claude.cmd (claude.ai)');
     expect(seats[1]).toHaveAttribute('data-state', 'not_tested');
-    expect(seats[1]).toHaveTextContent('Reviewer (QA)Not tested Inherits the planner seat. Next: Run the probe in Settings to verify it.Never probed');
-    expect(seats[1]).not.toHaveTextContent(/Signed in|Not signed in/);
+    expect(within(seats[1]).getByRole('rowheader')).toHaveTextContent('Reviewer (QA)');
+    const readinessCell = within(seats[1]).getAllByRole('gridcell')[0];
+    expect(within(readinessCell).getByText('Not tested')).toBeInTheDocument();
+    expect(within(readinessCell).getByText('Inherits the planner seat.')).toBeInTheDocument();
+    expect(within(readinessCell).getByText('Next: Run the probe in Settings to verify it.')).toBeInTheDocument();
+    expect(probe(seats[1])).toHaveTextContent(/^Never probed$/);
     expect(seats[2]).toHaveAttribute('data-state', 'failed');
     expect(seats[2]).toHaveTextContent('Failed');
-    expect(within(seats[2]).getAllByRole('cell')[1]).toHaveTextContent('Probe failed: HTTP 401 from the provider');
+    expect(probe(seats[2])).toHaveTextContent('Probe failed: HTTP 401 from the provider');
     expect(seats[2]).not.toHaveTextContent(/Signed in|Not signed in/);
     expect(seats[3]).toHaveTextContent('Vision');
     expect(seats[3]).toHaveTextContent('Blocked');
     expect(seats[3]).toHaveTextContent('The openai CLI reports no login');
     expect(seats[3]).toHaveTextContent('Next: Sign in inside the CLI, then reload this page');
-    expect(within(seats[3]).getAllByRole('cell')[1]).toHaveTextContent('Never probed Not signed in');
+    expect(probe(seats[3])).toHaveTextContent('Never probed');
+    expect(probe(seats[3])).toHaveTextContent('Not signed in');
     expect(seats[4]).toHaveTextContent('Prose');
-    expect(within(seats[4]).getAllByRole('cell')[1]).toHaveTextContent('Never probed');
+    expect(probe(seats[4])).toHaveTextContent('Never probed');
     expect(card('Seats')).toHaveAttribute('data-state', 'failed');
     expect(card('Seats')).toHaveTextContent('Next: Repair the falsifier seat, then probe it.');
     await user.click(within(card('Seats')).getByRole('button', {name: 'Open Settings'}));
@@ -106,11 +127,18 @@ describe('DiagnosticsWorkspace', () => {
 
     expect(card('Connectors')).toHaveAttribute('data-state', 'not_tested');
     expect(card('Connectors')).toHaveTextContent('1 of 2 connectors can be bound');
-    const connectors = within(screen.getByRole('table', {name: 'Connector readiness'})).getAllByRole('row');
-    expect(connectors[0]).toHaveTextContent('MCP · fake');
+    const connectors = within(screen.getByRole('grid', {name: 'Connector readiness'})).getAllByRole('row').slice(1);
+    expect(within(connectors[0]).getByRole('rowheader')).toHaveTextContent('fake');
+    expect(connectors[0]).toHaveTextContent('MCP');
     expect(connectors[0]).toHaveTextContent('Not tested');
-    expect(connectors[1]).toHaveTextContent('ACP · agentBlocked Enabled but not consented. Next: Consent in Settings.');
-    expect(card('Connectors')).toHaveTextContent('MCP SDK: 1.2.3 · ACP protocol: 1');
+    expect(within(connectors[1]).getByRole('rowheader')).toHaveTextContent('agent');
+    expect(connectors[1]).toHaveTextContent('ACP');
+    const connectorCell = within(connectors[1]).getAllByRole('gridcell')[1];
+    expect(within(connectorCell).getByText('Blocked')).toBeInTheDocument();
+    expect(within(connectorCell).getByText('Enabled but not consented.')).toBeInTheDocument();
+    expect(within(connectorCell).getByText('Next: Consent in Settings.')).toBeInTheDocument();
+    expect(fact(card('Connectors'), 'MCP SDK')).toHaveTextContent('1.2.3');
+    expect(fact(card('Connectors'), 'ACP protocol')).toHaveTextContent('1');
     expect(card('Renderer')).toHaveAttribute('data-state', 'not_tested');
     expect(card('Renderer')).toHaveTextContent('Next: Submit a render in Molecules to test it.');
     expect(card('Memory')).toHaveAttribute('data-state', 'ready');
@@ -118,8 +146,9 @@ describe('DiagnosticsWorkspace', () => {
     expect(card('Storage')).toHaveAttribute('data-state', 'not_tested');
     expect(within(card('Storage')).getByText('3')).toBeInTheDocument();
     expect(card('Storage')).toHaveTextContent('Integrity is checked on demand');
-    expect(screen.getByText('arc-memory/1 · SQLite 3.53.2')).toBeInTheDocument();
+    expect(screen.getByText('arc-memory/1, SQLite 3.53.2')).toBeInTheDocument();
     expect(screen.queryByText('not loaded')).not.toBeInTheDocument();
+    expect(region('Readiness')).toHaveTextContent('Read at ' + when(1_700_000_000));
     // Readiness is passive: nothing but the public health line was fetched here.
     expect(fetch).toHaveBeenCalledTimes(1);
   });
@@ -142,8 +171,10 @@ describe('DiagnosticsWorkspace', () => {
     expect(screen.getByRole('button', {name: 'Refresh readiness (re-read logins)'})).toBeDisabled();
     expect(screen.getByRole('button', {name: 'Check MCP'})).toBeDisabled();
     expect(screen.getByRole('button', {name: 'Check ACP'})).toBeDisabled();
-    // The reason sits beside both disabled button groups and in each unread card.
-    expect(within(screen.getByRole('complementary')).getByText('Needs a desktop session or an operator token.')).toBeInTheDocument();
+    // The reason sits beside each disabled button group and in each unread card.
+    expect(within(region('Status')).getByText('Needs a desktop session or an operator token.')).toBeInTheDocument();
+    const checks = region('Connection checks');
+    expect(within(checks).getAllByText('Needs a desktop session or an operator token.').some(note => note.parentElement === checks)).toBe(true);
     expect(screen.queryByText(/Operator checks need a token|Load capabilities/)).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/paste/i);
     expect(card('Service')).toHaveAttribute('data-state', 'ready');
@@ -153,6 +184,7 @@ describe('DiagnosticsWorkspace', () => {
     for (const title of ['Settings', 'Seats', 'Connectors', 'Renderer', 'Memory', 'Storage']) {
       expect(card(title)).toHaveAttribute('data-state', 'unknown');
       expect(card(title)).toHaveTextContent('Needs a desktop session or an operator token.');
+      expect(fact(region('Status'), title)).toHaveTextContent('Unknown');
     }
     expect(screen.getByText('not loaded')).toBeInTheDocument();
   });
@@ -210,7 +242,7 @@ describe('DiagnosticsWorkspace', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Readiness is unavailable in this local service');
     expect(alert).not.toHaveTextContent('Request failed (503)');
-    expect(within(screen.getByRole('complementary')).getByRole('alert')).toBeInTheDocument();
+    expect(within(region('Status')).getByRole('alert')).toBeInTheDocument();
     expect(card('Session')).toHaveAttribute('data-state', 'unknown');
     expect(card('Session')).toHaveTextContent('Next: See the message beside Refresh readiness.');
     expect(screen.queryByText('Operator token required')).not.toBeInTheDocument();
@@ -238,10 +270,13 @@ describe('DiagnosticsWorkspace', () => {
     await screen.findByText('mcp_fake_echo');
     expect(screen.getByText('Unavailable: command missing')).toBeInTheDocument();
     expect(card('MCP servers')).toHaveAttribute('data-state', 'ready');
+    expect(fact(card('MCP servers'), 'Consented servers')).toHaveTextContent('fake');
+    expect(fetch).toHaveBeenLastCalledWith('/api/mcp/servers/check', expect.objectContaining({method: 'POST'}));
 
     await user.click(screen.getByRole('button', {name: 'Check ACP'}));
-    await screen.findByText('fake-acp · 0.1');
+    await screen.findByText('fake-acp 0.1');
     expect(card('ACP agents')).toHaveAttribute('data-state', 'ready');
+    expect(fetch).toHaveBeenLastCalledWith('/api/acp/agents/check', expect.objectContaining({method: 'POST'}));
     expect(screen.queryByText(/"servers"/)).not.toBeInTheDocument();
   });
 
@@ -285,7 +320,7 @@ describe('DiagnosticsWorkspace', () => {
     await user.click(await screen.findByRole('button', {name: 'Check MCP'}));
     expect(await screen.findByRole('alert')).toHaveTextContent('Connection checks are unavailable in this local service');
     expect(screen.getByRole('alert')).not.toHaveTextContent('Request failed (503)');
-    expect(within(screen.getByRole('region', {name: 'Diagnostics'})).getByRole('alert')).toBeInTheDocument();
+    expect(within(region('Connection checks')).getByRole('alert')).toBeInTheDocument();
     expect(card('MCP servers')).toHaveAttribute('data-state', 'failed');
     expect(within(card('MCP servers')).getByText(/missing its settings or the MCP package/)).toBeInTheDocument();
     expect(card('Session')).toHaveAttribute('data-state', 'ready');
@@ -313,6 +348,7 @@ describe('DiagnosticsWorkspace', () => {
     await waitFor(() => expect(screen.getByText('unavailable')).toBeInTheDocument());
     expect(card('Service')).toHaveAttribute('data-state', 'failed');
     expect(card('Service')).toHaveTextContent('The last refresh failed. See the message beside Refresh service.');
+    expect(fact(region('Status'), 'Service')).toHaveTextContent('Failed');
     expect(screen.queryByText('single-trust-domain')).not.toBeInTheDocument();
   });
 
@@ -329,8 +365,7 @@ describe('DiagnosticsWorkspace', () => {
       const {unmount} = render(<DiagnosticsWorkspace token={token} readiness={null} refreshReadiness={vi.fn()}/>);
       await screen.findByText('single-trust-domain');
       expect(card('Service')).toHaveAttribute('data-host-session', key);
-      expect(card('Service')).toHaveTextContent('Host session');
-      expect(within(card('Service')).getByText(value)).toBeInTheDocument();
+      expect(fact(card('Service'), 'Host session')).toHaveTextContent(value);
       expect(within(card('Service')).getByText(/^Source: \/health/)).toBeInTheDocument();
       expect(fetch).toHaveBeenCalledTimes(1);
       unmount();
@@ -357,42 +392,47 @@ describe('DiagnosticsWorkspace', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch).toHaveBeenLastCalledWith('/api/diagnostics', expect.objectContaining({headers: {Authorization: 'Bearer operator'}, signal: expect.any(AbortSignal)}));
 
-    expect(card('Storage integrity')).toHaveAttribute('data-section', 'storage');
-    expect(card('Storage integrity')).toHaveTextContent('3 of 3');
-    expect(card('Storage integrity')).toHaveTextContent('missions.db ok · grants.db ok · timeline.db ok');
-    expect(card('Storage integrity')).toHaveTextContent('memory capture');
-    expect(card('Storage integrity')).toHaveTextContent('unconfigured · pending 0 · Native memory worker is not configured');
-    expect(card('Storage integrity')).not.toHaveTextContent('Broken chains');
+    const integrity = card('Storage integrity');
+    expect(integrity).toHaveAttribute('data-section', 'storage');
+    expect(fact(integrity, 'Missions verified')).toHaveTextContent(/^3 of 3$/);
+    expect(fact(integrity, 'SQLite')).toHaveTextContent('missions.db ok, grants.db ok, timeline.db ok');
+    expect(fact(integrity, 'Memory capture')).toHaveTextContent('unconfigured, pending 0, Native memory worker is not configured');
+    expect(integrity).not.toHaveTextContent('Broken chains');
 
     expect(card('Failed renders')).toHaveAttribute('data-section', 'jobs');
     expect(card('Failed renders')).toHaveAttribute('data-state', 'failed');
     expect(card('Failed renders')).toHaveTextContent('Next: Retry a render below, or render again from Molecules');
-    const rows = within(screen.getByRole('table', {name: 'Failed renders'})).getAllByRole('row');
+    const rows = within(screen.getByRole('grid', {name: 'Failed renders'})).getAllByRole('row').slice(1);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent('complex.cif · aaaaaaaaaaaa…');
-    expect(rows[0]).toHaveTextContent('failed · Molecular rendering failed: the stand-in refused');
+    expect(within(rows[0]).getByRole('rowheader')).toHaveTextContent('complex.cif');
+    expect(within(rows[0]).getByRole('rowheader')).toHaveTextContent('aaaaaaaaaaaa…');
+    expect(within(rows[0]).getAllByRole('gridcell')[0]).toHaveTextContent(/^failed$/);
+    expect(within(rows[0]).getAllByRole('gridcell')[1]).toHaveTextContent('Molecular rendering failed: the stand-in refused');
     expect(within(rows[0]).getByRole('button', {name: 'Retry render'})).toBeEnabled();
     expect(within(rows[0]).getByRole('button', {name: 'Retry render'})).toHaveAttribute('data-job-id', 'a'.repeat(32));
     expect(rows[1]).toHaveTextContent('interrupted');
     expect(within(rows[1]).getByRole('button', {name: 'Retry render'})).toBeDisabled();
     expect(rows[1]).toHaveTextContent('Recorded before settings tracking; render it again from Molecules');
 
-    expect(card('Renderer facts')).toHaveAttribute('data-section', 'renderer');
-    expect(card('Renderer facts')).toHaveAttribute('data-state', 'blocked');
-    expect(card('Renderer facts')).toHaveTextContent('configured no · found unknown · none');
-    expect(card('Renderer facts')).toHaveTextContent('configured yes · found yes · arc-svg2png.exe');
-    expect(card('Renderer facts')).toHaveTextContent('not run in this service');
-    expect(card('Renderer facts')).toHaveTextContent('Next: Set ARC_MOLECULAR_BLENDER_PYTHON on the server, then restart the service');
-    expect(card('Package')).toHaveAttribute('data-section', 'package');
-    expect(card('Package')).toHaveTextContent('3.13.7 · C:/py/python.exe');
-    expect(card('Package')).toHaveTextContent('not configured (ARC_SUPERVISOR unset)');
-    expect(card('Package')).toHaveTextContent('abcdef123456');
-    expect(card('Package')).not.toHaveTextContent('abcdef1234567890');
+    const rendererFacts = card('Renderer facts');
+    expect(rendererFacts).toHaveAttribute('data-section', 'renderer');
+    expect(rendererFacts).toHaveAttribute('data-state', 'blocked');
+    expect(fact(rendererFacts, 'Blender Python')).toHaveTextContent('configured no, found unknown, none');
+    expect(fact(rendererFacts, 'SVG rasterizer')).toHaveTextContent('configured yes, found yes, arc-svg2png.exe');
+    expect(fact(rendererFacts, 'Runtime probe')).toHaveTextContent('not run in this service');
+    expect(fact(rendererFacts, 'Last render')).toHaveTextContent('failed, render aaaaaaaaaaaa…, ' + when(READ_AT - 100.5));
+    expect(rendererFacts).toHaveTextContent('Next: Set ARC_MOLECULAR_BLENDER_PYTHON on the server, then restart the service');
+    const pkg = card('Package');
+    expect(pkg).toHaveAttribute('data-section', 'package');
+    expect(fact(pkg, 'Python')).toHaveTextContent('3.13.7');
+    expect(fact(pkg, 'Python executable')).toHaveTextContent('C:/py/python.exe');
+    expect(fact(pkg, 'Supervisor')).toHaveTextContent('not configured (ARC_SUPERVISOR unset)');
+    expect(fact(pkg, 'Settings revision')).toHaveTextContent(/^abcdef123456$/);
     expect(card('Probes')).toHaveAttribute('data-section', 'probes');
     expect(card('Probes')).toHaveTextContent('No probe recorded.');
     for (const title of ['Storage integrity', 'Failed renders', 'Renderer facts', 'Package', 'Probes']) {
       expect(card(title)).toHaveTextContent('Source:');
-      expect(card(title)).toHaveTextContent('Read at ' + new Date(READ_AT * 1000).toLocaleString());
+      expect(card(title)).toHaveTextContent('Read at ' + when(READ_AT));
     }
     expect(screen.queryByRole('button', {name: /startup log/i})).toBeNull();
     expect(screen.getByText(/this page can open it only inside the desktop window/)).toBeInTheDocument();
@@ -446,17 +486,24 @@ describe('DiagnosticsWorkspace', () => {
     Object.defineProperty(navigator, 'clipboard', {value: {writeText}, configurable: true});
     render(<DiagnosticsWorkspace token="operator" readiness={null} refreshReadiness={vi.fn()}/>);
     await screen.findByText('single-trust-domain');
-    expect(screen.queryByLabelText('Redacted report')).not.toBeInTheDocument();
+    const reportToggle = () => screen.queryByRole('button', {name: 'Redacted report'});
+    // The report panel keeps the service's text exactly, whitespace included.
+    const reportPanel = () => document.getElementById(reportToggle().getAttribute('aria-controls'));
+    const reportText = () => reportPanel().querySelector('pre.ar-code').textContent;
+    expect(reportToggle()).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', {name: 'Copy redacted report'}));
     expect(await screen.findByText('Copied the redacted report to the clipboard.')).toHaveAttribute('role', 'status');
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(writeText).toHaveBeenCalledWith(text);
-    expect(screen.getByLabelText('Redacted report')).toHaveValue(text);
+    expect(reportText()).toBe(text);
+    expect(reportToggle()).toHaveAttribute('aria-expanded', 'false');
 
     writeText.mockRejectedValue(new DOMException('Write permission denied.', 'NotAllowedError'));
     await user.click(screen.getByRole('button', {name: 'Copy redacted report'}));
     expect(await screen.findByText('Clipboard unavailable; the report is shown below to copy by hand.')).toHaveAttribute('role', 'status');
-    expect(screen.getByLabelText('Redacted report')).toHaveValue(text);
+    expect(reportToggle()).toHaveAttribute('aria-expanded', 'true');
+    expect(reportPanel()).toBeVisible();
+    expect(reportText()).toBe(text);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledTimes(3);
   });
@@ -471,7 +518,9 @@ describe('DiagnosticsWorkspace', () => {
       expect(card(title)).toHaveAttribute('data-state', 'unknown');
       expect(card(title)).toHaveTextContent('Needs a desktop session or an operator token.');
     }
-    expect(screen.queryByLabelText('Redacted report')).not.toBeInTheDocument();
+    const reads = region('Storage, renders and package');
+    expect(within(reads).getAllByText('Needs a desktop session or an operator token.').some(note => note.parentElement === reads)).toBe(true);
+    expect(screen.queryByRole('button', {name: 'Redacted report'})).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -493,5 +542,28 @@ describe('DiagnosticsWorkspace', () => {
     } finally {
       delete window.ipc;
     }
+  });
+
+  it('reads in Russian inside the Russian provider', async () => {
+    vi.stubGlobal('fetch', vi.fn(async path => path === '/health' ? health() : Promise.reject(new Error('unexpected ' + path))));
+    render(<I18nProvider locale="ru"><DiagnosticsWorkspace token="" refreshReadiness={vi.fn()}/></I18nProvider>);
+    await screen.findByText('single-trust-domain');
+    expect(screen.getByRole('region', {name: 'Диагностика'})).toBeInTheDocument();
+    expect(screen.getByRole('heading', {level: 1})).toHaveTextContent('Проверка локальной системы');
+    expect(screen.getByRole('status')).toHaveTextContent('Нужен токен оператора');
+    expect(screen.getByRole('button', {name: 'Обновить готовность'})).toBeDisabled();
+    expect(card('Служба')).toHaveAttribute('data-state', 'ready');
+    expect(fact(card('Служба'), 'Режим развёртывания')).toHaveTextContent('single-trust-domain');
+    expect(card('Сеанс')).toHaveTextContent('Нет ни сеанса приложения, ни токена оператора.');
+    expect(fact(region('Состояние'), 'Модели ролей')).toHaveTextContent('Неизвестно');
+    expect(document.body.textContent).not.toMatch(/Refresh|Needs a desktop session/);
+  });
+
+  it('names a failed service read in the reader\'s language', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    render(<I18nProvider locale="ru"><DiagnosticsWorkspace token="" refreshReadiness={vi.fn()}/></I18nProvider>);
+    await waitFor(() => expect(card('Служба')).toHaveAttribute('data-state', 'failed'));
+    expect(fact(card('Служба'), 'Состояние')).toHaveTextContent(/^недоступна$/);
+    expect(card('Служба')).not.toHaveTextContent('unavailable');
   });
 });

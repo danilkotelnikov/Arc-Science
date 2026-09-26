@@ -7,10 +7,15 @@ test('the workbench opens on a blank Research question in the requested order', 
   page.on('request', (request) => requested.push(request.url()));
   await page.goto('/');
   await expect(page).toHaveTitle('Arc Science');
-  await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', '/snoggo-mark.svg');
-  const mark = page.locator('img.brand-mark');
-  await expect(mark).toBeVisible();
-  expect(await mark.evaluate((img) => img.complete && img.naturalWidth > 0)).toBe(true);
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', '/favicon.svg');
+  expect((await page.request.get('/favicon.svg')).status()).toBe(200);
+  // The lockup is drawn inline from the logo geometry: tile, letters and wordmark.
+  const brand = page.getByRole('banner').getByRole('img', {name: 'Arc Science'});
+  await expect(brand).toBeVisible();
+  expect(await brand.locator('path').count()).toBe(3);
+  // Kyiv Type Sans, the interface face, is loaded from the bundle rather than the system.
+  await page.evaluate(() => document.fonts.ready);
+  expect(await page.evaluate(() => [...document.fonts].some(face => face.family.replace(/"/g, '') === 'Arc Kyiv' && face.status === 'loaded'))).toBe(true);
   const nav = page.getByRole('navigation', {name: 'Workspaces'});
   const names = ['Research', 'Memory', 'Molecules', 'BioArt', 'Prose', 'Settings', 'Diagnostics'];
   for (const name of names) {
@@ -33,7 +38,7 @@ test('workspaces switch without losing the shared in-memory token, and the token
   await page.goto('/');
   await openWorkspace(page, 'Research', 'Research results');
   await page.getByLabel('Operator token').fill(shared);
-  await openWorkspace(page, 'Memory', 'Memory');
+  await openWorkspace(page, 'Memory', 'Memory results');
   await expect(page.getByLabel('Operator token')).toHaveValue(shared);
   await openWorkspace(page, 'BioArt', 'BioArt evidence workspace');
   await expect(page.getByLabel('Operator token')).toHaveValue(shared);
@@ -70,9 +75,9 @@ test('at 700×800 Research and Diagnostics fit the viewport and every Diagnostic
   await page.getByLabel('Operator token').fill(E2E_TOKEN); // the operator checks enable with a token
   await fitsViewport();
   // Labels belong to the Diagnostics workspace; here only the count and the Tab order matter:
-  // Refresh service, Refresh readiness, Refresh readiness (re-read logins), Read diagnostics, Copy redacted report, Check MCP, Check ACP.
+  // Refresh service, Version and limits, Refresh readiness, Refresh readiness (re-read logins), Read diagnostics, Copy redacted report, Check MCP, Check ACP.
   const buttons = page.getByRole('main').getByRole('button', {disabled: false});
-  await expect(buttons).toHaveCount(7);
+  await expect(buttons).toHaveCount(8);
   const labels = await buttons.allTextContents();
   const reached = new Set();
   await page.getByLabel('Operator token').focus();

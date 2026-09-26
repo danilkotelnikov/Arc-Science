@@ -6,8 +6,8 @@ import {apiFetch} from './http';
 // resumed from the last id on a broken connection, and given up to polling after a
 // few failures. Nothing here is a claim about the render: the stages are what the
 // pipeline wrote so far, named as observations: an output appeared, not a step succeeded.
-export const STAGE_LABELS = {preparing: 'pipeline started', contacts_ready: 'scene output appeared', rendering: 'render log appeared',
-  composing: 'composed figure appeared', checking: 'image checks appeared', verifying: 'verifying artifacts'};
+// The stages a render reports, named in the dictionaries as render.stage.<stage>.
+export const STAGES = ['preparing', 'contacts_ready', 'rendering', 'composing', 'checking', 'verifying'];
 
 export function parseEventBlock(block) {
   const event = {};

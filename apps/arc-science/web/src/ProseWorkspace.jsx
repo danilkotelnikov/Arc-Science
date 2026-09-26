@@ -1,7 +1,21 @@
 import React, {useCallback, useLayoutEffect, useRef, useState} from 'react';
 import {Button} from '@heroui/react/button';
-import {SESSION_COPY, apiFetch, sessionState} from './http';
+import {Checkbox} from '@heroui/react/checkbox';
+import {Description} from '@heroui/react/description';
+import {Disclosure} from '@heroui/react/disclosure';
+import {EmptyState} from '@heroui/react/empty-state';
+import {Fieldset} from '@heroui/react/fieldset';
+import {Input} from '@heroui/react/input';
+import {Label} from '@heroui/react/label';
+import {Popover} from '@heroui/react/popover';
+import {Table} from '@heroui/react/table';
+import {TextArea} from '@heroui/react/textarea';
+import {TextField} from '@heroui/react/textfield';
+import {apiFetch, sessionLine, sessionState} from './http';
 import {LockNotice, focusTokenField, unlockLabel} from './LockNotice';
+import {useI18n} from './i18n/index.jsx';
+import {GravityIcon} from './theme/gravity-icons.jsx';
+import {Block, Facts, Kicker, PageHead, useFirstEntry} from './ui.jsx';
 
 // Prose control: a rule-based local rewrite that never touches scientific content, and
 // third-party AI-detection that needs consent on every request because the text leaves
@@ -9,26 +23,76 @@ import {LockNotice, focusTokenField, unlockLabel} from './LockNotice';
 // any bearing on a release decision.
 
 // Each action reports under its own group: what is running, or what failed and why.
-const ACTION = {
-  rewrite: {name: 'Rewrite locally', group: 'local', doing: 'Rewriting locally…'},
-  diagnose: {name: 'Diagnose locally', group: 'local', doing: 'Diagnosing locally…'},
-  rules: {name: 'Load rules', group: 'local', doing: 'Loading rules…'},
-  seat: {name: 'Rewrite with the prose seat', group: 'seat', doing: 'Sending the text to the prose seat…'},
-  behaviour: {name: 'Show behaviour text', group: 'seat', doing: 'Loading the behaviour text…'},
-  detect: {name: 'Detect', group: 'detect', doing: 'Sending the text to the detection service…'},
-};
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-function failure(name, e) {
-  if (e instanceof TypeError) return `${name} failed. ${SESSION_COPY.offline.title}. ${SESSION_COPY.offline.text}`;
+// Its name and running line are prose.action.<id>.name / .doing.
+const GROUP = {rewrite: 'local', diagnose: 'local', rules: 'local', seat: 'seat', behaviour: 'seat', detect: 'detect'};
+const MAX_CHARS = 20000;
+const LEGEND = 'text-[18px] leading-6 font-semibold';
+
+function failure(t, name, e) {
+  if (e instanceof TypeError) return t('prose.failed.offline', {name, reason: sessionLine('offline', t)});
   const m = /^Request failed \((\d+)\)(?:: (.*))?$/s.exec(e.message);
-  if (!m) return `${name} failed: ${e.message}`;
+  if (!m) return t('prose.failed.detail', {name, detail: e.message});
   let detail = m[2] || '';
   // The prose service answers {code, detail, spans}; http.js stringifies it, so unwrap the sentence.
   if (detail.startsWith('{')) { try { detail = JSON.parse(detail).detail || detail; } catch { /* keep the raw text */ } }
-  return `${name} failed${detail ? ': ' + detail : ' (HTTP ' + m[1] + ')'}`;
+  return detail ? t('prose.failed.detail', {name, detail}) : t('prose.failed.http', {name, status: m[1]});
+}
+
+/** A short explanation behind an info button, for text too long to sit under a control. */
+function About({label, heading, text}) {
+  // The Button is the trigger itself: Popover.Trigger would wrap it in a second role="button".
+  return <Popover>
+    <Button variant="ghost" size="sm" isIconOnly aria-label={label}><GravityIcon name="circle-info"/></Button>
+    <Popover.Content>
+      <Popover.Dialog>
+        <Popover.Heading>{heading}</Popover.Heading>
+        <p>{text}</p>
+      </Popover.Dialog>
+    </Popover.Content>
+  </Popover>;
+}
+
+function Consent({isSelected, isDisabled, onChange, children}) {
+  const {t} = useI18n();
+  return <Checkbox isSelected={isSelected} isDisabled={isDisabled} onChange={onChange}>
+    <Checkbox.Content><Checkbox.Control><Checkbox.Indicator/></Checkbox.Control>{children}</Checkbox.Content>
+    <Description>{t('prose.consent.clears')}</Description>
+  </Checkbox>;
+}
+
+/** Service text as it arrived, line breaks kept. */
+function Output({kind, children}) {
+  const {t} = useI18n();
+  return <div className="ar-stack ar-stack--tight">
+    <Kicker>{t('prose.output')}</Kicker>
+    <div className="whitespace-pre-wrap" data-output={kind}>{children}</div>
+  </div>;
+}
+
+function StaleNote({children}) { return <p role="status" className="ar-tag" data-tone="warning">{children}</p>; }
+
+function Grid({label, columns, rows}) {
+  return <div className="ar-table-scroll">
+    <Table>
+      <Table.ScrollContainer>
+        <Table.Content aria-label={label}>
+          <Table.Header>
+            {columns.map((column, index) => <Table.Column key={column} isRowHeader={index === 0}>{column}</Table.Column>)}
+          </Table.Header>
+          <Table.Body>
+            {rows.map(([id, ...cells]) => <Table.Row key={id} id={id}>
+              {cells.map((cell, index) => <Table.Cell key={index}>{cell}</Table.Cell>)}
+            </Table.Row>)}
+          </Table.Body>
+        </Table.Content>
+      </Table.ScrollContainer>
+    </Table>
+  </div>;
 }
 
 export default function ProseWorkspace({token, setToken}) {
+  const {t, n} = useI18n();
+  const enter = useFirstEntry('prose');
   const [text, setText] = useState(''), [rules, setRules] = useState(null);
   const [rewritten, setRewritten] = useState(null), [receipt, setReceipt] = useState(null);
   const [consent, setConsent] = useState(false), [error, setError] = useState(null), [busy, setBusy] = useState(null);
@@ -53,15 +117,15 @@ export default function ProseWorkspace({token, setToken}) {
     signal.throwIfAborted();
     return data;
   }, [token]);
-  async function task(action, meta) {
+  async function task(action, id, vars) {
     const signal = credential.current.signal;
-    setBusy(meta); setError(null);
+    setBusy({id, group: GROUP[id], vars}); setError(null);
     try { await action(signal); }
     catch (e) {
       if (signal.aborted) return;
       // A rejected token is one card in the error tone, not a card plus an alert.
       if (/Request failed \((401|403)\)/.test(e.message)) { setAuthExpired(true); return; }
-      setError({group: meta.group, text: failure(meta.name, e)});
+      setError({group: GROUP[id], text: failure(t, t(`prose.action.${id}.name`), e)});
     }
     finally { if (!signal.aborted) setBusy(null); }
   }
@@ -83,94 +147,192 @@ export default function ProseWorkspace({token, setToken}) {
   const diagnosisStale = stale(diagnosis), rewrittenStale = stale(rewritten), receiptStale = stale(receipt);
   const humaneStale = humane && (humane.source !== text || humane.source_instructions !== instructions);
   const detection = rules?.detection, minChars = detection?.bounds?.min_chars ?? 20;
-  const feedback = group => busy?.group === group ? <p role="status">{busy.doing}</p> : error?.group === group ? <p role="alert">{error.text}</p> : null;
-  return <div className="research-workspace">
-    <aside className="research-form">
-      <p className="eyebrow">PROSE</p><h1>Edit the words, not the evidence.</h1>
-      <p className="muted">Rewrite and diagnose run on this machine; the two actions marked ‘sends text’ send it away and ask for your consent each time. No rewrite changes a protected span (numbers, identifiers, citations, units, code); ‘Load rules and detection details’ lists the exact classes.</p>
-      <label htmlFor="prose-text">Text</label>
-      <textarea id="prose-text" rows={10} value={text} disabled={!!busy} onChange={e => setText(e.target.value)} maxLength={20000}/>
-      <p className="field-note">{text.length.toLocaleString()} / {(20000).toLocaleString()} characters.</p>
-      <div className="actions">
-        <Button isDisabled={!!busy || !token || !text.trim()} onPress={() => task(rewrite, ACTION.rewrite)}>Rewrite locally</Button>
-        <Button variant="secondary" isDisabled={!!busy || !token || !text.trim()} onPress={() => task(diagnose, ACTION.diagnose)}>Diagnose locally</Button>
-        <Button variant="secondary" isDisabled={!!busy || !token} onPress={() => task(loadRules, ACTION.rules)}>{rules ? 'Reload rules' : 'Load rules and detection details'}</Button>
+  const feedback = group => busy?.group === group ? <p role="status" className="ar-tag" data-tone="accent">{t(`prose.action.${busy.id}.doing`, busy.vars)}</p>
+    : error?.group === group ? <p role="alert" className="ar-tag" data-tone="danger">{error.text}</p> : null;
+  const quote = value => t('prose.quote', {text: value});
+  const none = t('common.none');
+  // Entering a token clears this workspace's text, so the lock card makes no draft promise.
+  const card = sessionState(token, authExpired, {draft: false});
+  const empty = !rewritten && !diagnosis && !humane && !behaviour && !receipt && !rules;
+
+  return <div className="ar-stack" data-enter={enter}>
+    <PageHead kicker={t('prose.kicker')} title={t('prose.title')} lead={t('prose.lead')}>
+      <Popover>
+        <Button variant="ghost" size="sm"><GravityIcon name="shield-check"/>{t('prose.protected.trigger')}</Button>
+        <Popover.Content>
+          <Popover.Dialog>
+            <Popover.Heading>{t('prose.protected.heading')}</Popover.Heading>
+            <p>{t('prose.protected.text')}</p>
+          </Popover.Dialog>
+        </Popover.Content>
+      </Popover>
+    </PageHead>
+    <div className="ar-pair items-start">
+      <div className="ar-stack">
+        <Block className="ar-stack">
+          <TextField value={text} onChange={setText} isDisabled={!!busy} maxLength={MAX_CHARS}>
+            <Label>{t('prose.text.label')}</Label>
+            <TextArea rows={10}/>
+          </TextField>
+          <p className="ar-note">{t('prose.text.count', {length: text.length, max: MAX_CHARS})}</p>
+          <div className="ar-row">
+            <Button isDisabled={!!busy || !token || !text.trim()} onPress={() => task(rewrite, 'rewrite')}>{t('prose.local.rewrite')}</Button>
+            <Button variant="secondary" isDisabled={!!busy || !token || !text.trim()} onPress={() => task(diagnose, 'diagnose')}>{t('prose.local.diagnose')}</Button>
+            <Button variant="secondary" isDisabled={!!busy || !token} onPress={() => task(loadRules, 'rules')}>{t(rules ? 'prose.local.reload' : 'prose.local.rules')}</Button>
+          </div>
+          {!token && <p className="ar-note">{t('prose.local.token')}</p>}
+          <LockNotice card={card} tone={authExpired ? 'error' : 'info'} onUnlock={() => focusTokenField(token, setToken)} unlockLabel={unlockLabel(token, t)}/>
+          {rules && <p className="ar-note">{t('prose.local.rules_loaded')}</p>}
+          {feedback('local')}
+        </Block>
+
+        <Block>
+          <Fieldset className="gap-4">
+            <Fieldset.Legend className={LEGEND}>{t('prose.seat.legend')}</Fieldset.Legend>
+            <div className="ar-row ar-row--tight justify-between">
+              <p className="ar-note">{t('prose.seat.note')}</p>
+              <About label={t('prose.seat.about')} heading={t('prose.seat.about')} text={t('prose.seat.about_text')}/>
+            </div>
+            <TextField value={instructions} onChange={setInstructions} isDisabled={!!busy} maxLength={2000}>
+              <Label>{t('prose.seat.instructions')}</Label>
+              <Input placeholder={t('prose.seat.placeholder')}/>
+            </TextField>
+            <Consent isSelected={seatConsent} isDisabled={!!busy} onChange={setSeatConsent}>{t('prose.seat.consent')}</Consent>
+            <p className="ar-note">{t('prose.seat.refusal')}</p>
+            <div className="ar-row">
+              <Button variant="secondary" isDisabled={!!busy || !token || !seatConsent || !text.trim()} onPress={() => task(humanise, 'seat')}>{t('prose.seat.send')}</Button>
+              <Button variant="ghost" size="sm" isDisabled={!!busy || !token} onPress={() => task(loadBehaviour, 'behaviour')}>{t(behaviour ? 'prose.seat.hide' : 'prose.seat.show')}</Button>
+            </div>
+            {feedback('seat')}
+          </Fieldset>
+        </Block>
+
+        <Block>
+          <Fieldset className="gap-4">
+            <Fieldset.Legend className={LEGEND}>{t('prose.detect.legend')}</Fieldset.Legend>
+            <p className="ar-note">{detection
+              ? (detection.enabled
+                ? t('prose.detect.sends', {recipient: detection.recipient, detectors: detection.detectors.join(', '), min: detection.bounds.min_chars, max: detection.bounds.max_chars})
+                : t('prose.detect.off'))
+              : t('prose.detect.load_first')}</p>
+            {detection?.enabled && <p className="ar-note">{t('prose.detect.unlocks', {min: minChars})}</p>}
+            <Consent isSelected={consent} isDisabled={!!busy || !detection?.enabled} onChange={setConsent}>
+              {t('prose.detect.consent', {recipient: detection?.recipient || 'api.edgeshop.ai'})}
+            </Consent>
+            <div className="ar-row">
+              <Button variant="secondary" isDisabled={!!busy || !token || !consent || text.trim().length < minChars}
+                onPress={() => task(detect, 'detect', {recipient: detection.recipient})}>{t('prose.detect.send')}</Button>
+            </div>
+            {feedback('detect')}
+          </Fieldset>
+        </Block>
       </div>
-      {!token && <p className="field-note">Enter an operator token in the header to use these.</p>}
-      <LockNotice card={sessionState(token, authExpired)} tone={authExpired ? 'error' : 'info'} onUnlock={() => focusTokenField(token, setToken)} unlockLabel={unlockLabel(token)}/>
-      {rules && <p className="field-note">Rules loaded; the list is at the end of the results.</p>}
-      {feedback('local')}
-      <fieldset className="prose-detect"><legend>Seat rewrite</legend>
-        <p className="field-note">Sends the text to the prose seat (one model assigned to one role; chosen in Settings). The seat edits under a fixed instruction text, the humane-prose behaviour (‘Show behaviour text’ below). If any protected span does not come back byte for byte, nothing is returned. The button unlocks when there is text and the box is ticked.</p>
-        <label htmlFor="prose-instructions">Instructions to the seat (optional)</label>
-        <input id="prose-instructions" value={instructions} disabled={!!busy} maxLength={2000} onChange={e => setInstructions(e.target.value)} placeholder="e.g. keep British spelling; it is a grant abstract"/>
-        <label className="check"><input type="checkbox" checked={seatConsent} disabled={!!busy} onChange={e => setSeatConsent(e.target.checked)}/>I consent to sending this text to the prose seat's provider for this one request.</label>
-        <p className="field-note">The box clears after each attempt. Instructions that ask to evade detectors or to impersonate someone are refused before anything is sent.</p>
-        <div className="actions">
-          <Button variant="secondary" isDisabled={!!busy || !token || !seatConsent || !text.trim()} onPress={() => task(humanise, ACTION.seat)}>Rewrite with the prose seat (sends text)</Button>
-          <Button variant="ghost" size="sm" isDisabled={!!busy || !token} onPress={() => task(loadBehaviour, ACTION.behaviour)}>{behaviour ? 'Hide behaviour text' : 'Show behaviour text'}</Button>
-        </div>
-        {feedback('seat')}
-      </fieldset>
-      <fieldset className="prose-detect"><legend>Third-party AI-text detection</legend>
-        <p className="field-note">{detection ? (detection.enabled
-          ? `Sends the text to ${detection.recipient} (${detection.detectors.join(', ')}); ${detection.bounds.min_chars}–${detection.bounds.max_chars.toLocaleString()} characters. Detect unlocks when the text has at least ${minChars} characters and the box is ticked.`
-          : 'Detection is switched off on this service.')
-          : 'Load the rules (‘Load rules and detection details’, above) to see where the text would be sent; the consent box unlocks once they are loaded.'}</p>
-        <label className="check"><input type="checkbox" checked={consent} disabled={!!busy || !detection?.enabled} onChange={e => setConsent(e.target.checked)}/>I consent to sending this text to {detection?.recipient || 'api.edgeshop.ai'} for this one request. The box clears after each attempt.</label>
-        <Button variant="secondary" isDisabled={!!busy || !token || !consent || text.trim().length < minChars} onPress={() => task(detect, {...ACTION.detect, doing: `Sending the text to ${detection.recipient}…`})}>Detect (sends text)</Button>
-        {feedback('detect')}
-      </fieldset>
-    </aside>
-    <section className="research-results" aria-label="Prose results">
-      <h2>Local rewrite</h2>
-      {rewritten ? <div className="record" data-status={rewritten.status} data-stale={String(!!rewrittenStale)}>
-        {rewrittenStale && <p role="status">The text changed since this rewrite; it applies to the earlier text.</p>}
-        <h3>{rewritten.status === 'edited' ? plural(rewritten.edits.reduce((n, e) => n + e.count, 0), 'edit') : 'No change'}{rewritten.reason ? ` · ${rewritten.reason.replace(/_/g, ' ')}` : ''} · {plural(rewritten.protected_count, 'protected span')} ({rewritten.protected_classes.join(', ') || 'none'})</h3>
-        <pre className="prose-output">{rewritten.text}</pre>
-        {rewritten.edits.length > 0 && <ul className="edits">{rewritten.edits.map(e => <li key={e.rule}>{e.rule} ×{e.count}: “{e.before}” → {e.after ? `“${e.after}”` : '(removed)'}</li>)}</ul>}
-        <p className="muted">{rewritten.statement} Rules {rewritten.rules_version}, protection {rewritten.protection_version}.</p>
-      </div> : <p className="muted">No rewrite yet.</p>}
-      <h2>Diagnosis</h2>
-      {diagnosis ? <div className="record" aria-label="Prose diagnosis" data-stale={String(!!diagnosisStale)}>
-        {diagnosisStale && <p role="status">The text changed since this diagnosis; diagnose again for the current text.</p>}
-        <h3>{diagnosis.edit_categories.length ? diagnosis.edit_categories.join(' · ') : 'No edit category indicated'} · {plural(diagnosis.protected_count, 'protected span')}</h3>
-        <dl className="receipt-metadata">
-          <dt>Overused style words</dt><dd>{diagnosis.observations.style_words.count} ({diagnosis.observations.style_words.per_1000_words} per 1,000 words){Object.keys(diagnosis.observations.style_words.words).length ? ': ' + Object.entries(diagnosis.observations.style_words.words).map(([w, n]) => w + (n > 1 ? ' ×' + n : '')).join(', ') : ''}</dd>
-          <dt>Formulaic frames (e.g. ‘it is important to note’)</dt><dd>{diagnosis.observations.formulaic_frames.count ? diagnosis.observations.formulaic_frames.instances.map(f => f.label + ': “' + f.text.trim() + '”').join(' · ') : 'none'}</dd>
-          <dt>Sentence length</dt><dd>{plural(diagnosis.observations.sentence_length.sentences, 'sentence')} · mean {diagnosis.observations.sentence_length.mean_words} words · spread {diagnosis.observations.sentence_length.spread_words} words · {Math.round(diagnosis.observations.sentence_length.share_within_20pct_of_mean * 100)}% of sentences within 20% of the mean length</dd>
-          <dt>Repeated openings</dt><dd>{Object.keys(diagnosis.observations.repeated_openings.openings).length ? Object.entries(diagnosis.observations.repeated_openings.openings).map(([o, n]) => '“' + o + '” ×' + n).join(', ') : 'none'}</dd>
-          <dt>Lists of three</dt><dd>{diagnosis.observations.triplets.count}</dd>
-          <dt>Paragraphs ending in a summary</dt><dd>{diagnosis.observations.closing_summaries.count} of {diagnosis.observations.closing_summaries.paragraphs}</dd>
-          <dt>Bullet points</dt><dd>{diagnosis.observations.bullets.count}</dd>
-        </dl>
-        <p className="muted">{diagnosis.note}</p>
-      </div> : <p className="muted">No diagnosis yet.</p>}
-      <h2>Seat rewrite</h2>
-      {humane ? <div className="record" data-status={humane.status} data-stale={String(!!humaneStale)}>
-        {humaneStale && <p role="status">The text or instructions changed since this rewrite; it applies to the earlier text.</p>}
-        <h3>{humane.status === 'edited' ? 'Edited by the prose seat' : 'Returned unchanged'} · {plural(humane.protected_count, 'protected span')} preserved</h3>
-        <pre className="prose-output">{humane.text}</pre>
-        {humane.notes.length > 0 && <ul className="edits">{humane.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
-        {humane.facts_needed.length > 0 && <p className="muted">Facts needed from the author: {humane.facts_needed.join('; ')}</p>}
-        {(humane.transport || humane.instruction_channel === 'prompt') && <p className="muted">
-          {humane.transport && `Model: ${humane.transport.provider} ${humane.transport.requested_model}; ${humane.transport.observed_model ? 'the provider confirmed ' + humane.transport.observed_model : 'the provider did not report which model answered'}.`}
-          {humane.instruction_channel === 'prompt' && ' The behaviour text was sent inside the message; this seat takes no separate system instructions.'}
-        </p>}
-        <p className="muted">{humane.statement}</p>
-      </div> : <p className="muted">No seat rewrite yet.</p>}
-      {behaviour && <details className="record" open><summary>Behaviour text (version {behaviour.version})</summary><pre className="prose-output">{behaviour.text}</pre></details>}
-      <h2>Detection receipt</h2>
-      {receipt ? <div className="record" data-complete={String(receipt.complete)} data-stale={String(!!receiptStale)}>
-        {receiptStale && <p role="status">The text changed since this detection; the receipt (SHA-256 below) applies to the earlier text.</p>}
-        <h3>{receipt.service} · {receipt.returned_types.join(', ') || 'no detector answered'}{receipt.missing_types.length ? ` · missing ${receipt.missing_types.join(', ')}` : ''}</h3>
-        <dl className="receipt-metadata">{Object.entries(receipt.results).map(([type, result]) => <React.Fragment key={type}><dt>{type}</dt><dd>{Object.entries(result).map(([k, v]) => `${k}: ${v}`).join(' · ') || '—'}</dd></React.Fragment>)}
-          <dt>Text SHA-256</dt><dd><code>{receipt.text_sha256}</code></dd><dt>Response SHA-256</dt><dd><code>{receipt.response_sha256}</code></dd></dl>
-        <p className="muted">{receipt.note}</p>
-      </div> : <p className="muted">No detection yet.</p>}
-      {rules && <details className="record"><summary>Rules ({rules.rules.length}) and protected classes ({rules.protected_classes.length})</summary>
-        <ul className="edits">{rules.rules.map(r => <li key={r.rule}><code>{r.rule}</code>: <code>{r.pattern}</code> → {r.replacement ? `“${r.replacement}”` : '(removed)'}</li>)}</ul>
-        <p className="muted">Protected: {rules.protected_classes.join(', ')}.</p></details>}
-    </section>
+
+      <section className="ar-stack" aria-label={t('prose.results')}>
+        {empty && <EmptyState className="bp-panel">{t('prose.results.empty')}</EmptyState>}
+
+        {rewritten && <Block className="ar-stack" data-status={rewritten.status} data-stale={String(!!rewrittenStale)}>
+          <h2>{t('prose.rewrite.heading')}</h2>
+          {rewrittenStale && <StaleNote>{t('prose.rewrite.stale')}</StaleNote>}
+          <h3>{[
+            rewritten.status === 'edited' ? t('prose.rewrite.edits', {count: rewritten.edits.reduce((sum, e) => sum + e.count, 0)}) : t('prose.rewrite.no_change'),
+            rewritten.reason ? rewritten.reason.replace(/_/g, ' ') : null,
+            t('prose.rewrite.protected', {count: rewritten.protected_count, classes: rewritten.protected_classes.join(', ') || none}),
+          ].filter(Boolean).join(', ')}</h3>
+          <Output kind="local">{rewritten.text}</Output>
+          {rewritten.edits.length > 0 && <Grid label={t('prose.edits.label')}
+            columns={[t('prose.edits.rule'), t('prose.edits.count'), t('prose.edits.before'), t('prose.edits.after')]}
+            rows={rewritten.edits.map(e => [e.rule, <code>{e.rule}</code>, n(e.count), quote(e.before), e.after ? quote(e.after) : t('prose.edits.removed')])}/>}
+          <p className="ar-note">{rewritten.statement} {t('prose.rewrite.versions', {rules: rewritten.rules_version, protection: rewritten.protection_version})}</p>
+        </Block>}
+
+        {diagnosis && <Block className="ar-stack" aria-label={t('prose.diagnosis.label')} data-stale={String(!!diagnosisStale)}>
+          <h2>{t('prose.diagnosis.heading')}</h2>
+          {diagnosisStale && <StaleNote>{t('prose.diagnosis.stale')}</StaleNote>}
+          <div className="ar-stack ar-stack--tight">
+            <Kicker>{t('prose.diagnosis.categories')}</Kicker>
+            {diagnosis.edit_categories.length
+              ? <ul className="list-disc ps-5">{diagnosis.edit_categories.map(category => <li key={category}>{category}</li>)}</ul>
+              : <p>{t('prose.diagnosis.no_category')}</p>}
+          </div>
+          <Facts items={[
+            [t('prose.diagnosis.protected'), n(diagnosis.protected_count)],
+            [t('prose.diagnosis.style_words'), (() => {
+              const style = diagnosis.observations.style_words;
+              const list = Object.entries(style.words).map(([word, count]) => word + (count > 1 ? ' ×' + n(count) : '')).join(', ');
+              return t('prose.diagnosis.style_words_value', {count: style.count, rate: style.per_1000_words}) + (list ? ': ' + list : '');
+            })()],
+            [t('prose.diagnosis.frames'), diagnosis.observations.formulaic_frames.count
+              ? <ul className="ar-stack ar-stack--tight">{diagnosis.observations.formulaic_frames.instances.map((frame, index) =>
+                <li key={index}>{t('prose.diagnosis.frame', {label: frame.label, text: quote(frame.text.trim())})}</li>)}</ul>
+              : none],
+            [t('prose.diagnosis.sentence_length'), t('prose.diagnosis.sentences', {
+              count: diagnosis.observations.sentence_length.sentences,
+              mean: diagnosis.observations.sentence_length.mean_words,
+              spread: diagnosis.observations.sentence_length.spread_words,
+              share: n(diagnosis.observations.sentence_length.share_within_20pct_of_mean, {style: 'percent', maximumFractionDigits: 0}),
+            })],
+            [t('prose.diagnosis.openings'), Object.keys(diagnosis.observations.repeated_openings.openings).length
+              ? Object.entries(diagnosis.observations.repeated_openings.openings).map(([opening, count]) => quote(opening) + ' ×' + n(count)).join(', ')
+              : none],
+            [t('prose.diagnosis.triplets'), n(diagnosis.observations.triplets.count)],
+            [t('prose.diagnosis.closing'), t('prose.diagnosis.of', {count: diagnosis.observations.closing_summaries.count, total: diagnosis.observations.closing_summaries.paragraphs})],
+            [t('prose.diagnosis.bullets'), n(diagnosis.observations.bullets.count)],
+          ]}/>
+          <p className="ar-note">{diagnosis.note}</p>
+        </Block>}
+
+        {humane && <Block className="ar-stack" data-status={humane.status} data-stale={String(!!humaneStale)}>
+          <h2>{t('prose.seat.legend')}</h2>
+          {humaneStale && <StaleNote>{t('prose.seat.stale')}</StaleNote>}
+          <h3>{t(humane.status === 'edited' ? 'prose.seat.edited' : 'prose.seat.unchanged', {count: humane.protected_count})}</h3>
+          <Output kind="seat">{humane.text}</Output>
+          {humane.notes.length > 0 && <ul className="list-disc ps-5">{humane.notes.map((note, i) => <li key={i}>{note}</li>)}</ul>}
+          {humane.facts_needed.length > 0 && <p className="ar-note">{t('prose.seat.facts_needed', {facts: humane.facts_needed.join('; ')})}</p>}
+          {(humane.transport || humane.instruction_channel === 'prompt') && <p className="ar-note">{[
+            humane.transport && t(humane.transport.observed_model ? 'prose.seat.model_confirmed' : 'prose.seat.model_unreported', {
+              provider: humane.transport.provider, model: humane.transport.requested_model, observed: humane.transport.observed_model,
+            }),
+            humane.instruction_channel === 'prompt' && t('prose.seat.prompt_channel'),
+          ].filter(Boolean).join(' ')}</p>}
+          <p className="ar-note">{humane.statement}</p>
+        </Block>}
+
+        {behaviour && <Block className="ar-stack">
+          <h2>{t('prose.behaviour.heading', {version: behaviour.version})}</h2>
+          <pre className="ar-code">{behaviour.text}</pre>
+        </Block>}
+
+        {receipt && <Block className="ar-stack" data-complete={String(receipt.complete)} data-stale={String(!!receiptStale)}>
+          <h2>{t('prose.receipt.heading')}</h2>
+          {receiptStale && <StaleNote>{t('prose.receipt.stale')}</StaleNote>}
+          <Facts items={[
+            [t('prose.receipt.service'), receipt.service],
+            [t('prose.receipt.answered'), receipt.returned_types.join(', ') || t('prose.receipt.none_answered')],
+            receipt.missing_types.length ? [t('prose.receipt.missing'), receipt.missing_types.join(', ')] : null,
+            ...Object.entries(receipt.results).map(([type, result]) => [type, Object.entries(result).map(([k, v]) => `${k}: ${v}`).join(', ') || '—']),
+            [t('prose.receipt.text_sha'), <code className="break-all">{receipt.text_sha256}</code>],
+            [t('prose.receipt.response_sha'), <code className="break-all">{receipt.response_sha256}</code>],
+          ]}/>
+          <p className="ar-note">{receipt.note}</p>
+        </Block>}
+
+        {rules && <Block>
+          <Disclosure>
+            <Disclosure.Heading>
+              <Button slot="trigger" variant="ghost">{t('prose.rules.heading', {rules: rules.rules.length, classes: rules.protected_classes.length})}<Disclosure.Indicator/></Button>
+            </Disclosure.Heading>
+            <Disclosure.Content>
+              <Disclosure.Body className="ar-stack">
+                <Grid label={t('prose.rules.label')}
+                  columns={[t('prose.rules.rule'), t('prose.rules.pattern'), t('prose.rules.replacement')]}
+                  rows={rules.rules.map(r => [r.rule, <code>{r.rule}</code>, <code className="break-all">{r.pattern}</code>, r.replacement ? quote(r.replacement) : t('prose.edits.removed')])}/>
+                <p className="ar-note">{t('prose.rules.protected', {classes: rules.protected_classes.join(', ')})}</p>
+              </Disclosure.Body>
+            </Disclosure.Content>
+          </Disclosure>
+        </Block>}
+      </section>
+    </div>
   </div>;
 }

@@ -181,7 +181,8 @@ test('the viewer assembly is applied on Enter or blur, not on every keystroke', 
   render(<MolecularViewer source={{filename: 'complex.cif', text: 'data_complex'}} scene={null} defaults={{}} stage=""/>);
   const context = await readyContext();
   expect(context.builders.structure.createStructure).toHaveBeenCalledTimes(1);
-  const input = screen.getByLabelText('Viewer assembly (press Enter to apply)');
+  const input = screen.getByLabelText('Viewer assembly');
+  expect(input).toHaveAccessibleDescription('Applied on Enter or when the field loses focus.');
   await user.clear(input);
   await user.type(input, '12');
   expect(context.builders.structure.createStructure).toHaveBeenCalledTimes(1);

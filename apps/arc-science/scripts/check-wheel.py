@@ -32,7 +32,7 @@ def main():
                     'Molecules' in js.text and 'BioArt' in js.text and 'Render your structure locally' in js.text and
                     '/api/bioart' in js.text and 'Receipt verified' in js.text)
             assert client.get('/THIRD_PARTY_NOTICES.md').status_code == 200
-            assert client.get('/snoggo-mark.svg').status_code == 200
+            assert client.get('/favicon.svg').status_code == 200
             # No packaged example collage: the workbench ships empty.
             assert client.get('/api/examples/1dqj').status_code == 404
             assert not any('example_assets' in name for name in ZipFile(wheel).namelist())

@@ -62,6 +62,12 @@ const BESPOKE = {
     'M7.25 5.25h1.5v2.5h-1.5z',
   ],
   evidence: 'M1 8 5.5 3.5H15v9H5.5zm2.12 0 3 3h7.38V5H6.12zM5 8a1 1 0 1 0 2 0a1 1 0 1 0-2 0zm3.5-.75H12v1.5H8.5z',
+  // Aa, the specimen sign: set apart from Gravity's 'text' (a T), which marks Prose.
+  type: [
+    'M.5 13.5 3.5 2.5H5l3 11H6.45l-.68-2.5H2.73l-.68 2.5zm2.64-4h2.22L4.25 5.43z',
+    'M9 10.5a3 3 0 1 0 6 0a3 3 0 1 0-6 0zm1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0z',
+    'M13.5 7.5H15v6h-1.5z',
+  ],
 };
 
 const GLYPHS = {...GRAVITY, ...BESPOKE};

@@ -51,8 +51,10 @@ function build(locale, dicts, setLocale) {
   return {locale, setLocale, t, n, d, rt};
 }
 
-// Outside a provider the shell still reads English instead of crashing.
-const I18nContext = createContext(build('en', BASE, () => {}));
+// Outside a provider the shell still reads English instead of crashing. Plain modules
+// (readiness.js) take this as their default, so they answer in English outside React too.
+export const ENGLISH = build('en', BASE, () => {});
+const I18nContext = createContext(ENGLISH);
 
 /** `locale` seeds the state; after mount `setLocale` owns it. `messages` = {en:{...}, ru:{...}} merged over the base dictionaries. */
 export function I18nProvider({locale: seed, messages, children}) {

@@ -1,0 +1,22 @@
+/* Research workspace: the few layouts the shared utilities do not cover. Colours, outlines
+   and marks come from blockprint.css; motion stays in motion.css. */
+
+/* A ruled definition list: label beside its value, a 1 px rule between rows. */
+.research-dl { margin: 0; }
+.research-dl > div {
+  display: grid; grid-template-columns: 184px minmax(0, 1fr); gap: 4px 16px;
+  padding-block: 8px; box-shadow: inset 0 1px 0 var(--bp-ink);
+}
+.research-dl > div:first-child { padding-block-start: 0; box-shadow: none; }
+.research-dl dt { font-size: 12px; line-height: 20px; font-weight: 600; letter-spacing: 0.02em; }
+.research-dl dd { margin: 0; min-width: 0; }
+@media (max-width: 760px) {
+  .research-dl > div { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* The mission on screen keeps the selection bar in the saved list (the list itself selects nothing). */
+.research-saved .list-box-item[data-current="true"] {
+  background-color: var(--surface);
+  box-shadow: inset var(--bp-bar) 0 0 var(--accent);
+}
+.research-saved .list-box-item { align-items: flex-start; flex-direction: column; gap: 4px; }

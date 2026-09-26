@@ -16,11 +16,11 @@ describe('dictionaries', () => {
     expect(SUPPORTED_LOCALES).toEqual([{id: 'en', label: 'English', short: 'EN'}, {id: 'ru', label: 'Русский', short: 'RU'}]);
   });
 
-  it('has every English key in Russian, with all four Russian plural forms', () => {
-    const missing = Object.keys(en).filter(key => !Object.hasOwn(ru, key));
-    expect(missing).toEqual([]);
+  it('has every English key in Russian and no Russian key without an English one, with all four Russian plural forms', () => {
+    expect(Object.keys(en).filter(key => !Object.hasOwn(ru, key))).toEqual([]);
+    const RU_FORMS = /_(one|few|many|other)$/;
+    expect(Object.keys(ru).filter(key => !Object.hasOwn(en, key) && !(RU_FORMS.test(key) && Object.hasOwn(en, key.replace(RU_FORMS, '_other'))))).toEqual([]);
     const plurals = [...new Set(Object.keys(en).filter(key => key.endsWith('_one')).map(key => key.slice(0, -4)))];
-    expect(plurals).toEqual(['count.missions', 'count.claims', 'count.sources']);
     for (const base of plurals) {
       expect(Object.hasOwn(en, base + '_other'), base).toBe(true);
       for (const form of ['one', 'few', 'many', 'other']) expect(Object.hasOwn(ru, `${base}_${form}`), `${base}_${form}`).toBe(true);

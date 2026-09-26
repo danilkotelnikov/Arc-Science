@@ -2,8 +2,12 @@ import React from 'react';
 import {beforeEach, afterEach, expect, test, vi} from 'vitest';
 import {act, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import {App} from './main.jsx';
-import {SESSION_COPY} from './http';
+import App from './App.jsx';
+import en from './i18n/en.js';
+
+// The shell mounts all seven workspaces and user-event types key by key: the slowest test takes
+// about 4 s alone, so the default 5 s limit fails it under load.
+vi.setConfig({testTimeout:20000});
 
 const bioartEntry = {entry_id:18,title:'Antibody',license:'Public Domain',credit:'Courtesy of NIAID',creator:'Ryan Kissinger',collection:'NIAID Visual & Medical Arts',citation:'NIAID BioArt, BIOART-000018',source_url:'https://bioart.niaid.nih.gov/bioart/18',preferred_representation_id:64,representations:[{group_id:63,caption:'Antibody - Colored',files:{PNG:626857,SVG:626858}},{group_id:64,caption:'Antibody - Grey',files:{PNG:626859,SVG:626860,AI:626861,EPS:626862}}]};
 const bioartReceipt = {receipt_id:'b'.repeat(64),entry_id:18,title:'Antibody',license:'Public Domain',credit:'Courtesy of NIAID',creator:'Ryan Kissinger',collection:'NIAID Visual & Medical Arts',citation:'NIAID BioArt, BIOART-000018',representation_id:64,caption:'Antibody - Grey',format:'SVG',file_id:626860,source_page_sha256:'c'.repeat(64),sha256:'d'.repeat(64),size:120,preview_eligible:true,import_eligible:true,limitation:null,rights_verified:false,scientific_validity_established:false,preview_url:'/api/bioart/receipts/'+'b'.repeat(64)+'/preview',download_url:'/api/bioart/receipts/'+'b'.repeat(64)+'/source'};
@@ -32,6 +36,10 @@ let requests, downloadClick, selectedRow;
 const json = (data,init={}) => new Response(JSON.stringify(data),{...init,headers:{'Content-Type':'application/json',...(init.headers||{})}});
 
 // The browser keeps the selected mission's id only (reopen); the token never reaches any storage.
+// The mission record is split into tabs whose unselected panels are hidden from role queries.
+const openTab=async(user,name)=>user.click(await screen.findByRole('tab',{name}));
+// Model source is a HeroUI Select under the collapsed Execution settings.
+const chooseLive=async user=>{await user.click(screen.getByText('Execution settings'));await user.click(screen.getByLabelText('Model source'));await user.click(await screen.findByRole('option',{name:/^Live models/}));};
 const onlyMissionStored=()=>{expect(Object.keys(localStorage)).toEqual(['arc.research.mission']);expect(localStorage.getItem('arc.research.mission')).toBe('mission-1');expect(Object.values(localStorage).some(v=>/private|operator|token/.test(v))).toBe(false);expect(sessionStorage.length).toBe(0);};
 beforeEach(()=>{
   requests=[]; selectedRow=structuredClone(row); localStorage.clear();
@@ -74,7 +82,7 @@ test('workspace switches retain in-memory token, goal and selected mission',asyn
   await user.type(screen.getByLabelText('Operator token'),'secret-token');
   await user.clear(screen.getByLabelText('Research goal'));await user.type(screen.getByLabelText('Research goal'),'Retained research question');
   await user.click(screen.getByRole('button',{name:'Load missions'}));
-  await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
+  await user.click(await screen.findByRole('option',{name:/Saved experiment/}));
   expect(await screen.findByText('Selected mission: mission-1')).toBeInTheDocument();
   await user.click(screen.getByRole('button',{name:'Molecules'}));
   await user.click(screen.getByRole('button',{name:'Research'}));
@@ -88,7 +96,7 @@ test('mission creation sends actual egress and visual-review consent and executi
   const user=userEvent.setup();render(<App/>);
   await user.type(screen.getByLabelText('Operator token'),'operator');
   await user.type(screen.getByLabelText('Research goal'),'Live nonlinear response check');
-  await user.selectOptions(screen.getByLabelText('Model source'),'live');
+  await chooseLive(user);
   await user.click(screen.getByLabelText(/Permit sending/));await user.click(screen.getByLabelText(/Require configured visual review/));
   // The route is previewed for the visual-review flag as set; the start is refused until that route is approved.
   await waitFor(()=>expect(requests.some(r=>r.path==='/api/missions/preview?vision_review=1')).toBe(true));
@@ -108,7 +116,8 @@ test('selected mission exposes authenticated artifacts, visual reports, verify, 
   selectedRow.state.visual_reports=[{model:'configured-reviewer',round:1,verdict:'revise',findings:[{category:'legibility',detail:'Inspect labels'}]}];
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
   await user.type(screen.getByLabelText('Operator token'),'private');
-  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
+  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('option',{name:/Saved experiment/}));
+  await openTab(user,'Evidence');
   expect(await screen.findByRole('img',{name:'Artifact from obs-1'})).toHaveAttribute('src','blob:artifact');
   expect(requests.find(r=>r.path?.includes('/artifacts/')).options.headers.Authorization).toBe('Bearer private');
   expect(screen.getByText('legibility: Inspect labels')).toBeInTheDocument();
@@ -127,14 +136,16 @@ test('a blocked release ledger explains itself and withholds the capsule until v
   selectedRow.state.artifacts=[{digest:'d'.repeat(64),source_observation_id:'obs-1',media_type:'image/png'}];
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
   await user.type(screen.getByLabelText('Operator token'),'private');
-  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
+  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('option',{name:/Saved experiment/}));
+  await openTab(user,'Release');
   const ledger=await screen.findByRole('region',{name:'Release decision'});
   expect(ledger).toHaveTextContent('Release decision: Blocked');
-  expect(ledger).toHaveTextContent('replay integrity · unverified — Replay verification has not been run for this mission.');
+  expect([...ledger.querySelector('tr[data-state="unknown"]').cells].map(cell=>cell.textContent)).toEqual(['replay integrity','unverified','Replay verification has not been run for this mission.']);
   expect(ledger).toHaveTextContent('Blocked by: replay integrity:unknown.');
   expect(ledger).toHaveTextContent('not validated');
   expect(screen.getByRole('button',{name:'Export replay archive (.zip)'})).toBeDisabled();
   // Inline inspection stays; the explicit file download consults the same ledger.
+  await openTab(user,'Evidence');
   expect(await screen.findByRole('img',{name:'Artifact from obs-1'})).toBeInTheDocument();
   expect(screen.queryByRole('button',{name:'Download PNG'})).toBeNull();
   expect(screen.getByText(/Download opens when the release decision is Eligible for human review/)).toBeInTheDocument();
@@ -144,6 +155,8 @@ test('a blocked release ledger explains itself and withholds the capsule until v
   await waitFor(()=>expect(screen.getByRole('region',{name:'Release decision'})).toHaveTextContent('Eligible for human review'));
   expect(screen.getByRole('button',{name:'Export replay archive (.zip)'})).toBeEnabled();
   expect(requests.find(r=>r.path?.endsWith('/verify')).options.method).toBe('POST');
+  // Replay and verify opened the Release tab; the figure's download lives under Evidence.
+  await openTab(user,'Evidence');
   expect(await screen.findByRole('button',{name:'Download PNG'})).toBeInTheDocument();
 });
 
@@ -154,11 +167,12 @@ test('repair cycles are listed with their own outcomes and superseded artifacts 
     {cycle:2,round:0,policy_digest:'e'.repeat(64),preset:'large_text',trigger_report_digest:'d'.repeat(64),addressed:['labels'],superseded_digests:[second],artifact_digests:[],outcome:'blocked',reason:'The large_text preset rendered an image that already exists; the repair changed nothing.'}];
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
   await user.type(screen.getByLabelText('Operator token'),'private');
-  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
+  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('option',{name:/Saved experiment/}));
+  await openTab(user,'Evidence');
   const repairs=await screen.findByRole('region',{name:'Figure repair cycles'});
   const items=within(repairs).getAllByRole('listitem');
   expect(items).toHaveLength(2);
-  expect(items[0]).toHaveTextContent('Cycle 1 · round 0 · render preset spacious · addressed legibility · review verdict: adequate');
+  expect(items[0]).toHaveTextContent('Cycle 1, round 0. Render preset spacious; addressed legibility. Review verdict: adequate');
   expect(items[1]).toHaveAttribute('data-outcome','blocked');
   expect(items[1]).toHaveTextContent('the repair changed nothing');
   const captions=screen.getAllByText(/render preset (default|spacious)/);
@@ -177,7 +191,8 @@ test('the claim scope shows each hypothesis narrowed to its evidence, its uncert
       uncertainties:[],next_tests:[{role:'analyst',round:1,test:'Use independently acquired data before a scientific conclusion.',evidence_ids:['fit-quadratic']}],evidence_ids:['fit-quadratic']}]};
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
   await user.type(screen.getByLabelText('Operator token'),'private');
-  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
+  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('option',{name:/Saved experiment/}));
+  await openTab(user,'Claims');
   const scope=await screen.findByRole('region',{name:'Claim scope'});
   expect(scope).toHaveTextContent('provisional support is exploratory, never validation');
   const claims=within(scope).getAllByRole('article');
@@ -187,7 +202,8 @@ test('the claim scope shows each hypothesis narrowed to its evidence, its uncert
   expect(claims[0]).toHaveTextContent('No supported scope; the requested claim stands only as a hypothesis.');
   expect(claims[0]).toHaveTextContent('challenged (falsifier): The linear fit leaves substantial residual error.');
   expect(claims[0]).toHaveTextContent(/Next discriminating test\s*falsifier: Compare a nonlinear alternative\./);
-  expect(claims[1]).toHaveTextContent('quadratic · Provisionally supported');
+  expect(within(claims[1]).getByRole('heading',{name:'quadratic'})).toBeInTheDocument();
+  expect(claims[1]).toHaveTextContent(/quadratic\s*Provisionally supported/);
   expect(claims[1]).toHaveTextContent('Scope: on the exploratory validation split of the frozen dataset; not independent data.');
   expect(claims[1]).toHaveTextContent('None recorded by either role; provisional support still needs independent data.');
 });
@@ -197,19 +213,20 @@ test('declared changes list what was declared, what was derived and each obligat
   selectedRow.change_obligations={['c'.repeat(32)]:[{check:'re_execution',state:'satisfied',sources:['operational_status']},{check:'dependent_claim_invalidation',state:'stale',sources:['claim_scope']},{check:'evidence_review',state:'stale',sources:['evidence_graph','reconciliation']},{check:'scope_review',state:'stale',sources:['claim_scope']}]};
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
   await user.type(screen.getByLabelText('Operator token'),'private');
-  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
+  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('option',{name:/Saved experiment/}));
+  await openTab(user,'Activity');
   const changes=await screen.findByRole('region',{name:'Declared changes'});
   const item=within(changes).getByRole('listitem');
-  expect(item).toHaveTextContent(/resume, round 1\s*Declared effect: analysis, claim · Derived effect: analysis, claim\s*Required checks: re execution satisfied · dependent claim invalidation stale · evidence review stale · scope review stale\s*Second round\./);
-  expect(item.querySelectorAll('.check-stale')).toHaveLength(3);
+  expect(item).toHaveTextContent(/resume, round 1\s*Declared effect\s*analysis, claim\s*Derived effect\s*analysis, claim\s*Required checks\s*re-execution: passed\s*dependent claim invalidation: stale\s*evidence review: stale\s*scope review: stale\s*Second round\./);
+  expect(item.querySelectorAll('[data-state="stale"]')).toHaveLength(3);
 });
 
 test('a finished mission keeps its outcome: Cancel is disabled, Verify and export stay available',async()=>{
   selectedRow.state.status='completed';selectedRow.state.stop_reason='Exploration completed within budget.';
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
   await user.type(screen.getByLabelText('Operator token'),'private');
-  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
-  expect(await screen.findByText('completed')).toBeInTheDocument();
+  await user.click(screen.getByRole('button',{name:'Load missions'}));await user.click(await screen.findByRole('option',{name:/Saved experiment/}));
+  expect(await screen.findByText('completed',{selector:'.status-label'})).toBeInTheDocument();
   expect(screen.getByRole('button',{name:'Cancel'})).toBeDisabled();
   expect(screen.getByRole('button',{name:/^Resume/})).toBeDisabled();
   expect(screen.getByRole('button',{name:'Replay and verify'})).toBeEnabled();
@@ -229,13 +246,14 @@ test('a stored mission id is reopened once the operator token is entered, withou
   await user.type(screen.getByLabelText('Operator token'),'private');
   await new Promise(resolve=>setTimeout(resolve,50));
   expect(requests.some(r=>String(r.path).startsWith('/api/missions'))).toBe(false);
-  expect(screen.queryByText(SESSION_COPY.expired.title)).not.toBeInTheDocument();
+  expect(screen.queryByText(en['session.expired.title'])).not.toBeInTheDocument();
   await user.tab();
   expect(await screen.findByText('Selected mission: mission-1')).toBeVisible();
   expect(requests.some(r=>r.path==='/api/missions')).toBe(false);
   expect(requests.filter(r=>r.path==='/api/missions/mission-1').at(-1).options.headers.Authorization).toBe('Bearer private');
-  expect(screen.queryByText(SESSION_COPY.expired.title)).not.toBeInTheDocument();
+  expect(screen.queryByText(en['session.expired.title'])).not.toBeInTheDocument();
   expect(requests.every(r=>!String(r.path).includes('private'))).toBe(true);
+  await openTab(user,'Activity');
   expect(screen.getByRole('region',{name:'Timeline'})).toHaveTextContent('No timeline was recorded for this mission');
   onlyMissionStored();
 });
@@ -243,12 +261,12 @@ test('a stored mission id is reopened once the operator token is entered, withou
 test('cold launch opens Research with a blank question and an explicit example opt-in',async()=>{
   render(<App/>);
   expect(await screen.findByRole('heading',{name:'Start with a question.'})).toBeInTheDocument();
-  expect(screen.getByRole('button',{name:'Research'})).toHaveAttribute('aria-pressed','true');
+  expect(screen.getByRole('button',{name:'Research'})).toHaveAttribute('aria-current','page');
   expect(within(screen.getByRole('navigation',{name:'Workspaces'})).getAllByRole('button').map(button=>button.textContent)).toEqual(['Research','Memory','Molecules','BioArt','Prose','Settings','Diagnostics']);
   expect(screen.getByLabelText('Research goal')).toHaveValue('');
   expect(screen.getByRole('button',{name:'Create and start'})).toBeDisabled();
   expect(screen.getByRole('button',{name:'Load missions'})).toBeDisabled();
-  expect(screen.getByRole('status')).toHaveTextContent(SESSION_COPY.locked.title);
+  expect(screen.getByRole('status')).toHaveTextContent(en['session.locked.title']);
   await userEvent.setup().click(screen.getByRole('button',{name:'Use example'}));
   expect(screen.getByLabelText('Research goal')).toHaveValue('Compare competing explanations of the nonlinear response and challenge the preferred fit.');
   expect(requests.some(r=>String(r.path).includes('/api/missions'))).toBe(false);
@@ -277,7 +295,8 @@ test('an owned native session unlocks without a page bearer and has a manual fal
   fetch.mockImplementation((path,options)=>path==='/api/session/status'
     ? Promise.resolve(json({status:'authorized'})) : normalFetch(path,options));
   const user=userEvent.setup();render(<App/>);
-  expect(await screen.findByText('Desktop session ready')).toBeInTheDocument();
+  // The header states the desktop session as a status.
+  expect(await within(document.querySelector('.ar-header')).findByRole('status')).toHaveTextContent('Desktop session');
   expect(screen.queryByLabelText('Operator token')).not.toBeInTheDocument();
   await user.type(screen.getByLabelText('Research goal'),'A local native-session question');
   await user.click(screen.getByRole('button',{name:'Create and start'}));
@@ -317,7 +336,7 @@ test('a manual token reads readiness only when a workspace asks, with the bearer
   expect(read).toHaveLength(1);
   expect(read[0].options.headers.Authorization).toBe('Bearer operator');
   expect(read[0].options.signal).toEqual(expect.any(AbortSignal));
-  expect(screen.getByText('arc-memory/1 · SQLite 3.53.2')).toBeInTheDocument();
+  expect(screen.getByText('arc-memory/1, SQLite 3.53.2')).toBeInTheDocument();
   expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);
 });
 
@@ -336,7 +355,7 @@ test('re-reading logins is the same readiness read with fresh=1 in the query, an
   expect(read()[0].options.method).toBeUndefined();
   // Research asks for a cached read while the fresh one is still out: it shares that fetch.
   await user.click(screen.getByRole('button',{name:'Research'}));
-  await user.selectOptions(screen.getByLabelText('Model source'),'live');
+  await chooseLive(user);
   expect(read().map(r=>r.path)).toEqual(['/api/readiness?fresh=1']);
   await act(async()=>{answer();});
   await user.click(screen.getByRole('button',{name:'Diagnostics'}));
@@ -366,7 +385,8 @@ test('failed authenticated artifact stops loading and retries without losing Res
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Research'}));
   await user.type(screen.getByLabelText('Operator token'),'private');
   await user.click(screen.getByRole('button',{name:'Load missions'}));
-  await user.click(await screen.findByRole('button',{name:'paused · Saved experiment'}));
+  await user.click(await screen.findByRole('option',{name:/Saved experiment/}));
+  await openTab(user,'Evidence');
   expect(await screen.findByText(/Artifact could not be loaded:/)).toHaveTextContent('503');
   expect(screen.queryByText('Loading image…')).not.toBeInTheDocument();
   expect(screen.queryByRole('img',{name:'Artifact from obs-1'})).not.toBeInTheDocument();
@@ -394,7 +414,7 @@ test('BioArt search is authenticated, cache-first, and shares the in-memory oper
   await user.clear(screen.getByLabelText('BioArt search query'));
   await user.type(screen.getByLabelText('BioArt search query'),'antibody');
   await user.click(screen.getByRole('button',{name:'Search BioArt'}));
-  expect(await screen.findByRole('button',{name:'Antibody · BIOART-000018'})).toBeInTheDocument();
+  expect(await screen.findByRole('button',{name:'Inspect Antibody, BIOART-000018'})).toBeInTheDocument();
   const sent=requests.find(r=>r.path==='/api/bioart/search');
   expect(sent.options.headers.Authorization).toBe('Bearer shared-operator');
   expect(JSON.parse(sent.options.body)).toEqual({query:'antibody',allow_egress:false});
@@ -430,11 +450,13 @@ test('BioArt inspects, fetches the automatic neutral SVG, verifies a protected p
   await user.click(screen.getByRole('button',{name:'Search BioArt'}));
   expect(metadataConsent).not.toBeChecked();
   await user.click(metadataConsent);
-  await user.click(await screen.findByRole('button',{name:'Antibody · BIOART-000018'}));
+  await user.click(await screen.findByRole('button',{name:'Inspect Antibody, BIOART-000018'}));
   expect(metadataConsent).not.toBeChecked();
   expect(await screen.findByText('Courtesy of NIAID')).toBeInTheDocument();
-  expect(screen.getByText('License per NIH: Public Domain')).toBeInTheDocument();
-  expect(screen.getByLabelText('Variant')).toHaveValue('auto');
+  expect(screen.getByText('License per NIH')).toBeInTheDocument();
+  expect(screen.getByText('Public Domain')).toBeInTheDocument();
+  // Variant is a HeroUI Select: its trigger is named by the chosen value, then the label.
+  expect(screen.getByRole('button',{name:/Variant$/})).toHaveTextContent('Automatic (prefers a grey or black-and-white SVG)');
   const fetchConsent=screen.getByLabelText('Permit NIH network access for this fetch');
   await user.click(fetchConsent);
   expect(metadataConsent).not.toBeChecked();
@@ -446,7 +468,7 @@ test('BioArt inspects, fetches the automatic neutral SVG, verifies a protected p
   const previewRequest=requests.find(r=>r.path===bioartReceipt.preview_url);
   expect(previewRequest.options.headers.Authorization).toBe('Bearer bioart-operator');
   expect(screen.getByText('File fetched and verified')).toBeInTheDocument();
-  expect(screen.getByText('Verified SVG · variant 64')).toBeInTheDocument();
+  expect(screen.getByText('Verified SVG, variant 64')).toBeInTheDocument();
   expect(screen.getByText(/Rights metadata has not been independently verified/)).toBeInTheDocument();
   expect(screen.getByText(/Scientific validity is not established/)).toBeInTheDocument();
   await user.click(screen.getByRole('button',{name:'Download verified file'}));
@@ -461,8 +483,9 @@ test('BioArt manual representation override is explicit and fetch errors preserv
   await user.click(screen.getByRole('button',{name:'BioArt'}));
   await user.type(screen.getByLabelText('Operator token'),'operator');
   await user.click(screen.getByRole('button',{name:'Search BioArt'}));
-  await user.click(await screen.findByRole('button',{name:'Antibody · BIOART-000018'}));
-  await user.selectOptions(screen.getByLabelText('Variant'),'63');
+  await user.click(await screen.findByRole('button',{name:'Inspect Antibody, BIOART-000018'}));
+  await user.click(screen.getByRole('button',{name:/Variant$/}));
+  await user.click(await screen.findByRole('option',{name:'Antibody - Colored'}));
   await user.click(screen.getByRole('button',{name:'Fetch and verify SVG'}));
   await screen.findByRole('img',{name:'Verified BioArt preview: Antibody'});
   const sent=requests.findLast(r=>r.path==='/api/bioart/fetch');
@@ -479,9 +502,11 @@ test('BioArt exposes original vector formats without previewing or importing dow
   await user.click(screen.getByRole('button',{name:'BioArt'}));
   await user.type(screen.getByLabelText('Operator token'),'operator');
   await user.click(screen.getByRole('button',{name:'Search BioArt'}));
-  await user.click(await screen.findByRole('button',{name:'Antibody · BIOART-000018'}));
-  expect(screen.getAllByRole('option').map(option=>option.value)).toEqual(expect.arrayContaining(['SVG','PNG','AI','EPS']));
-  await user.selectOptions(screen.getByLabelText('Format'),'EPS');
+  await user.click(await screen.findByRole('button',{name:'Inspect Antibody, BIOART-000018'}));
+  // Format is a HeroUI Select: its options exist while its popover is open.
+  await user.click(screen.getByRole('button',{name:/Format$/}));
+  expect((await screen.findAllByRole('option')).map(option=>option.textContent)).toEqual(expect.arrayContaining(['SVG','PNG','AI','EPS']));
+  await user.click(screen.getByRole('option',{name:'EPS'}));
   await user.click(screen.getByRole('button',{name:'Fetch and verify EPS'}));
   expect(await screen.findByText(/download-only; no browser preview/)).toBeInTheDocument();
   expect(screen.getByRole('button',{name:'EPS import unavailable'})).toBeDisabled();
@@ -497,9 +522,9 @@ test('memory workspace loads a captured session and searches its reasoning',asyn
   await user.click(screen.getByRole('button',{name:'Memory'}));
   await user.type(screen.getByLabelText('Operator token'),'tok');
   await user.click(screen.getByRole('button',{name:'Load sessions'}));
-  await user.click(await screen.findByRole('button',{name:/mission-1 · 18 records/}));
+  await user.click(await screen.findByRole('option',{name:/mission-1/}));
   await screen.findByText(/Captured records/);
-  await screen.findByText(/analyst · seq 2 · compaction epoch 0/);
+  expect((await screen.findByText('Analyst, seq 2')).closest('article')).toHaveTextContent('compaction epoch 0');
   await user.type(screen.getByLabelText('Search memory'),'quadratic');
   await user.click(screen.getByRole('button',{name:'Search'}));
   await screen.findByText(/quadratic term hypothesis/);
@@ -507,7 +532,7 @@ test('memory workspace loads a captured session and searches its reasoning',asyn
 
 test('native shell download outcomes are announced in the header and replace each other',async()=>{
   const user=userEvent.setup();render(<App/>);await user.click(screen.getByRole('button',{name:'Molecules'}));await screen.findByRole('heading',{name:'Render locally'});
-  expect(document.querySelector('.download-notice')).toBeNull();
+  expect(document.querySelector('.ar-download')).toBeNull();
   act(()=>{window.dispatchEvent(new CustomEvent('arc-download',{detail:{file:'1dqj-collage.svg',folder:'C:\Users\a b\Downloads',success:true}}));});
   expect(screen.getByText('Saved 1dqj-collage.svg in C:\Users\a b\Downloads')).toHaveAttribute('role','status');
   act(()=>{window.dispatchEvent(new CustomEvent('arc-download',{detail:{file:'1dqj-contacts.csv',folder:null,success:false}}));});

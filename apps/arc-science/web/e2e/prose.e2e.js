@@ -15,13 +15,13 @@ test('the local rewrite edits prose only and every protected span survives byte 
   await page.getByLabel('Text', {exact: true}).fill(TEXT);
   await page.getByRole('button', {name: 'Rewrite locally'}).click();
   const results = page.getByRole('region', {name: 'Prose results'});
-  const output = results.locator('pre.prose-output');
+  const output = results.locator('[data-output="local"]');
   await expect(output).toHaveText(/^We use a polynomial fit to describe the data \(Smith et al\., 2020\)\./);
   for (const literal of ['0.12 ± 0.03 µM', '37 °C', 'p < 0.05', 'n = 12', '[3]', 'Tyr33', 'Asp101', '1DQJ', '`arc-science verify`']) {
     await expect(output).toContainText(literal);
   }
   await expect(output).not.toContainText('utilize');
-  await expect(results.getByRole('heading', {level: 3}).first()).toHaveText(/^\d+ edits? · \d+ protected spans? \(/);
+  await expect(results.getByRole('heading', {level: 3}).first()).toHaveText(/^\d+ edits?, \d+ protected spans? \(/);
   await expect(results.getByText(/not a human-authorship claim/)).toBeVisible();
   // Deterministic: the service gives the same answer to the same text.
   const direct = await request.post('/api/prose/rewrite', {headers: {Authorization: `Bearer ${E2E_TOKEN}`}, data: {text: TEXT}});

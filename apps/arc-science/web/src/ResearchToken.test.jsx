@@ -3,7 +3,17 @@ import {afterEach, beforeEach, expect, test, vi} from 'vitest';
 import {act, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ResearchWorkspace from './ResearchWorkspace';
-import {SESSION_COPY} from './http';
+import {I18nProvider} from './i18n/index.jsx';
+import en from './i18n/en.js';
+import ru from './i18n/ru.js';
+
+// The session card words as the English dictionary holds them.
+const SESSION = Object.fromEntries(['locked', 'expired', 'offline'].map(id => [id, {title: en[`session.${id}.title`], text: en[`session.${id}.text`]}]));
+// Recorded times read as the workspace formats them outside a provider (English).
+const stamp = ms => new Intl.DateTimeFormat('en', {dateStyle: 'medium', timeStyle: 'medium'}).format(ms);
+const openTab = (user, name, index = 0) => user.click(screen.getAllByRole('tab', {name})[index]);
+const chooseMode = async (user, name) => { await user.click(screen.getByLabelText('Model source')); await user.click(await screen.findByRole('option', {name})); };
+const statusLabel = text => screen.findByText(text, {selector: '.status-label'});
 
 const json = data => new Response(JSON.stringify(data), {headers: {'Content-Type': 'application/json'}});
 const mission = {id: 'private-mission', request: {mode: 'demo'}, release: {policy_digest: 'p'.repeat(64), subject_digest: 's'.repeat(64), status: 'eligible_for_human_review', eligible_for_human_review: true, blocking_reasons: [], decided_at: 1, verification: null, checks: []}, state: {status: 'paused', round: 1, actions_used: 3, model_calls_used: 2, data_origin: 'fixture', branches: [], assessments: [], observations: [], events: [], visual_reports: [], artifacts: [], stop_reason: 'Private stop reason'}};
@@ -85,7 +95,9 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 async function openMission(user) {
   await user.click(screen.getByRole('button', {name: 'Load missions'}));
-  await user.click(await screen.findByRole('button', {name: /(paused|running) · Private saved question/}));
+  const saved = await screen.findByRole('option', {name: /Private saved question/});
+  expect(saved).toHaveTextContent(/paused|running/);
+  await user.click(saved);
   await screen.findByText('Selected mission: private-mission');
 }
 
@@ -104,7 +116,7 @@ test('switching away from a validated credential clears private drafts and conse
   rerender(<ResearchWorkspace token="new-token" setToken={setToken}/>);
   expect(screen.queryByText('Selected mission: private-mission')).not.toBeInTheDocument();
   expect(screen.queryByText(/Private stop reason/)).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', {name: /Private saved question/})).not.toBeInTheDocument();
+  expect(screen.queryByText(/Private saved question/)).not.toBeInTheDocument();
   expect(screen.queryByText(/3 computations/)).not.toBeInTheDocument();
   expect(screen.getByLabelText('Research goal')).toHaveValue('');
   await user.click(screen.getByText('Execution settings'));
@@ -140,7 +152,7 @@ test('expired credential recovery preserves the draft while resetting consent', 
 
   await user.click(screen.getByRole('button', {name: 'Replay and verify'}));
   // The rejected token is stated once, by the lock notice in its error tone; no separate alert repeats it.
-  expect((await screen.findByText(SESSION_COPY.expired.title)).closest('[role="status"]')).toHaveAttribute('data-tone', 'error');
+  expect((await screen.findByText(SESSION.expired.title)).closest('[role="status"]')).toHaveAttribute('data-tone', 'error');
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   rerender(<ResearchWorkspace token="replacement-token" setToken={setToken}/>);
 
@@ -198,11 +210,15 @@ test('verification summarizes evidence without expanding the full JSON report', 
   await openMission(user);
   await user.click(screen.getByRole('button', {name: 'Replay and verify'}));
   expect(await screen.findByText(/3 computations/)).toHaveTextContent('2 artifacts');
+  // The fresh report opens its own tab; it never lands in a hidden panel.
+  expect(screen.getByRole('tab', {name: 'Release'})).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('region', {name: 'Verification report'})).toBeVisible();
   expect(screen.getByText(/Scientific validity is not established/)).toBeVisible();
-  const details = screen.getByText('Verification details').closest('details');
-  expect(details).not.toHaveAttribute('open');
-  await user.click(screen.getByText('Verification details'));
-  expect(details).toHaveAttribute('open');
+  const details = screen.getByRole('button', {name: 'Verification details'});
+  expect(details).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.getByText(/"reproduction_passed": true/)).not.toBeVisible();
+  await user.click(details);
+  expect(details).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByText(/"reproduction_passed": true/)).toBeVisible();
 });
 
@@ -215,24 +231,30 @@ test('secondary research traces are collapsed by default and readable on demand'
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
 
   await openMission(user);
-  const reconciliation = screen.getByText(/^Reconciliation \(/).closest('details');
-  const evidence = screen.getByText('Execution evidence').closest('details');
-  const events = screen.getByText(/^Event history \(/).closest('details');
-
-  expect(reconciliation).not.toHaveAttribute('open');
-  expect(evidence).not.toHaveAttribute('open');
-  expect(events).not.toHaveAttribute('open');
+  await openTab(user, 'Activity');
+  const reconciliation = screen.getByRole('button', {name: 'Reconciliation (1 assessment)'});
+  const events = screen.getByRole('button', {name: 'Event history (1 event)'});
+  expect(reconciliation).toHaveAttribute('aria-expanded', 'false');
+  expect(events).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.getByText('Residuals remain structured.')).not.toBeVisible();
+  await openTab(user, 'Evidence');
+  const evidence = screen.getByRole('button', {name: 'Execution evidence'});
+  expect(evidence).toHaveAttribute('aria-expanded', 'false');
+  await openTab(user, 'Release');
   expect(screen.getByText('Release decision: Eligible for human review')).toBeVisible();
+  await openTab(user, 'Claims');
   expect(screen.getByRole('region', {name: 'Claim scope'})).toBeVisible();
 
-  await user.click(screen.getByText(/^Reconciliation \(/));
-  expect(reconciliation).toHaveAttribute('open');
+  await openTab(user, 'Activity');
+  await user.click(reconciliation);
+  expect(reconciliation).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByText('Residuals remain structured.')).toBeVisible();
-  await user.click(screen.getByText('Execution evidence'));
-  await user.click(screen.getByText('obs-1 · fit_model · ok'));
-  expect(screen.getByText(/"rmse": 0.42/)).toBeVisible();
-  await user.click(screen.getByText(/^Event history \(/));
+  await user.click(events);
   expect(screen.getByText('[1] decision: Opened nonlinear route.')).toBeVisible();
+  await openTab(user, 'Evidence');
+  await user.click(evidence);
+  await user.click(screen.getByRole('button', {name: 'obs-1, fit_model, ok'}));
+  expect(screen.getByText(/"rmse": 0.42/)).toBeVisible();
 });
 
 test('locked and expired research states preserve the draft goal without raw 401 text', async () => {
@@ -241,8 +263,8 @@ test('locked and expired research states preserve the draft goal without raw 401
   await user.type(screen.getByLabelText('Research goal'), 'Draft assay question');
   expect(screen.getByRole('button', {name: 'Create and start'})).toBeDisabled();
   expect(screen.getByRole('button', {name: 'Load missions'})).toBeDisabled();
-  expect(screen.getByRole('status')).toHaveTextContent(SESSION_COPY.locked.title);
-  expect(screen.getByRole('status')).toHaveTextContent(SESSION_COPY.locked.text);
+  expect(screen.getByRole('status')).toHaveTextContent(SESSION.locked.title);
+  expect(screen.getByRole('status')).toHaveTextContent(SESSION.locked.text);
   expect(fetch).not.toHaveBeenCalled();
 
   fetch.mockImplementationOnce(async () => new Response(JSON.stringify({detail: 'bad token'}), {status: 401, headers: {'Content-Type': 'application/json'}}));
@@ -251,14 +273,14 @@ test('locked and expired research states preserve the draft goal without raw 401
   await user.click(screen.getByRole('button', {name: 'Load missions'}));
   // One lock notice in its error tone beside Create and start; the Saved missions pane keeps only its own short line.
   const notice = await screen.findByRole('status');
-  expect(notice).toHaveTextContent(SESSION_COPY.expired.title);
+  expect(notice).toHaveTextContent(SESSION.expired.title);
   expect(notice).toHaveAttribute('data-tone', 'error');
-  expect(screen.getAllByText(SESSION_COPY.expired.title)).toHaveLength(1);
+  expect(screen.getAllByText(SESSION.expired.title)).toHaveLength(1);
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.queryByText(/Request failed \(401\)/)).not.toBeInTheDocument();
   const saved = screen.getByRole('complementary', {name: 'Saved missions'});
   expect(saved).toHaveTextContent('Enter an operator token to load saved missions.');
-  expect(saved).not.toHaveTextContent(SESSION_COPY.expired.title);
+  expect(saved).not.toHaveTextContent(SESSION.expired.title);
   expect(screen.getByLabelText('Research goal')).toHaveValue('Draft assay question');
   expect(screen.getByRole('button', {name: 'Load missions'})).toBeDisabled();
   await user.click(screen.getByRole('button', {name: 'Go to token field'}));
@@ -280,8 +302,8 @@ test('expired background polling gates controls and stops repeat polling', async
   });
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
-  expect(await screen.findByText('running')).toBeInTheDocument();
-  expect((await screen.findByText(SESSION_COPY.expired.title, {}, {timeout: 2500})).closest('[role="status"]')).toHaveAttribute('data-tone', 'error');
+  expect(await statusLabel('running')).toBeInTheDocument();
+  expect((await screen.findByText(SESSION.expired.title, {}, {timeout: 2500})).closest('[role="status"]')).toHaveAttribute('data-tone', 'error');
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.queryByText(/Request failed \(401\)/)).not.toBeInTheDocument();
   expect(screen.getByRole('button', {name: 'Replay and verify'})).toBeDisabled();
@@ -296,8 +318,8 @@ test('offline research errors keep service recovery copy separate from auth expi
   fetch.mockImplementationOnce(async () => { throw new TypeError('Failed to fetch'); });
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await user.click(screen.getByRole('button', {name: 'Load missions'}));
-  expect(await screen.findByRole('alert')).toHaveTextContent(SESSION_COPY.offline.title);
-  expect(screen.getByRole('alert')).not.toHaveTextContent(SESSION_COPY.expired.title);
+  expect(await screen.findByRole('alert')).toHaveTextContent(SESSION.offline.title);
+  expect(screen.getByRole('alert')).not.toHaveTextContent(SESSION.expired.title);
   expect(screen.getByRole('button', {name: 'Load missions'})).not.toBeDisabled();
 });
 
@@ -317,6 +339,7 @@ test('token removal revokes the loaded artifact and rejects an unfinished artifa
   const user = userEvent.setup(); const setToken = vi.fn();
   const {rerender} = render(<React.StrictMode><ResearchWorkspace token="old-token" setToken={setToken}/></React.StrictMode>);
   await openMission(user);
+  await openTab(user, 'Evidence');
   await screen.findByRole('img', {name: 'Artifact from ready-observation'});
   await waitFor(() => expect(finish).toBeTypeOf('function'));
   rerender(<React.StrictMode><ResearchWorkspace token="" setToken={setToken}/></React.StrictMode>);
@@ -332,7 +355,8 @@ test('invalid measurement JSON is reported beside Create and start before any re
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await user.type(screen.getByLabelText('Research goal'), 'Clamp and parse');
   await user.click(screen.getByText('Execution settings'));
-  fireEvent.change(screen.getByLabelText(/Round limit/), {target: {value: '40'}});
+  const roundLimit = screen.getByLabelText(/Round limit/);
+  await user.clear(roundLimit); await user.type(roundLimit, '40');
   fireEvent.change(screen.getByLabelText('Measurement JSON'), {target: {value: '{"x":[1],'}});
   await user.click(screen.getByRole('button', {name: 'Create and start'}));
   const alert = await screen.findByRole('alert');
@@ -347,6 +371,7 @@ test('invalid measurement JSON is reported beside Create and start before any re
   // An offline mission's start carries no route approval; its ledger is read and says so.
   expect(fetch.mock.calls.find(([path]) => path.endsWith('/start'))[1].body).toBeUndefined();
   expect(fetch.mock.calls.some(([path]) => path.startsWith('/api/missions/preview'))).toBe(false);
+  await openTab(user, 'Permissions');
   expect(await screen.findByRole('region', {name: 'Grants and receipts'})).toHaveTextContent('No grants. An offline fixture makes no external calls');
 });
 
@@ -357,7 +382,7 @@ test('a live mission without consent cannot be created, and the mode note beside
   const button = screen.getByRole('button', {name: 'Create and start'});
   expect(button).toBeEnabled();
   await user.click(screen.getByText('Execution settings'));
-  await user.selectOptions(screen.getByLabelText('Model source'), 'live');
+  await chooseMode(user, /^Live models/);
   expect(button).toBeDisabled();
   expect(button.parentElement).toHaveTextContent('A live mission is refused until you tick the consent box');
   await user.click(screen.getByLabelText(/Permit sending/));
@@ -389,14 +414,14 @@ test('live mode with blocked seats disables Create and start, names the seat and
   await user.click(screen.getByText('Execution settings'));
   expect(refreshReadiness).not.toHaveBeenCalled();
   expect(screen.queryByRole('region', {name: 'Live route'})).not.toBeInTheDocument();
-  await user.selectOptions(screen.getByLabelText('Model source'), 'live');
+  await chooseMode(user, /^Live models/);
   await user.click(screen.getByLabelText(/Permit sending/));
   expect(refreshReadiness).toHaveBeenCalledTimes(1);
   const button = screen.getByRole('button', {name: 'Create and start'});
   expect(button).toBeDisabled();
   expect(button.parentElement).toHaveTextContent('Live models are blocked. Planner — Store the anthropic API key in Settings → Connections.');
   const route = screen.getByRole('region', {name: 'Live route'});
-  expect(route).toHaveTextContent('Planner · anthropic · claude-sonnet-4-5 · medium · Blocked');
+  expect(within(route).getByText('Planner').closest('li')).toHaveTextContent('Planner anthropic claude-sonnet-4-5 medium Blocked');
   expect(route).not.toHaveTextContent('Vision');
   expect(within(route).getByRole('status')).toHaveTextContent('Blocked by: Planner — Store the anthropic API key in Settings → Connections.');
   await user.click(within(route).getByRole('button', {name: 'Open Settings'}));
@@ -408,10 +433,10 @@ test('seats that are set but not tested keep Create and start enabled and point 
   const user = userEvent.setup(); renderLive(untestedReadiness);
   await user.type(screen.getByLabelText('Research goal'), 'Live question');
   await user.click(screen.getByText('Execution settings'));
-  await user.selectOptions(screen.getByLabelText('Model source'), 'live');
+  await chooseMode(user, /^Live models/);
   await user.click(screen.getByLabelText(/Permit sending/));
   const route = screen.getByRole('region', {name: 'Live route'});
-  expect(route).toHaveTextContent('Planner · anthropic · claude-sonnet-4-5 · medium · Not tested');
+  expect(within(route).getByText('Planner').closest('li')).toHaveTextContent('Planner anthropic claude-sonnet-4-5 medium Not tested');
   expect(route).toHaveTextContent('Seats are configured but not tested; a probe is available in Settings → Connections.');
   expect(within(route).queryByRole('button', {name: 'Open Settings'})).not.toBeInTheDocument();
   await user.click(await screen.findByLabelText('Approve route'));
@@ -423,7 +448,7 @@ test('the live route says when seats are still being read or could not be read',
   const user = userEvent.setup(); const {rerender, refreshReadiness, onNavigate} = renderLive(null);
   await user.type(screen.getByLabelText('Research goal'), 'Live question');
   await user.click(screen.getByText('Execution settings'));
-  await user.selectOptions(screen.getByLabelText('Model source'), 'live');
+  await chooseMode(user, /^Live models/);
   const route = screen.getByRole('region', {name: 'Live route'});
   expect(within(route).getByRole('status')).toHaveTextContent('Seats not read yet.');
   // Unread seats block the start rather than letting the composer send a request the panel meant to prevent.
@@ -441,7 +466,7 @@ test('the offline fixture ignores seat readiness and never asks for it', async (
   await user.type(screen.getByLabelText('Research goal'), 'Offline question');
   expect(screen.getByRole('button', {name: 'Create and start'})).toBeEnabled();
   await user.click(screen.getByText('Execution settings'));
-  expect(screen.getByRole('option', {name: 'Offline fixture (scripted roles; nothing is sent)'}).selected).toBe(true);
+  expect(screen.getByLabelText('Model source')).toHaveTextContent('Offline fixture (scripted roles; nothing is sent)');
   expect(screen.queryByRole('region', {name: 'Live route'})).not.toBeInTheDocument();
   expect(screen.queryByRole('region', {name: 'Route and grants'})).not.toBeInTheDocument();
   expect(refreshReadiness).not.toHaveBeenCalled();
@@ -451,10 +476,13 @@ test('the offline fixture ignores seat readiness and never asks for it', async (
 test('the mission overview and the saved list show the model source from the mission request', async () => {
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
-  const heading = screen.getByRole('heading', {name: 'Mission overview'}).closest('.results-heading');
-  expect(heading).toHaveTextContent('paused');
-  expect(heading).toHaveTextContent('Offline fixture');
-  expect(screen.getByRole('button', {name: 'paused · Private saved question · Offline fixture'})).toBeInTheDocument();
+  const header = screen.getByRole('region', {name: 'Selected mission'});
+  expect(within(header).getByRole('heading', {name: 'Mission overview'})).toBeInTheDocument();
+  expect(header).toHaveTextContent('paused');
+  expect(header).toHaveTextContent('Offline fixture');
+  const saved = screen.getByRole('option', {name: /Private saved question/});
+  expect(saved).toHaveTextContent('paused');
+  expect(saved).toHaveTextContent('Offline fixture');
 });
 
 test('release checks read in the shared readiness words', async () => {
@@ -464,17 +492,20 @@ test('release checks read in the shared readiness words', async () => {
   fetch.mockImplementation(async path => path === '/api/missions' ? json([{id: checked.id, status: 'paused', goal: 'Private saved question'}]) : json(checked));
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
+  await openTab(user, 'Release');
   const ledger = screen.getByRole('region', {name: 'Release decision'});
-  expect(ledger).toHaveTextContent('replay integrity · unverified — Not verified yet.');
-  expect(ledger).toHaveTextContent('visual review · n/a — No review requested.');
+  const [integrity, visual] = within(ledger).getAllByRole('row').slice(1);
+  expect(integrity).toHaveAttribute('data-state', 'unknown');
+  expect([...integrity.children].map(cell => cell.textContent)).toEqual(['replay integrity', 'unverified', 'Not verified yet.']);
+  expect([...visual.children].map(cell => cell.textContent)).toEqual(['visual review', 'n/a', 'No review requested.']);
   expect(ledger).not.toHaveTextContent('not applicable');
-  expect(screen.getByRole('heading', {name: 'Mission overview'}).closest('.results-heading')).toHaveTextContent('Live models');
+  expect(screen.getByRole('region', {name: 'Selected mission'})).toHaveTextContent('Live models');
 });
 
 async function liveComposer(user) {
   await user.type(screen.getByLabelText('Research goal'), 'Live question');
   await user.click(screen.getByText('Execution settings'));
-  await user.selectOptions(screen.getByLabelText('Model source'), 'live');
+  await chooseMode(user, /^Live models/);
   await user.click(screen.getByLabelText(/Permit sending/));
   return screen.getByRole('region', {name: 'Route and grants'});
 }
@@ -486,14 +517,14 @@ test('live mode previews the route, gates Create and start on Approve route, and
   const rows = (await within(panel).findAllByRole('row')).slice(1);
   expect(rows).toHaveLength(2);
   expect(rows[0]).toHaveTextContent('seat');
-  expect(rows[0]).toHaveTextContent('planner · anthropic claude-sonnet-4-5');
+  expect(rows[0]).toHaveTextContent('planner (anthropic claude-sonnet-4-5)');
   expect(rows[0]).toHaveTextContent('https://api.anthropic.com');
   expect(rows[0]).toHaveTextContent(SEAT_DATA);
   expect(rows[0]).toHaveTextContent('planning, review and refutation');
   expect(rows[1]).toHaveTextContent('mcp');
   expect(rows[1]).toHaveTextContent('pubmed');
   expect(rows[1]).toHaveTextContent('npx pubmed-mcp');
-  expect(panel).toHaveTextContent('Route digest dddddddddddd · settings revision rev-7');
+  expect(panel).toHaveTextContent('Route digest dddddddddddd, settings revision rev-7');
   expect(panel).toHaveTextContent('Settings consent only makes a destination eligible');
   const button = screen.getByRole('button', {name: 'Create and start'});
   expect(button).toBeDisabled();
@@ -553,7 +584,7 @@ test('a preview without a route digest is an error line with a retry, never a ro
   const panel = await liveComposer(user);
   expect(await within(panel).findByRole('alert')).toHaveTextContent('The route preview did not include a route digest');
   expect(within(panel).queryByLabelText('Approve route')).not.toBeInTheDocument();
-  expect(within(panel).queryByRole('table')).not.toBeInTheDocument();
+  expect(within(panel).queryByRole('grid')).not.toBeInTheDocument();
   expect(screen.getByRole('button', {name: 'Create and start'})).toBeDisabled();
   // The retry reads the preview again; a well-formed answer then renders the route.
   fetch.mockImplementation(original);
@@ -572,9 +603,10 @@ test('the mission view lists grants and receipts, and Revoke posts the reason th
   });
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
+  await openTab(user, 'Permissions');
   const section = await screen.findByRole('region', {name: 'Grants and receipts'});
-  expect(section).toHaveTextContent('not scientific evidence');
-  const [grantsTable, receiptsTable] = await within(section).findAllByRole('table');
+  expect(section).toHaveTextContent('Not scientific evidence');
+  const [grantsTable, receiptsTable] = await within(section).findAllByRole('grid');
   const grantRows = within(grantsTable).getAllByRole('row').slice(1);
   expect(grantRows).toHaveLength(2);
   expect(grantRows[0]).toHaveTextContent('https://api.anthropic.com');
@@ -582,7 +614,7 @@ test('the mission view lists grants and receipts, and Revoke posts the reason th
   expect(grantRows[0]).toHaveTextContent(SEAT_DATA);
   expect(grantRows[0]).toHaveTextContent('mission');
   expect(grantRows[0]).toHaveTextContent('Active');
-  expect(grantRows[0]).toHaveTextContent(new Date(1700000000 * 1000).toLocaleString());
+  expect(grantRows[0]).toHaveTextContent(stamp(1700000000 * 1000));
   expect(grantRows[0]).toHaveAttribute('data-state', 'active');
   expect(grantRows[1]).toHaveTextContent('Revoked');
   expect(grantRows[1]).toHaveTextContent('never');
@@ -598,7 +630,7 @@ test('the mission view lists grants and receipts, and Revoke posts the reason th
   await user.click(within(grantRows[0]).getByRole('button', {name: 'Revoke grant https://api.anthropic.com'}));
   await waitFor(() => expect(revoked).toEqual([['/api/grants/' + GRANT + '/revoke', 'POST', {reason: 'Operator changed course'}]]));
   await waitFor(() => expect(within(section).queryByRole('button', {name: /^Revoke grant/})).not.toBeInTheDocument());
-  expect(within(within(section).getAllByRole('table')[0]).getAllByRole('row')[1]).toHaveTextContent('Revoked');
+  expect(within(within(section).getAllByRole('grid')[0]).getAllByRole('row')[1]).toHaveTextContent('Revoked');
   expect(section).toHaveTextContent('Only the newest 2 receipts are shown');
 });
 
@@ -607,9 +639,10 @@ test('a ledger that cannot be read is stated in its own section and leaves the m
   fetch.mockImplementation(async (path, options = {}) => path.endsWith('/grants') ? new Response(JSON.stringify({detail: 'Not Found'}), {status: 404, headers: {'Content-Type': 'application/json'}}) : original(path, options));
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
+  expect(screen.getByText(/Private stop reason/)).toBeVisible();
+  await openTab(user, 'Permissions');
   const section = await screen.findByRole('region', {name: 'Grants and receipts'});
   expect(await within(section).findByRole('alert')).toHaveTextContent('Grants could not be read: Request failed (404): Not Found');
-  expect(screen.getByText(/Private stop reason/)).toBeVisible();
   expect(screen.getByRole('button', {name: 'Replay and verify'})).toBeEnabled();
 });
 
@@ -627,20 +660,21 @@ test('the timeline table shows every recorded row from its own fields and never 
   fetch.mockImplementation(async (path, options = {}) => path.endsWith('/timeline') ? json(recordedTimeline) : inner(path, options));
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
+  await openTab(user, 'Activity');
   const section = await screen.findByRole('region', {name: 'Timeline'});
   expect(section).toHaveTextContent(TIMELINE_NOTE);
-  const rows = within(await within(section).findByRole('table')).getAllByRole('row').slice(1);
+  const rows = within(await within(section).findByRole('grid')).getAllByRole('row').slice(1);
   expect(rows).toHaveLength(6);
   expect(rows.map(row => row.getAttribute('data-operation'))).toEqual(['start', 'plan', 'tool', 'reconcile', 'plan', 'interrupt']);
   expect(rows.map(row => row.getAttribute('data-outcome-source'))).toEqual(['recorded', 'recorded', 'recorded', 'recorded', 'derived', 'recorded']);
   expect(rows[0]).toHaveAttribute('data-role', 'operator');
   expect(rows[0]).toHaveTextContent('operator:token');
   expect(rows[0]).toHaveTextContent('scheduled');
-  expect(rows[0]).toHaveTextContent(new Date(timelineRows[0].started_at).toLocaleString());
+  expect(rows[0]).toHaveTextContent(stamp(timelineRows[0].started_at));
   expect(rows[1]).toHaveTextContent('claude-opus-5 → claude-opus-5');
   expect(rows[1]).toHaveTextContent('verified');
   expect(rows[1]).toHaveTextContent('5f0caaaaaaaa');
-  expect(rows[2]).toHaveTextContent('polynomial_fit · fit-linear');
+  expect(rows[2]).toHaveTextContent('polynomial_fit / fit-linear');
   expect(rows[2]).toHaveTextContent('linear');
   expect(rows[2]).toHaveTextContent('not recorded');
   expect(rows[3]).toHaveTextContent('Reviewer (QA)');
@@ -659,9 +693,10 @@ test('the timeline table shows every recorded row from its own fields and never 
 test('a mission without a timeline says so and points at the persisted event history', async () => {
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
+  await openTab(user, 'Activity');
   const section = await screen.findByRole('region', {name: 'Timeline'});
   await waitFor(() => expect(section).toHaveTextContent('No timeline was recorded for this mission: it ran before the timeline existed, or it has not started. The event history below is the persisted record.'));
-  expect(within(section).queryByRole('table')).not.toBeInTheDocument();
+  expect(within(section).queryByRole('grid')).not.toBeInTheDocument();
   expect(document.querySelector('.status-label')).toHaveTextContent('paused');
 });
 
@@ -682,12 +717,13 @@ test('Pause is offered only while the persisted status is running and posts the 
   expect(screen.queryByRole('button', {name: 'Retry after error'})).not.toBeInTheDocument();
   await user.click(pause);
   await waitFor(() => expect(posts).toEqual(['POST']));
-  expect(await screen.findByText('paused', {selector: '.status-label'})).toBeInTheDocument();
+  expect(await statusLabel('paused')).toBeInTheDocument();
   expect(screen.getByRole('button', {name: 'Pause'})).toBeDisabled();
   expect(screen.getByRole('button', {name: 'Resume (recorded as an analysis and claim change)'})).toBeEnabled();
-  const banner = screen.getByText(/^Paused: Paused by operator:token at 2026-09-21T14:03:05Z; resume explicitly\. Resume continues it as a declared change\.$/);
+  const banner = document.querySelector('[data-event]');
   expect(banner).toHaveAttribute('role', 'status');
   expect(banner).toHaveAttribute('data-event', 'mission_paused');
+  expect(banner).toHaveTextContent(/^Paused\s*Paused by operator:token at 2026-09-21T14:03:05Z; resume explicitly\. Resume continues it as a declared change\.$/);
   expect(screen.getByRole('button', {name: 'Cancel'})).toBeEnabled();
 });
 
@@ -701,9 +737,7 @@ test('Retry after error is offered only for an errored mission, needs a reason a
     return original(path, options);
   });
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
-  await user.click(screen.getByRole('button', {name: 'Load missions'}));
-  await user.click(await screen.findByRole('button', {name: /paused · Private saved question/}));
-  await screen.findByText('Selected mission: private-mission');
+  await openMission(user);
   const retry = screen.getByRole('button', {name: 'Retry after error'});
   expect(retry).toBeDisabled();
   expect(screen.getByRole('button', {name: 'Pause'})).toBeDisabled();
@@ -714,7 +748,7 @@ test('Retry after error is offered only for an errored mission, needs a reason a
   expect(retry).toBeEnabled();
   await user.click(retry);
   await waitFor(() => expect(posts).toEqual([['POST', {kind: 'resume', declared_effects: ['analysis', 'claim'], note: 'Retry after error: the planner CLI was signed in again'}]]));
-  expect(await screen.findByText('running', {selector: '.status-label'})).toBeInTheDocument();
+  expect(await statusLabel('running')).toBeInTheDocument();
   expect(screen.queryByRole('button', {name: 'Retry after error'})).not.toBeInTheDocument();
   expect(screen.getByRole('button', {name: 'Pause'})).toBeEnabled();
 });
@@ -732,7 +766,7 @@ test('an accepted Resume keeps polling until the persisted status leaves paused'
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
   await user.click(screen.getByRole('button', {name: 'Resume (recorded as an analysis and claim change)'}));
-  expect(await screen.findByText('running', {}, {timeout: 4000})).toBeInTheDocument();
+  expect(await screen.findByText('running', {selector: '.status-label'}, {timeout: 4000})).toBeInTheDocument();
   expect(readsAfterStart).toBeGreaterThanOrEqual(3);
 });
 
@@ -749,10 +783,11 @@ test('an interrupted mission shows the banner from its last persisted event', as
   withMission({events: [{kind: 'mission_stopped', round: 0, detail: 'earlier'}, {kind: 'mission_interrupted', round: 1, detail: 'Service restarted; evidence retained. Resume explicitly.'}]});
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
-  const banner = screen.getByText(/^Interrupted: the service exited/);
+  const banner = document.querySelector('[data-event]');
   expect(banner).toHaveAttribute('role', 'status');
   expect(banner).toHaveAttribute('data-event', 'mission_interrupted');
-  expect(banner).toHaveTextContent('Interrupted: the service exited while this mission was running (persisted event mission_interrupted, round 1). Evidence is retained. Resume continues it as a declared change; timeline rows without a recorded outcome were abandoned by the exit.');
+  expect(banner).toBeVisible();
+  expect(banner).toHaveTextContent(/^Interrupted\s*The service exited while this mission was running \(persisted event mission_interrupted, round 1\)\. Evidence is retained\. Resume continues it as a declared change; timeline rows without a recorded outcome were abandoned by the exit\.$/);
   expect(screen.getByRole('button', {name: 'Resume (recorded as an analysis and claim change)'})).toBeEnabled();
 });
 
@@ -760,8 +795,9 @@ test('no banner when the last event is neither an interruption nor a pause', asy
   withMission({events: [{kind: 'mission_interrupted', round: 1, detail: 'Service restarted; evidence retained. Resume explicitly.'}, {kind: 'change_declared', round: 1, detail: 'resume'}]});
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
-  expect(screen.queryByText(/^Interrupted:/)).not.toBeInTheDocument();
-  expect(screen.queryByText(/^Paused:/)).not.toBeInTheDocument();
+  expect(document.querySelector('[data-event]')).toBeNull();
+  expect(screen.queryByText('Interrupted')).not.toBeInTheDocument();
+  expect(screen.queryByText('Paused')).not.toBeInTheDocument();
 });
 
 test('the route card reads the bound route from the seats_bound event and counts the grants', async () => {
@@ -771,23 +807,26 @@ test('the route card reads the bound route from the seats_bound event and counts
   fetch.mockImplementation(async (path, options = {}) => path.endsWith('/grants') ? json(ledger) : inner(path, options));
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
+  await openTab(user, 'Permissions');
   const route = await screen.findByRole('region', {name: 'Mission route'});
-  expect(route).toHaveTextContent('planner · anthropic:cli:claude-opus-5:default:planner');
-  expect(route).toHaveTextContent('reviewer · anthropic:api:claude-sonnet-4-5:medium:anthropic-key');
-  expect(route).toHaveTextContent('mcp_servers · pubmed');
-  expect(route).toHaveTextContent('Route digest cccccccccccc… · bound at round 0 (event seats_bound)');
-  await waitFor(() => expect(route).toHaveTextContent('Grants: 1 active · 1 revoked (see Grants and receipts)'));
+  expect(Object.fromEntries(within(route).getAllByRole('term').map(dt => [dt.textContent, dt.nextElementSibling.textContent]))).toEqual({
+    planner: 'anthropic:cli:claude-opus-5:default:planner', reviewer: 'anthropic:api:claude-sonnet-4-5:medium:anthropic-key', mcp_servers: 'pubmed'});
+  expect(route).toHaveTextContent('Route digest cccccccccccc…, bound at round 0 (event seats_bound)');
+  await waitFor(() => expect(route).toHaveTextContent('Grants: 1 active, 1 revoked (see Grants and receipts)'));
   expect(route).not.toHaveTextContent('Offline fixture');
 });
 
 test('the route card of an offline mission says no route was bound; an unstarted live one says it binds at the first start', async () => {
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
+  await openTab(user, 'Permissions');
   expect(screen.getByRole('region', {name: 'Mission route'})).toHaveTextContent('Offline fixture: scripted roles (scripted-fixture-v1); no route was bound and no grant exists.');
   withMission({status: 'ready'}, {request: {mode: 'live'}});
   const live = userEvent.setup(); const {unmount} = render(<ResearchWorkspace token="operator-live" setToken={vi.fn()}/>);
   await live.click(screen.getAllByRole('button', {name: 'Load missions'})[1]);
-  await live.click((await screen.findAllByRole('button', {name: /paused · Private saved question/}))[1]);
+  await live.click((await screen.findAllByRole('option', {name: /Private saved question/}))[1]);
+  await waitFor(() => expect(screen.getAllByRole('tab', {name: 'Permissions'})).toHaveLength(2));
+  await openTab(live, 'Permissions', 1);
   await waitFor(() => expect(screen.getAllByRole('region', {name: 'Mission route'})[1]).toHaveTextContent('No route bound yet: a live mission binds its route (event seats_bound) at its first start.'));
   unmount();
 });
@@ -812,9 +851,7 @@ test('reopen restores the stored mission once the session is unlocked and stores
   expect(fetch.mock.calls.some(([path]) => path === '/api/missions/private-mission')).toBe(false);
   expect(localStorage.getItem('arc.research.mission')).toBe('private-mission');
   // Selecting a mission again stores its id; nothing else.
-  await user.click(screen.getByRole('button', {name: 'Load missions'}));
-  await user.click(await screen.findByRole('button', {name: /paused · Private saved question/}));
-  await screen.findByText('Selected mission: private-mission');
+  await openMission(user);
   expect(Object.keys(localStorage)).toEqual(['arc.research.mission']);
 });
 
@@ -871,28 +908,30 @@ test('claim cards are rendered from the derived claims answer with every row in 
   fetch.mockImplementation(async (path, options = {}) => path.endsWith('/claims') ? json(exampleClaims) : original(path, options));
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
+  await openTab(user, 'Claims');
   const scope = screen.getByRole('region', {name: 'Claim scope'});
   const card = await within(scope).findByRole('article');
   expect(card).toHaveAttribute('data-status', 'unresolved');
   expect(card).toHaveAttribute('data-stale', 'false');
   expect(within(card).getAllByRole('term').map(dt => dt.textContent)).toEqual(CLAIM_ROWS);
-  expect(card).toHaveTextContent('quadratic · Unresolved');
+  expect(within(card).getByRole('heading', {name: 'quadratic'})).toBeInTheDocument();
+  expect(card).toHaveTextContent('Unresolved');
   expect(card).toHaveTextContent('Scope: on the exploratory validation split of the frozen dataset; not independent data.');
   expect(card).toHaveTextContent('shared identity: Both roles ran as the same model identity (scripted-fixture-v1)');
   const evidence = within(card).getAllByRole('listitem').filter(li => li.hasAttribute('data-evidence-id'));
   expect(evidence.map(li => li.getAttribute('data-evidence-id'))).toEqual(['fit-quadratic', 'shuffle-quadratic']);
-  expect(evidence[0]).toHaveTextContent('fit-quadratic · polynomial_fit@arc-numeric-2 · digest 9c4effffffff… · ok · started ' + new Date(1758463205400).toLocaleString() + ' · receipt none · validation MSE 0.0014');
+  expect(evidence[0]).toHaveTextContent('fit-quadratic polynomial_fit@arc-numeric-2 digest 9c4effffffff… ok started ' + stamp(1758463205400) + ' receipt none validation MSE 0.0014');
   expect(evidence[0]).not.toHaveTextContent('not counted for scope');
-  expect(evidence[1]).toHaveTextContent('· not counted for scope · started no time recorded · receipt none · mean shuffled MSE 0.9');
+  expect(evidence[1]).toHaveTextContent('ok not counted for scope no start time recorded receipt none mean shuffled MSE 0.9');
   expect(card).toHaveTextContent('Independent reviewers: no');
-  expect(card).toHaveTextContent('Reviewer (QA): scripted-fixture-v1 · identity not recorded');
-  expect(card).toHaveTextContent('falsifier: scripted-fixture-v1 · identity not recorded');
-  expect(card).toHaveTextContent('Reviewer (QA) · support: Low error on the exploratory split.');
+  expect(card).toHaveTextContent('Reviewer (QA): scripted-fixture-v1, identity not recorded');
+  expect(card).toHaveTextContent('falsifier: scripted-fixture-v1, identity not recorded');
+  expect(card).toHaveTextContent('Reviewer (QA), support: Low error on the exploratory split.');
   expect(card).toHaveTextContent('parents linear; siblings null-control; children none');
   expect(card).toHaveTextContent('Conflict: support and challenge both recorded (assessments a-3, a-4)');
   expect(card).toHaveTextContent('Reviewer (QA): Use independently acquired data before a scientific conclusion.');
   expect(card).toHaveTextContent('No units are recorded: mission points are bare x/y numbers');
-  expect(card).toHaveTextContent('arc-claim-scope-3 · release check claim scope: passed');
+  expect(card).toHaveTextContent('arc-claim-scope-3, release check claim scope: passed');
   expect(card).not.toHaveTextContent('Stale:');
   expect(scope).toHaveTextContent('Worked out at round 2; provisional support is exploratory, never validation.');
   expect(scope).toHaveTextContent(UNCERTAINTY_NOTE);
@@ -915,12 +954,14 @@ test('the poll that sees the mission stop also lands its claim cards and timelin
   });
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
-  expect(await screen.findByText('running')).toBeInTheDocument();
-  expect(await screen.findByText('completed', {}, {timeout: 3000})).toBeInTheDocument();
+  expect(await statusLabel('running')).toBeInTheDocument();
+  expect(await screen.findByText('completed', {selector: '.status-label'}, {timeout: 3000})).toBeInTheDocument();
+  await openTab(user, 'Claims');
   const scope = screen.getByRole('region', {name: 'Claim scope'});
   const card = await within(scope).findByRole('article');
   expect(card).toHaveAttribute('data-stale', 'false');
   expect(within(card).getAllByRole('term').map(dt => dt.textContent)).toEqual(CLAIM_ROWS);
+  await openTab(user, 'Activity');
   expect(within(screen.getByRole('region', {name: 'Timeline'})).getAllByRole('row')).toHaveLength(timelineRows.length + 1);
   const polls = () => fetch.mock.calls.filter(([path]) => path === '/api/missions/' + mission.id).length;
   const settled = polls();
@@ -934,9 +975,11 @@ test('a stale derivation is marked on the card and conflicts unavailable are sai
   fetch.mockImplementation(async (path, options = {}) => path.endsWith('/claims') ? json(stale) : original(path, options));
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
+  await openTab(user, 'Claims');
   const card = await within(screen.getByRole('region', {name: 'Claim scope'})).findByRole('article');
   expect(card).toHaveAttribute('data-stale', 'true');
-  expect(card).toHaveTextContent('release check claim scope: stale · Stale: Claim scope was derived under an earlier rule (arc-claim-scope-2); re-derive it.');
+  expect(card).toHaveTextContent('arc-claim-scope-3, release check claim scope: stale');
+  expect(within(card).getByText('Stale: Claim scope was derived under an earlier rule (arc-claim-scope-2); re-derive it.')).toBeVisible();
   expect(card).toHaveTextContent('conflicts unavailable');
   expect(card).not.toHaveTextContent('Conflict: support');
 });
@@ -948,6 +991,7 @@ test('when the claims read fails the persisted claim scope is shown as before, w
   fetch.mockImplementation(async (path, options = {}) => path.endsWith('/claims') ? new Response(JSON.stringify({detail: 'Not Found'}), {status: 404, headers: {'Content-Type': 'application/json'}}) : inner(path, options));
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
+  await openTab(user, 'Claims');
   const scope = screen.getByRole('region', {name: 'Claim scope'});
   expect(await within(scope).findByRole('alert')).toHaveTextContent('Request failed (404): Not Found');
   const card = within(scope).getByRole('article');
@@ -965,9 +1009,23 @@ test('unshaped timeline and claims answers are stated in their sections and leav
   fetch.mockImplementation(async (path, options = {}) => path.endsWith('/timeline') ? json({unexpected: true}) : path.endsWith('/claims') ? json({claims: 'nope'}) : original(path, options));
   const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
   await openMission(user);
-  expect(await within(screen.getByRole('region', {name: 'Timeline'})).findByRole('alert')).toHaveTextContent('The timeline answer had no rows list; the service may be out of date.');
-  expect(await within(screen.getByRole('region', {name: 'Claim scope'})).findByRole('alert')).toHaveTextContent('The claims answer had no claims list; the service may be out of date.');
   expect(screen.getByText(/Private stop reason/)).toBeVisible();
   expect(screen.getByRole('button', {name: 'Replay and verify'})).toBeEnabled();
+  await openTab(user, 'Activity');
+  expect(await within(screen.getByRole('region', {name: 'Timeline'})).findByRole('alert')).toHaveTextContent('The timeline answer had no rows list; the service may be out of date.');
+  await openTab(user, 'Claims');
+  expect(await within(screen.getByRole('region', {name: 'Claim scope'})).findByRole('alert')).toHaveTextContent('The claims answer had no claims list; the service may be out of date.');
   expect(screen.getByRole('region', {name: 'Claim scope'})).toHaveTextContent('Claim scope is worked out when the mission stops. Nothing yet.');
+});
+
+test('the workspace reads in Russian inside the provider', async () => {
+  const same = expected => actual => actual.replace(/\s+/g, ' ').trim() === expected.replace(/\s+/g, ' ').trim();
+  render(<I18nProvider locale="ru"><ResearchWorkspace token="" setToken={vi.fn()}/></I18nProvider>);
+  expect(screen.getByRole('heading', {level: 1, name: same(ru['research.title'])})).toBeInTheDocument();
+  expect(screen.getByRole('textbox', {name: same(ru['research.goal.label'])})).toHaveValue('');
+  expect(screen.getByRole('button', {name: same(ru['research.create'])})).toBeDisabled();
+  expect(screen.getByRole('button', {name: same(ru['research.saved.load'])})).toBeDisabled();
+  expect(screen.getByRole('status')).toHaveTextContent(ru['session.locked.title'].replace(/ /g, ' '));
+  expect(screen.getByRole('complementary', {name: same(ru['research.saved.title'])})).toHaveTextContent(ru['research.saved.locked'].replace(/ /g, ' '));
+  expect(fetch).not.toHaveBeenCalled();
 });

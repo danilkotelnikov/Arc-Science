@@ -5,12 +5,29 @@ import {test, expect} from '@playwright/test';
 import {E2E_TOKEN, openWorkspace, watchForTokenLeaks} from './fixtures.js';
 
 const headers = {Authorization: `Bearer ${E2E_TOKEN}`};
-const sidebarStatus = page => page.locator('.settings-sidebar [role="status"]');
-const settingsRegion = page => page.getByRole('region', {name: 'Settings'});
-// Opens a section that is closed; a section left open (Reload keeps the form mounted) is not toggled shut.
+// The file block beside the page head carries the revision and the one status line (save, rebase).
+const fileBlock = page => page.getByRole('region', {name: 'Settings file', exact: true});
+const sidebarStatus = page => fileBlock(page).getByRole('status');
+const settingsRegion = page => page.getByRole('region', {name: 'Settings', exact: true});
+// Sections are accordion items; one left open (Reload keeps the form mounted) is not toggled shut.
 const openSection = async (page, title) => {
-  const section = settingsRegion(page).locator('details.settings-section', {has: page.getByText(title, {exact: true})}).first();
-  if (!(await section.evaluate(el => el.open))) await section.getByText(title, {exact: true}).click();
+  const trigger = settingsRegion(page).getByRole('button', {name: new RegExp('^' + title)});
+  if ((await trigger.getAttribute('aria-expanded')) !== 'true') await trigger.click();
+};
+// A field by its name as whole words: a HeroUI select trigger is named by its value, its
+// aria-label and its visible label together ("None Planner provider Provider"), and
+// React Aria keeps a hidden native select beside it, so only what is on screen counts.
+// A text field with a visible label is labelled by itself and that label together
+// ("Planner credential Credential name"), which getByLabel reads as two separate labels,
+// so text fields are found by role and accessible name like the select triggers.
+const words = label => new RegExp('(^|\\s)' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\s|$)');
+const field = (page, label) => page.getByRole('button', {name: words(label)}).or(page.getByRole('textbox', {name: words(label)}))
+  .or(page.getByLabel(words(label))).filter({visible: true}).first();
+// A section's panel is named by its trigger (title, then summary) and stays in the page while folded.
+const sectionPanel = (page, title) => settingsRegion(page).getByRole('group', {name: new RegExp('^' + title + '\\s'), includeHidden: true});
+const choose = async (page, label, option) => {
+  await field(page, label).click();
+  await page.getByRole('listbox').getByRole('option', typeof option === 'string' ? {name: option, exact: true} : {name: option}).click();
 };
 
 async function openSettings(page) {
@@ -33,28 +50,28 @@ test('seats load by themselves, are edited in the workspace and persisted by the
   page.on('request', r => { if (r.url().endsWith('/api/readiness')) readinessReads.push(r.headers().authorization); });
   await page.getByLabel('Operator token').pressSequentially(E2E_TOKEN.slice(0, 8));
   await expect(settingsRegion(page)).toContainText('Settings load when you leave the token field');
-  await expect(page.locator('.settings-sidebar')).not.toContainText('Token not accepted');
+  await expect(fileBlock(page)).not.toContainText('Token not accepted');
   await page.getByLabel('Operator token').fill(E2E_TOKEN);
   await page.getByLabel('Operator token').press('Enter');
   // No click on Load settings: the snapshot loads once the token has settled.
-  await expect(page.getByLabel('Planner provider')).toBeVisible();
+  await expect(field(page, 'Planner provider')).toBeVisible();
   expect(readinessReads).toEqual([`Bearer ${E2E_TOKEN}`]);
   await expect(page.getByRole('button', {name: 'Reload', exact: true})).toBeVisible();
   await expect(page.getByRole('button', {name: 'Load settings'})).toHaveCount(0);
-  for (const title of ['Research Models', 'Connections', 'Rendering', 'Viewer', 'Advanced', 'Permissions']) await expect(settingsRegion(page).getByText(title, {exact: true})).toBeVisible();
-  await page.getByLabel('Planner provider').selectOption('openai');
-  await page.getByLabel('Planner model').selectOption('gpt-5.6-sol');
+  for (const title of ['Appearance', 'Research Models', 'Connections', 'Rendering', 'Viewer', 'Advanced', 'Permissions']) await expect(settingsRegion(page).getByText(title, {exact: true})).toBeVisible();
+  await choose(page, 'Planner provider', 'OpenAI');
+  await choose(page, 'Planner model', /\(gpt-5\.6-sol\)$/);
   await expect(page.getByRole('article', {name: 'Planner seat'})).toContainText('In catalog');
-  await page.getByLabel('Planner effort').selectOption('high');
-  await page.getByLabel('Planner credential').fill('planner');
-  await page.getByLabel('Reviewer (QA) provider').selectOption('anthropic');
-  await page.getByLabel('Reviewer (QA) model').selectOption('claude-sonnet-5');
-  await page.getByLabel('Reviewer (QA) sign-in').selectOption('cli');
-  await page.getByLabel('Falsifier provider').selectOption('gemini');
-  await page.getByLabel('Falsifier model').selectOption('gemini-3.8-flash');
-  await page.getByLabel('Falsifier sign-in').selectOption('cli');
-  await expect(page.getByLabel('Falsifier effort')).toHaveValue('medium');
-  await expect(page.getByLabel('Falsifier effort')).toBeDisabled();
+  await choose(page, 'Planner effort', 'high');
+  await field(page, 'Planner credential').fill('planner');
+  await choose(page, 'Reviewer (QA) provider', 'Anthropic');
+  await choose(page, 'Reviewer (QA) model', /\(claude-sonnet-5\)$/);
+  await choose(page, 'Reviewer (QA) sign-in', /^CLI login/);
+  await choose(page, 'Falsifier provider', 'Gemini');
+  await choose(page, 'Falsifier model', /\(gemini-3\.8-flash\)$/);
+  await choose(page, 'Falsifier sign-in', /^CLI login/);
+  await expect(field(page, 'Falsifier effort')).toHaveText('medium');
+  await expect(field(page, 'Falsifier effort')).toBeDisabled();
   await expect(page.getByRole('article', {name: 'Falsifier seat'})).toContainText('No effort control on this model/sign-in; the provider default applies');
   await page.getByRole('button', {name: 'Save', exact: true}).click();
   await expect(sidebarStatus(page)).toHaveText(/^Saved \(revision [0-9a-f]{12}\)\. .*applies at next live mission start\./);
@@ -76,7 +93,7 @@ test('a save onto a stale revision is refused, and "Reload and keep my edits" ca
   const probe = await request.get('/api/settings', {headers});
   test.skip(probe.status() === 503, 'native supervisor not built; settings unavailable');
   await openSettings(page);
-  await expect(page.getByLabel('Planner provider')).toBeVisible();
+  await expect(field(page, 'Planner provider')).toBeVisible();
   // Only Research Models opens by itself; the fields this test drives sit in two other sections.
   await openSection(page, 'Rendering');
   await openSection(page, 'Viewer');
@@ -94,7 +111,8 @@ test('a save onto a stale revision is refused, and "Reload and keep my edits" ca
   await conflict.getByRole('button', {name: 'Reload and keep my edits'}).click();
   await expect(sidebarStatus(page)).toHaveText(/^Edits re-applied onto revision [0-9a-f]{12}; review and save$/);
   await expect(page.getByLabel('Blender preset')).toHaveValue('e2e_rebase_preset');
-  await expect(page.getByLabel('Viewer background')).toHaveValue(elsewhere.viewer.background);
+  // The select shows the value's word (White, Black).
+  await expect(field(page, 'Viewer background')).toHaveText(new RegExp('^' + elsewhere.viewer.background + '$', 'i'));
   await page.getByRole('button', {name: 'Save', exact: true}).click();
   await expect(sidebarStatus(page)).toHaveText(/^Saved \(revision [0-9a-f]{12}\)\. Rendering: applies at next render submission\./);
   const snap = await (await request.get('/api/settings', {headers})).json();
@@ -102,14 +120,14 @@ test('a save onto a stale revision is refused, and "Reload and keep my edits" ca
   expect(snap.settings.viewer.background).toBe(elsewhere.viewer.background);
 });
 
-test('at 700 px wide the seat cards and the providers table fit the viewport', async ({page, request}) => {
+test('at 700 px wide the seat cards and the providers fit the viewport', async ({page, request}) => {
   const probe = await request.get('/api/settings', {headers});
   test.skip(probe.status() === 503, 'native supervisor not built; settings unavailable');
   await page.setViewportSize({width: 700, height: 900});
   await openSettings(page);
-  await expect(page.getByLabel('Planner provider')).toBeVisible();
+  await expect(field(page, 'Planner provider')).toBeVisible();
   await openSection(page, 'Advanced');
-  await expect(page.getByLabel('OpenClaw agent id')).toBeVisible();
+  await expect(field(page, 'OpenClaw agent id')).toBeVisible();
   expect(await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth)).toBe(true);
 });
 
@@ -117,9 +135,9 @@ test('a custom model id is marked unverified until the service has checked it', 
   const probe = await request.get('/api/settings', {headers});
   test.skip(probe.status() === 503, 'native supervisor not built; settings unavailable');
   await openSettings(page);
-  await page.getByLabel('Vision provider').selectOption('openai');
-  await page.getByLabel('Vision model').selectOption({label: 'Custom id…'});
-  await page.getByLabel('Vision custom model id').fill('gpt-e2e-custom');
+  await choose(page, 'Vision provider', 'OpenAI');
+  await choose(page, 'Vision model', 'Custom id…');
+  await field(page, 'Vision custom model id').fill('gpt-e2e-custom');
   const vision = page.getByRole('article', {name: 'Vision seat'});
   await expect(vision).toContainText('Custom id (unverified): not in the catalog; readiness cannot be assumed');
   await expect(vision).toContainText('Unsaved');
@@ -131,11 +149,11 @@ test('a browser session stores a credential from a terminal; Test seat needs con
   test.skip(probe.status() === 503, 'native supervisor not built; settings unavailable');
   const check = watchForTokenLeaks(page);
   await openSettings(page);
-  await page.getByLabel('Planner provider').selectOption('openai');
-  await page.getByLabel('Planner model').selectOption('gpt-5.6-sol');
-  await page.getByLabel('Planner sign-in').selectOption('api_key');
-  await page.getByLabel('Planner effort').selectOption('medium');
-  await page.getByLabel('Planner credential').fill('e2e-missing');
+  await choose(page, 'Planner provider', 'OpenAI');
+  await choose(page, 'Planner model', /\(gpt-5\.6-sol\)$/);
+  await choose(page, 'Planner sign-in', /^API credential/);
+  await choose(page, 'Planner effort', 'medium');
+  await field(page, 'Planner credential').fill('e2e-missing');
   const planner = page.getByRole('article', {name: 'Planner seat'});
   // No desktop host here: the terminal command instead of Store/Remove, and Test seat
   // waits for the save (it probes the saved seat) and then for the consent tick.
@@ -150,7 +168,7 @@ test('a browser session stores a credential from a terminal; Test seat needs con
   await expect(planner).toContainText('Never probed');
   await expect(testSeat).toBeDisabled();
   await expect(planner).toContainText('Tick the consent box to enable Test seat.');
-  await page.getByLabel('Planner probe consent').check();
+  await field(page, 'Planner probe consent').check({force: true});
   await expect(testSeat).toBeEnabled();
   // The probe resolves the credential before any request: with none stored under the name,
   // every subject fails at that step, nothing is sent to the provider and no token is spent.
@@ -166,7 +184,7 @@ test('a browser session stores a credential from a terminal; Test seat needs con
   // Readiness keeps the same cause; the tick is spent; no request-failure card appears.
   await expect(planner).toContainText('No credential is stored under the name e2e-missing');
   await expect(planner).toContainText('Never probed');
-  await expect(page.getByLabel('Planner probe consent')).not.toBeChecked();
+  await expect(field(page, 'Planner probe consent')).not.toBeChecked();
   await expect(testSeat).toBeDisabled();
   await expect(page.getByRole('alert')).toHaveCount(0);
   check();
@@ -177,16 +195,16 @@ test('a custom endpoint is confirmed under Advanced and the confirmation round-t
   test.skip(probe.status() === 503, 'native supervisor not built; settings unavailable');
   const official = (await probe.json()).settings.providers.openai.endpoint;
   await openSettings(page);
-  await expect(page.getByLabel('Planner provider')).toBeVisible();
+  await expect(field(page, 'Planner provider')).toBeVisible();
   await openSection(page, 'Advanced');
-  await expect(page.getByLabel('OpenAI endpoint')).toBeVisible();
+  await expect(field(page, 'OpenAI endpoint')).toBeVisible();
   // On the official origin there is nothing to confirm; off it, the box appears unticked.
-  await expect(page.getByLabel('OpenAI custom endpoint confirmed')).toHaveCount(0);
-  await page.getByLabel('OpenAI endpoint').fill('https://relay.e2e.invalid/v1/responses');
-  const confirm = page.getByLabel('OpenAI custom endpoint confirmed');
+  await expect(field(page, 'OpenAI custom endpoint confirmed')).toHaveCount(0);
+  await field(page, 'OpenAI endpoint').fill('https://relay.e2e.invalid/v1/responses');
+  const confirm = field(page, 'OpenAI custom endpoint confirmed');
   await expect(confirm).not.toBeChecked();
-  await expect(page.getByLabel('Anthropic custom endpoint confirmed')).toHaveCount(0);
-  await confirm.check();
+  await expect(field(page, 'Anthropic custom endpoint confirmed')).toHaveCount(0);
+  await confirm.check({force: true});
   await page.getByRole('button', {name: 'Save', exact: true}).click();
   await expect(sidebarStatus(page)).toHaveText(/^Saved \(revision [0-9a-f]{12}\)\. OpenAI provider: applies at next live mission start\./);
   let snap = await (await request.get('/api/settings', {headers})).json();
@@ -195,9 +213,9 @@ test('a custom endpoint is confirmed under Advanced and the confirmation round-t
   await page.getByRole('button', {name: 'Reload', exact: true}).click();
   await expect(sidebarStatus(page)).toHaveCount(0);
   await openSection(page, 'Advanced');
-  await expect(page.getByLabel('OpenAI custom endpoint confirmed')).toBeChecked();
+  await expect(field(page, 'OpenAI custom endpoint confirmed')).toBeChecked();
   // Withdrawing the confirmation blocks any OpenAI API seat until it is confirmed again or cleared.
-  await page.getByLabel('OpenAI custom endpoint confirmed').uncheck();
+  await field(page, 'OpenAI custom endpoint confirmed').uncheck({force: true});
   await page.getByRole('button', {name: 'Save', exact: true}).click();
   await expect(sidebarStatus(page)).toHaveText(/^Saved/);
   snap = await (await request.get('/api/settings', {headers})).json();
@@ -208,8 +226,8 @@ test('a custom endpoint is confirmed under Advanced and the confirmation round-t
     await expect(planner).toContainText('Next: Confirm the custom endpoint under Settings → Advanced, or clear it');
   }
   // Back on the official origin the box is gone and the stored flag stays off.
-  await page.getByLabel('OpenAI endpoint').fill(official);
-  await expect(page.getByLabel('OpenAI custom endpoint confirmed')).toHaveCount(0);
+  await field(page, 'OpenAI endpoint').fill(official);
+  await expect(field(page, 'OpenAI custom endpoint confirmed')).toHaveCount(0);
   await page.getByRole('button', {name: 'Save', exact: true}).click();
   await expect(sidebarStatus(page)).toHaveText(/^Saved/);
   snap = await (await request.get('/api/settings', {headers})).json();
@@ -240,15 +258,15 @@ test('Permissions reads the grant ledger when it opens and shows it empty on a f
   const reads = [];
   page.on('request', r => { if (r.url().endsWith('/api/grants')) reads.push(r.method()); });
   await openSettings(page);
-  await expect(page.getByLabel('Planner provider')).toBeVisible();
-  const permissions = page.getByLabel('Permissions');
-  await expect(permissions).toContainText('Consent under Connections makes a connector eligible for a route; a mission is granted access only when you approve its route in Research.');
+  await expect(field(page, 'Planner provider')).toBeVisible();
+  const permissions = sectionPanel(page, 'Permissions');
+  await expect(permissions).toContainText('A mission is granted access only when you approve its route in Research.');
   // Nothing was asked of the ledger until the section opened; then one read.
   expect(reads).toEqual([]);
   await openSection(page, 'Permissions');
   if (rows.length === 0) await expect(permissions).toContainText('No grants yet');
-  else await expect(permissions.getByRole('table', {name: 'Grants'}).getByRole('row')).toHaveCount(rows.length + 1);
-  await expect(page.getByLabel('Show')).toHaveValue('all');
+  else await expect(permissions.getByRole('grid', {name: 'Grants'}).getByRole('row')).toHaveCount(rows.length + 1);
+  await expect(field(page, 'Show')).toHaveText('All');
   expect(reads).toEqual(['GET']);
   await page.getByRole('button', {name: 'Refresh permissions'}).click();
   await expect.poll(() => reads.length).toBe(2);
