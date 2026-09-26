@@ -91,7 +91,7 @@ const profileSnapshot = () => {
   return {dir: stat(root), startup_log: stat(join(root, 'startup.log')), attach_record_present: existsSync(join(root, 'diagnostic-attach.json')), webview: stat(join(root, 'webview')), webview_diagnostic: stat(join(root, 'webview-diagnostic'))};
 };
 
-// ---- page helpers (selectors from the slice 4–5 drivers) -------------------------------
+// ---- page helpers (HeroUI v3 workbench; patterns from apps/arc-science/web/e2e) ---------
 let browser = null, page = null, launched = null;
 const pids = new Set();
 const shot = name => page.screenshot({path: join(out, name + '.png'), fullPage: false});
@@ -100,7 +100,14 @@ const nav = () => page.getByRole('navigation', {name: 'Workspaces'});
 const open = async name => { await nav().getByRole('button', {name}).click(); await page.waitForTimeout(500); };
 const results = () => page.getByRole('region', {name: 'Research results'});
 const status = () => results().locator('.status-label').first();
-const timeline = () => page.getByRole('region', {name: 'Timeline'});
+// The mission record is split into tabs; every panel stays mounted but only the open one is
+// visible, so the timeline is read with includeHidden and each screenshot opens its tab first.
+const timeline = () => page.getByRole('region', {name: 'Timeline', includeHidden: true});
+const openTab = async name => {
+  const tab = results().getByRole('tablist', {name: 'Mission record'}).getByRole('tab', {name, exact: true});
+  if ((await tab.getAttribute('aria-selected')) !== 'true') await tab.click();
+  await page.waitForTimeout(300);
+};
 const TERMINAL = /completed|budget|needs|error|cancelled/;
 const timelineRows = async () => {
   const rows = timeline().locator('tbody tr');
@@ -111,17 +118,45 @@ const timelineRows = async () => {
   }
   return list;
 };
-const selectedId = async () => { const t = await text(results()).catch(() => ''); const m = t.match(/Selected mission:?\s*([0-9a-f]{32})/i); return m ? m[1].toLowerCase() : null; };
-const waitForNewMission = async previous => page.waitForFunction(prev => { const m = document.body.innerText.match(/Selected mission:?\s*([0-9a-f]{32})/i); return m && m[1].toLowerCase() !== String(prev).toLowerCase(); }, previous, {timeout: 30000});
+// The selected mission's id is on the element that reads 'Selected mission: <id>'.
+const selectedId = () => page.evaluate(() => document.querySelector('[data-mission-id]')?.dataset.missionId?.toLowerCase() || null).catch(() => null);
+const waitForNewMission = async previous => page.waitForFunction(prev => { const id = document.querySelector('[data-mission-id]')?.dataset.missionId; return !!id && id.toLowerCase() !== String(prev).toLowerCase(); }, previous, {timeout: 30000});
 const waitForLastRow = async (operation, seconds = 15) => { for (let i = 0; i < seconds * 2; i++) { const rows = await timelineRows(); if (rows.length && rows.at(-1).operation === operation) return rows; await sleep(500); } return timelineRows(); };
 const storage = () => page.evaluate(() => { try { return Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])); } catch (e) { return {error: String(e)}; } });
+// The interface follows the WebView's language (Russian on a Russian Windows) until the header's
+// EN/RU toggle is pressed; the journeys read English, so EN is pressed once. The choice is stored
+// as arc.ui.locale in this run's isolated WebView2 profile, so a relaunch opens in English.
+const LOCALE_KEY = 'arc.ui.locale';
+const sessionReady = async () => {
+  await page.locator('header.ar-header').waitFor({timeout: 30000});
+  await page.waitForFunction(() => ['en', 'ru'].includes(document.documentElement.lang), null, {timeout: 10000});
+  const lang = await page.evaluate(() => document.documentElement.lang);
+  if (lang !== 'en') await page.locator('header.ar-header').getByText('EN', {exact: true}).click();
+  // A desktop session shows the 'Desktop session' chip beside 'Use operator token'.
+  await page.getByRole('button', {name: 'Use operator token'}).waitFor({timeout: 30000});
+  return lang;
+};
 const connect = async endpoint => {
   browser = await chromium.connectOverCDP(endpoint);
   page = browser.contexts()[0].pages()[0];
-  await page.getByText('Desktop session ready').waitFor({timeout: 30000});
+  return sessionReady();
 };
-// 'Execution settings' is a toggle; a reload closes it and a click on an open one closes it too.
+// 'Execution settings' is an accordion item; a reload closes it and a click on an open one closes it too.
 const openExecutionSettings = async () => { if (!(await page.getByLabel('Round limit').isVisible())) await page.getByText('Execution settings', {exact: true}).click(); };
+// Settings (HeroUI): selects are trigger buttons named by value, aria-label and label ("None Planner
+// provider Provider"), text fields by aria-label and label; see field()/choose() in e2e/settings.e2e.js.
+const settingsRegion = () => page.getByRole('region', {name: 'Settings', exact: true});
+const openSection = async title => {
+  const trigger = settingsRegion().getByRole('button', {name: new RegExp('^' + title)});
+  if ((await trigger.getAttribute('aria-expanded')) !== 'true') await trigger.click();
+};
+const words = label => new RegExp('(^|\\s)' + escapeRe(label) + '(\\s|$)');
+const field = label => page.getByRole('button', {name: words(label)}).or(page.getByRole('textbox', {name: words(label)}))
+  .or(page.getByLabel(words(label))).filter({visible: true}).first();
+const choose = async (label, option) => {
+  await field(label).click();
+  await page.getByRole('listbox').getByRole('option', typeof option === 'string' ? {name: option, exact: true} : {name: option}).click();
+};
 const startOfflineMission = async (goal, rounds) => {
   await open('Research');
   await page.waitForTimeout(1500);
@@ -145,7 +180,8 @@ const attachJourney = async () => {
   for (const p of tree) pids.add(p.pid);
   const facts = {launch: launched, record, listener_chain: chain, belongs_to_exe: chain.includes(`${launched.pid}:${launched.exe}`), tree};
   facts.ok = facts.belongs_to_exe && launched.health_ready === true;
-  await connect(record.endpoint);
+  const lang = await connect(record.endpoint);
+  facts.interface_language = {on_attach: lang, switched_to_en: lang !== 'en'};
   return facts;
 };
 
@@ -158,11 +194,14 @@ const steps = {
     offlineMission = await startOfflineMission('Slice 6 native: offline fixture mission for the timeline and claim cards.', 3);
     const rows = await waitForLastRow('stop');
     offlineRows = rows.length;
+    await openTab('Activity');
     await timeline().scrollIntoViewIfNeeded();
     await shot('01-research-timeline');
+    await openTab('Permissions');
     const route = (await text(page.getByRole('region', {name: 'Mission route'})).catch(() => 'absent')).slice(0, 400);
+    await openTab('Claims');
     const claims = page.getByRole('region', {name: 'Claim scope'});
-    const cards = claims.locator('article.claim');
+    const cards = claims.locator('article[data-status]');
     const n = await cards.count(); const cardData = [];
     for (let i = 0; i < n; i++) {
       const c = cards.nth(i);
@@ -170,7 +209,8 @@ const steps = {
     }
     await claims.scrollIntoViewIfNeeded();
     await shot('02-research-claim-cards');
-    const release = (await text(page.getByRole('region', {name: /Release/}).first()).catch(() => 'absent')).slice(0, 500);
+    await openTab('Release');
+    const release = (await text(results().getByRole('region', {name: 'Release decision'})).catch(() => 'absent')).slice(0, 500);
     await shot('03-research-release');
     const TEN = ['Requested claim', 'Evidence-supported scope', 'Remaining uncertainty', 'Evidence', 'Independence', 'Findings', 'Alternatives', 'Next discriminating test', 'Units', 'Derivation'];
     const tenRowCards = cardData.filter(c => c.dts.length === 10 && TEN.every(l => c.dts.includes(l))).length;
@@ -180,15 +220,18 @@ const steps = {
   reopen: async () => {
     const before = await selectedId();
     await page.reload();
-    await page.getByText('Desktop session ready').waitFor({timeout: 30000});
+    await sessionReady();
     await open('Research');
-    await results().getByText(/Selected mission/).waitFor({timeout: 20000}).catch(() => {});
+    await results().locator('[data-mission-id]').waitFor({timeout: 20000}).catch(() => {});
     await page.waitForTimeout(1000);
+    await openTab('Activity').catch(() => {});
     const rows = await timelineRows();
     const store = await storage();
     await shot('04-research-reopened');
     const selected = await selectedId();
-    return {ok: !!before && selected === before && rows.length === offlineRows, before, selected, rows: rows.length, storage_keys: Object.keys(store), storage_values_are_ids: Object.values(store).every(v => /^[0-9a-f]{32}$/i.test(String(v)))};
+    // The interface-language choice (arc.ui.locale, 'en') is the one key besides the mission id; it is reported apart.
+    const {[LOCALE_KEY]: locale, ...rest} = store;
+    return {ok: !!before && selected === before && rows.length === offlineRows, before, selected, rows: rows.length, storage_keys: Object.keys(store), storage_values_are_ids: Object.values(rest).every(v => /^[0-9a-f]{32}$/i.test(String(v))), storage_locale: locale ?? null};
   },
   diagnostics: async () => {
     await open('Diagnostics');
@@ -206,8 +249,13 @@ const steps = {
     await shot('06-diagnostics-read');
     await page.getByRole('button', {name: 'Copy redacted report'}).click();
     await page.waitForTimeout(2500);
-    const area = page.getByLabel('Redacted report');
-    const reportText = await area.inputValue().catch(() => '');
+    // The report text sits in a 'Redacted report' disclosure (open by itself only when the clipboard refused it).
+    const reads = page.locator('section[aria-labelledby="diagnostics-reads"]');
+    const disclosure = reads.getByRole('button', {name: 'Redacted report', exact: true});
+    if (await disclosure.count() && (await disclosure.getAttribute('aria-expanded')) !== 'true') await disclosure.click();
+    const area = reads.locator('pre.ar-code').first();
+    const reportText = (await area.textContent({timeout: 5000}).catch(() => '')) || '';
+    await area.scrollIntoViewIfNeeded({timeout: 5000}).catch(() => {});
     const format = (reportText.match(/"format": "([^"]+)"/) || [])[1] || null;
     const hasHome = reportText.toLowerCase().includes(home.toLowerCase());
     const hasBearer = /Bearer (?!\[redacted\])\S+/.test(reportText);
@@ -238,16 +286,21 @@ const steps = {
   },
   export: async () => {
     const mid = await startOfflineMission('Slice 6 native: export the replay archive and download the figure.', 2);
-    const figures = results().locator('figure.artifact');
+    await openTab('Evidence');
+    const figures = results().locator('figure[data-artifact]');
     await figures.first().waitFor({timeout: 20000});
     const before = {figures: await figures.count(), download_buttons: await results().getByRole('button', {name: 'Download PNG'}).count(), blocked_sentence: await results().getByText(/Download opens when the release decision is Eligible for human review/).count(), export_enabled: await results().getByRole('button', {name: /Export replay archive/}).isEnabled()};
     await figures.first().scrollIntoViewIfNeeded();
     await shot('08-research-figure-before-verify');
+    // A fresh replay report opens the Release tab by itself.
     await results().getByRole('button', {name: 'Replay and verify'}).click();
     await results().getByText(/Release decision: Eligible for human review/).waitFor({timeout: 60000});
-    await results().getByRole('button', {name: 'Download PNG'}).first().waitFor({timeout: 20000});
-    const after = {release: (await text(results().getByRole('region', {name: 'Release decision'}))).slice(0, 200), download_buttons: await results().getByRole('button', {name: 'Download PNG'}).count(), export_enabled: await results().getByRole('button', {name: /Export replay archive/}).isEnabled()};
+    const release = (await text(results().getByRole('region', {name: 'Release decision'}))).slice(0, 200);
     await shot('09-research-after-verify');
+    // Download PNG lives in the Evidence tab; it stays selected while UI Automation clicks.
+    await openTab('Evidence');
+    await results().getByRole('button', {name: 'Download PNG'}).first().waitFor({timeout: 20000});
+    const after = {release, download_buttons: await results().getByRole('button', {name: 'Download PNG'}).count(), export_enabled: await results().getByRole('button', {name: /Export replay archive/}).isEnabled()};
     // A WebView2 download needs a user gesture and no CDP client attached (slice 5: a CDP click
     // produced nothing and Playwright's attach suppressed the UIA download), so the driver is
     // disconnected while UI Automation clicks, then reattached for the screenshot.
@@ -257,7 +310,8 @@ const steps = {
     const m = result.match(/^RESULT png=(.*) zip=(.*)$/);
     await connect(launched.attach.endpoint);
     await open('Research');
-    await results().locator('figure.artifact').first().scrollIntoViewIfNeeded().catch(() => {});
+    await openTab('Evidence').catch(() => {});
+    await results().locator('figure[data-artifact]').first().scrollIntoViewIfNeeded().catch(() => {});
     await shot('10-research-downloads');
     if (uia.status !== 0 || !m || !m[1] || !m[2]) return {ok: false, mission: mid, before, after, uia_exit: uia.status, uia_result: result, error: 'download missing'};
     const files = {};
@@ -283,19 +337,19 @@ const steps = {
     if (/\s/.test(mcpServer) || /\s/.test(python)) throw new Error('the MCP server command and script paths must not contain spaces (the arguments field splits on whitespace)');
     writeFileSync(cmd, `@"${python}" "${join(repo, 'scripts', 'fixtures', 'fake_planner_cli.py')}" --arc-sleep 25 %*\r\n`);
     await open('Settings');
-    await page.locator('.seat-card').first().waitFor({timeout: 15000});
-    await page.getByLabel('Planner provider').selectOption('anthropic');
-    await page.getByLabel('Planner model').selectOption('claude-opus-5');
-    await page.getByLabel('Planner sign-in').selectOption('cli');
-    await page.getByText('Advanced', {exact: true}).click();
-    await page.getByLabel('Anthropic CLI command').fill(cmd);
-    await page.getByText('Connections', {exact: true}).click();
-    if (await page.getByLabel('MCP server 1 name').count() === 0) {
+    await page.getByRole('article', {name: 'Planner seat'}).waitFor({timeout: 15000});
+    await choose('Planner provider', 'Anthropic');
+    await choose('Planner model', /\(claude-opus-5\)$/);
+    await choose('Planner sign-in', /^CLI login/);
+    await openSection('Advanced');
+    await field('Anthropic CLI command').fill(cmd);
+    await openSection('Connections');
+    if (await field('MCP server 1 name').count() === 0) {
       await page.getByRole('button', {name: 'Add MCP server'}).click();
-      await page.getByLabel('MCP server 1 name').fill('fake');
-      await page.getByLabel('MCP server 1 command').fill(python);
-      await page.getByLabel('MCP server 1 arguments').fill(mcpServer);
-      await page.getByText('Consent: missions may send data to this server').click();
+      await field('MCP server 1 name').fill('fake');
+      await field('MCP server 1 command').fill(python);
+      await field('MCP server 1 arguments').fill(mcpServer);
+      await page.getByRole('group', {name: 'MCP server 1'}).getByLabel('Consent: missions may send data to this server').check({force: true});
     }
     await page.getByRole('button', {name: 'Save', exact: true}).click();
     await page.getByRole('status').filter({hasText: /Saved \(revision/}).first().waitFor({timeout: 20000});
@@ -304,16 +358,19 @@ const steps = {
     const previous = await selectedId();
     await page.getByLabel('Research goal').fill('Slice 6 native: interrupt the service mid-mission, reopen, resume.');
     await openExecutionSettings();
-    await page.getByLabel('Model source').selectOption('live');
+    await page.getByLabel('Model source').click();
+    await page.getByRole('option', {name: /^Live models/}).click();
     await page.getByLabel('Round limit').fill('4');
+    // HeroUI draws each checkbox's box over its hidden input, so the inputs are checked with force.
     const routePanel = page.getByRole('region', {name: 'Route and grants'});
-    await routePanel.getByLabel('Approve route').waitFor({timeout: 20000});
-    await page.getByLabel(/Permit sending/).check();
-    await routePanel.getByLabel('Approve route').check();
+    await routePanel.getByLabel('Approve route').waitFor({state: 'attached', timeout: 20000});
+    await page.getByLabel(/Permit sending/).check({force: true});
+    await routePanel.getByLabel('Approve route').check({force: true});
     await page.getByRole('button', {name: 'Create and start'}).click();
     await waitForNewMission(previous);
     liveMission = await selectedId();
     await status().filter({hasText: /running/}).waitFor({timeout: 60000});
+    await openTab('Activity');
     await timeline().locator('tbody tr[data-operation="plan"]').first().waitFor({timeout: 60000});
     const rows = await timelineRows();
     await shot('11-research-live-running');
@@ -331,16 +388,19 @@ const steps = {
   'interrupt-reopen': async () => {
     const facts = await attachJourney();
     await open('Research');
-    await results().getByText(/Selected mission/).waitFor({timeout: 20000}).catch(() => {});
+    await results().locator('[data-mission-id]').waitFor({timeout: 20000}).catch(() => {});
     await page.waitForTimeout(1000);
     const selected = await selectedId();
     const statusText = await status().innerText().catch(() => 'absent');
-    const banner = (await page.locator('p.interruption').innerText().catch(() => 'absent')).slice(0, 300);
+    // The interruption banner (an alert carrying data-event="mission_interrupted") is on the Overview tab.
+    await openTab('Overview').catch(() => {});
+    const banner = (await results().locator('[data-event]').first().innerText({timeout: 5000}).catch(() => 'absent')).replace(/\s+/g, ' ').slice(0, 300);
     const rows = await timelineRows();
     const buttons = {};
-    for (const name of ['Pause', 'Retry after error', 'Cancel', 'Start']) buttons[name] = await results().getByRole('button', {name, exact: true}).isEnabled().catch(() => 'absent');
+    for (const name of ['Pause', 'Retry after error', 'Cancel', 'Start']) buttons[name] = await results().getByRole('button', {name, exact: true}).isEnabled({timeout: 3000}).catch(() => 'absent');
     const resume = results().getByRole('button', {name: /^Resume/});
     buttons.resume = (await resume.innerText().catch(() => 'absent')) + ' · enabled ' + (await resume.isEnabled().catch(() => 'absent'));
+    await results().locator('[data-event]').first().scrollIntoViewIfNeeded({timeout: 5000}).catch(() => {});
     await shot('13-research-reopened-interrupted');
     const reopened = selected === liveMission && /paused/.test(statusText) && banner.includes('Interrupted') && rows.some(r => r.operation === 'interrupt' && r.role === 'service') && rows.some(r => r.operation === 'plan' && r.outcome === 'outcome_unknown' && r.source === 'derived');
     await resume.click();
@@ -348,7 +408,10 @@ const steps = {
     await status().filter({hasText: TERMINAL}).waitFor({timeout: 480000});
     await page.waitForTimeout(1500);
     const finalRows = await waitForLastRow('stop');
+    await openTab('Permissions');
     const grants = (await text(page.getByRole('region', {name: 'Grants and receipts'})).catch(() => 'absent')).slice(0, 600);
+    await openTab('Activity');
+    await timeline().scrollIntoViewIfNeeded().catch(() => {});
     await shot('14-research-resumed-finished');
     return {ok: facts.ok && reopened && finalRows.at(-1)?.operation === 'stop', relaunch: facts, selected, status: statusText, banner, rows, buttons, resumed_status: await status().innerText(), resumed_rows: finalRows, tool_outcomes: finalRows.filter(r => r.operation === 'tool').map(r => r.outcome), grants};
   },
