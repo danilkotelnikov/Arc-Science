@@ -6,21 +6,28 @@ class Agent(Protocol):
     async def propose(self, context: dict) -> dict: ...
     async def assess(self, role: str, context: dict) -> dict: ...
 
+# Scripted measurable falsifiers: a branch is refuted when the named metric lands on the
+# stated side of the threshold. Fixed by this script, never tuned to the data.
+FIT_ERROR = {'tool':'polynomial_fit','metric':'validation_mse','threshold':.02,'direction':'above'}
+
 class DemoAgent:
     model = 'scripted-fixture-v1'
 
     async def propose(self, context):
         if context['round']==0:
             return {'branches':[{'id':'linear','title':'Linear response','hypothesis':'A linear curve adequately describes the fixture.',
-                    'falsifier':'Residual structure or substantially worse exploratory validation error than an alternative.','parents':[]}],
+                    'falsifier':'Residual structure or substantially worse exploratory validation error than an alternative.','parents':[],
+                    'falsifier_test':FIT_ERROR}],
                     'actions':[{'id':'fit-linear','branch_id':'linear','tool':'polynomial_fit','arguments':{'degree':1}}],
                     'stop':False,'reason':'Establish a simple baseline before testing a nonlinear alternative.'}
         if context['round']==1:
             return {'branches':[
                  {'id':'quadratic','title':'Curved response','hypothesis':'The response requires a quadratic term.',
-                  'falsifier':'No improvement over the linear baseline on the fixed exploratory split.','parents':['linear']},
+                  'falsifier':'No improvement over the linear baseline on the fixed exploratory split.','parents':['linear'],
+                  'falsifier_test':FIT_ERROR},
                  {'id':'null-control','title':'Shuffled-response control','hypothesis':'The fit is indistinguishable from shuffled responses.',
-                  'falsifier':'The observed fit has substantially smaller error than shuffled controls.','parents':['linear']}],
+                  'falsifier':'The observed fit has substantially smaller error than shuffled controls.','parents':['linear'],
+                  'falsifier_test':{'tool':'permutation_control','metric':'minimum_shuffled_validation_mse','threshold':.1,'direction':'above'}}],
               'actions':[{'id':'fit-quadratic','branch_id':'quadratic','tool':'polynomial_fit','arguments':{'degree':2}},
                          {'id':'shuffle-control','branch_id':'null-control','tool':'permutation_control','arguments':{'permutations':16}}],
               'stop':False,'reason':'Reconcile the linear residual challenge against a curved model and a negative control.'}

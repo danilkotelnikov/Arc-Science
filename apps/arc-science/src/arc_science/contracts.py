@@ -2,8 +2,8 @@
 from __future__ import annotations
 import hashlib
 import json
-from typing import Annotated, Literal
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from typing import Annotated, ClassVar, Literal
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 Digest = Annotated[str, Field(pattern=r'^[a-f0-9]{64}$')]
 Identifier = Annotated[str, Field(min_length=1, max_length=160, pattern=r'^[A-Za-z0-9_.:/-]+$')]
@@ -19,6 +19,22 @@ def digest(value: object) -> str:
 
 class Record(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True, allow_inf_nan=False, validate_default=True)
+
+class Versioned(Record):
+    """A stored, digested record that gains fields over time. A field added after
+    records were first stored is listed in LATER_FIELDS and left out of every dump while
+    it holds its default, so absent and explicit-default canonicalise identically and
+    the digests of records stored before the field existed do not change."""
+    LATER_FIELDS: ClassVar[tuple[str, ...]] = ()
+
+    @model_serializer(mode='wrap')
+    def _omit_later_defaults(self, handler):
+        data = handler(self)
+        if isinstance(data, dict):
+            for name in type(self).LATER_FIELDS:
+                if name in data and getattr(self, name) == type(self).model_fields[name].get_default(call_default_factory=True):
+                    del data[name]
+        return data
 
 class ArtifactRef(Record):
     name: Annotated[str, Field(min_length=1, max_length=180)]

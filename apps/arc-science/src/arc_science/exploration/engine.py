@@ -20,6 +20,9 @@ from ..contracts import digest
 
 class MissionCancelled(RuntimeError): pass
 
+class ProposalRejected(ValueError):
+    """A plan the engine refused; the message is the engine's own and safe to show."""
+
 
 def initialize(request: MissionRequest) -> MissionState:
     points=request.points or (synthetic_data(request.seed) if request.mode=='demo' else ())
@@ -132,16 +135,22 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                 if idea.id in ids:
                     old=next(b for b in branches if b.id==idea.id)
                     if old.model_dump(exclude={'created_round'})!=idea.model_dump():
-                        raise ValueError('A prior hypothesis cannot be silently rewritten')
+                        raise ProposalRejected('A prior hypothesis cannot be silently rewritten')
                     continue
-                if idea.id in idea.parents or not set(idea.parents)<=ids: raise ValueError('Unbound or cyclic parent')
-                if len(branches)>=request.max_branches: raise ValueError('Branch budget exceeded')
+                if idea.id in idea.parents or not set(idea.parents)<=ids: raise ProposalRejected('Unbound or cyclic parent')
+                if len(branches)>=request.max_branches: raise ProposalRejected('Branch budget exceeded')
+                # A measurable falsifier must name a tool this mission can actually run.
+                if idea.falsifier_test and idea.falsifier_test.tool not in runtime_catalog:
+                    raise ProposalRejected('Branch '+idea.id+": the falsifier test names a tool the mission's action catalogue "
+                                           'does not offer (offered: '+(', '.join(sorted(runtime_catalog)) or 'none')+')')
                 branches.append(Branch(**idea.model_dump(),created_round=state.round));ids.add(idea.id)
-            if len({a.id for a in plan.actions})!=len(plan.actions): raise ValueError('Duplicate actions')
-            if any(a.branch_id not in ids for a in plan.actions): raise ValueError('Unknown branch')
-        except Exception:
+            if len({a.id for a in plan.actions})!=len(plan.actions): raise ProposalRejected('Duplicate actions')
+            if any(a.branch_id not in ids for a in plan.actions): raise ProposalRejected('Unknown branch')
+        except Exception as why:
             if op:log('finished',op,outcome='error',detail='Planning failed validation or provider execution.')
-            return stop('error','Planning failed validation or provider execution. No synthetic fallback was used.')
+            # Only the engine's own refusals are quoted; provider and schema errors may carry model text.
+            reason=' Rejected: '+str(why)+'.' if isinstance(why,ProposalRejected) else ''
+            return stop('error','Planning failed validation or provider execution. No synthetic fallback was used.'+reason)
         records=state.model_records
         if committed_plan is None:
             transport=provenance('planner');log('finished',op,outcome='ok',transport=transport)

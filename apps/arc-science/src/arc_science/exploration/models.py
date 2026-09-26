@@ -3,7 +3,7 @@ import base64
 import hashlib
 from typing import Annotated, Literal
 from pydantic import Field, model_validator
-from ..contracts import Record, Digest, Identifier, canonical, digest
+from ..contracts import Record, Versioned, Digest, Identifier, canonical, digest
 
 Id = Annotated[str, Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')]
 
@@ -11,7 +11,7 @@ class Point(Record):
     x: float = Field(ge=-1e6, le=1e6)
     y: float = Field(ge=-1e12, le=1e12)
 
-class MissionRequest(Record):
+class MissionRequest(Versioned):
     goal: str = Field(min_length=3, max_length=10000)
     mode: Literal['demo', 'live'] = 'demo'
     seed: int = Field(default=17, ge=0, le=2147483647)
@@ -30,12 +30,22 @@ class MissionRequest(Record):
             raise ValueError('Live models require explicit permission to send mission data')
         return self
 
-class BranchIdea(Record):
+class FalsifierTest(Record):
+    """A branch's falsifier stated as a measurement before it runs: the hypothesis is
+    refuted when the named tool reports `metric` on the `direction` side of `threshold`."""
+    tool: str = Field(min_length=1, max_length=80)
+    metric: str = Field(min_length=1, max_length=120)
+    threshold: float
+    direction: Literal['above', 'below']
+
+class BranchIdea(Versioned):
+    LATER_FIELDS = ('falsifier_test',)
     id: Id
     title: str = Field(min_length=1, max_length=180)
     hypothesis: str = Field(min_length=1, max_length=1000)
     falsifier: str = Field(min_length=1, max_length=700)
     parents: tuple[Id, ...] = Field(default=(), max_length=8)
+    falsifier_test: FalsifierTest | None = None
 
 class Branch(BranchIdea):
     created_round: int = Field(ge=0)
@@ -213,7 +223,7 @@ class VisualReport(VisualReply):
         return self.model_dump(mode='json', exclude={'input_context'})
 
 
-class VisionRecord(Record):
+class VisionRecord(Versioned):
     candidate_digest: Digest
     reviewed_digests: tuple[Digest, ...] = Field(min_length=1, max_length=8)
     context_digest: Digest
@@ -316,7 +326,7 @@ class ClaimScope(Record):
 ChangeEffect = Literal['presentation', 'scientific_depiction', 'analysis', 'claim', 'permission']
 
 
-class Change(Record):
+class Change(Versioned):
     id: Id
     kind: Literal['resume']
     declared_effects: tuple[ChangeEffect, ...] = Field(min_length=1, max_length=5)
@@ -387,7 +397,7 @@ class ReleaseDecision(Record):
         return self
 
 
-class MissionState(Record):
+class MissionState(Versioned):
     request_digest: Digest
     status: Literal['ready','running','completed','budget_exhausted','needs_input','error','paused','cancelled'] = 'ready'
     round: int = 0
