@@ -1,8 +1,0 @@
-# Vedix docs site build dependencies.
-#
-# Install with: pip install -r docs/site/requirements.txt
-# Build with:   cd docs/site && mkdocs build
-# Serve with:   cd docs/site && mkdocs serve
-mkdocs>=1.6
-mkdocs-material>=9.5
-pymdown-extensions>=10.7

@@ -606,7 +606,7 @@ fn measure_corpus_scale() {
         v[(v.len() * p / 100).min(v.len() - 1)]
     };
     // Each measurement prints p50/p95 and returns p95 in milliseconds, checked
-    // against the budget from docs/hoh/2026-09-19-plan.md so the run is decidable.
+    // against the budget of the 19 September 2026 memory plan (git history, f31a498) so the run is decidable.
     let bench = |label: &str, rounds: usize, budget_ms: f64, f: &dyn Fn()| -> f64 {
         let mut t = Vec::new();
         for _ in 0..rounds {

@@ -3,7 +3,7 @@
 Runs the real release worker against 100 retained missions shaped like actual
 captures (event lines plus JSON model payloads), then the documented regime beyond
 100 missions through the live routes. Set ARC_MEMORY_SCALE=1 to run; numbers are
-printed with -s and the budgets come from docs/hoh/2026-09-19-plan.md.
+printed with -s and the budgets come from the 19 September 2026 memory plan (git history, commit f31a498).
 """
 from __future__ import annotations
 

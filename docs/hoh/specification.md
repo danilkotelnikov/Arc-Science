@@ -11,13 +11,13 @@ reason to replace validated numerical code merely to claim a language rewrite.
 | H1 | HoH is the persistent Codex software-development default and a fresh context reads it; role/evidence records survive context loss. |
 | D1 | Native desktop launches the configured local service from paths containing spaces, validates service identity/readiness, reports failures and never silently displays a failed startup. |
 | D2 | Startup, service ownership and shutdown are bounded; reused services are not killed, owned descendants are reaped within the documented platform boundary. |
-| D3 | Release build runs locally with the supplied transparent Snöggo icon; startup time, executable size and memory observations are reported with environment and scope. |
+| D3 | Release build runs locally with the "as" tile icon; startup time, executable size and memory observations are reported with environment and scope. |
 | M1 | Mission capture is visible and persistent; retrieval defaults to an actually available mode; credential changes clear private UI state. |
 | M2 | Session retrieval, keyword search, scope, retention and unavailable semantic retrieval behave truthfully. Real embeddings/context replay remain separate gates. |
 | R1 | Research create/start/cancel/resume, bounded decision routes, reconciliation, verification and replay export work through user-visible controls. |
 | F1 | Molecular example and local renders retain verified source/scene/artifact identity and scientific limitations. |
 | B1 | BioArt cache/search/inspect/fetch/import flows are tested where authorized and available; missing network/rights/runtime evidence remains explicit. |
-| S1 | The existing bioinformatics thesis has a claim tree, verified prior-art sources and a falsifiable novelty test; proposals are not presented as measured discoveries. |
+| S1 | A scientific proposal made with Arc Science has a claim tree, verified prior-art sources and a falsifiable novelty test; proposals are not presented as measured discoveries. (The September 2026 thesis evaluation is in the git history, `docs/arc-science/usability-thesis/` at commit f31a498.) |
 | U1 | Interactive browser testing exercises visible controls; no-code acceptance is not replaced by generated browser scripts or direct API calls. |
 | P1 | Appropriate automated checks, independent review, packaging and recoverability pass; unresolved live-provider, platform and deployment gates are recorded. |
 
@@ -25,7 +25,7 @@ reason to replace validated numerical code merely to claim a language rewrite.
 
 The existing routes and fields are a starting point, not evidence that an operator can
 configure, understand or govern a live scientific run. The detailed continuation
-contract is the [Claude agentic UX and production prompt](2026-09-21-claude-agentic-ux-and-production-prompt.md).
+contract of 21 September 2026 is in the git history (commit f31a498).
 
 | ID | Observable acceptance |
 | --- | --- |

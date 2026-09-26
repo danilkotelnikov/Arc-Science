@@ -1,7 +1,6 @@
-# Arc Science 0.6.0 · development
+# Arc Science 0.6.0 (development)
 
-This is the reviewed Arc Science application, imported into the existing Vedix
-repository. The [repository guide](../../README.md) has current installation,
+The Arc Science service and workbench. The [repository guide](../../README.md) has current installation,
 workbench and test commands. The [0.6 migration notes](docs/migration-0.6.md)
 describe the public example, packaging, provenance and qualification boundaries.
 
@@ -61,7 +60,7 @@ download notice, and that the operator token never enters a URL. Memory recall
 skips itself when `arc-memory-worker` is not built; nothing in the suite needs
 Blender, a model provider or the public network.
 
-The [original 0.4 guide](docs/source-readme-0.4.md), historical locks and Docker
+The historical locks and Docker
 files are preserved references, not a claim that those deployments were newly
 qualified. Provider settings and runtime tools remain compatible; use current
 source installation rather than a historical wheel filename.

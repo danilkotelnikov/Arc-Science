@@ -743,3 +743,127 @@ These were first posted before 1 July 2026 and are background only.
 - Do not order the approval queue by a seat's self-reported confidence (arXiv:2607.28317).
 - Place each alarm beside its evidence and controls, and cap the motion speed of live
   displays (Rav26b, Ton26b).
+
+## S0b addendum: motion, optical alignment, colour, type, logo vectorisation
+
+Compiled on 25 September 2026 for the second S0 round: an animated frontend, text optically
+centred in its boxes, non-intrusive colour, font presets that include caps-only and monospaced
+faces, and a new logo round from GPT-Image rasters traced to SVG. The evidence rule is the one
+above. Searches: Undermind quick searches in the "Arc Science 2026" workspace (no deep
+searches) and the Firecrawl research index with a 1 July 2026 floor. The arXiv search tool
+returned HTTP 406 and Semantic Scholar was rate-limited. Both indexes filter on created or
+updated dates, so every date was re-checked: arXiv first postings from the export API
+`<published>` field, with each abstract page opened, and DOI items from Crossref. Findings
+are abstract-level claims.
+
+| Topic | ID | Title | First posted | Finding | Decision it supports or constrains |
+|---|---|---|---|---|---|
+| Motion | [arXiv:2607.18507](https://arxiv.org/abs/2607.18507) | AInimation: Animating from Prompt to AI-Generated Responses | 2026-07-20 | Transitions that move prompt elements to their place in the response and highlight changes improved locating elements by 43%, identifying changes by 153% and verifying interpretation by 20%; the abstract gives no sample size. | Supports animating state changes that carry meaning (an item moving between lanes, a changed claim, a drawer opening from its trigger). Gives no duration or easing values. |
+| Motion | [arXiv:2608.23609](https://arxiv.org/abs/2608.23609) | Decomposing Browser Pipeline Architectures for DOM-Sourced Particle Effects | 2026-08-21 | Worker offload raised Chrome pacing from about 52 to 144 FPS, but a 1.5-1.85x faster simulation kernel did not always raise user-visible FPS, and renderer rankings changed across browsers and GPUs. | Constrains claims of efficient animation: measure frame pacing end to end in the target WebView on the operator's hardware, not per-layer benchmarks. |
+| Type | [doi:10.3390/jemr19040073](https://doi.org/10.3390/jemr19040073) | Effects of Pictogram and Typeface Complexity on Visual Attention: Eye-Tracking Study | 2026-07-07 (Crossref, online) | With 90 participants, reading time was the most sensitive measure; whether a serif or sans typeface read faster beside a simple pictogram depended on the thematic category, and subjective ratings did not differ. | Constrains font presets and mark-wordmark pairing: no general rule; judge pairs by measured reading or task time, not preference alone. |
+| Type | [arXiv:2609.07029](https://arxiv.org/abs/2609.07029) | LoGAN: Multilingual Font Localization with Generative Agents | 2026-09-07 | An agentic pipeline extended a few glyphs of a font or logo to character sets in more than 27 languages with higher glyph fidelity and kerning consistency than general image editors (FLUX, Nano-Banana). | Indirect support for setting the "Arc Science" wordmark in a real font preset instead of taking lettering from generated images. Legibility was not measured. |
+| Colour | [doi:10.1002/jsid.70094](https://doi.org/10.1002/jsid.70094) | Effects of Cognitive Load and Color Saliency Interaction on Children's Visual Search in Digital Interfaces | 2026-07-02 (Crossref, online) | In children's visual search, large colour differences (ΔE00) helped more under high cognitive load; red and green targets were found fastest, while blue and purple targets cost 50-60 ms. | Supports reserving strong colour contrast for critical states under load and keeping other colour quiet. Transfer from children to adult operators is an assumption. |
+| Colour | [arXiv:2608.10169](https://arxiv.org/abs/2608.10169) | Predicting affective connotation of visualizations from their constituent colors | 2026-08-10 | Across three experiments, the emotional association of a whole visualisation was predicted by the mean association of its colours, and better by a mean weighted by the area each colour covers (to appear in IEEE TVCG). | Supports controlling colour by area share: large neutral surfaces set the tone, and a saturated accent on a small area shifts it little. |
+| Logo | [arXiv:2609.25677](https://arxiv.org/abs/2609.25677) | Seeing Is Not Perceiving: When Synthetic Consumers Can and Cannot Pretest Visual Marketing | 2026-09-22 | In six preregistered visual marketing experiments (logos, packaging, advertising), no GPT-4o-mini or GPT-5.4-mini configuration reproduced more than two of six human effects, and one reversed a human effect. | Constrains logo selection: a model panel cannot stand in for the operator or a human panel. |
+| Logo | [arXiv:2609.27110](https://arxiv.org/abs/2609.27110) | Feed the Panel Dimensions, Not Verdicts: Rubric-Decomposed Fusion of Vision-Language Aesthetic Judges | 2026-09-22 | Panels of holistic VLM aesthetic judges never significantly beat their best member; fusing scores on five rubric dimensions beat it on one of two datasets, at the cost of a few hundred human labels. | If a VLM pre-screens logo candidates, it scores fixed dimensions (silhouette, legibility at 16 px, stroke weight) and only filters; it does not rank the finalists. |
+| Logo | [arXiv:2608.25876](https://arxiv.org/abs/2608.25876) | Do Vision-Language Models Agree on the Affective Qualities of Shape? | 2026-08-26 | Six VLMs agreed only partially on affective shape axes (mean rank correlation 0.36 against a 0.14 null and a 0.44 geometric ceiling), and agreement between models did not imply agreement with people. | Model adjectives such as "more minimal" or "more elegant" are not a selection criterion for marks. |
+| Vector | [arXiv:2607.27699](https://arxiv.org/abs/2607.27699) | RefineSVG: Visual Feedback-Driven Reinforcement Learning for Image-to-SVG Generation | 2026-07-30 | Rendering a first SVG, computing a residual map against the target image and feeding it back for one correction step beat open-loop image-to-SVG baselines in fidelity, structural accuracy and code efficiency (ACM MM 2026). | Supports a render-and-compare gate: every traced logo is rasterised and compared with its source raster. |
+| Vector | [arXiv:2608.28678](https://arxiv.org/abs/2608.28678) | Evaluating Constrained Iterative Refinement for Scalable Vector Graphics Generation with Off-the-Shelf VLMs | 2026-08-26 | Constrained decoding raised compile success, but iterative refinement exposed weak visual self-correction in general-purpose VLMs (two-page poster). | Constrains asking a chat model to "fix" SVG paths; keep deterministic tracing (VTracer) checked by an external metric. |
+| Vector | [arXiv:2607.19056](https://arxiv.org/abs/2607.19056) | Vector-Bench: Can Models Surgically Edit SVG Code? | 2026-07-21 | Across 34 model endpoints and 40 repair tasks, the best reached 15.0% full specification success despite 43.7% mean repair progress. | Model edits to a final SVG need a check that nothing else changed; hand or deterministic edits are preferred. |
+| Vector | [arXiv:2609.03806](https://arxiv.org/abs/2609.03806) | SVG-Score: Human-Aligned Evaluation of Text-to-SVG Generation | 2026-09-03 | CLIP-based scores barely reacted to wrong colours, counts and spatial relations; off-the-shelf VLM judges were more sensitive but uneven across error types and styles. | Rules out CLIP similarity as the vectorisation or logo metric. |
+| Vector | [arXiv:2608.01977](https://arxiv.org/abs/2608.01977) | SVGEval: A Vision-Grounded Framework for Perceptual-Quality Benchmarking and Evaluation in Text-to-SVG Generation | 2026-08-03 | Multimodal models judged semantic alignment and aesthetics relatively well but struggled with geometry and layout (ECCV 2026). | Geometric fidelity is measured with pixel and edge metrics, not a VLM verdict. |
+| Vector | [arXiv:2609.25270](https://arxiv.org/abs/2609.25270) | RULER: Instance-aware Rubric Rewards for SVG Generation | 2026-09-21 | A VLM judge prompted with a multi-axis rubric correlated with human judgements far better than CLIP or aesthetic scalars, which invited reward hacking when used as rewards. | Any automatic score of semantic or style quality uses a fixed rubric, never a scalar CLIP or aesthetic score. |
+| Vector | [arXiv:2609.13294](https://arxiv.org/abs/2609.13294) | VectorHarness: Recovering Editable, Relation-Preserving Structure from Scientific Graphics | 2026-09-09 | Scores reconstruction on rendering fidelity together with raster fallback coverage and executable, relation-preserving edits, since visual resemblance alone can leave regions uneditable. | Acceptance of a traced logo includes editability: no embedded raster, few closed paths, shapes grouped by part. |
+| Vector | [arXiv:2608.20803](https://arxiv.org/abs/2608.20803) | CubicSplat: Differentiable Vector Graphics via Error-Bounded Forward Relaxation | 2026-08-21 | A differentiable vector rasteriser gained over 2 dB PSNR in closed-fill reconstruction on DIV2K and Kodak and trained up to 4x faster (ECCV 2026 oral). | Reports fidelity as PSNR of the re-rendered image; optimisation-based vectorisation is an option if tracing leaves uneven curves. |
+
+Already in this dossier and relevant here: Ton26b (presentation speeds above 8°/s raised
+operator errors, so continuously moving content has a speed cap), Var26b (pixel complexity
+metrics correlated only weakly with task outcomes, so a computed colourfulness or clutter score
+is not a gate) and Rav26b (proximity-compatible layout).
+
+### Implications for S0b
+
+- **Motion.** Animate only changes that carry meaning, linking the old and new state
+  (arXiv:2607.18507); cap the speed of continuous motion (Ton26b); under
+  `prefers-reduced-motion` replace movement with an instant or opacity change (standard).
+  Durations and easing are design judgement. Efficiency is verified by frame pacing in the
+  real WebView (arXiv:2608.23609).
+- **Optical centring.** No post-July evidence. Trim text to cap height and baseline with
+  `text-box-trim` where supported, normalise preset metrics with `ascent-override` and
+  `descent-override`, and verify the ink box in screenshots (standard plus design judgement).
+- **Colour share.** Keep large surfaces neutral and put saturated colour on small areas,
+  since whole-screen tone follows area share (arXiv:2608.10169); reserve strong contrast for
+  critical states (doi:10.1002/jsid.70094, children). A numeric share limit is design
+  judgement.
+- **Logo.** Models do not choose the mark (arXiv:2609.25677, arXiv:2608.25876); a VLM
+  pre-screen, if used, scores fixed rubric dimensions (arXiv:2609.27110). Simplicity for
+  small sizes is design judgement, checked at 16, 24 and 32 px.
+- **Vectorisation metric.** Re-render the SVG and compare with the source raster
+  (arXiv:2607.27699) using pixel metrics (PSNR or filled-region IoU, arXiv:2608.20803), plus
+  editability (path count, no embedded raster, arXiv:2609.13294). Not CLIP
+  (arXiv:2609.03806), and no VLM verdict on geometry (arXiv:2608.01977).
+
+### Gaps (design judgement)
+
+- **Animation durations, easing and stagger** for a desktop tool: no post-July study gives
+  values; arXiv:2607.18507 supports meaningful transitions only.
+- **Reduced motion and vestibular sensitivity in 2D interfaces:** the post-July results
+  returned are clinical or VR studies; the rule rests on the standards below.
+- **Optical vertical centring of text in boxes and alignment of rectangles:** no study.
+- **Legibility of caps-only and monospaced display faces, and Cyrillic-Latin pairing:** no
+  post-July study; LoGAN generates glyphs but does not measure legibility.
+- **A colour share threshold** (proportion of accent or saturated pixels): no study gives a
+  number; arXiv:2608.10169 supports area weighting, not a limit.
+- **Logo recognisability at small sizes and distinctiveness among app icons:** no post-July
+  study; the logo and icon studies returned predate the cutoff.
+- **A metric validated on tracing flat logos:** post-July metrics cover icons, illustrations,
+  charts and scientific figures, not logos.
+- **Brutalist motion** (hard offsets, press-down effects): no study.
+
+### Standards and background (not evidence)
+
+- **WCAG 2.2 SC 2.3.3 Animation from Interactions** (AAA): motion triggered by interaction can
+  be disabled unless it is essential.
+- **Media Queries Level 5, `prefers-reduced-motion`.**
+- **CSS Inline Layout Level 3, `text-box-trim` and `text-box-edge`**, for trimming text to cap
+  height and baseline.
+- **CSS Fonts Level 5, `ascent-override`, `descent-override`, `line-gap-override`**, for
+  normalising vertical metrics across font presets.
+- **Older works returned by the searches** (dates as returned by Undermind or implied by the
+  arXiv identifier, not re-checked): Design guidelines for animated data visualization based
+  on perceptual capacity limits (2026-03-31); Design quality, distraction, and trust: web
+  interface micro animations (2026-06-03); Counting the Wait (2026-02-04); Effects of Progress
+  Bar Thickness on Users' Perception of Waiting Time (2026-06-07); Usability Hasn't Peaked
+  (2026-04-13); Comparative Analysis of CSS Animation Methods under High DOM Load
+  (2026-02-14); A Cross-Device and Cross-OS Benchmark of Modern Web Animation Systems (2026);
+  Beyond Screenshots: VLMs' Understanding of UI Animations (arXiv:2604.26148); Assessment of
+  newly designed fonts for visual accessibility (2026-03-24); Understanding the
+  opaque-is-more and saturated-is-more biases for colormaps (2026-02-23); Well-known and
+  Lesser-known logos with covert eye tracking (2026-05-09); Logo Placement and Centre Bias
+  (2026-04-26); Adaptive Color Strategies in App Icons (2026-03-07); icon labels and style
+  across cultures (2026-05-12); VFIG (arXiv:2603.24575); Render-in-the-Loop
+  (arXiv:2604.20730); VectorArk (2026-05-23); Structural Evaluation Metrics for SVG Generation
+  via Leave-One-Out Analysis (2026-04-09); random search versus iterative refinement for
+  parametric icon design (2026-03-22).
+
+### Excluded as unverified
+
+- *Animations in UI microinteractions as modulators of emotion and time perception in UX*
+  (doi:10.1016/j.displa.2026.103436): issue dated July 2026, but the Crossref record was
+  created on 2026-03-17, so it was probably online before the cutoff; no abstract available.
+- *The Effect of Hue Quantity and Contrast on Visual Search Performance in Complex Interfaces*
+  (doi:10.1007/978-3-032-29593-4_2) and *The Impact of Icon Animation Types on Task
+  Performance and User Experience* (doi:10.1007/978-3-032-29178-3_22): Crossref records created
+  on 2026-07-07, but the abstract page needs a Springer login and neither Crossref nor OpenAlex
+  holds an abstract.
+- *Prediction of eyestrain and motion sickness based on eye parameters during exposure to a
+  visual flicker stimulus* (doi:10.1016/j.actpsy.2026.107480): Crossref record created on
+  2026-07-23; no abstract available.
+
+### Post-July items not used
+
+- Off-topic for logos (dates checked through the arXiv export API): Chart2SVG (2026-08-27),
+  A Scalable Vector Graphics Latent Space (2026-08-22), CANVAS (2026-08-31), Compositional SVG
+  Generation via VLM-Driven Hierarchical Semantic Parsing (2026-09-13).
+- Dates not checked: LU-500, a logo benchmark for concept unlearning (arXiv:2607.24101);
+  Learning to Detect UI Principle Violations via Reinforcement Learning (arXiv:2607.20690).

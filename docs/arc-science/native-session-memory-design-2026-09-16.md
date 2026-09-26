@@ -8,7 +8,7 @@ supersedes: docs/arc-science/native-session-memory-proposal-2026-09-11.md (engin
 
 # Native Session Memory
 
-This design turns the researched [session-memory proposal](native-session-memory-proposal-2026-09-11.md)
+This design turns the researched session-memory proposal (in the git history at commit f31a498)
 into an approved, buildable implementation. It fixes the two decisions the proposal
 left open: the engine is **Rust-first** (`arc-memory`), and the first qualification
 target is **Windows-native**. Everything the proposal marked as a contract, boundary

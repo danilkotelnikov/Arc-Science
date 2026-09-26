@@ -59,5 +59,5 @@ scientific validity or publication authorization.
 Windows retains the filesystem and process-isolation limits described in the
 [Windows port record](windows-native-port-2026-09-18.md). A dedicated Blender
 environment is preferable to the retained workstation environment, which emits a
-NumPy ABI warning. Fresh verification for this increment is recorded separately in
-[the continuation qualification](molecular-workbench-qualification-2026-09-18.md).
+NumPy ABI warning. The verification record of this increment is in the git history
+(`docs/arc-science/molecular-workbench-qualification-2026-09-18.md` at commit f31a498).

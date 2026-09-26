@@ -8,37 +8,16 @@ venv/
 .pytest_cache/
 .tmp/
 
-# OS
+# Node
+node_modules/
+
+# OS and editors
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# Editor
 .vscode/
 .idea/
 
-# Pipeline outputs (when running from plugin dir)
-ai-scientist-output/
-
-# Logs
+# Logs and local agent runs
 *.log
-
-# Node / web build
-node_modules/
-
-# The B9 Web UI subtree was removed from the OSS release (commit 18f309a)
-# but local `npm install` artifacts can survive. Ignore the whole subtree
-# so untracked-file noise doesn't accumulate.
-plugins/vedix/web/
-
-# Pipeline outputs (when running from plugin dir, legacy v2.x name)
-vedix-output/
-
-# MkDocs build output
-docs/site/site/
-
-
-# BioRender-derived logo candidates stay local until their licence allows public use
-design/logo/generated/biorender-*
-apps/arc-science/web/public/logo-candidates/biorender-*
-apps/arc-science/web/public/logo-candidates/index.local.json
+.omx/
