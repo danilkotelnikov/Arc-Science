@@ -8,7 +8,10 @@ import json
 from .catalog import PUBLIC_CATALOG, TrustedPublicTools, validate_arguments
 
 
-def public_tools(client):
+def public_tools(client, openalex=None):
+    """`openalex` wraps the retraction lookup in its own grant check: a function taking the
+    async lookup (called with the DOI list) and returning the guarded call. Without it no DOI
+    leaves the machine and every returned work stays unchecked."""
     async def get(url,params=None):
         async with client.stream('GET',url,params=params,timeout=20,follow_redirects=False,
                                  headers={'Accept':'application/json','User-Agent':'ArcScience/0.2'}) as response:
@@ -33,10 +36,13 @@ def public_tools(client):
                 'scope':'retrieval_only_not_claim_verification','source':'Europe PMC',
                 'retraction_check':await retractions(records[:5])}
 
+    async def lookup(dois):
+        return await get('https://api.openalex.org/works',{'filter':'doi:'+'|'.join(dois),'select':'doi,is_retracted','per-page':25})
+
     async def retractions(records):
-        """OpenAlex is_retracted for the DOIs of the returned works, inside the same granted
-        call; only those public DOIs are sent. A failed lookup never fails the search: it is
-        recorded as not done, and a work without a usable DOI stays unchecked."""
+        """OpenAlex is_retracted for the DOIs of the returned works, sent only through the
+        OpenAlex guard. A refused or failed lookup never fails the search: it is recorded as
+        not done, and a work without a usable DOI stays unchecked."""
         endpoint='https://api.openalex.org/works'
         dois,unchecked=[],[]
         for record in records:
@@ -46,14 +52,15 @@ def public_tools(client):
         dois=sorted(set(dois))
         check={'source':'OpenAlex','endpoint':endpoint,'status':'ok','checked':[],'retracted':[],'unchecked':unchecked}
         if not dois:return check
+        if openalex is None:return {**check,'status':'not_granted','unchecked':unchecked+dois}
         try:
-            data,sha=await get(endpoint,{'filter':'doi:'+'|'.join(dois),'select':'doi,is_retracted','per-page':25})
+            data,sha=await openalex(lookup)(dois)
             found={}
             for work in data.get('results') or ():
                 doi=str(work.get('doi') or '').lower().removeprefix('https://doi.org/')
                 if isinstance(work.get('is_retracted'),bool):found[doi]=work['is_retracted']
-        except Exception:
-            return {**check,'status':'error','unchecked':unchecked+dois}
+        except Exception as why:
+            return {**check,'status':'error','reason':str(why)[:200],'unchecked':unchecked+dois}
         return {**check,'response_sha256':sha,'checked':[d for d in dois if d in found],
                 'retracted':[d for d in dois if found.get(d) is True],'unchecked':unchecked+[d for d in dois if d not in found]}
 

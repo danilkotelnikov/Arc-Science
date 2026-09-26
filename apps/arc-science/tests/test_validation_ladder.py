@@ -23,11 +23,13 @@ from arc_science.exploration.evidence import evidence_graph
 from arc_science.exploration.models import Event, MissionRequest, MissionState, VerificationReceipt
 from arc_science.exploration.public_reads import public_tools
 from arc_science.exploration.validation import RUNGS, claim_ladder, numbers
+from test_settings import stub  # noqa: F401  (fixture reuse)
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 OPENALEX = json.loads((FIXTURES / 'openalex' / 'works_is_retracted.json').read_text(encoding='utf-8'))
 EUROPEPMC = json.loads((FIXTURES / 'openalex' / 'europepmc_search.json').read_text(encoding='utf-8'))
 FIT_ERROR = {'tool': 'polynomial_fit', 'metric': 'validation_mse', 'threshold': .02, 'direction': 'above'}
+ASYNC_CLIENT = httpx.AsyncClient  # captured before a journey test replaces the service's client
 MODELS = {'planner': 'planner-model', 'analyst': 'reviewer-model', 'falsifier': 'falsifier-model'}
 
 
@@ -117,11 +119,29 @@ def test_an_unbound_number_fails_l1_and_a_bound_one_passes():
     ladder = ladder_of(bound)
     assert ladder['rung'] == 1 and 'numbers_bound' in ladder['met'] and ladder['verdict'] == 'qualified'
     assert ladder['next']['rung'] == 2 and ladder['next']['needs'] == ['recomputation_missing']
-    # Identifiers are not quantities; a year written as text in a record still binds.
-    assert numbers(['cites 10.1038/nature14539 via https://doi.org/x1.5 and IL-6 in 2015']) == ['2015']
+    # Identifiers are not quantities; a year written as text is still a number to bind.
+    assert numbers(['cites 10.1038/nature14539 via https://doi.org/x1.5, PMID 26017442, and IL-6 in 2015']) == ['2015']
     # A timeline row that recorded a failure contradicts the chain: not traced.
     row = {'operation': 'tool', 'action_id': 'fit', 'outcome_source': 'recorded', 'outcome': 'error', 'receipt_id': None}
     assert 'timeline_not_ok' in ladder_of(bound, rows=[row])['next']['needs']
+
+
+def test_a_number_binds_only_to_the_quantity_it_names_at_close_relative_precision():
+    """The recorded fit: validation_mse 0.00404, training_mse 0.00195, degree 2, coefficients
+    near 2.0, 0.51 and 1.2. Each sentence below misreports the validation error."""
+    misreported = [lambda o: f"Validation error {o['data']['training_mse']:.2g}, far below the threshold.",
+                   lambda o: 'Validation error is 2 on the split.', lambda o: 'Validation error 0 on the split.',
+                   lambda o: 'Validation error 1 on the split.', lambda o: 'Validation error 0.5 on the split.',
+                   lambda o: 'The quadratic cuts error 40x on the split.', lambda o: 'Validation error .4242 on the split.']
+    for say in misreported:
+        _, state = run(Scripted([FIT], say=say))
+        ladder = ladder_of(state, verification=passing(state))
+        assert ladder['rung'] == 0 and ladder['next']['needs'] == ['unbound_number'], state.claim_scope.branches[0].supported_scope
+    # The named quantity binds at the precision written; a second named value in the sentence binds too.
+    _, fine = run(Scripted([FIT], say=lambda o: f"Validation error {o['data']['validation_mse']:.2g}; training error {o['data']['training_mse']:.3g}."))
+    assert ladder_of(fine)['rung'] == 1
+    # Every digit run is a number to bind: unit suffixes, multipliers and a leading dot included.
+    assert numbers(['dose 5mg/kg', 'IC50 of 12nM', 'p=.03', 'a 0.5x cut', 'took 4242ms', 'a 3D fit', 'v1.2.3']) == ['5', '12', '.03', '0.5', '4242']
 
 
 def epmc_client(records, openalex=OPENALEX, seen=None):
@@ -132,44 +152,109 @@ def epmc_client(records, openalex=OPENALEX, seen=None):
         if request.url.host == 'api.openalex.org' and openalex is not None:
             return httpx.Response(200, json=openalex)
         return httpx.Response(503)
-    return httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    return ASYNC_CLIENT(transport=httpx.MockTransport(handle))
 
 
 def read_row(receipt_id='receipt-1'):
     return {'operation': 'tool', 'action_id': 'read', 'outcome_source': 'recorded', 'outcome': 'ok', 'receipt_id': receipt_id}
 
 
-def test_public_reads_record_openalex_retraction_status():
-    seen = []
-    tools = public_tools(epmc_client(EUROPEPMC['resultList']['result'], seen=seen))
+def granted(call):
+    """A retraction guard that lets the OpenAlex call through, as a granted destination does."""
+    return call
+
+
+def reads(records, openalex=OPENALEX, guard=granted):
+    return public_tools(epmc_client(records, openalex=openalex), openalex=guard)
+
+
+WAKEFIELD, LECUN = '10.1016/S0140-6736(97)11096-0', '10.1038/nature14539'
+
+
+def test_public_reads_check_retractions_only_under_their_own_openalex_guard():
+    seen, guarded = [], []
+
+    def guard(call):
+        async def run_(dois):
+            guarded.append(dois)
+            return await call(dois)
+        return run_
+    tools = public_tools(epmc_client(EUROPEPMC['resultList']['result'], seen=seen), openalex=guard)
     data = asyncio.run(tools['literature_search'][1]({'query': 'retraction fixture'}))
     check = data['retraction_check']
     assert check['source'] == 'OpenAlex' and check['status'] == 'ok' and len(check['response_sha256']) == 64
     assert check['checked'] == ['10.1016/s0140-6736(97)11096-0', '10.1038/nature14539']
     assert check['retracted'] == ['10.1016/s0140-6736(97)11096-0'] and check['unchecked'] == ['PPR000001']
+    # The guard saw exactly the DOIs that went to OpenAlex, in one request.
+    assert guarded == [['10.1016/s0140-6736(97)11096-0', '10.1038/nature14539']]
     openalex = [url for url in seen if 'api.openalex.org' in url]
     assert len(openalex) == 1 and 'is_retracted' in openalex[0] and 'nature14539' in openalex[0]
-    # An unreachable OpenAlex never fails the search; the check is recorded as not done.
-    down = asyncio.run(public_tools(epmc_client(EUROPEPMC['resultList']['result'], openalex=None))['literature_search'][1]({'query': 'x'}))
+    # Without a guard for OpenAlex nothing is sent there and every work stays unchecked.
+    seen.clear()
+    bare = asyncio.run(public_tools(epmc_client(EUROPEPMC['resultList']['result'], seen=seen))['literature_search'][1]({'query': 'x'}))
+    assert not [url for url in seen if 'api.openalex.org' in url]
+    assert bare['retraction_check']['status'] == 'not_granted' and len(bare['retraction_check']['unchecked']) == 3
+    # A refused grant and an unreachable OpenAlex never fail the search; the check is recorded as not done.
+    def refuse(call):
+        async def run_(dois):
+            raise ValueError('Refused by the grant ledger: no grant')
+        return run_
+    denied = asyncio.run(reads(EUROPEPMC['resultList']['result'], guard=refuse)['literature_search'][1]({'query': 'x'}))
+    assert denied['retraction_check']['status'] == 'error' and 'Refused' in denied['retraction_check']['reason']
+    down = asyncio.run(reads(EUROPEPMC['resultList']['result'], openalex=None)['literature_search'][1]({'query': 'x'}))
     assert down['retraction_check']['status'] == 'error' and down['retraction_check']['retracted'] == []
+
+
+def test_the_preview_asks_for_openalex_as_its_own_public_read_destination(monkeypatch):
+    from arc_science import service
+    from arc_science.exploration.providers import ModelEndpoint
+    monkeypatch.setenv('ARC_PUBLIC_READS', '1')
+    seat = ModelEndpoint(provider='openai', endpoint='https://api.openai.com/v1/responses', model='a', credential_ref='planner')
+    preview = service.route_preview({'seats': {'planner': seat, 'reviewer': seat, 'falsifier': seat}, 'mcp_servers': [], 'acp_agents': []})
+    [openalex] = [g for g in preview['required_grants'] if g['destination'] == 'https://api.openalex.org']
+    assert openalex['destination_kind'] == 'public_read' and 'DOI' in openalex['data_category']
 
 
 def test_a_retracted_citation_blocks_l1():
     records = EUROPEPMC['resultList']['result']
-    _, cited = run(Scripted([FIT, READ]), extra_tools=public_tools(epmc_client(records)), egress=True)
-    assert [o.status for o in cited.observations] == ['ok', 'ok']
-    ladder = ladder_of(cited, rows=[read_row()], verification=passing(cited))
-    assert ladder['rung'] == 0 and 'retracted_source' in ladder['next']['needs'] and ladder['verdict'] == 'blocked'
-    # The same search without the retracted work, every record checked: traced.
-    clean = [r for r in records if r.get('doi') == '10.1038/nature14539']
-    _, fine = run(Scripted([FIT, READ]), extra_tools=public_tools(epmc_client(clean)), egress=True)
-    ladder = ladder_of(fine, rows=[read_row()])
+    # A retracted work among the hits is not a citation: a claim citing nothing is traced.
+    _, hits = run(Scripted([FIT, READ]), extra_tools=reads(records), egress=True)
+    assert [o.status for o in hits.observations] == ['ok', 'ok']
+    ladder = ladder_of(hits, rows=[read_row()])
     assert ladder['rung'] == 1 and {'no_retracted_source', 'ledger_receipt'} <= set(ladder['met'])
-    # No ledger receipt on the external read, or no retraction check: not traced.
-    assert 'receipt_missing' in ladder_of(fine, rows=[read_row(None)])['next']['needs']
-    assert 'receipt_unchecked' in ladder_of(fine, rows=[])['next']['needs']
-    _, unchecked = run(Scripted([FIT, READ]), extra_tools=public_tools(epmc_client(clean, openalex=None)), egress=True)
-    assert 'retraction_unchecked' in ladder_of(unchecked, rows=[read_row()])['next']['needs']
+    # Citing the retracted work, by DOI or by PMID, blocks L1; citing a checked sound work does not.
+    for cite in (WAKEFIELD, 'https://doi.org/' + WAKEFIELD.lower(), 'PMID 9500042'):
+        _, cited = run(Scripted([FIT, READ], say=lambda o, c=cite: f'Consistent with the cited work {c}.'), extra_tools=reads(records), egress=True)
+        ladder = ladder_of(cited, rows=[read_row()], verification=passing(cited))
+        assert ladder['rung'] == 0 and 'retracted_source' in ladder['next']['needs'] and ladder['verdict'] == 'blocked', cite
+    _, sound = run(Scripted([FIT, READ], say=lambda o: f'Consistent with the cited work ({LECUN}).'), extra_tools=reads(records), egress=True)
+    assert ladder_of(sound, rows=[read_row()])['rung'] == 1
+    # A cited DOI no read checked is unchecked, even when no literature read ran at all.
+    _, uncited = run(Scripted([FIT, NULL], say=lambda o: f'Consistent with the cited work {WAKEFIELD} on the split.'))
+    ladder = ladder_of(uncited, verification=passing(uncited))
+    assert ladder['rung'] == 0 and ladder['next']['needs'] == ['retraction_unchecked'] and 'no_retracted_source' not in ladder['met']
+    _, down = run(Scripted([FIT, READ], say=lambda o: f'Consistent with {LECUN}.'), extra_tools=reads(records, openalex=None), egress=True)
+    assert 'retraction_unchecked' in ladder_of(down, rows=[read_row()])['next']['needs']
+    # No ledger receipt on the external read: not traced.
+    assert 'receipt_missing' in ladder_of(hits, rows=[read_row(None)])['next']['needs']
+    assert 'receipt_unchecked' in ladder_of(hits, rows=[])['next']['needs']
+
+
+def test_a_pre_retraction_check_read_is_graded_by_the_works_its_claim_cites():
+    """A literature read stored before B9 carries no retraction_check. Its claim is traced when
+    it cites no work; a cited work was never checked, so that claim stays below L1."""
+    records = [r for r in EUROPEPMC['resultList']['result'] if r.get('doi') == LECUN]
+
+    def legacy(state):
+        observations = tuple(o.model_copy(update={'data': {k: v for k, v in o.data.items() if k != 'retraction_check'}})
+                             for o in state.observations)
+        return state.model_copy(update={'observations': observations})
+    request, plain = run(Scripted([READ], falsifier_test=None), extra_tools=reads(records), egress=True)
+    plain = legacy(plain)
+    assert rung_check(release.evaluate_release(request, plain, None, event_chain_ok=True, timeline_rows=[read_row()])).state == 'satisfied'
+    request, citing = run(Scripted([READ], falsifier_test=None, say=lambda o: f'Consistent with {LECUN}.'), extra_tools=reads(records), egress=True)
+    check = rung_check(release.evaluate_release(request, legacy(citing), None, event_chain_ok=True, timeline_rows=[read_row()]))
+    assert check.state == 'unknown' and 'retraction_unchecked' in check.reason
 
 
 def test_a_severe_test_reaches_l4_and_l5_stays_a_need():
@@ -179,7 +264,8 @@ def test_a_severe_test_reaches_l4_and_l5_stays_a_need():
     assert ladder['next'] == {'rung': 5, 'needs': ['external_replication']} and ladder['verdict'] == 'accepted'
     assert {'numbers_bound', 'recomputed', 'falsifier_prespecified', 'null_rejected', 'falsifier_survived'} <= set(ladder['met'])
     facts = ladder['facts']
-    assert facts['null_model']['p_value'] == pytest.approx(1 / 33) and facts['null_model']['alpha'] == .05
+    assert facts['null_model']['permutation_bound'] == pytest.approx(1 / 33) and facts['null_model']['alpha'] == .05
+    assert facts['null_model']['degree'] == 2 and 'p_value' not in facts['null_model']
     assert facts['falsifier']['refuted'] is False and facts['falsifier']['metric'] == 'validation_mse'
     # Without a replay receipt for the current subject the ladder stops at L1.
     assert ladder_of(state)['rung'] == 1
@@ -193,6 +279,61 @@ def test_a_severe_test_reaches_l4_and_l5_stays_a_need():
     # Too few permutations to reach the stated alpha: the null is not rejected.
     _, weak = run(Scripted([FIT, {**NULL, 'arguments': {'permutations': 8}}]))
     assert 'null_not_rejected' in ladder_of(weak, verification=passing(weak))['next']['needs']
+
+
+def test_the_null_model_compares_only_fits_of_the_degree_the_control_shuffled():
+    # permutation_control always refits degree 2 (tools.py); a cubic fit has no matching null.
+    _, cubic = run(Scripted([{**FIT, 'arguments': {'degree': 3}}, NULL]))
+    ladder = ladder_of(cubic, verification=passing(cubic))
+    assert ladder['rung'] == 3 and ladder['next']['needs'] == ['null_model_mismatch'] and ladder['facts']['null_model'] is None
+    # A cubic fit beside the quadratic is ignored by the null; the quadratic alone meets it.
+    _, both = run(Scripted([FIT, {'id': 'cubic', 'tool': 'polynomial_fit', 'arguments': {'degree': 3}}, NULL]))
+    ladder = ladder_of(both, verification=passing(both))
+    assert ladder['rung'] == 4 and ladder['facts']['null_model']['worst_fit_validation_mse'] == both.observations[0].data['validation_mse']
+
+
+def test_a_refuting_observation_stands_when_a_later_one_on_the_branch_survives():
+    line = {'id': 'line', 'tool': 'polynomial_fit', 'arguments': {'degree': 1}}
+    _, state = run(Scripted([line, FIT, NULL]))
+    linear = state.observations[0].data['validation_mse']
+    assert linear > FIT_ERROR['threshold'] > state.observations[1].data['validation_mse']
+    ladder = ladder_of(state, verification=passing(state))
+    assert ladder['verdict'] == 'rejected' and ladder['facts']['falsifier']['refuted'] is True
+    assert ladder['facts']['falsifier']['value'] == linear and ladder['rung'] == 3 and 'falsifier_refuted' in ladder['next']['needs']
+
+
+class Replay(DemoAgent):
+    """Round 0 fits on branch 'peek'; round 1 opens 'curve' with a falsifier threshold tuned
+    just above the value it saw, and reruns the identical fit under a new id; round 2 stops."""
+    models = MODELS
+
+    def model_for(self, role):
+        return self.models[role]
+
+    async def propose(self, context):
+        if context['round'] == 0:
+            return {'branches': [{'id': 'peek', 'title': 'Peek', 'hypothesis': 'Look first.', 'falsifier': 'None.', 'parents': []}],
+                    'actions': [{**FIT, 'branch_id': 'peek'}], 'stop': False, 'reason': 'Look.'}
+        if context['round'] == 1:
+            seen = next(o['data']['validation_mse'] for o in context['observations'] if o['id'] == 'fit')
+            branch = {'id': 'curve', 'title': 'Curved response', 'hypothesis': 'The response needs a quadratic term.',
+                      'falsifier': 'Validation error above the threshold.', 'parents': [],
+                      'falsifier_test': {**FIT_ERROR, 'threshold': seen * 1.01}}
+            return {'branches': [branch], 'actions': [{**FIT, 'id': 'fit2', 'branch_id': 'curve'}, {**NULL, 'branch_id': 'curve'}],
+                    'stop': False, 'reason': 'Commit after looking.'}
+        return {'stop': True, 'reason': 'Done.'}
+
+    async def assess(self, role, context):
+        ok = [o['id'] for o in context['observations'] if o['status'] == 'ok' and o['branch_id'] == 'curve']
+        return {'assessments': [{'branch_id': 'curve', 'position': 'support', 'evidence_ids': ok, 'finding': 'Consistent.'}] if ok else []}
+
+
+def test_a_falsifier_committed_after_an_identical_request_was_observed_does_not_reach_l3():
+    _, state = run(Replay())
+    assert [o.id for o in state.observations] == ['fit', 'fit2', 'null']
+    assert state.observations[0].data['validation_mse'] == state.observations[1].data['validation_mse']
+    ladder = ladder_of(state, verification=passing(state))
+    assert ladder['rung'] == 2 and ladder['next'] == {'rung': 3, 'needs': ['falsifier_after_observation']}
 
 
 def test_a_falsifier_committed_after_the_observation_does_not_reach_l3():
@@ -258,11 +399,14 @@ def test_release_holds_numeric_claims_to_l2_and_blocks_below_the_minimum():
 
 def test_release_holds_a_non_numeric_claim_to_l1():
     records = [r for r in EUROPEPMC['resultList']['result'] if r.get('doi') == '10.1038/nature14539']
-    request, state = run(Scripted([READ], falsifier_test=None), extra_tools=public_tools(epmc_client(records)), egress=True)
-    rows = [read_row()]
-    decision = release.evaluate_release(request, state, None, event_chain_ok=True, timeline_rows=rows)
+    request, state = run(Scripted([READ], falsifier_test=None), extra_tools=reads(records), egress=True)
+    decision = release.evaluate_release(request, state, None, event_chain_ok=True, timeline_rows=[read_row()])
     assert rung_check(decision).state == 'satisfied', rung_check(decision).reason
-    # Without the timeline the external read's receipt cannot be checked: unknown, never satisfied.
+    # A read the grant ledger has no receipt for is a defect: the check fails, not merely unknown.
+    missing = release.evaluate_release(request, state, None, event_chain_ok=True, timeline_rows=[read_row(None)])
+    assert rung_check(missing).state == 'failed' and 'receipt_missing' in rung_check(missing).reason
+    # The pure function without a timeline cannot check the receipt; the service always passes one
+    # (test_a_granted_literature_read_verifies_and_exports_through_the_service).
     assert rung_check(release.evaluate_release(request, state, None, event_chain_ok=True)).state == 'unknown'
 
 
@@ -272,20 +416,105 @@ def needs_rasterizer():
         pytest.skip('No SVG rasterizer: set ARC_SVG2PNG or install cairosvg to re-render the legacy plots')
 
 
-def test_legacy_missions_still_load_verify_and_pass_the_rung_check():
-    from arc_science.exploration.capsule import export_capsule, verify_capsule
+def legacy_mission():
     legacy = FIXTURES / 'legacy'
-    request = MissionRequest.model_validate_json((legacy / 'completed.request.json').read_text(encoding='utf-8'))
-    state = MissionState.model_validate_json((legacy / 'completed.state.json').read_text(encoding='utf-8'))
+    return (MissionRequest.model_validate_json((legacy / 'completed.request.json').read_text(encoding='utf-8')),
+            MissionState.model_validate_json((legacy / 'completed.state.json').read_text(encoding='utf-8')))
+
+
+def test_legacy_missions_still_load_and_pass_the_rung_check():
+    request, state = legacy_mission()
     # The persisted ledger predates claim_rungs and still loads; the current decision adds the check.
     assert 'claim_rungs' not in [c.name for c in state.release.checks]
-    decision = release.current_decision(request, state, event_chain_ok=True)
+    decision = release.current_decision(request, state, event_chain_ok=True, timeline_rows=[])
     assert rung_check(decision).state == 'satisfied' and decision.eligible_for_human_review, decision.blocking_reasons
     cards = build_claims(state, [], evidence_graph(state), decision.model_dump(mode='json'))['claims']
     assert [c['ladder']['rung'] for c in cards] == [2, 2, 2]
     assert [c['ladder']['verdict'] for c in cards] == ['rejected', 'revised', 'rejected']
+
+
+def test_legacy_missions_still_verify_and_pass_the_rung_check():
+    from arc_science.exploration.capsule import export_capsule, verify_capsule
     needs_rasterizer()
+    request, state = legacy_mission()
     report = verify_capsule(export_capsule(request, state))
     assert report['integrity'] and report['reproduction_passed'], report['failures']
-    fresh = release.evaluate_release(request, state, release.receipt_from_report(report, state), event_chain_ok=True)
+    fresh = release.evaluate_release(request, state, release.receipt_from_report(report, state), event_chain_ok=True, timeline_rows=[])
     assert rung_check(fresh).state == 'satisfied' and fresh.eligible_for_human_review
+
+
+# A CLI seat for every role: round 0 plans one literature read, the reviews support it with
+# the read as evidence, round 1 stops.
+READER = r'''
+import json, sys
+args = sys.argv[1:]
+if args[:2] == ['auth', 'status']:
+    print(json.dumps({'loggedIn': True, 'authMethod': 'claude.ai'})); sys.exit(0)
+if args == ['--version']:
+    print('9.9.9'); sys.exit(0)
+model = args[args.index('--model') + 1]
+request = json.loads(sys.stdin.read())
+ctx = request['context']
+if request['response_schema'].get('title') == 'Proposal':
+    if ctx['observations']:
+        text = {'branches': [], 'actions': [], 'stop': True, 'reason': 'done'}
+    else:
+        text = {'branches': [{'id': 'lit', 'title': 'Literature', 'hypothesis': 'Deep learning is reviewed.', 'falsifier': 'No review.', 'parents': []}],
+                'actions': [{'id': 'read', 'branch_id': 'lit', 'tool': 'literature_search', 'arguments': {'query': 'deep learning review'}}],
+                'stop': False, 'reason': 'read'}
+else:
+    ok = [o['id'] for o in ctx['observations'] if o['status'] == 'ok']
+    text = {'assessments': [{'branch_id': 'lit', 'position': 'support', 'evidence_ids': ok, 'finding': 'A review of deep learning is on record.'}] if ok else [],
+            'summary': 'read'}
+print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'result': json.dumps(text), 'modelUsage': {model: {}},
+                  'usage': {'input_tokens': 1, 'output_tokens': 1}, 'permission_denials': []}))
+'''
+
+
+def test_a_granted_literature_read_verifies_and_exports_through_the_service(tmp_path, stub, monkeypatch):
+    """Journey: the operator grants Europe PMC and OpenAlex, the read and its retraction check
+    each pass the ledger under their own destination, and verify, the release read, the claim
+    card and the capsule export all evaluate the same timeline."""
+    import sys
+    from fastapi.testclient import TestClient
+    from arc_science import service, settings
+    from test_settings import AUTH, app, wait_final
+    for key in ('ARC_PROVIDER', 'ARC_MODEL', 'ARC_REVIEWER_MODEL', 'ARC_CLAUDE_CODE_EXE', 'ARC_VISION_PROVIDER',
+                'ARC_MODEL_TOKEN_FILE', 'ARC_BIORENDER_READS'):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv('ARC_PUBLIC_READS', '1')
+    (tmp_path / 'reader.py').write_text(READER, encoding='utf-8')
+    monkeypatch.setattr(service, 'claude_code_command', lambda: [sys.executable, str(tmp_path / 'reader.py')])
+    records = [r for r in EUROPEPMC['resultList']['result'] if r.get('doi') == LECUN]
+    seen = []
+    monkeypatch.setattr(service.httpx, 'AsyncClient', lambda **kwargs: epmc_client(records, seen=seen))
+    snap = settings.snapshot()
+    doc = snap['settings']
+    for role in ('planner', 'reviewer', 'falsifier'):
+        doc['seats'][role].update(provider='anthropic', model='claude-opus-5', auth='cli')
+    doc['providers']['anthropic']['cli'] = 'claude'
+    settings.replace(doc, snap['revision'])
+    with TestClient(app(tmp_path)) as c:
+        preview = c.get('/api/missions/preview', headers=AUTH).json()
+        assert ('public_read', 'https://api.openalex.org') in [(g['destination_kind'], g['destination']) for g in preview['required_grants']]
+        mid = c.post('/api/missions', headers=AUTH, json={'goal': 'Read', 'mode': 'live', 'max_rounds': 2, 'allow_egress': True}).json()['id']
+        started = c.post(f'/api/missions/{mid}/start', headers=AUTH,
+                         json={'approved_route_digest': preview['route_digest'], 'grants': preview['required_grants']})
+        assert started.status_code == 202, started.text
+        state = wait_final(c, mid)['state']
+        assert state['status'] == 'completed', state['stop_reason']
+        [read] = state['observations']
+        assert read['status'] == 'ok' and read['data']['retraction_check']['checked'] == [LECUN]
+        receipts = c.get(f'/api/missions/{mid}/grants', headers=AUTH).json()['receipts']
+        assert {(r['destination'], r['outcome']) for r in receipts if r['destination_kind'] == 'public_read'} == {
+            ('https://www.ebi.ac.uk', 'ok'), ('https://api.openalex.org', 'ok')}
+        assert [u for u in seen if 'api.openalex.org' in u]
+        verified = c.post(f'/api/missions/{mid}/verify', headers=AUTH)
+        assert verified.status_code == 200, verified.text
+        decision = verified.json()['release']
+        rungs = next(ch for ch in decision['checks'] if ch['name'] == 'claim_rungs')
+        assert rungs['state'] == 'satisfied' and decision['status'] == 'eligible_for_human_review', decision['blocking_reasons']
+        assert c.get(f'/api/missions/{mid}/release', headers=AUTH).json()['status'] == 'eligible_for_human_review'
+        [card] = c.get(f'/api/missions/{mid}/claims', headers=AUTH).json()['claims']
+        assert card['ladder']['rung'] >= 1 and 'ledger_receipt' in card['ladder']['met']
+        assert c.get(f'/api/missions/{mid}/capsule', headers=AUTH).status_code == 200

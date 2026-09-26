@@ -3,13 +3,14 @@ been checked, derived from persisted evidence only.
 
     L0 asserted     model text only
     L1 traced       evidence exists and is recorded, every number in the supported scope
-                    binds to it, the run passes a fidelity audit, and no cited work is
-                    retracted (OpenAlex is_retracted, recorded by the public read)
+                    binds to the recorded field its quantity word names, the run passes a
+                    fidelity audit, and no work the claim cites is retracted (OpenAlex
+                    is_retracted, recorded by the public read under its own grant)
     L2 recomputed   the replay verification receipt passed for the current subject
     L3 prespecified the branch's measurable falsifier was committed before the first
-                    observation the claim uses
-    L4 severe       a permutation control on the branch rejects the null at ALPHA, and the
-                    falsifier was evaluated against its threshold and survived
+                    observation of any request the claim uses, on any branch
+    L4 severe       a permutation control rejects the null at ALPHA for fits of its own
+                    degree, and no measurement of the falsifier on the branch refutes it
     L5 replicated   an external result; attaching one is not built yet, so always a need
 
 A rung counts only when every rung below it holds. No condition reads a seat's position:
@@ -36,47 +37,87 @@ RUNGS = {1: ('evidence_present', 'observations_traced', 'numbers_bound', 'fideli
 DEFECTS = frozenset({'observation_unrecorded', 'timeline_not_ok', 'receipt_missing', 'unbound_number',
                      'retracted_source', 'action_mismatch', 'oracle_substitution', 'unregistered_tool',
                      'data_shrinkage', 'budget_shrinkage', 'recomputation_failed'})
-# The significance level a permutation control must reach. With the fixed seed and no
-# tie data the attainable p-value is 1/(N+1), reached only when every shuffle fits worse.
+# The significance level a permutation control must reach. The control records only its
+# best shuffle, so the bound (b+1)/(N+1) is known only for b = 0: 1/(N+1).
 ALPHA = .05
-NUMBER = re.compile(r'(?<![\w.\-])-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?(?![A-Za-z_\d]|\.\d)')
-# Rendered prediction rows are too dense to bind a stated number to anything by chance.
-UNBINDABLE = frozenset({'predictions'})
+# permutation_control refits this degree on every shuffle (tools.py); only fits of the same
+# degree share its statistic.
+CONTROL_DEGREE = 2
+# Every digit run, with any unit or multiplier suffix (12nM, 40x, 4242ms) and a leading dot
+# (.03). A run glued to a letter, dot or hyphen before it is part of a name (IL-6, p53, v1.2).
+NUMBER = re.compile(r'(?<![\w.\-])(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z%]*)(?!\d|\.\d)')
+SCALAR = re.compile(r'-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?')
+# Suffixes that make a digit run a name, not a quantity: 2D, 3D.
+NAME_SUFFIXES = frozenset({'d'})
+# A written number binds only within this relative distance of the recorded value, on top of
+# matching it at the precision written: '1' never binds 1.199 and '0' never binds 0.004.
+RELATIVE = Decimal('.05')
+# DOIs, links and PubMed ids are identifiers, not stated quantities.
+IDENTIFIER = re.compile(r'https?://\S+|\b10\.\d{4,9}/\S+|\bPMID:?\s*\d+|\bPMC\d+', re.I)
+DOI = re.compile(r'\b10\.\d{4,9}/\S+')
+PMID = re.compile(r'\bPMID:?\s*(\d+)', re.I)
+MSE = ('training_mse', 'validation_mse', 'minimum_shuffled_validation_mse', 'mean_shuffled_validation_mse')
+# The recorded fields a quantity word names. The nearest name before a number (the longest at
+# the same place) decides what it must bind to; a p-value is never recorded, so it never binds.
+QUANTITIES = ((re.compile(r'shuffled (?:validation )?(?:error|mse|loss)|null (?:error|mse)', re.I), MSE[2:]),
+              (re.compile(r'(?:validation|held[- ]out|test) (?:error|mse|loss)', re.I), ('validation_mse',)),
+              (re.compile(r'train(?:ing)? (?:error|mse|loss)', re.I), ('training_mse',)),
+              (re.compile(r'\b(?:mse|error|loss)\b', re.I), MSE),
+              (re.compile(r'\bdegree\b', re.I), ('degree',)),
+              (re.compile(r'\b(?:permutations?|shuffles)\b', re.I), ('permutations',)),
+              (re.compile(r'\bp(?:[- ]?value)?\s*[=<>≤]', re.I), ()))
 
 
-# DOIs and links are identifiers, not stated quantities.
-IDENTIFIER = re.compile(r'https?://[^ ]+|10[.][0-9]{4,9}/[^ ]+')
+def _quantity(window):
+    best, names = None, None
+    for pattern, fields in QUANTITIES:
+        for m in pattern.finditer(window):
+            if best is None or (m.end(), -m.start()) > best:
+                best, names = (m.end(), -m.start()), fields
+    return names
+
+
+def _tokens(text):
+    """(number, the recorded fields its nearest quantity word names, or None) per number."""
+    text, last = IDENTIFIER.sub(' ', text), 0
+    for m in NUMBER.finditer(text):
+        if m.group(2).lower() in NAME_SUFFIXES:
+            continue
+        yield m.group(1), _quantity(text[last:m.start()])
+        last = m.end()
 
 
 def numbers(texts) -> list[str]:
-    return [token for text in texts for token in NUMBER.findall(IDENTIFIER.sub(' ', text))]
+    return [token for text in texts for token, _ in _tokens(text)]
 
 
-def _values(value, key=None):
-    if key in UNBINDABLE:
-        return
-    if isinstance(value, bool):
-        return
-    if isinstance(value, (int, float)):
-        yield value
-    elif isinstance(value, str) and NUMBER.fullmatch(value.strip()):
-        yield float(value)
-    elif isinstance(value, dict):
-        for k, v in value.items():
-            yield from _values(v, k)
-    elif isinstance(value, (list, tuple)):
-        for v in value:
-            yield from _values(v)
+def _fields(evidence, names):
+    """The top-level recorded scalars of the evidence, only the named ones when names is
+    given. Arrays and nested records (coefficients, predictions, literature records) never bind."""
+    for o in evidence:
+        for key, value in o.data.items():
+            if names is not None and key not in names or isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                yield value
+            elif isinstance(value, str) and SCALAR.fullmatch(value.strip()):
+                yield float(value)
 
 
 def _binds(token, values) -> bool:
-    """The token equals a recorded value at the precision it was written with."""
+    """The token equals a recorded value at the precision it was written with, and within
+    RELATIVE of it."""
     try:
         written = Decimal(token)
     except InvalidOperation:
         return False
     tolerance = Decimal(5).scaleb(written.as_tuple().exponent - 1)
-    return any(abs(Decimal(repr(float(v))) - written) <= tolerance for v in values)
+    for v in values:
+        recorded = Decimal(repr(float(v)))
+        gap = abs(recorded - written)
+        if gap <= tolerance and gap <= RELATIVE * abs(recorded):
+            return True
+    return False
 
 
 def _row(timeline_rows, action_id):
@@ -145,22 +186,37 @@ def _fidelity(state, evidence):
     return None
 
 
-def _retraction(evidence):
-    """TRACES style: every literature read the claim uses carries a completed OpenAlex
-    check, and no work it returned is retracted."""
-    unchecked = False
+def _doi(text):
+    doi = text.lower().rstrip('.,;:')
+    while doi.endswith(')') and doi.count(')') > doi.count('('):
+        doi = doi[:-1].rstrip('.,;:')
+    return doi
+
+
+def _retraction(scoped, evidence):
+    """TRACES style: every work the claim cites (a DOI or PMID in its supported scope) was
+    checked by a completed OpenAlex lookup of a literature read the claim uses, and none is
+    retracted. A search hit the claim does not cite is not a citation."""
+    cited = {_doi(m.group()) for text in scoped.supported_scope for m in DOI.finditer(text)}
+    pmids = {m.group(1) for text in scoped.supported_scope for m in PMID.finditer(text)}
+    if not cited and not pmids:
+        return None
+    checked, retracted, resolved = set(), set(), set()
     for o in evidence:
         if o.tool != 'literature_search':
             continue
+        for record in o.data.get('records') or ():
+            pmid = str(record.get('pmid') or '') if isinstance(record, dict) else ''
+            if pmid in pmids and isinstance(record.get('doi'), str) and record['doi'].strip():
+                cited.add(record['doi'].strip().lower())
+                resolved.add(pmid)
         check = o.data.get('retraction_check')
-        if not isinstance(check, dict) or check.get('status') != 'ok':
-            unchecked = True
-            continue
-        if check.get('retracted'):
-            return 'retracted_source'
-        if check.get('unchecked'):
-            unchecked = True
-    return 'retraction_unchecked' if unchecked else None
+        if isinstance(check, dict) and check.get('status') == 'ok':
+            checked.update(check.get('checked') or ())
+            retracted.update(check.get('retracted') or ())
+    if cited & retracted:
+        return 'retracted_source'
+    return 'retraction_unchecked' if pmids - resolved or not cited <= checked else None
 
 
 def _recomputed(verification, subject):
@@ -175,7 +231,9 @@ def _recomputed(verification, subject):
 
 def _prespecified(state, branch, evidence):
     """The planner record that introduced the branch carries the same falsifier_test, and
-    its commit event precedes the event of the first observation the claim uses."""
+    its commit event precedes the first observation of any request the claim uses: the same
+    tool and arguments on the same dataset, on any branch. The tools are deterministic, so a
+    rerun under a new id or branch shows nothing the planner had not already seen."""
     if branch.falsifier_test is None:
         return 'falsifier_test_missing'
     introduced = next((r for r in sorted((r for r in state.model_records if r.role == 'planner'), key=lambda r: r.round)
@@ -185,42 +243,54 @@ def _prespecified(state, branch, evidence):
         return 'falsifier_after_observation'
     events = list(state.events)
     committed = next((i for i, e in enumerate(events) if e.kind == 'plan_committed' and e.round == introduced.round), None)
-    used = {o.id + ': ok' for o in evidence}
+    request = lambda o: (o.tool, digest(o.action.arguments), o.dataset_digest)
+    requests = {request(o) for o in evidence}
+    used = {o.id + ': ok' for o in state.observations if request(o) in requests}
     first = next((i for i, e in enumerate(events) if e.kind == 'observation' and e.detail in used), None)
     if committed is None or first is None or committed > first:
         return 'falsifier_after_observation'
     return None
 
 
-def _falsifier(branch, evidence):
+def _falsifier(state, branch, evidence):
+    """Every measurement of the falsifier's metric on the branch or in the claim's evidence
+    counts: a refutation stands however many later observations survive it, and leaving it
+    out of the claim's evidence does not hide it. The fact reports the most adverse value."""
     test = branch.falsifier_test
     if test is None:
         return 'falsifier_not_evaluated', None
-    value = next((o.data[test.metric] for o in reversed(evidence) if o.tool == test.tool
-                  and isinstance(o.data.get(test.metric), (int, float)) and not isinstance(o.data.get(test.metric), bool)), None)
-    if value is None:
+    pool = {o.id: o for o in evidence}
+    pool.update({o.id: o for o in state.observations if o.branch_id == branch.id and o.status == 'ok' and o.claim_eligible})
+    values = [o.data[test.metric] for o in pool.values() if o.tool == test.tool
+              and isinstance(o.data.get(test.metric), (int, float)) and not isinstance(o.data.get(test.metric), bool)]
+    if not values:
         return 'falsifier_not_evaluated', None
+    value = max(values) if test.direction == 'above' else min(values)
     refuted = value > test.threshold if test.direction == 'above' else value < test.threshold
-    fact = {**test.model_dump(mode='json'), 'value': value, 'refuted': refuted}
+    fact = {**test.model_dump(mode='json'), 'value': value, 'refuted': refuted, 'measurements': len(values)}
     return ('falsifier_refuted' if refuted else None), fact
 
 
 def _null(evidence):
-    """NxN style null model: every fit on the branch beats every shuffled-response fit, and
-    enough shuffles ran for that to reach ALPHA."""
+    """NxN style null model: every fit of the control's degree in the claim's evidence beats
+    every shuffled-response fit, and enough shuffles ran for that to reach ALPHA. A fit of
+    another degree has no null here: its statistic was never computed on shuffled data."""
     controls = [o for o in evidence if o.tool == 'permutation_control']
-    fits = [o.data['validation_mse'] for o in evidence if o.tool == 'polynomial_fit']
+    fits = [o for o in evidence if o.tool == 'polynomial_fit']
     if not controls or not fits:
         return 'null_model_missing', None
+    matched = [o.data['validation_mse'] for o in fits if o.data.get('degree') == CONTROL_DEGREE]
+    if not matched:
+        return 'null_model_mismatch', None
     control = controls[-1].data
     permutations = control.get('permutations') or 0
     shuffled = control.get('minimum_shuffled_validation_mse')
     if not permutations or not isinstance(shuffled, (int, float)):
         return 'null_model_missing', None
-    p_value = 1 / (permutations + 1) if max(fits) < shuffled else None
-    fact = {'permutations': permutations, 'alpha': ALPHA, 'p_value': p_value,
-            'worst_fit_validation_mse': max(fits), 'minimum_shuffled_validation_mse': shuffled}
-    return (None if p_value is not None and p_value <= ALPHA else 'null_not_rejected'), fact
+    bound = 1 / (permutations + 1) if max(matched) < shuffled else None
+    fact = {'permutations': permutations, 'alpha': ALPHA, 'degree': CONTROL_DEGREE, 'statistic': 'validation_mse',
+            'permutation_bound': bound, 'worst_fit_validation_mse': max(matched), 'minimum_shuffled_validation_mse': shuffled}
+    return (None if bound is not None and bound <= ALPHA else 'null_not_rejected'), fact
 
 
 def is_numeric(state: MissionState, scoped: ScopedBranch) -> bool:
@@ -238,15 +308,15 @@ def claim_ladder(state: MissionState, scoped: ScopedBranch, *, timeline_rows=Non
     used = set(scoped.evidence_ids)
     evidence = [o for o in state.observations if o.id in used and o.status == 'ok' and o.claim_eligible]
     traced, extra = _traced(state, evidence, timeline_rows)
-    values = [v for o in evidence for v in _values(o.data)]
-    unbound = any(not _binds(token, values) for token in numbers(scoped.supported_scope))
-    survived, falsifier = _falsifier(branch, evidence)
+    unbound = any(not _binds(token, list(_fields(evidence, names)))
+                  for text in scoped.supported_scope for token, names in _tokens(text))
+    survived, falsifier = _falsifier(state, branch, evidence)
     rejected, null = _null(evidence)
     outcomes = {'evidence_present': None if evidence else 'no_evidence',
                 'observations_traced': traced,
                 'numbers_bound': 'unbound_number' if unbound else None,
                 'fidelity_audit': _fidelity(state, evidence),
-                'no_retracted_source': _retraction(evidence),
+                'no_retracted_source': _retraction(scoped, evidence),
                 'recomputed': _recomputed(verification, subject),
                 'falsifier_prespecified': _prespecified(state, branch, evidence),
                 'null_rejected': rejected,

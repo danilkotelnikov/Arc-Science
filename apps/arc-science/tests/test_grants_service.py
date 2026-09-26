@@ -323,9 +323,10 @@ def test_the_preview_lists_public_reads_and_biorender_when_enabled_with_one_gran
     assert preview['route_digest'] == service.seat_plan(route)[0] and preview['settings_revision'] == 'r' * 64
     assert [(s['destination'], s['model']) for s in preview['seats']] == [('https://api.openai.com', 'a'), ('https://api.openai.com', 'b'), ('https://api.openai.com', 'a')]
     assert [(c['kind'], c['destination']) for c in preview['connectors']] == [('mcp', 'https://tools.example/mcp'), ('acp', 'agent')]
-    assert [p['destination'] for p in preview['public_reads']] == ['https://www.ebi.ac.uk', 'https://data.rcsb.org']
+    assert [p['destination'] for p in preview['public_reads']] == ['https://www.ebi.ac.uk', 'https://data.rcsb.org', 'https://api.openalex.org']
     assert preview['biorender']['destination'] == 'https://mcp.services.biorender.com/mcp'
     assert [(g['destination_kind'], g['destination']) for g in preview['required_grants']] == [
         ('seat', 'https://api.openai.com'), ('mcp', 'https://tools.example/mcp'), ('acp', 'agent'),
-        ('public_read', 'https://www.ebi.ac.uk'), ('public_read', 'https://data.rcsb.org'), ('biorender', 'https://mcp.services.biorender.com/mcp')]
+        ('public_read', 'https://www.ebi.ac.uk'), ('public_read', 'https://data.rcsb.org'), ('public_read', 'https://api.openalex.org'),
+        ('biorender', 'https://mcp.services.biorender.com/mcp')]
     assert all(g['scope'] == 'mission' and g['data_category'] and g['purpose'] for g in preview['required_grants'])

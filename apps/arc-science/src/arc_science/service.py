@@ -265,6 +265,8 @@ CONNECTOR_CATEGORY='tool arguments the planner chooses';PUBLIC_READ_CATEGORY='qu
 BIORENDER_CATEGORY='template search terms the planner chooses'
 # The origin each shipped public-read tool reaches (public_reads.py fixes the URLs).
 PUBLIC_READ_ORIGINS={'literature_search':'https://www.ebi.ac.uk','pdb_metadata':'https://data.rcsb.org'}
+# The retraction check of a literature search is its own destination under its own grant.
+OPENALEX_ORIGIN='https://api.openalex.org';RETRACTION_CATEGORY='DOIs of the works a literature search returned'
 
 
 def seat_destination(cfg):
@@ -293,6 +295,7 @@ def route_preview(route,settings_revision=None):
                   'data_category':CONNECTOR_CATEGORY,'purpose':'consultation'} for a in route['acp_agents']]
     public_reads=[{'destination':o,'destination_kind':'public_read','data_category':PUBLIC_READ_CATEGORY,'purpose':'public metadata read'}
                   for o in dict.fromkeys(PUBLIC_READ_ORIGINS.values())] if os.environ.get('ARC_PUBLIC_READS')=='1' else []
+    if public_reads:public_reads.append({'destination':OPENALEX_ORIGIN,'destination_kind':'public_read','data_category':RETRACTION_CATEGORY,'purpose':'retraction check'})
     biorender=None
     if os.environ.get('ARC_BIORENDER_READS')=='1':
         from .biorender import BIORENDER_ENDPOINT
@@ -952,7 +955,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         # never a claim of validity, only of eligibility for human review. The validated
         # state is returned beside the row so one request validates it once.
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
-        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(row['id']))
+        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(row['id']),timeline_rows=timeline.rows(row['id']))
         obligations={change.id:list(obligation_states(change,decision)) for change in state.changes}
         return {**row,'release':decision.model_dump(mode='json'),'change_obligations':obligations},state
 
@@ -1063,7 +1066,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                     agent=GuardedSeatAgent(agent,guard_seat)
                     if os.environ.get('ARC_PUBLIC_READS')=='1':
                         from .exploration.public_reads import public_tools
-                        tools=combine_trusted_tools(tools,public_tools(client))
+                        retraction=lambda call:guard('public_read',OPENALEX_ORIGIN,RETRACTION_CATEGORY,call,request_digest=lambda dois:digest(dois))
+                        tools=combine_trusted_tools(tools,public_tools(client,openalex=retraction))
                         for name,origin_ in PUBLIC_READ_ORIGINS.items():
                             if name in tools:tools[name]=guard_tool(tools[name],origin_,'public_read',PUBLIC_READ_CATEGORY)
                     if os.environ.get('ARC_BIORENDER_READS')=='1':
@@ -1250,7 +1254,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         chain=repository.verify(mid)
         if not chain:raise HTTPException(409,'Mission integrity check failed')
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
-        try:release_ledger.assert_exportable(request,state,event_chain_ok=chain)
+        try:release_ledger.assert_exportable(request,state,event_chain_ok=chain,timeline_rows=timeline.rows(mid))
         except release_ledger.ReleaseBlocked as blocked:
             raise HTTPException(409,'Release blocked; verify the mission and resolve: '+', '.join(blocked.reasons)) from None
         return Response(item.bytes,media_type=item.media_type,
@@ -1263,7 +1267,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if not chain:raise HTTPException(409,'Mission integrity check failed')
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
         # Every release export consults the ledger: a blocked mission is not exported.
-        try:decision=release_ledger.assert_exportable(request,state,event_chain_ok=chain)
+        rows=timeline.rows(mid)
+        try:decision=release_ledger.assert_exportable(request,state,event_chain_ok=chain,timeline_rows=rows)
         except release_ledger.ReleaseBlocked as blocked:
             raise HTTPException(409,'Release blocked; verify the mission and resolve: '+', '.join(blocked.reasons)) from None
         # Capsule format 3: the decision, the derived graph and claims, and the operational
@@ -1272,7 +1277,6 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         release=decision.model_dump(mode='json')
         try:graph=evidence_graph(state)
         except ValueError:raise HTTPException(409,'Evidence graph is invalid; verify the mission') from None
-        rows=timeline.rows(mid)
         receipts=ledger.receipts(mission_id=mid,limit=1000)
         grants={'grants':ledger.list('mission',mid),'receipts':receipts,'receipts_truncated':len(receipts)>=1000}
         data=export_capsule(request,state,release=release,claims=build_claims(state,rows,graph,release),timeline=rows,grants=grants)
@@ -1297,7 +1301,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         report=await asyncio.to_thread(verify_capsule,export_capsule(request,state))
         # Persist what was observed and the decision it yields; a later change stales it.
         receipt=release_ledger.receipt_from_report(report,state)
-        decision=release_ledger.evaluate_release(request,state,receipt,event_chain_ok=chain)
+        decision=release_ledger.evaluate_release(request,state,receipt,event_chain_ok=chain,timeline_rows=timeline.rows(mid))
         try:repository.save(mid,state.model_copy(update={'release':decision}),expected_revision=row['revision'])
         except RevisionConflict:raise HTTPException(409,'Mission changed during verification; retry') from None
         return {**report,'event_chain':True,'release':decision.model_dump(mode='json')}
