@@ -237,7 +237,9 @@ def test_a_retracted_citation_blocks_l1():
     assert 'retraction_unchecked' in ladder_of(down, rows=[read_row()])['next']['needs']
     # No ledger receipt on the external read: not traced.
     assert 'receipt_missing' in ladder_of(hits, rows=[read_row(None)])['next']['needs']
-    assert 'receipt_unchecked' in ladder_of(hits, rows=[])['next']['needs']
+    # A timeline that records the fit but not the read cannot vouch for the read.
+    fit_row = {'operation': 'tool', 'action_id': 'fit', 'round': 0, 'outcome_source': 'recorded', 'outcome': 'ok', 'receipt_id': None}
+    assert 'receipt_unchecked' in ladder_of(hits, rows=[fit_row])['next']['needs']
 
 
 def test_a_pre_retraction_check_read_is_graded_by_the_works_its_claim_cites():
@@ -518,3 +520,130 @@ def test_a_granted_literature_read_verifies_and_exports_through_the_service(tmp_
         [card] = c.get(f'/api/missions/{mid}/claims', headers=AUTH).json()['claims']
         assert card['ladder']['rung'] >= 1 and 'ledger_receipt' in card['ladder']['met']
         assert c.get(f'/api/missions/{mid}/capsule', headers=AUTH).status_code == 200
+
+
+# Carried-forward QA findings of B9 (EVIDENCE-MAJ).
+
+def test_a_number_too_large_for_decimal_arithmetic_is_unbound_and_never_raises():
+    for said in ('Validation error 1e1000000.', 'Validation error 1e-1000000.'):
+        request, state = run(Scripted([FIT], say=lambda o, s=said: s))
+        ladder = ladder_of(state, verification=passing(state))
+        assert ladder['rung'] == 0 and ladder['next']['needs'] == ['unbound_number'], said
+        check = rung_check(release.evaluate_release(request, state, passing(state), event_chain_ok=True))
+        assert check.state == 'failed' and 'unbound_number' in check.reason
+
+
+def test_both_ends_of_a_hyphenated_range_must_bind():
+    assert numbers(['validation error 0.01-0.5 across degrees 2-9']) == ['0.01', '0.5', '2', '9']
+    # A digit run after a hyphen glued to a letter is still part of a name.
+    assert numbers(['IL-6 and COVID-19 in a degree-2 fit']) == []
+    _, state = run(Scripted([FIT], say=lambda o: f"Validation error {o['data']['validation_mse']:.2g}-0.9 on the split."))
+    assert ladder_of(state)['next']['needs'] == ['unbound_number']
+    # The upper end names the same quantity as the lower end, so a true range binds.
+    _, state = run(Scripted([FIT], say=lambda o: f"Validation error {o['data']['validation_mse']:.2g}-{o['data']['validation_mse']:.3g} at degree 2."))
+    assert ladder_of(state)['rung'] == 1
+
+
+def test_a_quantity_named_after_the_number_or_not_recorded_never_binds_elsewhere():
+    """The recorded fit: validation_mse 0.00404, training_mse 0.00195, degree 2, n_validation 16."""
+    misreported = [lambda o: 'The fit reached 2 in validation error.',
+                   lambda o: f"The quadratic reached {o['data']['training_mse']:.3g} validation error.",
+                   lambda o: f"R-squared of {o['data']['validation_mse']:.3g} on the split.",
+                   lambda o: f"Accuracy {o['data']['n_validation']} on the split.",
+                   lambda o: '2 is the validation error.']
+    for say in misreported:
+        _, state = run(Scripted([FIT], say=say))
+        ladder = ladder_of(state, verification=passing(state))
+        assert ladder['rung'] == 0 and ladder['next']['needs'] == ['unbound_number'], state.claim_scope.branches[0].supported_scope
+    # A name after the number binds it, and a plural names the same field.
+    _, fine = run(Scripted([FIT], say=lambda o: f"It reached {o['data']['validation_mse']:.2g} validation error at 2 degrees."))
+    assert ladder_of(fine)['rung'] == 1
+
+
+def slow_openalex_client(records):
+    async def handle(request):
+        if request.url.host == 'www.ebi.ac.uk':
+            return httpx.Response(200, json={**EUROPEPMC, 'resultList': {'result': records}})
+        await asyncio.sleep(3600)
+    return ASYNC_CLIENT(transport=httpx.MockTransport(handle))
+
+
+def test_a_slow_openalex_lookup_keeps_the_search_inside_the_tool_deadline_and_leaves_a_receipt(monkeypatch):
+    from arc_science.exploration import public_reads
+    monkeypatch.setattr(public_reads, 'OPENALEX_SECONDS', .2, raising=False)
+    receipts = []
+
+    def guard(call):
+        """The service guard: a call that raises leaves a failed receipt, one that returns an ok one."""
+        async def run_(dois):
+            try:
+                result = await call(dois)
+            except Exception:
+                receipts.append('failed')
+                raise
+            receipts.append('ok')
+            return result
+        return run_
+    records = EUROPEPMC['resultList']['result']
+    search = public_tools(slow_openalex_client(records), openalex=guard)['literature_search'][1]
+    data = asyncio.run(asyncio.wait_for(search({'query': 'x'}), 2))
+    assert len(data['records']) == len(records) and receipts == ['failed']
+    assert data['retraction_check']['status'] == 'error' and data['retraction_check']['retracted'] == []
+    # engine.py gives an external tool 30 s in all; both reads together stay inside it.
+    monkeypatch.undo()
+    assert public_reads.EUROPE_PMC_SECONDS + public_reads.OPENALEX_SECONDS < 30
+
+
+def test_a_timeline_without_tool_rows_predates_the_ledger_and_does_not_block_a_read():
+    """Public reads ran from 2026-09-08; the timeline and its receipts came on 2026-09-21. A
+    mission with no tool row at or before a read's round cannot have a receipt for it."""
+    records = [r for r in EUROPEPMC['resultList']['result'] if r.get('doi') == LECUN]
+    request, state = run(Scripted([READ], falsifier_test=None), extra_tools=reads(records), egress=True)
+    ladder = ladder_of(state, rows=[])
+    assert ladder['rung'] == 1 and 'receipt_predates_timeline' in ladder['met'] and 'ledger_receipt' not in ladder['met']
+    assert rung_check(release.evaluate_release(request, state, None, event_chain_ok=True, timeline_rows=[])).state == 'satisfied'
+    # A timeline that records the mission's tools but not this read is not legacy.
+    other = {'operation': 'tool', 'action_id': 'other', 'round': 0, 'outcome_source': 'recorded', 'outcome': 'ok', 'receipt_id': None}
+    assert ladder_of(state, rows=[other])['next']['needs'] == ['receipt_unchecked']
+
+
+def test_any_retracted_record_of_a_doi_wins_over_a_duplicate_that_is_not():
+    records = EUROPEPMC['resultList']['result']
+    duplicated = {'results': [{'doi': 'https://doi.org/' + WAKEFIELD.lower(), 'is_retracted': True},
+                              {'doi': 'https://doi.org/' + WAKEFIELD.lower(), 'is_retracted': False},
+                              {'doi': 'https://doi.org/' + LECUN, 'is_retracted': False}]}
+    data = asyncio.run(reads(records, openalex=duplicated)['literature_search'][1]({'query': 'x'}))
+    assert data['retraction_check']['retracted'] == [WAKEFIELD.lower()]
+    _, cited = run(Scripted([FIT, READ], say=lambda o: f'Consistent with {WAKEFIELD}.'), extra_tools=reads(records, openalex=duplicated), egress=True)
+    assert 'retracted_source' in ladder_of(cited, rows=[read_row()])['next']['needs']
+
+
+def test_a_doi_cited_in_brackets_or_quotes_matches_the_checked_doi():
+    records = EUROPEPMC['resultList']['result']
+    for cite in (f'[{WAKEFIELD}]', f'"{WAKEFIELD}"', f'({WAKEFIELD})', f'“{WAKEFIELD}”'):
+        _, cited = run(Scripted([FIT, READ], say=lambda o, c=cite: f'Consistent with the cited work {c}.'), extra_tools=reads(records), egress=True)
+        ladder = ladder_of(cited, rows=[read_row()], verification=passing(cited))
+        assert 'retracted_source' in ladder['next']['needs'] and ladder['verdict'] == 'blocked', cite
+    _, sound = run(Scripted([FIT, READ], say=lambda o: f'Consistent with [{LECUN}].'), extra_tools=reads(records), egress=True)
+    assert ladder_of(sound, rows=[read_row()])['rung'] == 1
+
+
+def test_the_null_is_rejected_only_when_no_control_on_the_branch_beats_the_fit():
+    big, small = {**NULL, 'id': 'big', 'arguments': {'permutations': 128}}, {**NULL, 'id': 'small', 'arguments': {'permutations': 19}}
+    _, state = run(Scripted([FIT, big, small]))
+    fit = state.observations[0].data['validation_mse']
+    beaten = tuple(o.model_copy(update={'data': {**o.data, 'minimum_shuffled_validation_mse': fit / 2}}) if o.id == 'big' else o
+                   for o in state.observations)
+    adverse = state.model_copy(update={'observations': beaten})
+    ladder = ladder_of(adverse, verification=passing(adverse))
+    assert 'null_not_rejected' in ladder['next']['needs'] and ladder['verdict'] != 'accepted'
+    assert ladder['facts']['null_model']['minimum_shuffled_validation_mse'] == fit / 2
+    # A control too small to reach alpha does not undo one that rejected the null.
+    _, pair = run(Scripted([FIT, NULL, {**NULL, 'id': 'few', 'arguments': {'permutations': 8}}]))
+    ladder = ladder_of(pair, verification=passing(pair))
+    assert ladder['rung'] == 4 and ladder['facts']['null_model']['permutation_bound'] == pytest.approx(1 / 33)
+    # A control on the branch that the claim leaves out of its evidence still counts.
+    [scoped] = adverse.claim_scope.branches
+    hidden = scoped.model_copy(update={'evidence_ids': tuple(i for i in scoped.evidence_ids if i != 'big')})
+    ladder = claim_ladder(adverse, hidden, timeline_rows=[], verification=passing(adverse), subject=release.subject_digest(adverse))
+    assert 'null_not_rejected' in ladder['next']['needs']
