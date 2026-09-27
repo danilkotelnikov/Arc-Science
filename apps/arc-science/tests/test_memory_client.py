@@ -9,13 +9,37 @@ import pytest
 from arc_science.memory import MemoryClient
 
 
+# Read once at import: service tests unset ARC_MEMORY_WORKER to test an unconfigured app.
+CONFIGURED_WORKER = os.environ.get("ARC_MEMORY_WORKER")
+WORKER_CRATE = Path(__file__).resolve().parents[3] / "native" / "arc-memory"
+
+
 def worker_binary() -> Path:
-    root = Path(__file__).resolve().parents[3]
+    """The service's own locator (ARC_MEMORY_WORKER) first, then the newest cargo build.
+
+    Setting ARC_MEMORY_WORKER declares that the worker-backed tests must run, so a
+    path that is not a file fails the test instead of skipping or falling back. Under
+    CI the variable is required, so a gate that forgot the worker goes red, not green.
+    A cargo build older than the crate sources fails too: a stale worker answers with
+    old behaviour, and its results would be read as evidence about the current code.
+    """
+    if CONFIGURED_WORKER:
+        if not Path(CONFIGURED_WORKER).is_file():
+            pytest.fail(f"ARC_MEMORY_WORKER is set but is not a file: {CONFIGURED_WORKER}")
+        return Path(CONFIGURED_WORKER)
+    if os.environ.get("CI"):
+        pytest.fail("CI must build arc-memory-worker and set ARC_MEMORY_WORKER; these tests cannot skip")
+    targets = [Path(os.environ["CARGO_TARGET_DIR"])] if os.environ.get("CARGO_TARGET_DIR") else []
+    targets.append(WORKER_CRATE / "target")
     name = "arc-memory-worker.exe" if os.name == "nt" else "arc-memory-worker"
-    for profile in ("release", "debug"):
-        candidate = root / "native" / "arc-memory" / "target" / profile / name
-        if candidate.exists():
-            return candidate
+    built = [t / p / name for t in targets for p in ("release", "debug") if (t / p / name).is_file()]
+    if built:
+        newest = max(built, key=lambda b: b.stat().st_mtime)
+        sources = [WORKER_CRATE / "Cargo.toml", WORKER_CRATE / "Cargo.lock", *(WORKER_CRATE / "src").rglob("*.rs")]
+        edited = max((s.stat().st_mtime for s in sources if s.is_file()), default=0.0)
+        if newest.stat().st_mtime < edited:
+            pytest.fail(f"{newest} is older than the arc-memory sources; rebuild it or set ARC_MEMORY_WORKER")
+        return newest
     pytest.skip("arc-memory-worker binary not built")
 
 
@@ -87,6 +111,19 @@ def test_memory_worker_launch_gets_scrubbed_environment(tmp_path, monkeypatch):
     assert mem.is_alive()
 
 
+def test_client_stats_report_storage_from_the_worker(tmp_path):
+    with MemoryClient(worker_binary(), tmp_path / "memory.db") as mem:
+        mem.append(sample("hydrogen bond note"))
+        hidden = mem.append(sample("salt bridge"))
+        mem.disable(hidden)
+        stats = mem.stats()
+    assert stats["counts"] == {"sessions": 1, "records": 2, "visible": 1, "hidden": 1, "blobs": 2, "embeddings": 0}
+    assert stats["bytes"]["blobs_raw"] == len("hydrogen bond note") + len("salt bridge")
+    assert stats["bytes"]["logical"] == stats["bytes"]["blobs_raw"]
+    assert stats["index"]["in_step"] is True
+    assert stats["retrieval_modes"] == ["lexical"]
+
+
 def test_client_surfaces_worker_errors(tmp_path):
     from arc_science.memory import MemoryError as MemErr
 
@@ -156,3 +193,85 @@ def test_rejects_oversized_response_before_reading_payload():
     with pytest.raises(MemErr, match='frame'):
         mem.health()
     assert mem._proc.killed, 'invalid framing must retire a desynchronized worker'
+
+
+def test_configured_worker_that_is_missing_fails_instead_of_skipping(tmp_path, monkeypatch):
+    # ARC_MEMORY_WORKER declares that the worker-backed tests must run; a wrong path is
+    # a broken run, not a quiet skip or a silent fall-back to another build.
+    import test_memory_client as module
+
+    monkeypatch.setattr(module, "CONFIGURED_WORKER", str(tmp_path / "missing-worker.exe"))
+    with pytest.raises(pytest.fail.Exception, match="ARC_MEMORY_WORKER"):
+        module.worker_binary()
+
+
+def test_ci_without_a_configured_worker_fails_instead_of_skipping(monkeypatch):
+    # CI builds the worker before pytest and exports ARC_MEMORY_WORKER; if it does
+    # not, the gate must go red rather than pass with the worker-backed tests skipped.
+    import test_memory_client as module
+
+    monkeypatch.setattr(module, "CONFIGURED_WORKER", None)
+    monkeypatch.setenv("CI", "true")
+    with pytest.raises(pytest.fail.Exception, match="ARC_MEMORY_WORKER"):
+        module.worker_binary()
+
+
+def _fake_crate(tmp_path, binaries):
+    crate = tmp_path / "arc-memory"
+    (crate / "src").mkdir(parents=True)
+    (crate / "src" / "engine.rs").write_text("// source")
+    os.utime(crate / "src" / "engine.rs", (2_000, 2_000))
+    name = "arc-memory-worker.exe" if os.name == "nt" else "arc-memory-worker"
+    for profile, mtime in binaries.items():
+        binary = crate / "target" / profile / name
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(b"")
+        os.utime(binary, (mtime, mtime))
+    return crate, name
+
+
+def test_worker_binary_refuses_a_build_older_than_its_sources(tmp_path, monkeypatch):
+    # A stale worker answers with old behaviour, so its results are not evidence.
+    import sys
+    module = sys.modules[__name__]
+    crate, _ = _fake_crate(tmp_path, {"release": 1_000})
+    monkeypatch.setattr(module, "CONFIGURED_WORKER", None)
+    monkeypatch.setattr(module, "WORKER_CRATE", crate)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
+    with pytest.raises(pytest.fail.Exception, match="older than the arc-memory sources"):
+        module.worker_binary()
+
+
+def test_worker_binary_takes_the_newest_build(tmp_path, monkeypatch):
+    import sys
+    module = sys.modules[__name__]
+    crate, name = _fake_crate(tmp_path, {"release": 1_000, "debug": 3_000})
+    monkeypatch.setattr(module, "CONFIGURED_WORKER", None)
+    monkeypatch.setattr(module, "WORKER_CRATE", crate)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
+    assert module.worker_binary() == crate / "target" / "debug" / name
+
+
+def test_client_errors_carry_the_worker_kind(tmp_path):
+    import sqlite3
+    from arc_science.memory.client import MemoryError as MemErr
+
+    with MemoryClient(worker_binary(), tmp_path / "memory.db") as mem:
+        with pytest.raises(MemErr) as missing:
+            mem.inspect("does-not-exist")
+        assert missing.value.kind == "not_found"
+
+        mem.append(sample("hydrogen bond note"))
+        with sqlite3.connect(tmp_path / "memory.db") as conn:
+            conn.execute("UPDATE blobs SET original_size = original_size - 1")
+        with pytest.raises(MemErr) as corrupt:
+            mem.session_fetch("p", "s")
+        assert corrupt.value.kind == "corrupt"
+        with sqlite3.connect(tmp_path / "memory.db") as conn:
+            conn.execute("UPDATE blobs SET data = X'00010203'")
+        with pytest.raises(MemErr) as undecodable:
+            mem.session_fetch("p", "s")
+        assert undecodable.value.kind == "corrupt"
+    assert MemErr("legacy worker message").kind is None

@@ -127,6 +127,8 @@ pub struct SessionSummary {
     pub last_seq: i64,
     pub min_epoch: i64,
     pub max_epoch: i64,
+    /// Latest `wall_time_ms` among the session's visible records.
+    pub last_capture_ms: i64,
 }
 
 /// A record read back from the store, with its original text decompressed.

@@ -33,12 +33,15 @@ jobs:
       # native/arc-science/target/release/arc-science-native, so the real-supervisor case and settings.e2e.js (:25 skips on 503) run instead of skipping.
       - run: cargo build --release --locked --manifest-path native/arc-science/Cargo.toml
         working-directory: ${{ github.workspace }}
-      - run: python -m pytest -q -rs
-      # End-to-end: the real service on an isolated data directory driven by Playwright.
-      # The memory worker is built with the runner's preinstalled Rust so the recall
-      # spec runs for real instead of skipping.
+      # The memory worker is built with the runner's preinstalled Rust before pytest:
+      # the worker-backed memory tests require ARC_MEMORY_WORKER under CI and fail
+      # rather than skip, and the Playwright recall spec below runs for real.
       - run: cargo build --release --locked --manifest-path native/arc-memory/Cargo.toml
         working-directory: ${{ github.workspace }}
+      - run: python -m pytest -q -rs
+        env:
+          ARC_MEMORY_WORKER: ${{ github.workspace }}/native/arc-memory/target/release/arc-memory-worker
+      # End-to-end: the real service on an isolated data directory driven by Playwright.
       - run: npx playwright install --with-deps chromium
         working-directory: apps/arc-science/web
       - run: npm run e2e:only

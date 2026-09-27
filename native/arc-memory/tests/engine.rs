@@ -419,6 +419,23 @@ fn embed_pending_is_idempotent() {
     );
 }
 
+/// A blob whose bytes no longer decode is corrupt on the embed path too.
+#[test]
+fn embed_pending_reports_undecodable_blob_as_corrupt() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("memory.db");
+    let engine = Engine::open(&path).unwrap();
+    engine.append(&sample("anything")).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("UPDATE blobs SET data = X'00010203'", [])
+        .unwrap();
+    assert!(matches!(
+        engine.embed_pending(&HashingEmbedder { dim: 32 }),
+        Err(arc_memory::Error::Corrupt(_))
+    ));
+}
+
 #[test]
 fn malformed_vectors_are_rejected() {
     let dir = tempdir().unwrap();
@@ -872,4 +889,119 @@ fn empty_scope_values_abstain() {
             .len(),
         1
     );
+}
+
+/// Storage facts come from the database itself: after appends (one text shared by
+/// two sessions) and a disable, every byte and count is the arithmetic of the rows.
+#[test]
+fn stats_count_bytes_and_records_after_appends_and_a_disable() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("memory.db");
+    let engine = Engine::open(&path).unwrap();
+    let shared = "hydrogen bond between Asp32 and the ligand. ".repeat(40);
+    let other = "salt bridge near residue 118";
+
+    let mut first = sample(&shared);
+    first.wall_time_ms = 10;
+    engine.append(&first).unwrap();
+    let mut second = sample(&shared); // same text, another session: one blob
+    second.session_id = "sess-2".into();
+    second.wall_time_ms = 30;
+    engine.append(&second).unwrap();
+    let mut third = sample(other);
+    third.wall_time_ms = 20;
+    let hidden = engine.append(&third).unwrap();
+    engine.disable(&hidden).unwrap();
+
+    let stats = engine.stats().unwrap();
+    let raw = (shared.len() + other.len()) as i64;
+    let stored = (zstd::encode_all(shared.as_bytes(), 19).unwrap().len()
+        + zstd::encode_all(other.as_bytes(), 19).unwrap().len()) as i64;
+    assert_eq!(stats["bytes"]["blobs_raw"], raw);
+    assert_eq!(stats["bytes"]["blobs_stored"], stored);
+    assert!(stored < raw, "repetitive text compresses");
+    assert_eq!(
+        stats["bytes"]["logical"],
+        (2 * shared.len() + other.len()) as i64,
+        "logical bytes count every record's text, deduplicated or not"
+    );
+    assert_eq!(stats["counts"]["records"], 3);
+    assert_eq!(stats["counts"]["visible"], 2);
+    assert_eq!(stats["counts"]["hidden"], 1);
+    assert_eq!(stats["counts"]["sessions"], 2);
+    assert_eq!(stats["counts"]["blobs"], 2);
+    assert_eq!(stats["counts"]["embeddings"], 0);
+    assert_eq!(stats["index"]["rows"], 2);
+    assert_eq!(stats["index"]["in_step"], true);
+    assert_eq!(stats["index"]["kind"], "fts5-bm25");
+    assert_eq!(stats["index"]["tokenizer"], "unicode61");
+    assert_eq!(stats["engine"], "sqlite-wal");
+    assert_eq!(stats["sqlite_version"], arc_memory::sqlite_version());
+    assert_eq!(
+        stats["codec"],
+        serde_json::json!({"name": "zstd", "level": 19, "dictionary": false})
+    );
+    assert_eq!(stats["last_capture_ms"], 30);
+
+    // bytes.db is the memory.db file as the operator sees it on disk; pages that
+    // live only in the un-checkpointed WAL are counted once, under bytes.wal.
+    let db = std::fs::metadata(&path).unwrap().len();
+    let wal = std::fs::metadata(dir.path().join("memory.db-wal"))
+        .unwrap()
+        .len();
+    assert!(wal > 0, "the open WAL holds the appends");
+    assert_eq!(stats["bytes"]["db"], db);
+    assert_eq!(stats["bytes"]["wal"], wal);
+    let (pages, page_size): (i64, i64) = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row(
+            "SELECT page_count, page_size FROM pragma_page_count, pragma_page_size",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert!(
+        (pages * page_size) as u64 > db,
+        "the logical page total includes WAL-only pages, so it is not the file size"
+    );
+}
+
+/// `in_step` compares the lexical index with the visible records; an index row
+/// lost behind the engine's back is reported, and an empty store is in step.
+#[test]
+fn stats_report_an_index_out_of_step_with_the_visible_records() {
+    let dir = tempdir().unwrap();
+    let empty = Engine::open(dir.path().join("empty.db"))
+        .unwrap()
+        .stats()
+        .unwrap();
+    assert_eq!(empty["counts"]["records"], 0);
+    assert_eq!(empty["bytes"]["logical"], 0);
+    assert_eq!(empty["bytes"]["blobs_raw"], 0);
+    assert_eq!(empty["index"]["in_step"], true);
+    assert_eq!(empty["last_capture_ms"], serde_json::Value::Null);
+
+    let path = dir.path().join("memory.db");
+    let engine = Engine::open(&path).unwrap();
+    let id = engine.append(&sample("indexed note")).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("DELETE FROM records_fts WHERE record_id = ?1", [&id])
+        .unwrap();
+    let stats = engine.stats().unwrap();
+    assert_eq!(stats["index"]["rows"], 0);
+    assert_eq!(stats["counts"]["visible"], 1);
+    assert_eq!(stats["index"]["in_step"], false);
+}
+
+#[test]
+fn session_list_reports_the_last_capture_time() {
+    let dir = tempdir().unwrap();
+    let engine = Engine::open(dir.path().join("memory.db")).unwrap();
+    for (text, at) in [("a", 5), ("b", 9), ("c", 7)] {
+        let mut record = sample(text);
+        record.wall_time_ms = at;
+        engine.append(&record).unwrap();
+    }
+    assert_eq!(engine.session_list("proj-1").unwrap()[0].last_capture_ms, 9);
 }
