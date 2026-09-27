@@ -53,7 +53,7 @@ class ContextItem(Versioned):
 
 
 class MissionRequest(Versioned):
-    LATER_FIELDS = ('max_tokens', 'max_cost_usd', 'max_minutes', 'crew', 'context_items', 'gate', 'continues')
+    LATER_FIELDS = ('max_tokens', 'max_cost_usd', 'max_minutes', 'crew', 'context_items', 'gate', 'continues', 'ladder_policy')
     goal: str = Field(min_length=3, max_length=10000)
     mode: Literal['demo', 'live'] = 'demo'
     seed: int = Field(default=17, ge=0, le=2147483647)
@@ -76,6 +76,10 @@ class MissionRequest(Versioned):
     gate: Literal['auto', 'each_round'] = 'auto'
     # The finished mission this one continues (a fork); its supported scope is attached as context.
     continues: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{1,80}$')
+    # How release holds claims to the ladder (D019). 'references': claims write numbers and sources
+    # as references and are held to their minimum rung; 'legacy': a mission stored before that keeps
+    # its export eligibility and shows its ladder only. The service creates new missions as 'references'.
+    ladder_policy: Literal['legacy', 'references'] = 'legacy'
 
     @model_validator(mode='after')
     def egress_consent(self):
@@ -388,7 +392,7 @@ class ScopedBranch(Record):
 
 
 class ClaimScope(Record):
-    derivation_version: Literal['arc-claim-scope-1', 'arc-claim-scope-2', 'arc-claim-scope-3'] = 'arc-claim-scope-3'
+    derivation_version: Literal['arc-claim-scope-1', 'arc-claim-scope-2', 'arc-claim-scope-3', 'arc-claim-scope-4'] = 'arc-claim-scope-4'
     basis_round: int = Field(ge=0)
     branches: tuple[ScopedBranch, ...] = Field(default=(), max_length=64)
     counts: dict[str, int]

@@ -12,7 +12,7 @@ from copy import deepcopy
 from .catalog import BIORENDER_CATALOG, NUMERICAL_CATALOG, PUBLIC_CATALOG
 from .claim_scope import DERIVATION_VERSION, latest_assessments
 from .models import MissionState
-from .validation import claim_ladder
+from .validation import claim_ladder, members, references, render
 
 # Fields of Observation.data per trusted tool (tools.py).
 NUMERIC_FIELDS = {'polynomial_fit': ('degree', 'training_mse', 'validation_mse', 'n_train', 'n_validation', 'split'),
@@ -23,7 +23,9 @@ UNCERTAINTY_NOTE = ('MSE values are errors on the exploratory validation split o
                     'no confidence interval or standard error is computed in this build.')
 INDEPENDENCE_REASONS = ('shared_identity', 'unverified_identity', 'missing_independent_role')
 NOTE = ('Claim cards are derived on read from the persisted claim scope, the recorded reconciliation, '
-        'the evidence graph and the operational timeline; nothing here is validation.')
+        'the evidence graph and the operational timeline; nothing here is validation. supported_scope_rendered shows '
+        'each number reference as its recorded value [field, observation id] and each source as the works its '
+        'retrieval returned; a reference that does not resolve stays as written.')
 EMPTY_NOTE = 'Claim scope is derived when the mission stops; nothing yet.'
 
 
@@ -155,7 +157,10 @@ def route_states(state: MissionState) -> list[dict]:
     return routes
 
 
-def build_claims(state: MissionState, timeline_rows: list[dict], graph: dict | None, release: dict | None) -> dict:
+def build_claims(state: MissionState, timeline_rows: list[dict], graph: dict | None, release: dict | None,
+                 receipts: list[dict] | None = None) -> dict:
+    """`receipts` are the mission's grant-ledger receipts; without them the ladder cannot
+    confirm the receipt of an external read."""
     scope = state.claim_scope
     check = next((c for c in (release or {}).get('checks', ()) if c.get('name') == 'claim_scope'), None)
     check_state = check['state'] if check else 'unknown'
@@ -169,6 +174,7 @@ def build_claims(state: MissionState, timeline_rows: list[dict], graph: dict | N
     claims = []
     for scoped in (scope.branches if scope else ()):
         branch = branches[scoped.branch_id]
+        evidence = members(state, scoped)
         findings = [{'role': role, 'round': assessed.round, 'model': assessed.model, 'position': assessed.position,
                      'finding': assessed.finding, 'next_test': assessed.next_test, 'evidence_ids': list(assessed.evidence_ids)}
                     for role, assessed in sorted(((role, latest[(role, bid)]) for role, bid in latest if bid == branch.id),
@@ -177,6 +183,8 @@ def build_claims(state: MissionState, timeline_rows: list[dict], graph: dict | N
             'claim_id': branch.id, 'branch_id': branch.id, 'title': branch.title,
             'requested': scoped.requested, 'status': scoped.status,
             'supported_scope': list(scoped.supported_scope), 'scope_qualifier': scoped.scope_qualifier,
+            'supported_scope_rendered': [render(text, evidence) for text in scoped.supported_scope],
+            'references': references(scoped.supported_scope, evidence),
             'uncertainties': [u.model_dump(mode='json') for u in scoped.uncertainties],
             'evidence': [_evidence(o, scoped, timeline_rows) for o in state.observations if o.branch_id == branch.id],
             'independence': _independence(state, scoped, latest),
@@ -185,7 +193,8 @@ def build_claims(state: MissionState, timeline_rows: list[dict], graph: dict | N
             'next_tests': [t.model_dump(mode='json') for t in scoped.next_tests],
             'units': None, 'units_note': UNITS_NOTE,
             'stale_derivation': stale, 'stale_reason': stale_reason, 'claim_scope_check': check_state,
-            'ladder': claim_ladder(state, scoped, timeline_rows=timeline_rows, verification=verification, subject=subject)})
+            'ladder': claim_ladder(state, scoped, timeline_rows=timeline_rows, receipts=receipts,
+                                   verification=verification, subject=subject)})
     return {'source': 'derived',
             'derivation_version': scope.derivation_version if scope else None,
             'current_derivation_version': DERIVATION_VERSION,

@@ -108,7 +108,7 @@ def test_c3_a_scope_derived_under_an_earlier_rule_is_stale_and_export_stays_bloc
     older = state.model_copy(update={'claim_scope': state.claim_scope.model_copy(update={'derivation_version': 'arc-claim-scope-2'})})
     decision = release.current_decision(request, older, event_chain_ok=True).model_dump(mode='json')
     result = build_claims(older, [], evidence_graph(older), decision)
-    assert result['derivation_version'] == 'arc-claim-scope-2' and result['current_derivation_version'] == 'arc-claim-scope-3'
+    assert result['derivation_version'] == 'arc-claim-scope-2' and result['current_derivation_version'] == 'arc-claim-scope-4'
     for card in result['claims']:
         assert card['stale_derivation'] is True and card['claim_scope_check'] == 'stale'
         assert 'earlier rule' in card['stale_reason'] and 'arc-claim-scope-2' in card['stale_reason']

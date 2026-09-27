@@ -26,6 +26,8 @@ POLICY = {'version': 'arc-mission-release-1',
           'verifier': 'arc-mission-verifier-1'}
 POLICY_DIGEST = digest(POLICY)
 BLOCKING = ('failed', 'unknown', 'error', 'stale')
+# Earlier scope versions whose rule differs from the current one only where the stored scope shows it.
+SAME_RULE = ('arc-claim-scope-3',)
 
 
 class ReleaseBlocked(PermissionError):
@@ -128,14 +130,20 @@ def _claim_scope(state):
         return 'not_applicable', 'The claim scope is derived when the mission stops; it has not stopped.', ()
     if state.claim_scope is None:
         return 'unknown', 'The mission stopped without a derived claim scope; verification derives and records it.', ()
-    if state.claim_scope.derivation_version != DERIVATION_VERSION:
-        return 'stale', ('The recorded claim scope was derived under an earlier rule (' + state.claim_scope.derivation_version
-                         + '); verification derives it again under ' + DERIVATION_VERSION + '.'), ()
     try:
         expected = derive_claim_scope(state)
     except Exception:
+        expected = None
+    version = state.claim_scope.derivation_version
+    recorded = state.claim_scope.model_copy(update={'derivation_version': DERIVATION_VERSION})
+    # Version 4 only stopped cutting findings at 900 characters: a version-3 scope the current
+    # rule derives unchanged is current, so a stored mission still exports untouched.
+    if version != DERIVATION_VERSION and not (version in SAME_RULE and expected is not None and recorded == expected):
+        return 'stale', ('The recorded claim scope was derived under an earlier rule (' + version
+                         + '); verification derives it again under ' + DERIVATION_VERSION + '.'), ()
+    if expected is None:
         return 'error', 'The claim scope could not be derived from the recorded reconciliation.', ()
-    if state.claim_scope != expected:
+    if recorded != expected:
         return 'failed', 'The recorded claim scope does not follow from the recorded reconciliation.', ()
     counts = dict(state.claim_scope.counts)
     missing = counts.pop('without_next_test', 0)
@@ -146,9 +154,14 @@ def _claim_scope(state):
             'provisional support is exploratory, never validation.', ())
 
 
-def _claim_rungs(state, verification, subject, timeline_rows):
-    """Every assessed claim reaches its minimum rung: L2 when it rests on numbers, L1
-    otherwise. An untested hypothesis claims nothing and is held to no rung."""
+def _claim_rungs(request, state, verification, subject, timeline_rows, receipts):
+    """Under the reference policy every assessed claim reaches its minimum rung: L2 when it
+    rests on numbers (numerical evidence, a number reference or a typed numeral), L1 otherwise.
+    An untested hypothesis claims nothing and is held to no rung. A legacy mission's claims
+    were written before references existed: its ladder is shown, its export eligibility stays."""
+    if request.ladder_policy == 'legacy':
+        return 'not_applicable', ('A legacy mission: its claims predate reference-traced numbers, so its ladder is shown '
+                                  'but does not hold export to a minimum rung.'), ()
     if state.claim_scope is None:
         return 'not_applicable', 'No claim scope is recorded yet; the claim_scope check covers a stopped mission without one.', ()
     held = [b for b in state.claim_scope.branches if b.status != 'unassessed']
@@ -157,7 +170,7 @@ def _claim_rungs(state, verification, subject, timeline_rows):
     short, defect = [], False
     for scoped in held:
         minimum = 2 if is_numeric(state, scoped) else 1
-        ladder = claim_ladder(state, scoped, timeline_rows=timeline_rows, verification=verification, subject=subject)
+        ladder = claim_ladder(state, scoped, timeline_rows=timeline_rows, receipts=receipts, verification=verification, subject=subject)
         if ladder['rung'] < minimum:
             needs = ladder['next']['needs']
             defect = defect or any(need in DEFECTS for need in needs)
@@ -199,10 +212,11 @@ def _replay(name, receipt: VerificationReceipt | None, current_subject, state):
 
 
 def evaluate_release(request: MissionRequest, state: MissionState, verification: VerificationReceipt | None,
-                     *, event_chain_ok: bool | None, timeline_rows: list | None = None) -> ReleaseDecision:
+                     *, event_chain_ok: bool | None, timeline_rows: list | None = None,
+                     receipts: list | None = None) -> ReleaseDecision:
     """Compute the current decision. Pure: it never turns an old unknown into satisfied.
-    `timeline_rows` lets the rung check confirm the ledger receipts of external reads;
-    without them those receipts stay unchecked."""
+    `timeline_rows` and the mission's grant-ledger `receipts` let the rung check confirm the
+    receipts of external reads; without them those receipts stay unchecked."""
     subject = subject_digest(state)
     checks = []
 
@@ -222,7 +236,7 @@ def evaluate_release(request: MissionRequest, state: MissionState, verification:
     add('reconciliation', _reconciliation(state))
     add('visual_review', _visual(request, state))
     add('claim_scope', _claim_scope(state))
-    add('claim_rungs', _claim_rungs(state, verification, subject, timeline_rows))
+    add('claim_rungs', _claim_rungs(request, state, verification, subject, timeline_rows, receipts))
     blocking = tuple(f'{c.name}:{c.state}' for c in checks if c.state in BLOCKING)
     return ReleaseDecision(policy_digest=POLICY_DIGEST, subject_digest=subject,
                            status='blocked' if blocking else 'eligible_for_human_review',
@@ -242,13 +256,13 @@ def receipt_from_report(report: dict, state: MissionState) -> VerificationReceip
 
 
 def current_decision(request: MissionRequest, state: MissionState, *, event_chain_ok: bool | None,
-                     timeline_rows: list | None = None) -> ReleaseDecision:
+                     timeline_rows: list | None = None, receipts: list | None = None) -> ReleaseDecision:
     """Re-evaluate against the persisted verification receipt, keeping a declared
     invalidation (a stale mark whose basis has not changed) until a fresh verification
     replaces the ledger."""
     persisted = state.release
     receipt = persisted.verification if persisted else None
-    fresh = evaluate_release(request, state, receipt, event_chain_ok=event_chain_ok, timeline_rows=timeline_rows)
+    fresh = evaluate_release(request, state, receipt, event_chain_ok=event_chain_ok, timeline_rows=timeline_rows, receipts=receipts)
     if persisted is None:
         return fresh
     stale = {c.name: c for c in persisted.checks if c.state == 'stale'}
@@ -272,8 +286,8 @@ def invalidate_release(decision: ReleaseDecision, affected, reason: str) -> Rele
 
 
 def assert_exportable(request: MissionRequest, state: MissionState, *, event_chain_ok: bool | None,
-                      timeline_rows: list | None = None) -> ReleaseDecision:
-    decision = current_decision(request, state, event_chain_ok=event_chain_ok, timeline_rows=timeline_rows)
+                      timeline_rows: list | None = None, receipts: list | None = None) -> ReleaseDecision:
+    decision = current_decision(request, state, event_chain_ok=event_chain_ok, timeline_rows=timeline_rows, receipts=receipts)
     if not decision.eligible_for_human_review:
         raise ReleaseBlocked(decision.blocking_reasons)
     return decision

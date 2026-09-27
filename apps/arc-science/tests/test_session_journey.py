@@ -318,14 +318,25 @@ def ladders(c, mid):
 
 
 def test_j9_the_ladder_reaches_l2_only_after_verify_and_l3_only_with_a_prelocked_falsifier(tmp_path, monkeypatch):
+    """A new mission writes its numbers as references (D019): L1 before Verify, L2 after it, and
+    L3 only for the branch whose falsifier was committed before any observation of the dataset."""
     with TestClient(app(tmp_path / 'data')) as c:
-        mid, _ = run(c)
+        mid, row = run(c)
+        assert row['request']['ladder_policy'] == 'references'
         before = ladders(c, mid)
         assert before and all(l['rung'] == 1 and l['next'] == {'rung': 2, 'needs': ['recomputation_missing']} for l in before.values())
+        cards = {card['branch_id']: card for card in c.get(f'/api/missions/{mid}/claims', headers=AUTH).json()['claims']}
+        assert '{{fit-quadratic.validation_mse}}' in cards['quadratic']['supported_scope'][0]
+        assert ' [validation_mse, fit-quadratic].' in cards['quadratic']['supported_scope_rendered'][0]
+        assert all(r['resolved'] for card in cards.values() for r in card['references'])
         decision = verified(c, mid)
         assert next(ch for ch in decision['checks'] if ch['name'] == 'claim_rungs')['state'] == 'satisfied'
         after = ladders(c, mid)
-        assert all(l['rung'] >= 3 and {'recomputed', 'falsifier_prespecified'} <= set(l['met']) for l in after.values())
+        # The linear branch's falsifier was committed in round 0, before any observation.
+        assert after['linear']['rung'] >= 3 and {'recomputed', 'falsifier_prespecified'} <= set(after['linear']['met'])
+        # The round-1 branches were committed after the linear fit had been observed on the same dataset.
+        for branch in ('quadratic', 'null-control'):
+            assert after[branch]['rung'] == 2 and after[branch]['next'] == {'rung': 3, 'needs': ['falsifier_after_observation']}
         monkeypatch.setattr(service, 'DemoAgent', NoFalsifier)
         mid, _ = run(c)
         verified(c, mid)

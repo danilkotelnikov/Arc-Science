@@ -261,3 +261,26 @@ def test_all_proxy_applies_when_no_scheme_specific_proxy_is_set(system_proxy):
     system_proxy({'all': 'socks5://127.0.0.1:10808'})
     with pytest.raises(ProxyUnsupported):
         resolve(ORIGIN)
+
+
+def test_a_shared_client_is_built_under_an_unsupported_proxy_and_still_reaches_loopback(system_proxy, monkeypatch):
+    """The per-request client never asks for the global proxy: a socks system proxy refuses only
+    the requests it would route, and loopback seats stay reachable."""
+    from arc_science.net import ProxyUnsupported, outbound_client
+    built = []
+
+    class Stub(httpx.BaseTransport):
+        def __init__(self, **kwargs):
+            built.append(kwargs)
+
+        def handle_request(self, request):
+            return httpx.Response(200)
+
+    monkeypatch.setattr(httpx, 'HTTPTransport', Stub)
+    system_proxy({'https': 'socks5://127.0.0.1:10808', 'http': 'socks5://127.0.0.1:10808'})
+    with outbound_client() as client:
+        assert client.get('http://127.0.0.1:11434/v1').status_code == 200
+        with pytest.raises(ProxyUnsupported):
+            client.get('https://api.example.org/v1')
+    # The transports it builds ignore environment CA settings, as the client itself does.
+    assert built == [{'proxy': None, 'trust_env': False}]

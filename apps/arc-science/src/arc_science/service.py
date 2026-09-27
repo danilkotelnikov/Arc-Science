@@ -49,7 +49,7 @@ from .exploration.spend import running_minutes, spent
 from .exploration.capsule import export_capsule, verify_capsule
 from .exploration import release as release_ledger
 from .exploration.evidence import evidence_graph
-from .exploration.catalog import TrustedPublicTools
+from .exploration.catalog import PUBLIC_READ_ORIGINS, TrustedPublicTools
 from .diagnostics import host_session
 
 VERSION=__version__
@@ -397,8 +397,6 @@ def seat_category(context=False,directives=False):
     return '; '.join([SEAT_CATEGORY]+[MISSION_CONTEXT_CATEGORY]*bool(context)+[OPERATOR_DIRECTIVES_CATEGORY]*bool(directives))
 CONNECTOR_CATEGORY='tool arguments the planner chooses';PUBLIC_READ_CATEGORY='query text the planner chooses'
 BIORENDER_CATEGORY='template search terms the planner chooses'
-# The origin each shipped public-read tool reaches (public_reads.py fixes the URLs).
-PUBLIC_READ_ORIGINS={'literature_search':'https://www.ebi.ac.uk','pdb_metadata':'https://data.rcsb.org'}
 # The retraction check of a literature search is its own destination under its own grant.
 OPENALEX_ORIGIN='https://api.openalex.org';RETRACTION_CATEGORY='DOIs of the works a literature search returned'
 
@@ -633,6 +631,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     repository=MissionRepository(root/'missions.db');running={}
     # The grant ledger is operational and append-only, apart from the mission state and its chain.
     ledger=GrantLedger(root/'grants.db');consented=functools.partial(request_grant,ledger)
+    # The mission's grant-ledger receipts: the ladder checks each external read's receipt against them.
+    def mission_receipts(mid):return ledger.receipts(mission_id=mid,limit=1000)
     # The operational timeline: when each operation started and ended; never evidence.
     timeline=MissionTimeline(root/'timeline.db')
     INTERRUPTED=('Service exit noticed; the mission was running and is now paused (event mission_interrupted). '
@@ -996,7 +996,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                  'uncertainties':[u.reason+': '+u.detail for u in b.uncertainties]}
                 for b in (state.claim_scope.branches if state.claim_scope else ())]
         # The same inputs as the mission's own view (with_release): its timeline checks read receipts.
-        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(mid),timeline_rows=timeline.rows(mid))
+        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(mid),timeline_rows=timeline.rows(mid),
+                                                 receipts=mission_receipts(mid))
         return json.dumps({'goal':request.goal,'status':state.status,'mode':request.mode,'data_origin':state.data_origin,
                            'release':{'status':decision.status,'blocking_reasons':list(decision.blocking_reasons)},'claims':claims},
                           ensure_ascii=False,separators=(',',':'))
@@ -1064,7 +1065,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         try:graph=evidence_graph(state)
         except ValueError:graph=None
         # 'routes' is additive and read-only here; the capsule's claims.json is unchanged.
-        return {'mission_id':mid,**build_claims(state,timeline.rows(mid),graph,row['release']),'routes':route_states(state)}
+        return {'mission_id':mid,**build_claims(state,timeline.rows(mid),graph,row['release'],receipts=mission_receipts(mid)),
+                'routes':route_states(state)}
 
     @app.get('/api/grants',dependencies=[Depends(authorized)])
     async def list_grants(subject_kind:str|None=None,subject_id:str|None=None):
@@ -1293,7 +1295,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         items.sort(key=lambda i:(i['kind'],i['ref'])!=('mission',body.continues))
         chars=sum(len(i['text']) for i in items)
         if chars>CONTEXT_CHAR_LIMIT:raise api_error(409,'context.too_large',facts={'chars':chars,'limit':CONTEXT_CHAR_LIMIT})
-        request=MissionRequest.model_validate({**body.model_dump(mode='json',exclude={'crew','context'}),
+        # Every new mission writes its claims as references and is held to the ladder (D019).
+        request=MissionRequest.model_validate({**body.model_dump(mode='json',exclude={'crew','context'}),'ladder_policy':'references',
             **({'crew':{role:entry.model_dump() for role,entry in body.crew.items()}} if body.crew else {}),
             **({'context_items':[ContextItem(**i) for i in items]} if items else {})})
         if request.mode=='live' and earlier is None:
@@ -1319,7 +1322,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         # never a claim of validity, only of eligibility for human review. The validated
         # state is returned beside the row so one request validates it once.
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
-        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(row['id']),timeline_rows=timeline.rows(row['id']))
+        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(row['id']),timeline_rows=timeline.rows(row['id']),
+                                                 receipts=mission_receipts(row['id']))
         obligations={change.id:list(obligation_states(change,decision)) for change in state.changes}
         return {**row,'release':decision.model_dump(mode='json'),'change_obligations':obligations},state
 
@@ -1672,7 +1676,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         chain=repository.verify(mid)
         if not chain:raise api_error(409,'mission.integrity_failed')
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
-        try:release_ledger.assert_exportable(request,state,event_chain_ok=chain,timeline_rows=timeline.rows(mid))
+        try:release_ledger.assert_exportable(request,state,event_chain_ok=chain,timeline_rows=timeline.rows(mid),receipts=mission_receipts(mid))
         except release_ledger.ReleaseBlocked as blocked:
             raise api_error(409,'release.blocked','Release blocked; verify the mission and resolve: '+', '.join(blocked.reasons),
                             facts={'reasons':list(blocked.reasons)}) from None
@@ -1686,8 +1690,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if not chain:raise api_error(409,'mission.integrity_failed')
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
         # Every release export consults the ledger: a blocked mission is not exported.
-        rows=timeline.rows(mid)
-        try:decision=release_ledger.assert_exportable(request,state,event_chain_ok=chain,timeline_rows=rows)
+        rows=timeline.rows(mid);receipts=mission_receipts(mid)
+        try:decision=release_ledger.assert_exportable(request,state,event_chain_ok=chain,timeline_rows=rows,receipts=receipts)
         except release_ledger.ReleaseBlocked as blocked:
             raise api_error(409,'release.blocked','Release blocked; verify the mission and resolve: '+', '.join(blocked.reasons),
                             facts={'reasons':list(blocked.reasons)}) from None
@@ -1697,9 +1701,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         release=decision.model_dump(mode='json')
         try:graph=evidence_graph(state)
         except ValueError:raise api_error(409,'mission.evidence_invalid') from None
-        receipts=ledger.receipts(mission_id=mid,limit=1000)
         grants={'grants':ledger.list('mission',mid),'receipts':receipts,'receipts_truncated':len(receipts)>=1000}
-        data=export_capsule(request,state,release=release,claims=build_claims(state,rows,graph,release),timeline=rows,grants=grants)
+        data=export_capsule(request,state,release=release,claims=build_claims(state,rows,graph,release,receipts=receipts),timeline=rows,grants=grants)
         return Response(data,media_type='application/zip',headers={'Content-Disposition':f'attachment; filename="arc-{mid}.zip"'})
 
     @app.post('/api/missions/{mid}/verify',dependencies=[Depends(authorized)])
@@ -1721,7 +1724,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         report=await asyncio.to_thread(verify_capsule,export_capsule(request,state))
         # Persist what was observed and the decision it yields; a later change stales it.
         receipt=release_ledger.receipt_from_report(report,state)
-        decision=release_ledger.evaluate_release(request,state,receipt,event_chain_ok=chain,timeline_rows=timeline.rows(mid))
+        decision=release_ledger.evaluate_release(request,state,receipt,event_chain_ok=chain,timeline_rows=timeline.rows(mid),
+                                                 receipts=mission_receipts(mid))
         try:repository.save(mid,state.model_copy(update={'release':decision}),expected_revision=row['revision'])
         except RevisionConflict:raise api_error(409,'mission.revision_conflict','Mission changed during verification; retry',facts={'operation':'verify'}) from None
         return {**report,'event_chain':True,'release':decision.model_dump(mode='json')}

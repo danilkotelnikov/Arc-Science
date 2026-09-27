@@ -66,14 +66,18 @@ class DemoAgent:
                 out.append({'branch_id':o['branch_id'],'position':'uncertain','evidence_ids':[o['id']],
                             'finding':'Execution failed; the hypothesis remains unresolved.','next_test':'Repair input or select another valid tool.'})
             elif o['tool']=='polynomial_fit':
-                good=o['data']['validation_mse']<.02
+                # Numbers are written as references to the recorded values (D019), never typed.
+                good=o['data']['validation_mse']<.02;error='{{'+o['id']+'.validation_mse}}'
                 out.append({'branch_id':o['branch_id'],'position':'support' if good else 'challenge','evidence_ids':[o['id']],
-                            'finding':('Low error on the exploratory split.' if good else 'The linear fit leaves substantial residual error.') +
+                            'finding':('Low error on the exploratory split: validation error '+error+'.' if good else
+                                       'The linear fit leaves substantial residual error: validation error '+error+'.') +
                                       (' Adaptive reuse of this split prevents confirmatory interpretation.' if role=='falsifier' else ''),
                             'next_test':'Use independently acquired data before a scientific conclusion.' if good else 'Compare a nonlinear alternative.'})
             else:
                 out.append({'branch_id':o['branch_id'],'position':'challenge','evidence_ids':[o['id']],
-                            'finding':'The shuffled-response control has substantial error; this is descriptive, not a p-value.',
+                            'finding':'The shuffled-response control has substantial error'
+                                      +(' (best shuffle {{'+o['id']+'.minimum_shuffled_validation_mse}})' if o['tool']=='permutation_control' else '')
+                                      +'; this is descriptive, not a p-value.',
                             'next_test':'Independent replication.'})
         return {'assessments':out,'summary':'Cross-branch findings retained; no consensus vote authorizes scientific truth.'}
 

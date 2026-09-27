@@ -84,7 +84,8 @@ class _PerTarget(httpx.BaseTransport, httpx.AsyncBaseTransport):
     def _for(self, request):
         proxy = system_proxy(str(request.url))
         if proxy not in self.pool:
-            self.pool[proxy] = (httpx.AsyncHTTPTransport if self.asynchronous else httpx.HTTPTransport)(proxy=proxy)
+            # Like the client itself: no CA bundle or other settings from the environment.
+            self.pool[proxy] = (httpx.AsyncHTTPTransport if self.asynchronous else httpx.HTTPTransport)(proxy=proxy, trust_env=False)
         return self.pool[proxy]
 
     def handle_request(self, request):
@@ -109,10 +110,10 @@ def outbound_client(target: str | None = None, *, asynchronous: bool = False, **
     kwargs.setdefault('follow_redirects', False)
     # An injected transport owns routing; a proxy mount would silently replace it.
     if kwargs.get('transport') is None:
-        proxy = system_proxy(target)  # an unsupported proxy is refused here, before any call
         if target is None:
+            # Routed per request: an unsupported proxy refuses only the requests it would carry.
             kwargs['transport'] = _PerTarget(asynchronous)
-        elif proxy:
+        elif proxy := system_proxy(target):  # an unsupported proxy is refused here, before any call
             kwargs['proxy'] = proxy
     return (httpx.AsyncClient if asynchronous else httpx.Client)(trust_env=False, **kwargs)
 

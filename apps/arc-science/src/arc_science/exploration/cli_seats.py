@@ -34,7 +34,7 @@ from ..transport import ProviderError, strict_schema
 from .catalog import BUILTIN_CATALOG, proposal_schema
 from .effort import applied_effort
 from .models import Proposal, Reconciliation
-from .providers import PLAN_PROMPT, REVIEW_PROMPT, render_prompt
+from .providers import PLAN_PROMPT, render_prompt, review_prompt
 from .spend import count, reports_usage
 
 CALL_TIMEOUT = 75.0            # below the engine's 90 s deadline
@@ -437,7 +437,7 @@ class CliAgent:
         return await self._call(self.model, PLAN_PROMPT, context, Proposal, role='planner')
 
     async def assess(self, role, context):
-        return await self._call(self.model_for(role), REVIEW_PROMPT + '\nRole: ' + role, context, Reconciliation, role=role)
+        return await self._call(self.model_for(role), review_prompt(role, context), context, Reconciliation, role=role)
 
     async def review_visual(self, context, artifacts):
         if self.vision is None:
