@@ -175,15 +175,16 @@ def _pending(state, round_number):
 
 
 def _relied_pending(state):
-    """The _pending reason the latest plan's record relies on: some action of it neither ran nor was
-    withheld. None when it relies on none."""
+    """The _pending reason the latest plan's record relies on: a stopping or empty plan (the gate
+    pauses it like any other), or some action of it neither ran nor was withheld. None when it
+    relies on none."""
     record = next((r for r in state.model_records if r.role == "planner" and r.round == state.round), None)
     if record is None:
         return None
     plan = Proposal.model_validate(record.payload)
     withheld = {e.detail.partition(":")[0] for e in state.events if e.kind == "action_withheld" and e.round == state.round}
     ran = {o.id for o in state.observations}
-    if plan.stop or all(a.id in ran or a.id in withheld for a in plan.actions):
+    if plan.actions and not plan.stop and all(a.id in ran or a.id in withheld for a in plan.actions):
         return None
     return _pending(state, state.round)
 
@@ -562,16 +563,20 @@ def validate_context(request, state: MissionState) -> None:
     # recomputes exactly, and any other stop needs a spend none of them stops. A pause names its
     # plan and was not preceded by a decision on its round (a decided round never pauses again;
     # a decision after the pause waits for the resume); a time stop needs the time budget it names.
+    # A stopping or empty plan also ends ungated, its stop replaced by a budget stop (the engine's
+    # stop checks the budgets first), so for it only the pause label needs the gate.
     # ponytail: the minutes themselves are not recomputable from the record (the clock is in the timeline).
     if _relied_pending(state) == "gate":
         from .engine import budget_stop, plan_digest  # the engine imports this module
         code, facts = state.stop_code, state.stop_facts
         plan = next(r for r in state.model_records if r.role == "planner" and r.round == state.round)
+        proposal = Proposal.model_validate(plan.payload)
+        stopping = proposal.stop or not proposal.actions
         spend = budget_stop(request, state, lambda: 0)
         kinds = [(e.kind, e.round) for e in state.events]
         committed = len(kinds) - 1 - kinds[::-1].index(("plan_committed", state.round))
         decided = {c.id for c in state.changes if c.kind == "decision" and c.round == state.round}
-        if (request.gate != "each_round"
+        if (request.gate != "each_round" and (not stopping or code == "awaiting_decision")
                 or spend != (code if code in ("token_limit", "cost_limit", "budget_unmeasurable") else None)
                 or code == "awaiting_decision" and (
                     facts != {"round": state.round, "plan_digest": plan_digest(plan)}

@@ -52,7 +52,11 @@ CONTROL_DEGREE = 2
 # letter ends the number before it: then it is the upper end of a range (2nd-9th,
 # 0.004x-0.9x), as after a digit (0.01-0.5); or ends a quantity word, recorded or not, which
 # the hyphen joins to its value (degree-3, MSE-0.9, RMSE-0.3, n-500). _tokens applies these rules.
-NUMBER = re.compile(r'(?<![\w.])(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z%]*)(?!\d|\.\d)')
+NUMBER = re.compile(r'(?<![\w.])(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)((?:[^\W\d_]|[%‰‱°])*)(?!\d|\.\d)')
+# A unit or multiplier set off from its number by a space, or spelled out: 0.0017 %, 48 k,
+# 48 thousand, 0.17 per cent, 0.004 µM. A word that only follows the number is not one.
+UNIT_AFTER = re.compile(r'\s+(?:[%‰‱°µμ]|(?i:per[- ]?cent|percent|thousand|million|billion|тыс|млн|млрд|процент)'
+                        r'|[kKM](?![^\W\d_]))')
 LETTER_HYPHEN = re.compile(r'[^\W\d]-')
 POWER = 'power'
 SCALAR = re.compile(r'-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?')
@@ -70,9 +74,12 @@ DOI = re.compile(r'\b10\.\d{4,9}/\S+')
 CLOSERS = {')': '(', ']': '[', '}': '{', '>': '<'}
 TRAILING = '.,;:"\'\u201d\u2019\u00bb'
 PMID = re.compile(r'\bPMID:?\s*(\d+)', re.I)
-PUBMED_LINK = re.compile(r'\bpubmed\.ncbi\.nlm\.nih\.gov/(\d+)', re.I)
-# Suffixes that keep a number unitless: ordinals (2nd-degree). Any other unit or multiplier
-# (0.0017%, 48k) states a value no recorded field holds: the recorded fields are unitless.
+# A PubMed record's link, current, legacy NCBI or Europe PMC: each names the record's PMID.
+PUBMED_LINK = re.compile(r'\b(?:pubmed\.ncbi\.nlm\.nih\.gov/|ncbi\.nlm\.nih\.gov/pubmed/|europepmc\.org/(?:article|abstract)/MED/)(\d+)',
+                         re.I)
+# Suffixes that keep a number unitless: ordinals (2nd-degree). Any other unit or multiplier,
+# glued (0.0017%, 48k, 0.004µM) or not (UNIT_AFTER), states a value no recorded field holds:
+# the recorded fields are unitless.
 ORDINALS = frozenset({'', 'st', 'nd', 'rd', 'th'})
 MSE = ('training_mse', 'validation_mse', 'minimum_shuffled_validation_mse', 'mean_shuffled_validation_mse')
 # The recorded fields a quantity word names. The name nearest a number, within its sentence and
@@ -89,10 +96,25 @@ SPLIT_WORD = re.compile(r'\b(?:(validation|held[- ]out|test(?:ing|ed)?)|train(?:
 # opening parenthesis, 'of', a copula, 'test' or 'statistic', or nothing but a hyphen (the
 # window ends at the number).
 _BARE = r'(?=\s*(?:[=<>≤≥≈~:(]|(?:of|is|was|were|equals?|equalled|test|statistic)\b|-?$))'
-QUANTITIES = ((re.compile(r'shuffled (?:validation )?(?:error|mse|loss)|null (?:error|mse)', re.I), MSE[2:]),
-              # A named statistic of the shuffles binds only its own field (the longer name wins the tie).
-              (re.compile(r'\b(?:minimum|min|lowest|smallest|best) shuffled (?:validation )?(?:error|mse|loss)', re.I), MSE[2:3]),
-              (re.compile(r'\b(?:mean|average) shuffled (?:validation )?(?:error|mse|loss)', re.I), MSE[3:]),
+# The error of a shuffled control: 'shuffled validation errors', 'shuffled-response validation MSE'.
+_SHUFFLED = (r'shuffled(?:[- ](?:response|labels?|targets?|outcomes?|y))?[- ](?:validation[- ])?'
+             r'(?:errors?|mses?|loss(?:es)?)')
+
+
+def _shuffle_statistic(before, after):
+    """A statistic named before the shuffled error ('mean of the shuffled errors') or after it
+    in the same clause ('the shuffled error had a mean of', 'averaged')."""
+    return re.compile(r'\b(?:' + before + r')(?:[- ]of(?:[- ]the)?)?[- ]' + _SHUFFLED + '|' + _SHUFFLED +
+                      r'[^.;,\d]{0,40}?\b(?:' + after + r')\b(?:[- ](?:of|at))?', re.I)
+
+
+QUANTITIES = ((re.compile(_SHUFFLED + r'|null (?:error|mse)', re.I), MSE[2:]),
+              # A statistic of the shuffles binds only its own field, named before the error ('mean of
+              # the shuffled errors': the longer name wins the tie) or after it ('the shuffled error
+              # averaged': the nearer name wins); one the control never records binds nothing.
+              (_shuffle_statistic(r'minimum|min|lowest|smallest|best', r'minimum|min|lowest|smallest'), MSE[2:3]),
+              (_shuffle_statistic(r'mean|average', r'mean|average[ds]?'), MSE[3:]),
+              (_shuffle_statistic(r'median|max|maximum|highest|largest|worst', r'median|max|maximum|highest|largest|peak(?:ed)?'), ()),
               (re.compile(r'(?:validation|held[- ]out|test)' + _ERROR + r'|(?:error|mse|loss) on the (?:validation|held[- ]out|test)',
                           re.I), ('validation_mse',)),
               (re.compile(r'train(?:ing)?' + _ERROR + r'|(?:error|mse|loss) on the train(?:ing)?', re.I), ('training_mse',)),
@@ -170,11 +192,17 @@ def _count(before, between='', trailing='', own=''):
     (own), one the rest of its sentence up to the next number names (trailing, SPLIT_AFTER), the
     last in its sentence before it (before); with none, the whole data set. A split word before
     the number wins over a later one, which often describes another step ('trained on 48
-    samples, then scored on the test set'), unless it belongs to an earlier number."""
+    samples, then scored on the test set'), unless it belongs to an earlier count: own and before
+    start after the text an earlier count claimed. Returns the fields and how much of trailing the
+    count claimed (0 unless its split came from there)."""
     after = SPLIT_AFTER.match(trailing)
-    nearest = (SPLIT_WORD.findall(between)[:1] or SPLIT_WORD.findall(own)[-1:]
-               or ([after.group(1) or ''] if after else SPLIT_WORD.findall(before)[-1:]))
-    return (('n_validation',) if nearest[0] else ('n_train',)) if nearest else ('n',)
+    nearest = SPLIT_WORD.findall(between)[:1] or SPLIT_WORD.findall(own)[-1:]
+    used = 0
+    if not nearest and after:
+        nearest, used = [after.group(1) or ''], after.end()
+    elif not nearest:
+        nearest = SPLIT_WORD.findall(before)[-1:]
+    return ((('n_validation',) if nearest[0] else ('n_train',)) if nearest else ('n',)), used
 
 
 def _adjacent(text):
@@ -182,16 +210,29 @@ def _adjacent(text):
     return SPLIT_WORD.sub('', text).strip(' -') == ''
 
 
+def _new_clause(phrase):
+    """A comma, colon or semicolon in the phrase from a statistic to its error word ends the
+    statistic's clause: a colon or semicolon always, a comma when a quantity name starts right
+    after it ('the CI excluded zero, validation error 0.12'). A comma inside the error's own
+    noun phrase does not ('the SE of the fold-wise, held-out validation error')."""
+    for mark in re.finditer(r'[,;:]\s*(?:the\s+)?', phrase):
+        near = _quantity(phrase[mark.end():], after=True)
+        if mark.group()[0] != ',' or near is not None and near[0] == 0:
+            return True
+    return False
+
+
 def _of_error(sentence):
     """The last error word before the number has a statistic of it earlier in its sentence
-    (STATISTIC), in the same clause once asides set off by a pair of commas are left out: 'the
-    standard error, over five folds, of the validation error', not 'the CI excluded zero,
-    validation error 0.12'."""
+    (STATISTIC), in the same clause (_new_clause) once asides set off by a pair of commas are
+    left out: 'the standard error, over five folds, of the validation error', not 'the CI
+    excluded zero, validation error 0.12'."""
     errors = list(ERROR_WORD.finditer(sentence))
     return bool(errors) and any(
-        STATISTIC_LINK.search(between) and not STATEMENT_BREAK.search(between) and not CLAUSE.search(between)
-        for between in (ASIDE.sub(' ', sentence[m.end():errors[-1].start()])
-                        for m in STATISTIC.finditer(sentence[:errors[-1].start()])))
+        STATISTIC_LINK.search(between) and not STATEMENT_BREAK.search(between) and not _new_clause(phrase)
+        for between, phrase in ((ASIDE.sub(' ', sentence[m.end():errors[-1].start()]),
+                                 ASIDE.sub(' ', sentence[m.end():errors[-1].end()]))
+                                for m in STATISTIC.finditer(sentence[:errors[-1].start()])))
 
 
 def _tokens(text):
@@ -221,7 +262,7 @@ def _tokens(text):
     # name is then taken: it does not also name the next number. A nearer unrecorded name after
     # the number still keeps the recorded one before it off ('error fell with 0.004 accuracy'),
     # unless it sits nearer the next number and names that one ('error 0.004 with R2 0.9').
-    taken = 0
+    taken = claimed = 0
     for i, group in enumerate(groups):
         start = max(groups[i - 1][-1].end() if i else 0, taken)
         piece = SENTENCE.split(text[start:max(start, group[0].start())])[-1]
@@ -232,32 +273,47 @@ def _tokens(text):
         # The number's sentence before it, and after it up to the next number: a count's split may
         # stand anywhere in either, but one after the next number names that number.
         sentence = SENTENCE.split(text[:group[0].start()])[-1]
-        own = SENTENCE.split(text[groups[i - 1][-1].end() if i else 0:group[0].start()])[-1]
+        # A count's split words before it, past what an earlier count claimed (its count word and
+        # any split it took after that): in its sentence, and since the number before it.
+        unclaimed = SENTENCE.split(text[claimed:max(claimed, group[0].start())])[-1]
+        own = SENTENCE.split(text[max(groups[i - 1][-1].end() if i else 0, claimed):max(claimed, group[0].start())])[-1]
         rest = SENTENCE.split(text[group[-1].end():end])[0]
+
+        def count(cut):
+            nonlocal claimed
+            fields, used = _count(unclaimed, window[:cut], rest[cut:], own)
+            claimed = group[-1].end() + cut + used
+            return fields
         # The distance from the name to the next number, when that number is in the same clause.
         onward = len(window) - after[2] if after and i + 1 < len(groups) and group[-1].end() + len(window) == end else None
         if after and after[1] is COUNT and _adjacent(window[:after[0]]):
             # An explicit count word right after the number wins over any name before it.
-            named, taken = _count(sentence, window[:after[2]], rest[after[2]:], own), group[-1].end() + after[2]
+            named, taken = count(after[2]), group[-1].end() + after[2]
         elif before and after and after[0] < before[0] and not after[1] and (onward is None or after[0] <= onward):
             named = ()
         elif before:
             named = before[1]
             if named is COUNT:
                 # A later count word names this number only when nearer than the one before it.
-                cut = after[2] if after and after[1] is COUNT and after[0] < before[0] else 0
-                named = _count(sentence, window[:cut], rest[cut:], own)
+                named = count(after[2] if after and after[1] is COUNT and after[0] < before[0] else 0)
             elif set(named) <= set(MSE) and _of_error(sentence):
                 named = ()
         elif after:
             named, taken = after[1], group[-1].end() + after[2]
-            named = _count(sentence, window[:after[2]], rest[after[2]:], own) if named is COUNT else named
+            named = count(after[2]) if named is COUNT else named
         else:
             named = None
+        # A unit on either end of a range is the unit of the whole range.
+        unit = any(m.group(2).lower() not in ORDINALS or UNIT_AFTER.match(text, m.end()) for m in group)
         for m in group:
-            yield m.group(1), (named if m.group(2).lower() in ORDINALS else None)
+            yield m.group(1), (None if unit else named)
     for m in powers:
         yield m.group(1), POWER
+
+
+def _states_result(text) -> bool:
+    """The text gives a number a recorded error names: an earlier result of a fit or control."""
+    return any(names not in (None, POWER) and set(names) & set(MSE) for _, names in _tokens(text))
 
 
 def numbers(texts) -> list[str]:
@@ -460,10 +516,12 @@ def _prespecified(state, branch, evidence):
     idea = next((b for b in introduced.payload['branches'] if b.get('id') == branch.id), {}) if introduced else {}
     if idea.get('falsifier_test') != branch.falsifier_test.model_dump(mode='json'):
         return 'falsifier_after_observation'
-    # A planner shown earlier results (a prior mission, or memory a mission wrote: the items only
-    # the planner reads) may have set the threshold after seeing their outcome.
-    # ponytail: any such item counts, whatever its dataset; context items do not record one.
-    if any(ContextItem.model_validate(item).planner_only for item in introduced.input_context.get('mission_context') or ()):
+    # A planner shown earlier results (a prior mission, memory a mission wrote, or any attached
+    # item that states a value of a recorded result) may have set the threshold after seeing them.
+    # ponytail: any such item counts, whatever its dataset; context items do not record one. The
+    # goal is not read: a threshold stated there is the prespecification itself.
+    if any(item.planner_only or _states_result(item.text)
+           for item in map(ContextItem.model_validate, introduced.input_context.get('mission_context') or ())):
         return 'falsifier_after_context'
     events = list(state.events)
     committed = next((i for i, e in enumerate(events) if e.kind == 'plan_committed' and e.round == introduced.round), None)

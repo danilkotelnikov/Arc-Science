@@ -313,7 +313,7 @@ def test_api_seats_are_probed_over_http_with_the_official_header_style_and_persi
         return httpx.Response(200, json={'model': body['model'], 'status': 'completed', 'usage': {'input_tokens': 1, 'output_tokens': 1},
                                          'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': '{"ok": true}'}]}]})
     real_client = httpx.AsyncClient
-    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: real_client(transport=httpx.MockTransport(respond), **kw))
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: real_client(**{**kw, 'transport': httpx.MockTransport(respond)}))
     monkeypatch.setattr('arc_science.net.system_proxy', lambda target=None: None)  # offline: no proxy mount over the mock
     doc = settings.snapshot()['settings']
     doc['seats']['planner'].update(provider='openai', model='gpt-5.6-sol', effort='high', credential='planner-key')

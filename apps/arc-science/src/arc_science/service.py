@@ -995,7 +995,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                  'supported_scope':list(b.supported_scope),'scope_qualifier':b.scope_qualifier,'evidence_ids':list(b.evidence_ids),
                  'uncertainties':[u.reason+': '+u.detail for u in b.uncertainties]}
                 for b in (state.claim_scope.branches if state.claim_scope else ())]
-        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(mid))
+        # The same inputs as the mission's own view (with_release): its timeline checks read receipts.
+        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(mid),timeline_rows=timeline.rows(mid))
         return json.dumps({'goal':request.goal,'status':state.status,'mode':request.mode,'data_origin':state.data_origin,
                            'release':{'status':decision.status,'blocking_reasons':list(decision.blocking_reasons)},'claims':claims},
                           ensure_ascii=False,separators=(',',':'))

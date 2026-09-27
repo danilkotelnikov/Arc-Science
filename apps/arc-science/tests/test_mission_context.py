@@ -149,6 +149,23 @@ def test_a_prior_mission_contributes_its_supported_scope_and_claims(client):
     assert summary['release'] == {'status': decision['status'], 'blocking_reasons': decision['blocking_reasons']}
 
 
+def test_an_attached_missions_release_reads_its_timeline_like_its_own_view(client, monkeypatch):
+    """The summary's release is the one the mission's own view derives: both read its timeline,
+    so a read's receipt is checked rather than reported as receipt_unchecked."""
+    prior = client.post('/api/missions', headers=AUTH, json={'goal': 'Earlier curve study', 'max_rounds': 2}).json()['id']
+    client.post(f'/api/missions/{prior}/start', headers=AUTH)
+    settled(client, prior)
+    calls, current = [], release.current_decision
+
+    def spy(request, state, **kwargs):
+        calls.append(kwargs.get('timeline_rows'))
+        return current(request, state, **kwargs)
+    monkeypatch.setattr(release, 'current_decision', spy)
+    client.post('/api/missions', headers=AUTH, json={'goal': 'Build on it', 'context': {'prior_mission_ids': [prior]}})
+    rows = client.app.state.timeline.rows(prior)
+    assert rows and calls == [rows]
+
+
 def test_context_refusals_carry_codes(client, tmp_path):
     refused(client.post('/api/missions', headers=AUTH, json={'goal': 'Ctx', 'context': {'memory_record_ids': ['nope']}}),
             404, 'context.unknown_record', {'kind': 'memory', 'ref': 'nope'})

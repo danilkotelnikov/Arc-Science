@@ -49,12 +49,42 @@ def test_loopback_and_no_proxy_hosts_bypass_the_proxy(system_proxy, captured):
     assert 'proxy' not in captured[0]
 
 
-def test_a_shared_client_without_target_keeps_loopback_direct(system_proxy):
-    from arc_science.net import outbound_client
+def test_a_shared_client_without_target_routes_each_request_like_its_own_target(system_proxy, monkeypatch):
+    """Loopback, NO_PROXY and ProxyOverride hosts stay direct on the shared mission, seat-probe
+    and prose client, exactly as a client built for that target would route them."""
+    import asyncio
+    from arc_science.net import outbound_client, system_proxy as resolve
+    seen = []
+
+    class Stub(httpx.BaseTransport, httpx.AsyncBaseTransport):
+        def __init__(self, proxy=None, **_):
+            self.proxy = proxy
+
+        def handle_request(self, request):
+            seen.append((request.url.host, self.proxy))
+            return httpx.Response(200)
+
+        async def handle_async_request(self, request):
+            return self.handle_request(request)
+
+    monkeypatch.setattr(httpx, 'HTTPTransport', Stub)
+    monkeypatch.setattr(httpx, 'AsyncHTTPTransport', Stub)
+    urls = ('http://127.0.0.1:11434/v1', 'http://localhost:8765/mcp', 'https://api.internal.example/v1', 'https://api.example.org/v1')
     with outbound_client() as client:
-        assert client._transport_for_url(httpx.URL('http://127.0.0.1:11434/v1')) is client._transport
-        assert client._transport_for_url(httpx.URL('http://localhost:8765/mcp')) is client._transport
-        assert client._transport_for_url(httpx.URL('https://api.example.org/v1')) is not client._transport
+        for url in urls:
+            client.get(url)
+    expected = [('127.0.0.1', None), ('localhost', None), ('api.internal.example', None), ('api.example.org', PROXY)]
+    assert seen == expected and [proxy for _, proxy in expected] == [resolve(url) for url in urls]
+    # A registry proxy's ProxyOverride, on the asynchronous client the mission worker uses.
+    system_proxy({'https': PROXY, 'http': PROXY}, override='*.corp.example;<local>')
+    seen.clear()
+
+    async def calls():
+        async with outbound_client(asynchronous=True) as client:
+            for url in ('https://llm.corp.example/v1', 'http://intranet/x', 'https://api.example.org/v1'):
+                await client.get(url)
+    asyncio.run(calls())
+    assert seen == [('llm.corp.example', None), ('intranet', None), ('api.example.org', PROXY)]
 
 
 def test_injected_transport_is_never_overridden_by_the_proxy(system_proxy, captured):

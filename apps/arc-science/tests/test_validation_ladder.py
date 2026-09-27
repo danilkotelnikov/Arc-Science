@@ -1047,5 +1047,90 @@ def test_a_falsifier_set_after_the_planner_read_earlier_results_is_not_prespecif
                  ContextItem(kind='memory', source_uri='mission://mission-a/round/1', **prior)):
         ladder = ladder_under(item)
         assert ladder['rung'] == 2 and ladder['next'] == {'rung': 3, 'needs': ['falsifier_after_context']}, item
-    # An operator note is not an earlier result: the falsifier stays prespecified.
-    assert ladder_under(ContextItem(kind='memory', trust='user', **prior))['rung'] == 4
+    # An operator note that states a recorded result is an earlier result too (fix round 2); one
+    # that states none leaves the falsifier prespecified.
+    note = dict(kind='memory', trust='user', ref='note-1', title='Operator note', digest='a' * 64)
+    for text in ('last run validation error 0.00404', 'The shuffled validation error was 1.2 last week.'):
+        ladder = ladder_under(ContextItem(text=text, **note))
+        assert ladder['rung'] == 2 and ladder['next'] == {'rung': 3, 'needs': ['falsifier_after_context']}, text
+    assert ladder_under(ContextItem(text='Prefer a quadratic basis; the curve bends near x=4.', **note))['rung'] == 4
+
+
+# Integration fix round 2: counts after a count, commas inside an error's phrase, spaced and
+# spelled-out units, statistics anywhere in a shuffled-error phrase, legacy PubMed links.
+
+def test_a_later_count_takes_its_own_split_not_the_one_of_the_count_before_it():
+    for text in ('The fit used 48 training samples and 12 samples for validation.',
+                 'We used 48 training samples, and 12 samples were held out.',
+                 'We used 48 samples for training and 12 samples for validation.'):
+        assert list(_tokens(text)) == [('48', ('n_train',)), ('12', ('n_validation',))], text
+    # A split word before a count still wins over a later one.
+    assert list(_tokens('The model was trained on 48 samples and then scored on the held-out test set.')) == [('48', ('n_train',))]
+    for second, rung in (('n_validation', 1), ('n_train', 0)):
+        _, state = run(Scripted([FIT], say=lambda o, f=second: f"The fit used {o['data']['n_train']} training samples and "
+                                                               f"{o['data'][f]} samples for validation."))
+        assert ladder_of(state)['rung'] == rung, second
+
+
+def test_a_comma_inside_the_phrase_of_a_statistic_of_an_error_keeps_the_statistic():
+    for text in ('The standard error of the fold-wise, held-out validation error was 0.004.',
+                 'The SD across the five folds, of the validation error, was 0.004.'):
+        assert list(_tokens(text)) == [('0.004', ())], text
+    for text in ('The CI for degree 2 excluded zero, validation error 0.12.',
+                 'With SE reported for each fold in the appendix, the validation error fell to 0.12.'):
+        assert [names for _, names in _tokens(text)][-1] == ('validation_mse',), text
+
+
+def test_a_spaced_spelled_out_or_non_ascii_unit_never_binds_a_unitless_record():
+    for text, token in (('The validation MSE was 0.0017 %.', '0.0017'), ('The validation MSE was 0.0017 percent.', '0.0017'),
+                        ('The validation MSE was 0.17 per cent.', '0.17'), ('The validation MSE was 0.0017‰.', '0.0017'),
+                        ('The validation MSE was 0.0017 ‰.', '0.0017'), ('Validation MSE was 0.00404µM.', '0.00404'),
+                        ('Validation MSE was 0.00404μM.', '0.00404'), ('Validation MSE was 0.00404°C.', '0.00404'),
+                        ('Validation MSE was 0.00404мл.', '0.00404'), ('Validation MSE was 0.00404 µM.', '0.00404'),
+                        ('The model used 48 k training samples.', '48'), ('The model used 48 thousand training samples.', '48'),
+                        ('We used 48 thousand samples.', '48'), ('We used 48 тыс. samples.', '48')):
+        assert list(_tokens(text)) == [(token, None)], text
+    # A range with a unit is one quantity with that unit.
+    assert list(_tokens('The validation error ranged 0.01-0.5 %.')) == [('0.01', None), ('0.5', None)]
+    # A following word is not a unit: the count and its split still bind.
+    assert list(_tokens('We used 48 training samples.')) == [('48', ('n_train',))]
+    v = lambda o: f"{o['data']['validation_mse']:.3g}"
+    for say in (lambda o: f'The validation MSE was {v(o)} %.', lambda o: f'The validation MSE was {v(o)} percent.',
+                lambda o: f"The model used {o['data']['n_train']} k training samples.", lambda o: f'The validation MSE was {v(o)}µM.'):
+        _, state = run(Scripted([FIT], say=say))
+        assert ladder_of(state)['next']['needs'] == ['unbound_number']
+
+
+MSE_SHUFFLED = ('minimum_shuffled_validation_mse', 'mean_shuffled_validation_mse')
+
+
+def test_a_statistic_anywhere_in_a_shuffled_error_phrase_decides_its_field():
+    mean, minimum = ('mean_shuffled_validation_mse',), ('minimum_shuffled_validation_mse',)
+    for text, names in (('The mean of the shuffled validation errors was 1.2', mean),
+                        ('The average of the shuffled errors was 1.2', mean),
+                        ('The shuffled validation error averaged 1.2', mean),
+                        ('The shuffled validation error had a mean of 1.2', mean),
+                        ('The minimum of the shuffled validation errors was 1.2', minimum),
+                        ('The shuffled validation error had a minimum of 1.2', minimum),
+                        ('The median shuffled validation error was 1.2', ()),
+                        ('The maximum shuffled validation error was 1.2', ()),
+                        ('The worst shuffled error was 1.2', ()),
+                        ('The shuffled validation error peaked at a maximum of 1.2', ()),
+                        ('Shuffled-response validation MSE was 1.2', MSE_SHUFFLED),
+                        ('Shuffled validation error was 1.2', MSE_SHUFFLED)):
+        assert list(_tokens(text)) == [('1.2', names)], text
+    for field, rung in (('minimum_shuffled_validation_mse', 0), ('mean_shuffled_validation_mse', 1)):
+        _, state = run(Scripted([NULL], falsifier_test=None,
+                                say=lambda o, f=field: f"The mean of the shuffled validation errors was {o['data'][f]:.6g}."))
+        assert ladder_of(state)['rung'] == rung, field
+
+
+@pytest.mark.parametrize('link', ['https://pubmed.ncbi.nlm.nih.gov/9500042/', 'https://www.ncbi.nlm.nih.gov/pubmed/9500042',
+                                  'http://ncbi.nlm.nih.gov/pubmed/9500042/', 'https://europepmc.org/article/MED/9500042',
+                                  'https://europepmc.org/abstract/MED/9500042'])
+def test_a_retracted_work_cited_by_any_pubmed_link_form_blocks_l1(link):
+    records = EUROPEPMC['resultList']['result']
+    _, cited = run(Scripted([FIT, READ], say=lambda o: f'Consistent with {link} on the split.'),
+                   extra_tools=reads(records), egress=True)
+    ladder = ladder_of(cited, rows=[read_row()], verification=passing(cited))
+    assert ladder['rung'] == 0 and 'retracted_source' in ladder['next']['needs']

@@ -728,6 +728,29 @@ def test_a_gate_pause_is_checked_against_its_request_whatever_its_label():
     validate_context(request, decided.model_copy(update={'stop_code': 'interrupted', 'stop_facts': {}}))
 
 
+def test_a_stopping_plan_paused_at_the_gate_is_checked_against_its_request_whatever_its_label():
+    request = gated()
+    state = run(request, initial=decide(run(request), ('proposal', 'plan-0', 'pursue', '')))
+    state = run(request, initial=decide(state, ('branch', 'null-control', 'park', '')))
+    plan = next(r for r in state.model_records if r.role == 'planner' and r.round == 2)
+    assert plan.payload['stop'] and state.stop_code == 'awaiting_decision'
+    validate_evidence(state)
+    validate_context(request, state)
+    for status, code, facts in (('budget_exhausted', 'time_limit', {}),
+                                ('paused', 'awaiting_decision', {'round': 2, 'plan_digest': 'f' * 64})):
+        forged = state.model_copy(update={'stop_code': code, 'status': status, 'stop_facts': facts})
+        validate_evidence(forged)
+        with pytest.raises(ValueError, match='unbound tool request'):
+            validate_context(request, forged)
+    # The same pause under a request without the gate cannot have come from the engine.
+    with pytest.raises(ValueError, match='unbound tool request'):
+        validate_context(MissionRequest(goal='Steer the fixture'), state)
+    # Accepted, the stop plan ends the mission, which verifies.
+    ended = run(request, initial=decide(state, ('proposal', 'plan-2', 'pursue', '')))
+    assert ended.stop_code == 'plan_stop'
+    validate_context(request, ended)
+
+
 def test_the_action_limit_excuse_and_the_dispatch_fact_bind_to_what_ran():
     from arc_science.exploration.claim_scope import derive_claim_scope
     request = MissionRequest(goal='Probe', max_rounds=3, max_cost_usd=0.01)

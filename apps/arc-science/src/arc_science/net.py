@@ -73,17 +73,47 @@ def system_proxy(target: str | None = None) -> str | None:
     return proxy
 
 
+class _PerTarget(httpx.BaseTransport, httpx.AsyncBaseTransport):
+    """Routes each request as a client built for its URL would: system_proxy(url), so loopback,
+    NO_PROXY and ProxyOverride hosts stay direct. One pooled transport per proxy decision.
+    ponytail: reads the proxy settings on every request; cache them if that ever shows in a profile."""
+
+    def __init__(self, asynchronous):
+        self.asynchronous, self.pool = asynchronous, {}
+
+    def _for(self, request):
+        proxy = system_proxy(str(request.url))
+        if proxy not in self.pool:
+            self.pool[proxy] = (httpx.AsyncHTTPTransport if self.asynchronous else httpx.HTTPTransport)(proxy=proxy)
+        return self.pool[proxy]
+
+    def handle_request(self, request):
+        return self._for(request).handle_request(request)
+
+    async def handle_async_request(self, request):
+        return await self._for(request).handle_async_request(request)
+
+    def close(self):
+        for transport in self.pool.values():
+            transport.close()
+
+    async def aclose(self):
+        for transport in self.pool.values():
+            await transport.aclose()
+
+
 def outbound_client(target: str | None = None, *, asynchronous: bool = False, **kwargs):
-    """An httpx client for target that goes through the system proxy when one is set."""
+    """An httpx client for target that goes through the system proxy when one is set. Without a
+    target (the shared client of seats, public reads and loopback endpoints) each request is
+    routed by its own URL."""
     kwargs.setdefault('follow_redirects', False)
     # An injected transport owns routing; a proxy mount would silently replace it.
     if kwargs.get('transport') is None:
-        proxy = system_proxy(target)
-        if proxy:
+        proxy = system_proxy(target)  # an unsupported proxy is refused here, before any call
+        if target is None:
+            kwargs['transport'] = _PerTarget(asynchronous)
+        elif proxy:
             kwargs['proxy'] = proxy
-            if target is None:  # a shared client may also call loopback endpoints: keep those direct
-                kwargs['mounts'] = {'all://localhost': None, 'all://127.0.0.1': None, 'all://[::1]': None,
-                                    **kwargs.get('mounts', {})}
     return (httpx.AsyncClient if asynchronous else httpx.Client)(trust_env=False, **kwargs)
 
 
