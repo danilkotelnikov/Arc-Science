@@ -485,7 +485,29 @@ def test_corrupt_session_record_reports_integrity_not_read_budget(tmp_path):
             detail = _error(client.get("/api/memory/sessions/s", params={"project": "p"}), 500, "memory.record_corrupt")
             assert detail["facts"] == {"operation": "session_fetch"}
             with sqlite3.connect(tmp_path / "memory.db") as conn:
+                conn.execute("UPDATE blobs SET original_size = -1")
+            _error(client.get("/api/memory/sessions/s", params={"project": "p"}), 500, "memory.record_corrupt")
+            with sqlite3.connect(tmp_path / "memory.db") as conn:
                 conn.execute("UPDATE blobs SET original_size = 9000000")
             _error(client.get("/api/memory/sessions/s", params={"project": "p"}), 409, "memory.read_budget")
+    finally:
+        routes.close()
+
+
+def test_tampered_blob_bytes_report_record_corrupt(tmp_path):
+    """Bytes zstd cannot decode are a corrupt record, not a failed operation."""
+    import sqlite3
+    routes = MemoryRoutes(tmp_path, worker_binary(), _authorized)
+    app = FastAPI()
+    app.include_router(routes.router)
+    try:
+        with TestClient(app) as client:
+            record_id = routes._client_or_503().append(sample("hydrogen bond note"))
+            with sqlite3.connect(tmp_path / "memory.db") as conn:
+                conn.execute("UPDATE blobs SET data = X'00010203'")
+            detail = _error(client.get("/api/memory/sessions/s", params={"project": "p"}), 500, "memory.record_corrupt")
+            assert detail["facts"] == {"operation": "session_fetch"}
+            detail = _error(client.get(f"/api/memory/records/{record_id}"), 500, "memory.record_corrupt")
+            assert detail["facts"] == {"operation": "inspect"}
     finally:
         routes.close()

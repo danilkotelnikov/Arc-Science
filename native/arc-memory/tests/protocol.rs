@@ -234,6 +234,44 @@ fn errors_carry_a_machine_kind_for_their_cause() {
     };
     tamper("UPDATE blobs SET original_size = original_size - 1");
     assert_eq!(kind(call(&worker, fetch)), "corrupt");
+    // A negative stored size can only come from tampering, never from a budget.
+    tamper("UPDATE blobs SET original_size = -1");
+    assert_eq!(kind(call(&worker, fetch)), "corrupt");
     tamper("UPDATE blobs SET original_size = 9000000");
     assert_eq!(kind(call(&worker, fetch)), "read_budget");
+}
+
+/// Tampered blob bytes fail zstd decoding before the digest check; that is a
+/// corrupt record, not a storage failure, on every path that decodes a blob.
+#[test]
+fn tampered_blob_bytes_are_corrupt_not_storage() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("memory.db");
+    let worker = Worker::new(Engine::open(&path).unwrap(), None);
+    let record_id = call(&worker, RECORD)["data"]["record_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let fetch = r#"{"op":"session_fetch","project":"p","session":"s"}"#;
+    let inspect = format!(r#"{{"op":"inspect","record_id":"{record_id}"}}"#);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let original: Vec<u8> = db
+        .query_row("SELECT data FROM blobs", [], |row| row.get(0))
+        .unwrap();
+    let mut flipped_header = original.clone();
+    flipped_header[0] ^= 0xFF;
+    let truncated = original[..original.len() - 1].to_vec();
+    let garbage = vec![0u8, 1, 2, 3];
+    for (label, data) in [
+        ("header", flipped_header),
+        ("truncated", truncated),
+        ("garbage", garbage),
+    ] {
+        db.execute("UPDATE blobs SET data = ?1", [&data]).unwrap();
+        for request in [fetch, inspect.as_str()] {
+            let response = call(&worker, request);
+            assert_eq!(response["status"], "error", "{label} {request}");
+            assert_eq!(response["kind"], "corrupt", "{label} {request}: {response}");
+        }
+    }
 }

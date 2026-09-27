@@ -637,12 +637,22 @@ fn read_raw(row: &Row) -> rusqlite::Result<Raw> {
     })
 }
 
+/// Stored bytes that zstd cannot decode were damaged or tampered with in the database;
+/// the file itself was read fine, so this is corruption, not a storage failure.
+fn undecodable() -> Error {
+    Error::Corrupt("record blob failed to decompress")
+}
+
 fn read_budget_error() -> Error {
     Error::ReadBudget
 }
 
 fn hydrate_bounded(raw: Raw, remaining: &mut usize) -> Result<StoredRecord> {
-    if raw.original_size < 0 || raw.original_size as u64 > *remaining as u64 {
+    // A negative size can only be tampered metadata, so it is corrupt, not a budget.
+    if raw.original_size < 0 {
+        return Err(Error::Corrupt("record size is negative"));
+    }
+    if raw.original_size as u64 > *remaining as u64 {
         return Err(read_budget_error());
     }
     *remaining -= raw.original_size as usize;
@@ -652,9 +662,13 @@ fn hydrate_bounded(raw: Raw, remaining: &mut usize) -> Result<StoredRecord> {
 fn hydrate(raw: Raw) -> Result<StoredRecord> {
     // Even corrupt metadata or a compressed bomb cannot allocate without a cap.
     let mut text_bytes = Vec::new();
-    zstd::Decoder::new(raw.data.as_slice())?
-        .take(MAX_FETCH_TEXT_BYTES as u64 + 1)
-        .read_to_end(&mut text_bytes)?;
+    zstd::Decoder::new(raw.data.as_slice())
+        .and_then(|decoder| {
+            decoder
+                .take(MAX_FETCH_TEXT_BYTES as u64 + 1)
+                .read_to_end(&mut text_bytes)
+        })
+        .map_err(|_| undecodable())?;
     if text_bytes.len() > MAX_FETCH_TEXT_BYTES {
         return Err(Error::Corrupt("record exceeds decoded text limit"));
     }
@@ -744,7 +758,7 @@ fn fts_match_expression(scope: &Scope, query: &str) -> Option<String> {
 
 /// Decompress a stored blob and check it against its recorded size and digest.
 fn decode_verified(data: &[u8], size: i64, digest: &str) -> Result<String> {
-    let text = zstd::decode_all(data)?;
+    let text = zstd::decode_all(data).map_err(|_| undecodable())?;
     if text.len() as i64 != size || sha256_hex(&text) != digest {
         return Err(Error::Corrupt("record text failed integrity check"));
     }

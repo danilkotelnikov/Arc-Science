@@ -419,6 +419,23 @@ fn embed_pending_is_idempotent() {
     );
 }
 
+/// A blob whose bytes no longer decode is corrupt on the embed path too.
+#[test]
+fn embed_pending_reports_undecodable_blob_as_corrupt() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("memory.db");
+    let engine = Engine::open(&path).unwrap();
+    engine.append(&sample("anything")).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("UPDATE blobs SET data = X'00010203'", [])
+        .unwrap();
+    assert!(matches!(
+        engine.embed_pending(&HashingEmbedder { dim: 32 }),
+        Err(arc_memory::Error::Corrupt(_))
+    ));
+}
+
 #[test]
 fn malformed_vectors_are_rejected() {
     let dir = tempdir().unwrap();

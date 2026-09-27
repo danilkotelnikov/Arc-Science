@@ -17,13 +17,16 @@ def worker_binary() -> Path:
     """The service's own locator (ARC_MEMORY_WORKER) first, then the cargo target dir.
 
     Setting ARC_MEMORY_WORKER declares that the worker-backed tests must run, so a
-    path that is not a file fails the test instead of skipping or falling back.
+    path that is not a file fails the test instead of skipping or falling back. Under
+    CI the variable is required, so a gate that forgot the worker goes red, not green.
     """
     if CONFIGURED_WORKER:
         if not Path(CONFIGURED_WORKER).is_file():
             pytest.fail(f"ARC_MEMORY_WORKER is set but is not a file: {CONFIGURED_WORKER}")
         return Path(CONFIGURED_WORKER)
-    root = Path(__file__).resolve().parents[3]
+    if os.environ.get("CI"):
+        pytest.fail("CI must build arc-memory-worker and set ARC_MEMORY_WORKER; these tests cannot skip")
+    root =Path(__file__).resolve().parents[3]
     target = Path(os.environ.get("CARGO_TARGET_DIR") or root / "native" / "arc-memory" / "target")
     name = "arc-memory-worker.exe" if os.name == "nt" else "arc-memory-worker"
     for profile in ("release", "debug"):
@@ -195,6 +198,17 @@ def test_configured_worker_that_is_missing_fails_instead_of_skipping(tmp_path, m
         module.worker_binary()
 
 
+def test_ci_without_a_configured_worker_fails_instead_of_skipping(monkeypatch):
+    # CI builds the worker before pytest and exports ARC_MEMORY_WORKER; if it does
+    # not, the gate must go red rather than pass with the worker-backed tests skipped.
+    import test_memory_client as module
+
+    monkeypatch.setattr(module, "CONFIGURED_WORKER", None)
+    monkeypatch.setenv("CI", "true")
+    with pytest.raises(pytest.fail.Exception, match="ARC_MEMORY_WORKER"):
+        module.worker_binary()
+
+
 def test_client_errors_carry_the_worker_kind(tmp_path):
     import sqlite3
     from arc_science.memory.client import MemoryError as MemErr
@@ -210,4 +224,9 @@ def test_client_errors_carry_the_worker_kind(tmp_path):
         with pytest.raises(MemErr) as corrupt:
             mem.session_fetch("p", "s")
         assert corrupt.value.kind == "corrupt"
+        with sqlite3.connect(tmp_path / "memory.db") as conn:
+            conn.execute("UPDATE blobs SET data = X'00010203'")
+        with pytest.raises(MemErr) as undecodable:
+            mem.session_fetch("p", "s")
+        assert undecodable.value.kind == "corrupt"
     assert MemErr("legacy worker message").kind is None
