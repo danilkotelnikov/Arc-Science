@@ -14,6 +14,9 @@ import uuid
 import hmac
 import httpx
 import json
+import contextvars
+import hashlib
+from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 from fastapi import Body, FastAPI, Depends, Header, Response
 from fastapi.exceptions import RequestValidationError
@@ -53,10 +56,15 @@ NATIVE_SESSION_ENV='ARC_NATIVE_SESSION_SECRET'
 class ProseText(BaseModel):
     text:str=Field(min_length=1,max_length=20000)
 
-class ProseDetect(ProseText):
+class Remember(BaseModel):
+    """D009: with the call's consent flag, remember_days: 30 also remembers that consent for
+    exactly this destination and data category; later calls without the flag reuse it."""
+    remember_days:Literal[30]|None=None
+
+class ProseDetect(ProseText,Remember):
     allow_egress:bool=False
 
-class ProseHumanise(ProseText):
+class ProseHumanise(ProseText,Remember):
     """The text leaves this machine for the prose seat's provider: consent per request."""
     allow_egress:bool=False
     instructions:str=Field(default='',max_length=2000)
@@ -71,7 +79,7 @@ class ChangeDeclaration(BaseModel):
     declared_effects:list[str]=Field(default_factory=list,max_length=5)
     note:str=Field(default='',max_length=400)
 
-class ProbeRequest(BaseModel):
+class ProbeRequest(Remember):
     """Explicit consent: a provider probe spends real tokens."""
     spend_tokens:bool=False
 
@@ -399,10 +407,42 @@ def request_grant(ledger,destination,destination_kind,data_category,purpose,requ
     grant=ledger.create(subject_kind='request',subject_id=uuid.uuid4().hex,destination=destination,destination_kind=destination_kind,
                         data_category=data_category,purpose=purpose,scope='once',route_digest='',settings_revision='',source='operator-ui',max_uses=1)
     ledger.reserve(grant['id'])
+    return _finisher(ledger,grant['id'],destination,destination_kind,data_category,request_digest)
+
+
+def _finisher(ledger,grant_id,destination,destination_kind,data_category,request_digest):
     def finish(outcome,reason=''):
-        ledger.receipt(grant_id=grant['id'],mission_id=None,destination=destination,destination_kind=destination_kind,data_category=data_category,
+        ledger.receipt(grant_id=grant_id,mission_id=None,destination=destination,destination_kind=destination_kind,data_category=data_category,
                        outcome=outcome,reason=str(reason)[:300],request_digest=request_digest,observation_id=None,role=None)
     return finish
+
+
+def consent_covered(ledger,destination,destination_kind,data_category,purpose,*,given,remember_days):
+    """The consent gate of a per-call route: True when the request body carries the consent
+    flag, or an active remembered grant covers exactly this destination and data category.
+    The flag with remember_days writes that remembered grant; only this request body can, so
+    model output, memory and connector text never do. remember_days alone is refused."""
+    if remember_days and not given:raise api_error(422,'consent.remember_needs_consent')
+    if given:
+        if remember_days:ledger.remember(destination,destination_kind,data_category,purpose)
+        return True
+    return ledger.remembered(destination,data_category,reserve=False) is not None
+
+
+def consent_grant(ledger,destination,destination_kind,data_category,purpose,request_digest=None,*,given,remember_days):
+    """At the point of sending: finish(outcome, reason) under a reserved grant, or None when
+    nothing covers the call any more (revoked or expired since the gate). A remembered grant
+    is used when the call has no flag or asked to remember; the flag alone is a 'once' grant."""
+    grant=ledger.remembered(destination,data_category) if (remember_days or not given) else None
+    if grant is not None:return _finisher(ledger,grant['id'],destination,destination_kind,data_category,request_digest)
+    return request_grant(ledger,destination,destination_kind,data_category,purpose,request_digest) if given else None
+
+
+# The data category and purpose of each per-call route's grants; the detector's pair is the
+# one prose.Detector passes to its egress hook.
+DETECTION_GRANT=('the submitted text','third-party AI-text detection')
+HUMANISE_GRANT=('the submitted text and instructions','a reader-facing edit by the prose seat')
+PROBE_GRANT=('a fixed readiness prompt that spends tokens','a provider readiness probe')
 
 
 class GuardedSeatAgent:
@@ -598,7 +638,14 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     app.include_router(molecular_jobs.router)
 
     from . import prose as prose_module
-    detector=prose_module.Detector(root);detector.egress=consented
+    # The detect route reserves its grant before calling the detector and hands it over here;
+    # any other caller keeps a one-off grant per request.
+    detect_grant=contextvars.ContextVar('detect_grant',default=None)
+    def detector_egress(*args):
+        held=detect_grant.get()
+        if held is None:return consented(*args)
+        held['sent']=True;return held['finish']
+    detector=prose_module.Detector(root);detector.egress=detector_egress
     app.state.detector=detector
 
     # Prose control: a rule-based local rewrite that never touches scientific content,
@@ -660,14 +707,16 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             # A missing credential is a local prerequisite, not a provider answer.
             try:_secret(cfg.credential_ref)
             except ValueError as error:prose_error(prose_module.ProseRefused('seat_unavailable','The prose seat has no stored credential: '+str(error)[:200]))
-        if not body.allow_egress:
-            prose_error(prose_module.ProseRefused('consent_required','The text would leave this machine for the '+cfg.provider
-                +' seat; send allow_egress: true to consent to this one request'))
+        destination=seat_destination(cfg);consent=dict(given=body.allow_egress,remember_days=body.remember_days)
+        refusal=prose_module.ProseRefused('consent_required','The text would leave this machine for the '+cfg.provider
+            +' seat; send allow_egress: true to consent to this one request')
+        if not consent_covered(ledger,destination,'prose',*HUMANISE_GRANT,**consent):prose_error(refusal)
         if humanise_lock.locked():prose_error(prose_module.ProseRefused('busy','A seat rewrite is already in flight'))
         async with humanise_lock:
+            # The consent is also a grant in the ledger (once, or the remembered one), with its receipt.
+            finish=consent_grant(ledger,destination,'prose',*HUMANISE_GRANT,keyed,**consent)
+            if finish is None:prose_error(refusal)
             line({'status':'attempted','provider':cfg.provider,'transport':cfg.transport,'model':cfg.model,'chars':len(body.text)})
-            # The consent is also a once-scoped grant in the ledger, with its receipt.
-            finish=consented(seat_destination(cfg),'prose','the submitted text and instructions','a reader-facing edit by the prose seat',keyed)
             seat=None
             try:
                 async with httpx.AsyncClient(trust_env=False) as client:
@@ -695,8 +744,20 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         current=operator_settings.current()
         if current is not None and not (current.get('prose') or {}).get('detection',True):
             prose_error(prose_module.ProseRefused('disabled','Detection is switched off in the settings'))
-        try:return await detector.detect(body.text,allow_egress=body.allow_egress)
-        except prose_module.ProseRefused as refused:prose_error(refused)
+        # Consent is this body's flag or a remembered grant for exactly this destination and
+        # category; without either the detector refuses in its own words and nothing is written.
+        consent=dict(given=body.allow_egress,remember_days=body.remember_days)
+        finish=None
+        if consent_covered(ledger,prose_module.DETECTION_HOST,'detector',*DETECTION_GRANT,**consent):
+            finish=consent_grant(ledger,prose_module.DETECTION_HOST,'detector',*DETECTION_GRANT,
+                                 hashlib.sha256(body.text.encode('utf-8')).hexdigest(),**consent)
+        held={'finish':finish,'sent':False};reset=detect_grant.set(held)
+        try:return await detector.detect(body.text,allow_egress=finish is not None)
+        except prose_module.ProseRefused as refused:
+            # Refused before anything left (bounds, busy, switched off): the reserved use is denied.
+            if finish is not None and not held['sent']:finish('denied',refused.code)
+            prose_error(refused)
+        finally:detect_grant.reset(reset)
 
     # Operator settings: the native supervisor owns the file; the service reads the
     # snapshot and forwards a whole replacement with the revision the operator saw.
@@ -977,7 +1038,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         provider='anthropic' if provider=='claude-code' else provider
         if provider not in PROVIDERS:raise api_error(404,'provider.unknown',facts={'provider':provider})
         name=CLI_TRANSPORTS[provider][1] if provider in CLI_TRANSPORTS else None
-        if not consent.spend_tokens:raise api_error(422,'probe.consent_required')
+        # The body's spend_tokens, or a remembered consent to probe this provider.
+        grant_args=('provider:'+provider,'seat',*PROBE_GRANT);given=dict(given=consent.spend_tokens,remember_days=consent.remember_days)
+        if not consent_covered(ledger,*grant_args,**given):raise api_error(422,'probe.consent_required')
         settings=operator_settings.current() or {}
         try:seats=provider_seats(settings,provider)
         except Exception as error:raise api_error(409,'probe.seat_invalid',str(error),facts={'provider':provider}) from None
@@ -986,44 +1049,51 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if time.monotonic()-probe_last['at']<PROBE_COOLDOWN:
             raise api_error(429,'probe.cooldown',facts={'retry_after_s':max(1,int(PROBE_COOLDOWN-(time.monotonic()-probe_last['at']))+1)})
         async with probe_lock:
+            finish=consent_grant(ledger,*grant_args,**given)
+            if finish is None:raise api_error(422,'probe.consent_required')
             probe_last['at']=time.monotonic()
-            command=_cli_command(settings,provider) if any(e.transport=='cli' for e in seats.values()) else None
-            executable_sha256=await executable_digest(command[0]) if command else None
-            # The subject names what a result verifies; readiness matches a seat to it by digest.
-            distinct={}
-            for role,e in seats.items():
-                verified=(probe_subject(provider,'cli',e.model,e.effort,executable_sha256=executable_sha256) if e.transport=='cli'
-                          else probe_subject(provider,'api',e.model,e.effort,endpoint=origin(e.endpoint),credential_ref=e.credential_ref))
-                distinct.setdefault(subject_digest(verified),(verified,e,[]))[2].append(role)
-            results=[]
-            async with httpx.AsyncClient(trust_env=False) as client:
-                for digest_value,(verified,e,roles) in distinct.items():
-                    record={'model':e.model,'effort':e.effort,'roles':roles,'transport':e.transport,'subject':verified,'subject_digest':digest_value}
-                    started=time.monotonic();seat=None
-                    try:
-                        if e.transport=='cli':
-                            seat=CliAgent(command,e.model,e.model,provider=provider,efforts={'probe':e.effort} if e.effort else None);target=e.model
-                        else:
-                            seat=HTTPAgent(e,client=client,project='probe',principal='local-operator',
-                                           resolver=lambda ref,principal,project,e=e:access_grant(e,ref,principal,project));target=e
-                        await seat._call(target,PROBE_INSTRUCTIONS,{'probe':True},ProbeReply,role='probe')
-                        call=seat.calls[-1]
-                        results.append({**record,'ok':True,'observed_model':call['observed_model'],
-                                        'identity_verified':call['identity_verified'],'applied_effort':call['applied_effort'],
-                                        'duration_ms':int((time.monotonic()-started)*1000)})
-                    except Exception as error:
-                        results.append({**record,'ok':False,'error':redact(str(error))[:300],
-                                        'duration_ms':int((time.monotonic()-started)*1000)})
-                    finally:
-                        if seat is not None and hasattr(seat,'close'):seat.close()
-            at=int(time.time());reply={'at':at,'transport':name if command else 'api','provider':provider,'results':results}
-            (root/'providers').mkdir(parents=True,exist_ok=True)
-            for key,transport in ((name,'cli'),(provider,'api')):
-                mine=[r for r in results if r['transport']==transport]
-                if not mine:continue
-                probes[key]={'at':at,'transport':key if transport=='cli' else 'api','provider':provider,'results':mine}
-                with (root/'providers'/(key+'-probes.jsonl')).open('a',encoding='utf-8') as log:log.write(json.dumps(probes[key])+'\n')
-            return reply
+            try:
+                command=_cli_command(settings,provider) if any(e.transport=='cli' for e in seats.values()) else None
+                executable_sha256=await executable_digest(command[0]) if command else None
+                # The subject names what a result verifies; readiness matches a seat to it by digest.
+                distinct={}
+                for role,e in seats.items():
+                    verified=(probe_subject(provider,'cli',e.model,e.effort,executable_sha256=executable_sha256) if e.transport=='cli'
+                              else probe_subject(provider,'api',e.model,e.effort,endpoint=origin(e.endpoint),credential_ref=e.credential_ref))
+                    distinct.setdefault(subject_digest(verified),(verified,e,[]))[2].append(role)
+                results=[]
+                async with httpx.AsyncClient(trust_env=False) as client:
+                    for digest_value,(verified,e,roles) in distinct.items():
+                        record={'model':e.model,'effort':e.effort,'roles':roles,'transport':e.transport,'subject':verified,'subject_digest':digest_value}
+                        started=time.monotonic();seat=None
+                        try:
+                            if e.transport=='cli':
+                                seat=CliAgent(command,e.model,e.model,provider=provider,efforts={'probe':e.effort} if e.effort else None);target=e.model
+                            else:
+                                seat=HTTPAgent(e,client=client,project='probe',principal='local-operator',
+                                               resolver=lambda ref,principal,project,e=e:access_grant(e,ref,principal,project));target=e
+                            await seat._call(target,PROBE_INSTRUCTIONS,{'probe':True},ProbeReply,role='probe')
+                            call=seat.calls[-1]
+                            results.append({**record,'ok':True,'observed_model':call['observed_model'],
+                                            'identity_verified':call['identity_verified'],'applied_effort':call['applied_effort'],
+                                            'duration_ms':int((time.monotonic()-started)*1000)})
+                        except Exception as error:
+                            results.append({**record,'ok':False,'error':redact(str(error))[:300],
+                                            'duration_ms':int((time.monotonic()-started)*1000)})
+                        finally:
+                            if seat is not None and hasattr(seat,'close'):seat.close()
+                at=int(time.time());reply={'at':at,'transport':name if command else 'api','provider':provider,'results':results}
+                (root/'providers').mkdir(parents=True,exist_ok=True)
+                for key,transport in ((name,'cli'),(provider,'api')):
+                    mine=[r for r in results if r['transport']==transport]
+                    if not mine:continue
+                    probes[key]={'at':at,'transport':key if transport=='cli' else 'api','provider':provider,'results':mine}
+                    with (root/'providers'/(key+'-probes.jsonl')).open('a',encoding='utf-8') as log:log.write(json.dumps(probes[key])+'\n')
+                finish('ok' if all(r['ok'] for r in results) else 'failed')
+                return reply
+            except BaseException as error:
+                # Every reserved use has a receipt, even when the probe itself breaks.
+                finish('failed',type(error).__name__);raise
 
     from .readiness import create_router as readiness_router
     readiness_api=readiness_router(authorized=authorized,root=root,repository=repository,cli_transport=cli_transport,cli_transports=CLI_TRANSPORTS,

@@ -69,6 +69,7 @@ ERROR_CODES = {
     'budget.cost_unreported': 'A cost budget needs every bound seat to report its cost; only Claude Code CLI seats do',
     'release.blocked': 'Release blocked; verify the mission and resolve its checks',
     'grant.not_found': 'Unknown grant',
+    'consent.remember_needs_consent': 'Send remember_days only together with the consent flag of the same request',
     'provider.unknown': 'Unknown provider',
     'probe.consent_required': 'Confirm spend_tokens=true; a probe makes a real model call per configured model',
     'probe.seat_invalid': 'A seat on this provider cannot be built',
