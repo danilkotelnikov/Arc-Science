@@ -85,7 +85,7 @@ STOP_CODES = {
     'token_limit': 'Token budget reached',
     'cost_limit': 'Cost budget reached',
     'time_limit': 'Time budget reached',
-    'budget_unmeasurable': 'A model call reported no usage or cost, so the budget cannot be enforced',
+    'budget_unmeasurable': 'A model call answered without reporting usable usage or cost, so the budget cannot be enforced',
     'paused_by_operator': 'Paused by the operator',
     'cancelled': 'Cancelled by the operator',
     'interrupted': 'The service restarted while the mission ran',

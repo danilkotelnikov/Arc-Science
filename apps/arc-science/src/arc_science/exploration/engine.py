@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import time
 from .models import (MissionRequest, MissionState, Branch, Proposal, Reconciliation,
-                     Observation, Assessed, Event, ModelRecord, VisionRecord, RepairCycle, VisualReport)
+                     Observation, Assessed, Event, ModelRecord, VisionRecord, RepairCycle, VisualReport, UnboundCall)
 from .tools import synthetic_data, execute_numeric, CATALOG, TOOL_VERSION
 from .artifacts import artifact_for_observation
 from .claim_scope import derive_claim_scope
@@ -17,7 +17,7 @@ from .vision import VISUAL_PROMPT_VERSION, current_artifacts, required_visual_re
 from .catalog import (BIORENDER_CATALOG, BUILTIN_CATALOG, PUBLIC_CATALOG, TrustedPublicTools,
                       trusted_replay, trusted_version, validate_arguments, validate_catalog)
 from .evidence import validate_evidence
-from .spend import reports_usage, spent
+from .spend import spent, tally
 from ..contracts import digest
 
 # The vision_required cause of each reason required_visual_reason can return: a review that
@@ -29,6 +29,9 @@ VISUAL_CAUSES = {
     'Required visual review is missing exact coverage for one or more generated artifacts.': 'coverage',
     'Required visual review did not return an accepted artifact-bound report.': 'record_not_accepted',
 }
+
+# Stops that over_budget itself makes; every other non-error stop checks the budgets first.
+BUDGET_STOPS = ('token_limit', 'cost_limit', 'time_limit', 'budget_unmeasurable')
 
 class MissionCancelled(RuntimeError): pass
 
@@ -89,6 +92,8 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         if emit: emit(state)
     def stop(status,code,reason,**facts):
         # code is an error_codes.STOP_CODES key; facts are the variable parts of reason.
+        # The last step's spend is checked before any other terminal transition.
+        if status!='error' and code not in BUDGET_STOPS and (over:=over_budget()) is not None:return over
         op=log('started',operation='stop',role='engine',round=state.round,detail=reason[:300])
         # Every stop states what the evidence supports so far; the scope is derived,
         # never authored, and a resumed mission derives it again at its next stop.
@@ -108,6 +113,13 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         record=agent.take_provenance(role)
         if record is None: raise ValueError('Missing transport provenance for '+role)
         return record
+    def unbound(role):
+        # The transport record of a call whose answer was rejected or failed, taken so its
+        # usage still counts; None when the transport kept nothing (a cut-off call).
+        return agent.take_provenance(role) if hasattr(agent,'take_provenance') else None
+    def unbound_call(role,transport):
+        failed=transport.get('outcome')=='failed'
+        return UnboundCall(role=role,round=state.round,outcome='failed' if failed else 'rejected',transport=transport)
     def context(reviewing=None):
         # A vision seat sees earlier rounds plus exactly the batch it reviews, and no
         # same-round report: a repair is reviewed with fresh eyes as a new candidate.
@@ -134,11 +146,10 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         # calls or one vision call), so a budget is overshot by at most one step's usage;
         # reserve worst-case tokens per step if exact caps matter.
         if request.max_tokens is None and request.max_cost_usd is None and request.max_minutes is None:return None
-        used=spent(state)
-        measured=sum(1 for r in state.model_records+state.vision_records if r.transport and reports_usage(r.transport.get('usage')))
+        used=spent(state);measured=len(tally(state)[0])
         if request.max_tokens is not None:
             if not used['measured']:
-                return stop('needs_input','budget_unmeasurable','A model call reported no token usage, so the token budget cannot be enforced.',
+                return stop('needs_input','budget_unmeasurable','A model call answered without reporting usable token usage, so the token budget cannot be enforced.',
                             kind='tokens',limit=request.max_tokens,calls=used['calls'],measured_calls=measured)
             tokens=used['input_tokens']+used['output_tokens']
             if tokens>=request.max_tokens:
@@ -146,7 +157,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                             kind='tokens',spent=tokens,limit=request.max_tokens)
         if request.max_cost_usd is not None:
             if used['cost_usd'] is None:
-                return stop('needs_input','budget_unmeasurable','A model call reported no cost, so the cost budget cannot be enforced.',
+                return stop('needs_input','budget_unmeasurable','A model call answered without reporting its cost, so the cost budget cannot be enforced.',
                             kind='cost_usd',limit=request.max_cost_usd,calls=used['calls'],measured_calls=measured)
             if used['cost_usd']>=request.max_cost_usd:
                 return stop('budget_exhausted','cost_limit','Cost budget reached; remaining alternatives are unresolved.',
@@ -197,7 +208,10 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             if len({a.id for a in plan.actions})!=len(plan.actions): raise ProposalRejected('Duplicate actions')
             if any(a.branch_id not in ids for a in plan.actions): raise ProposalRejected('Unknown branch')
         except Exception as why:
-            if op:log('finished',op,outcome='error',detail='Planning failed validation or provider execution.')
+            if op:
+                log('finished',op,outcome='error',detail='Planning failed validation or provider execution.')
+                transport=unbound('planner')
+                if transport is not None:change(unbound_calls=state.unbound_calls+(unbound_call('planner',transport),))
             # Only the engine's own refusals are quoted; provider and schema errors may carry model text.
             reason=' Rejected: '+str(why)+'.' if isinstance(why,ProposalRejected) else ''
             return stop('error','planning_failed','Planning failed validation or provider execution. No synthetic fallback was used.'+reason,
@@ -329,7 +343,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                         vtransport=provenance('vision')
                     except Exception:
                         log('finished',op,outcome='error',detail='Missing, failed, malformed or unbound visual review.')
-                        rejected=reservation.model_copy(update={'status':'rejected'})
+                        rejected=reservation.model_copy(update={'status':'rejected','transport':unbound('vision')})
                         change(vision_records=state.vision_records[:-1]+(rejected,),
                                repairs=with_outcome(state.repairs,batch_digests,'rejected','The fresh review failed or was unbound; no success inferred.'))
                         event('visual_review_rejected','Missing, failed, malformed or unbound visual review; no success inferred.')
@@ -388,18 +402,21 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         # Neither invocation sees the other's current-round answer.
         packets=await asyncio.gather(review('analyst'),review('falsifier'))
         check_cancel()
-        assessments=list(state.assessments);records=list(state.model_records)
+        assessments=list(state.assessments);records=list(state.model_records);unbound_calls=list(state.unbound_calls)
         for role,packet,op in packets:
-            try:transport=provenance(role) if packet is not None else None
-            except ValueError:packet=None
+            # Every reviewer call hands over its transport record, answer accepted or not;
+            # a live transport without one fails closed.
+            transport=unbound(role)
+            if transport is None and hasattr(agent,'take_provenance'):packet=None
             if packet is None:
+                if transport is not None:unbound_calls.append(unbound_call(role,transport))
                 log('finished',op,outcome='error',detail='missing, malformed or unbound review')
                 event('review_rejected',role+': missing, malformed or unbound review; no success inferred.')
                 continue
             log('finished',op,outcome='ok',transport=transport)
             records.append(ModelRecord(role=role,round=state.round,model=identity(role),context_digest=digest(frozen),input_context=frozen,payload=packet.model_dump(mode='json'),transport=transport))
             assessments.extend(Assessed(**a.model_dump(),role=role,round=state.round,model=identity(role)) for a in packet.assessments)
-        change(assessments=tuple(assessments),model_records=tuple(records))
+        change(assessments=tuple(assessments),model_records=tuple(records),unbound_calls=tuple(unbound_calls))
         fits=[o for o in state.observations if o.status=='ok' and o.tool=='polynomial_fit']
         focus=min(fits,key=lambda o:(o.data['validation_mse'],o.id)).branch_id if fits else state.focus
         if focus!=state.focus:

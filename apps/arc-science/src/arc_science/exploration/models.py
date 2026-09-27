@@ -137,6 +137,15 @@ class ModelRecord(Record):
     transport: dict | None = None
 
 
+class UnboundCall(Record):
+    """A reserved model call that produced no accepted record: the engine rejected the
+    answer, or the provider failed. The transport record is kept so its usage still counts."""
+    role: str
+    round: int = Field(ge=0)
+    outcome: Literal['rejected', 'failed']
+    transport: dict | None = None
+
+
 class Artifact(Record):
     digest: Digest
     media_type: Literal['image/png'] = 'image/png'
@@ -406,7 +415,7 @@ class ReleaseDecision(Record):
 
 
 class MissionState(Versioned):
-    LATER_FIELDS = ('stop_code', 'stop_facts')
+    LATER_FIELDS = ('stop_code', 'stop_facts', 'unbound_calls')
     request_digest: Digest
     status: Literal['ready','running','completed','budget_exhausted','needs_input','error','paused','cancelled'] = 'ready'
     round: int = 0
@@ -417,6 +426,8 @@ class MissionState(Versioned):
     observations: tuple[Observation, ...] = ()
     assessments: tuple[Assessed, ...] = ()
     model_records: tuple[ModelRecord, ...] = ()
+    # Calls whose answer was rejected or failed; their usage counts toward the spend.
+    unbound_calls: tuple[UnboundCall, ...] = ()
     artifacts: tuple[Artifact, ...] = Field(default=(), max_length=64)
     visual_reports: tuple[VisualReport, ...] = Field(default=(), max_length=64)
     vision_records: tuple[VisionRecord, ...] = Field(default=(), max_length=64)

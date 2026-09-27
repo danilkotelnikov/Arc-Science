@@ -35,17 +35,31 @@ def raw(name, part):
 
 
 def needs_rasterizer():
-    # The completed vector carries rendered plots; replay re-renders them.
+    # The completed vector carries rendered plots; replay re-renders them. An acceptance run
+    # sets ARC_REQUIRE_RASTERIZER=1 so a missing rasterizer fails instead of skipping.
     from arc_science.svg_raster import cairo_available
     if not os.environ.get('ARC_SVG2PNG') and not cairo_available():
-        pytest.skip('No SVG rasterizer: set ARC_SVG2PNG or install cairosvg to re-render the legacy plots')
+        message = 'No SVG rasterizer: set ARC_SVG2PNG or install cairosvg to re-render the legacy plots'
+        if os.environ.get('ARC_REQUIRE_RASTERIZER') == '1':
+            pytest.fail(message)
+        pytest.skip(message)
+
+
+# The store schema of the release the vectors come from, before the updated_at column.
+LEGACY_SCHEMA = '''CREATE TABLE missions (
+    id TEXT PRIMARY KEY, request TEXT NOT NULL, request_digest TEXT NOT NULL,
+    state TEXT NOT NULL, revision INTEGER NOT NULL, creation_key TEXT UNIQUE NOT NULL);
+CREATE TABLE mission_events (
+    mission TEXT NOT NULL, revision INTEGER NOT NULL, state_digest TEXT NOT NULL,
+    previous TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY(mission,revision));'''
 
 
 def legacy_store(root: Path):
-    """A missions.db holding the legacy rows and event chains exactly as they were stored."""
+    """A missions.db holding the legacy rows and event chains exactly as they were stored,
+    in the schema they were stored in; the current code migrates it when it opens the store."""
     root.mkdir(parents=True, exist_ok=True)
-    MissionRepository(root / 'missions.db')
     with sqlite3.connect(root / 'missions.db') as db:
+        db.executescript(LEGACY_SCHEMA)
         for name, vector in VECTORS.items():
             db.execute('INSERT INTO missions(id,request,request_digest,state,revision,creation_key) VALUES(?,?,?,?,?,?)',
                        (vector['id'], raw(name, 'request'), vector['request_digest'], raw(name, 'state'),
@@ -151,6 +165,10 @@ def test_j7_legacy_missions_resume_export_and_verify(tmp_path):
         report = verify_capsule(capsule.content)
         assert report['integrity'] and report['reproduction_passed']
         assert c.app.state.repository.verify(done) and c.app.state.repository.verify(interrupted)
+        # The store gained updated_at when it was opened; both rows were written since.
+        listed = {r['id']: r for r in c.get('/api/missions', headers=AUTH).json()}
+        assert listed[done]['updated_at'] > 0 and listed[interrupted]['updated_at'] > 0
+        assert row['spent']['calls'] == row['state']['model_calls_used']
 
 
 def create_app(root):

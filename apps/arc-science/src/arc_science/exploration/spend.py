@@ -1,8 +1,12 @@
 """What a mission spent, summed from the per-call transport records (contract C4).
 
-Every reserved model call must hand over a record whose usage one of the known provider
-shapes can read; otherwise the spend is not measured and a budget cannot be honoured."""
+Each reserved model call ends in one of three ways. It is measured when its transport record
+carries usage that one of the known provider shapes reads as counts. It is unmeasured when the
+provider answered but reported no usable usage: a set budget cannot be honoured then. It is
+unrecorded when no answer came back (the provider failed, or a pause, restart or timeout cut
+the call off): its usage is unknown, and the spend says how many such calls there are."""
 from __future__ import annotations
+import math
 import time
 
 # Input and output token keys of each provider's usage shape: Anthropic Messages and
@@ -15,41 +19,63 @@ OPENS = ('start', 'resume')
 CLOSES = ('stop', 'pause', 'cancel', 'interrupt')
 
 
+def count(value):
+    """A finite, non-negative number of tokens or dollars."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+
+
 def _tokens(usage, keys):
-    return sum(int(usage[key]) for key in keys if isinstance(usage.get(key), (int, float)) and not isinstance(usage.get(key), bool))
+    return sum(int(usage[key]) for key in keys if key in usage)
 
 
 def reports_usage(usage):
-    return isinstance(usage, dict) and any(key in usage for key in ('input_tokens', 'promptTokenCount', 'prompt'))
+    """Usage with an input count, in which every known key holds a count."""
+    return (isinstance(usage, dict) and any(key in usage for key in ('input_tokens', 'promptTokenCount', 'prompt'))
+            and all(count(usage[key]) for key in INPUT_KEYS + OUTPUT_KEYS if key in usage))
+
+
+def tally(state):
+    """The measured transports and the number of unmeasured calls. An accepted record always
+    answered; a rejected call answered unless it has no transport or the transport failed.
+    Every other reserved call is unrecorded."""
+    answered = [r.transport for r in state.model_records] + [r.transport for r in state.vision_records if r.status == 'accepted']
+    rejected = [r.transport for r in state.vision_records if r.status == 'rejected'] + [c.transport for c in state.unbound_calls]
+    measured = [t for t in answered + rejected if t and reports_usage(t.get('usage'))]
+    unmeasured = sum(1 for t in answered if not (t and reports_usage(t.get('usage'))))
+    unmeasured += sum(1 for t in rejected if t and t.get('outcome', 'ok') != 'failed' and not reports_usage(t.get('usage')))
+    return measured, unmeasured
 
 
 def spent(state, *, minutes: float = 0) -> dict:
     """Tokens, cost and calls of a mission; minutes come from the timeline, which the
-    state does not hold. cost_usd is None unless every call reported a cost."""
-    transports = [r.transport for r in state.model_records] + [r.transport for r in state.vision_records]
-    usages = [t['usage'] for t in transports if t and reports_usage(t.get('usage'))]
-    costs = [t.get('cost_usd', t.get('total_cost_usd')) for t in transports if t and reports_usage(t.get('usage'))]
-    costs = [c for c in costs if isinstance(c, (int, float)) and not isinstance(c, bool)]
-    measured = len(usages) >= state.model_calls_used
-    return {'input_tokens': sum(_tokens(u, INPUT_KEYS) for u in usages),
-            'output_tokens': sum(_tokens(u, OUTPUT_KEYS) for u in usages),
-            'cost_usd': float(round(sum(costs), 6)) if measured and len(costs) >= state.model_calls_used else None,
-            'calls': state.model_calls_used, 'minutes': minutes, 'measured': measured,
+    state does not hold. cost_usd is None unless every measured call reported a cost. With
+    unrecorded calls, tokens and cost are what is known: a lower bound."""
+    measured, unmeasured = tally(state)
+    costs = [t.get('cost_usd', t.get('total_cost_usd')) for t in measured]
+    transports = [r.transport for r in state.model_records + state.vision_records + state.unbound_calls]
+    return {'input_tokens': sum(_tokens(t['usage'], INPUT_KEYS) for t in measured),
+            'output_tokens': sum(_tokens(t['usage'], OUTPUT_KEYS) for t in measured),
+            'cost_usd': float(round(sum(costs), 6)) if not unmeasured and all(count(c) for c in costs) else None,
+            'calls': state.model_calls_used, 'minutes': minutes, 'measured': not unmeasured,
+            'unrecorded_calls': max(0, state.model_calls_used - len(measured) - unmeasured),
             'estimated': any(t and t.get('estimated') for t in transports)}
 
 
 def running_minutes(rows, now_ms: int | None = None) -> float:
-    """Minutes between each start or resume and the stop, pause, cancellation or restart
-    that ended it, from merged timeline rows; an open interval runs until now. A restart
-    after a crash closes the interval late, so the time is over-counted, never under."""
+    """Minutes between each start or resume and the stop, pause or cancellation that ended
+    it, from merged timeline rows; an open interval runs until now. The service writes a
+    crash's interrupt row only when it starts again, so an interval ended by an interrupt
+    closes at the last moment a row inside it recorded, never at the restart."""
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
-    total, opened = 0, None
+    total, opened, last = 0, None, None
     for row in rows:
         if row['operation'] in OPENS and opened is None:
-            opened = row['started_at']
+            opened = last = row['started_at']
         elif row['operation'] in CLOSES and opened is not None:
-            total += row['started_at'] - opened
+            total += (last if row['operation'] == 'interrupt' else row['started_at']) - opened
             opened = None
+        elif opened is not None:
+            last = max(last, row['started_at'], row.get('finished_at') or 0)
     if opened is not None:
         total += max(0, now_ms - opened)
     return total / 60000

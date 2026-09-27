@@ -246,6 +246,14 @@ def live_seats(vision_review=False):
     return live_route(vision_review)['seats']
 
 
+def refuse_uncosted(request,seats):
+    """Fail closed: a cost budget needs every seat to report a cost per call, and only the
+    Claude Code CLI does. Checked at creation and again against the route bound at start."""
+    if request.max_cost_usd is None:return
+    unreported=[role for role,seat in seats.items() if (seat.provider,seat.transport)!=('anthropic','cli')]
+    if unreported:raise api_error(409,'budget.cost_unreported',facts={'roles':unreported})
+
+
 def seat_plan(route):
     """The whole route without secrets (per seat: provider, transport, model, effort,
     credential name, endpoint or executable, OpenClaw agent and isolation; per consented
@@ -957,11 +965,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             if os.environ.get('ARC_BIORENDER_READS')=='1':
                 try:biorender_configuration()
                 except Exception:raise api_error(409,'mission.biorender_unconfigured') from None
-            if request.max_cost_usd is not None:
-                # Fail closed: only the Claude Code CLI reports a cost per call.
-                unreported=[role for role,seat in live_seats(request.vision_review).items()
-                            if (seat.provider,seat.transport)!=('anthropic','cli')]
-                if unreported:raise api_error(409,'budget.cost_unreported',facts={'roles':unreported})
+            refuse_uncosted(request,live_seats(request.vision_review))
         try:
             row=repository.create(request,initialize(request),key=idempotency_key or uuid.uuid4().hex)
             memory_routes.schedule_capture(row['id'],MissionState.model_validate(row['state']))
@@ -1164,6 +1168,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if request.mode=='live':
             try:route=live_route(request.vision_review)
             except Exception as error:raise api_error(409,'mission.seats_unconfigured','Configure the model seats before starting: '+str(error)[:300]) from None
+            refuse_uncosted(request,route['seats'])
             route_digest,detail=seat_plan(route)
             state=MissionState.model_validate(row['state'])
             bound=next((e for e in reversed(state.events) if e.kind=='seats_bound'),None)
