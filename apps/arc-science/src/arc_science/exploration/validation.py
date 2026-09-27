@@ -20,7 +20,7 @@ the inputs are never mutated. None of this is scientific validation.
 """
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, Underflow, localcontext
 import re
 
 from ..contracts import digest
@@ -45,9 +45,10 @@ ALPHA = .05
 # degree share its statistic.
 CONTROL_DEGREE = 2
 # Every digit run, with any unit or multiplier suffix (12nM, 40x, 4242ms) and a leading dot
-# (.03). A run glued to a letter or dot, or to a hyphen after a letter, is part of a name
-# (IL-6, p53, v1.2); after a digit and a hyphen it is the upper end of a range (0.01-0.5).
-NUMBER = re.compile(r'(?<![\w.])(?<![A-Za-z_]-)(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z%]*)(?!\d|\.\d)')
+# (.03). A run glued to a letter or dot, or to a hyphen after a letter of any script, is part
+# of a name (IL-6, ИЛ-6, β-2, p53, v1.2); after a digit and a hyphen it is the upper end of a
+# range (0.01-0.5).
+NUMBER = re.compile(r'(?<![\w.])(?<![^\W\d]-)(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z%]*)(?!\d|\.\d)')
 SCALAR = re.compile(r'-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?')
 # Suffixes that make a digit run a name, not a quantity: 2D, 3D.
 NAME_SUFFIXES = frozenset({'d'})
@@ -72,10 +73,16 @@ QUANTITIES = ((re.compile(r'shuffled (?:validation )?(?:error|mse|loss)|null (?:
               (re.compile(r'\b(?:mse|error|loss)\b', re.I), MSE),
               (re.compile(r'\bdegrees?\b', re.I), ('degree',)),
               (re.compile(r'\b(?:permutations?|shuffles)\b', re.I), ('permutations',)),
-              (re.compile(r'\bp(?:[- ]?value)?\s*[=<>≤]', re.I), ()))
+              (re.compile(r'\bp(?:[- ]?value)?\s*[=<>≤]', re.I), ()),
+              # Quantities the tools never record: nearer than a recorded name, they keep it off.
+              (re.compile(r'\b(?:accuracy|r[- ]?squared|r2|auc|auroc|f1|precision|recall|sensitivity|specificity|'
+                          r'correlation|rmse|mae|odds ratio|hazard ratio|slope|intercept)\b', re.I), ()))
 
 
-SENTENCE = re.compile(r'[.;!?](?:\s|$)')
+# A sentence ends at ; ! or ?, or at a full stop before a capital letter, so the stop of an
+# abbreviation (approx. 0.03, ca., vs., e.g.) keeps the name before it. The ceiling: a
+# sentence that opens with a digit or a lower-case letter is read as part of the one before.
+SENTENCE = re.compile(r'[;!?](?:\s|$)|\.\s+(?=[A-ZА-ЯЁΑ-Ω])')
 RANGE = ('-', '–', '—')
 
 
@@ -95,16 +102,20 @@ def _tokens(text):
     """(number, the recorded fields its nearest quantity word names, or None) per number."""
     text = IDENTIFIER.sub(' ', text)
     found = [m for m in NUMBER.finditer(text) if m.group(2).lower() not in NAME_SUFFIXES]
-    names = None
+    # A range (0.01-0.5, 0.01 – 0.5) is one quantity: both ends take the name nearest the range.
+    groups = []
     for i, m in enumerate(found):
-        before = SENTENCE.split(text[found[i - 1].end() if i else 0:m.start()])[-1]
-        after = SENTENCE.split(text[m.end():found[i + 1].start() if i + 1 < len(found) else len(text)])[0]
-        # The upper end of a range (0.01-0.5) is the same quantity as its lower end. Otherwise
-        # the nearer name wins; at equal distance the one before the number.
-        if not (i and before in RANGE):
-            named = min((q for q in (_quantity(before), _quantity(after, after=True)) if q), key=lambda q: q[0], default=None)
-            names = named[1] if named else None
-        yield m.group(1), names
+        if i and text[found[i - 1].end():m.start()].strip() in RANGE:
+            groups[-1].append(m)
+        else:
+            groups.append([m])
+    for i, group in enumerate(groups):
+        before = SENTENCE.split(text[groups[i - 1][-1].end() if i else 0:group[0].start()])[-1]
+        after = SENTENCE.split(text[group[-1].end():groups[i + 1][0].start() if i + 1 < len(groups) else len(text)])[0]
+        # The nearer name wins; at equal distance the one before the number.
+        named = min((q for q in (_quantity(before), _quantity(after, after=True)) if q), key=lambda q: q[0], default=None)
+        for m in group:
+            yield m.group(1), named[1] if named else None
 
 
 def numbers(texts) -> list[str]:
@@ -126,16 +137,19 @@ def _fields(evidence, names):
 
 def _binds(token, values) -> bool:
     """The token equals a recorded value at the precision it was written with, and within
-    RELATIVE of it. A token too large or too small for decimal arithmetic (1e1000000) never
-    binds: claim text is model output and must not be able to raise here."""
+    RELATIVE of it. A token too large or too small for decimal arithmetic (1e1000000,
+    1e-1000027) never binds: claim text is model output and must not be able to raise here,
+    and a gap that underflows to zero must not match a recorded zero."""
     try:
-        written = Decimal(token)
-        tolerance = Decimal(5).scaleb(written.as_tuple().exponent - 1)
-        for v in values:
-            recorded = Decimal(repr(float(v)))
-            gap = abs(recorded - written)
-            if gap <= tolerance and gap <= RELATIVE * abs(recorded):
-                return True
+        with localcontext() as context:
+            context.traps[Underflow] = True
+            written = Decimal(token)
+            tolerance = Decimal(5).scaleb(written.as_tuple().exponent - 1)
+            for v in values:
+                recorded = Decimal(repr(float(v)))
+                gap = abs(recorded - written)
+                if gap <= tolerance and gap <= RELATIVE * abs(recorded):
+                    return True
     except ArithmeticError:
         return False
     return False
@@ -151,11 +165,13 @@ def _row(timeline_rows, action_id):
 
 
 def _predates_timeline(timeline_rows, observation):
-    """No tool row at or before the observation's round: the read ran before the timeline and
-    the grant ledger existed (public reads from 2026-09-08, receipts from 2026-09-21), or the
-    timeline is gone, which never invalidates a mission (timeline.py)."""
-    return not any(r.get('operation') == 'tool' and isinstance(r.get('round'), int) and r['round'] <= observation.round
-                   for r in timeline_rows)
+    """The timeline holds rows for the mission, and none of any kind (plan, tool, start, ...)
+    at or before the observation's round: it first saw the mission later, on a resume, so the
+    read ran before the timeline and the grant ledger existed (public reads from 2026-09-08,
+    receipts from 2026-09-21). An empty timeline proves no age: it may be lost or recreated,
+    which leaves the receipt unchecked rather than invalidating the mission (timeline.py)."""
+    return bool(timeline_rows) and not any(isinstance(r.get('round'), int) and r['round'] <= observation.round
+                                           for r in timeline_rows)
 
 
 def _traced(state, evidence, timeline_rows):

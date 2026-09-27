@@ -22,7 +22,7 @@ from arc_science.exploration.engine import explore
 from arc_science.exploration.evidence import evidence_graph
 from arc_science.exploration.models import Event, MissionRequest, MissionState, VerificationReceipt
 from arc_science.exploration.public_reads import public_tools
-from arc_science.exploration.validation import RUNGS, claim_ladder, numbers
+from arc_science.exploration.validation import RUNGS, _binds, _tokens, claim_ladder, numbers
 from test_settings import stub  # noqa: F401  (fixture reuse)
 
 FIXTURES = Path(__file__).parent / 'fixtures'
@@ -594,17 +594,64 @@ def test_a_slow_openalex_lookup_keeps_the_search_inside_the_tool_deadline_and_le
     assert public_reads.EUROPE_PMC_SECONDS + public_reads.OPENALEX_SECONDS < 30
 
 
-def test_a_timeline_without_tool_rows_predates_the_ledger_and_does_not_block_a_read():
+def test_a_read_older_than_the_mission_timeline_is_legacy_and_a_lost_timeline_is_unchecked():
     """Public reads ran from 2026-09-08; the timeline and its receipts came on 2026-09-21. A
-    mission with no tool row at or before a read's round cannot have a receipt for it."""
+    mission the timeline first saw on a later resume ran its earlier reads without one. An
+    empty timeline, or one with any row at or before the read's round, proves no such age."""
     records = [r for r in EUROPEPMC['resultList']['result'] if r.get('doi') == LECUN]
     request, state = run(Scripted([READ], falsifier_test=None), extra_tools=reads(records), egress=True)
-    ladder = ladder_of(state, rows=[])
+    resumed = [{'operation': 'resume', 'round': 1, 'outcome_source': 'recorded', 'outcome': 'resumed'},
+               {'operation': 'plan', 'round': 1, 'outcome_source': 'recorded', 'outcome': 'ok'}]
+    ladder = ladder_of(state, rows=resumed)
     assert ladder['rung'] == 1 and 'receipt_predates_timeline' in ladder['met'] and 'ledger_receipt' not in ladder['met']
-    assert rung_check(release.evaluate_release(request, state, None, event_chain_ok=True, timeline_rows=[])).state == 'satisfied'
-    # A timeline that records the mission's tools but not this read is not legacy.
-    other = {'operation': 'tool', 'action_id': 'other', 'round': 0, 'outcome_source': 'recorded', 'outcome': 'ok', 'receipt_id': None}
-    assert ladder_of(state, rows=[other])['next']['needs'] == ['receipt_unchecked']
+    assert rung_check(release.evaluate_release(request, state, None, event_chain_ok=True, timeline_rows=resumed)).state == 'satisfied'
+    # A deleted or recreated timeline is no evidence that the read is old.
+    assert ladder_of(state, rows=[])['next']['needs'] == ['receipt_unchecked']
+    assert rung_check(release.evaluate_release(request, state, None, event_chain_ok=True, timeline_rows=[])).state != 'satisfied'
+    # A plan row at the read's round shows the timeline was recording then, whatever round the other tools ran in.
+    plan = {'operation': 'plan', 'round': 0, 'outcome_source': 'recorded', 'outcome': 'ok'}
+    other = {'operation': 'tool', 'action_id': 'other', 'round': 1, 'outcome_source': 'recorded', 'outcome': 'ok', 'receipt_id': None}
+    assert ladder_of(state, rows=[plan, other])['next']['needs'] == ['receipt_unchecked']
+    assert ladder_of(state, rows=[{**other, 'round': 0}])['next']['needs'] == ['receipt_unchecked']
+
+
+def test_a_range_is_one_quantity_named_before_or_after_it_spaced_or_not():
+    for text in ('0.03-0.05 validation error', 'validation error 0.03 - 0.05', '0.03 – 0.05 validation error.'):
+        assert [names for _, names in _tokens(text)] == [('validation_mse',)] * 2, text
+    for form in ('{v}-{v} validation error across folds.', 'Validation error {v} - {v} on the split.'):
+        _, state = run(Scripted([FIT], say=lambda o, f=form: f.format(v=f"{o['data']['validation_mse']:.3g}")))
+        assert ladder_of(state)['rung'] == 1, form
+    _, state = run(Scripted([FIT], say=lambda o: f"{o['data']['validation_mse']:.3g}-0.9 validation error."))
+    assert ladder_of(state)['next']['needs'] == ['unbound_number']
+
+
+def test_a_name_with_a_greek_or_cyrillic_letter_before_a_hyphen_is_not_a_number():
+    assert numbers(['ИЛ-6 was high', 'β-2 adrenergic receptor', 'α-1 antitrypsin']) == []
+    _, state = run(Scripted([FIT], say=lambda o: 'Consistent with β-2 adrenergic signalling.'))
+    assert ladder_of(state)['rung'] == 1
+
+
+def test_an_abbreviation_does_not_end_the_sentence_that_names_a_number():
+    for text, number in (('validation MSE approx. 0.03', '0.03'), ('validation MSE of ca. 0.004 on the split', '0.004'),
+                         ('validation MSE vs. 0.03', '0.03'), ('validation error, e.g. 0.03', '0.03')):
+        assert list(_tokens(text)) == [(number, ('validation_mse',))], text
+    # A sentence that ends still takes its name with it.
+    assert [names for _, names in _tokens('Validation error was low. The fit took 3 rounds.')] == [None]
+    _, state = run(Scripted([FIT], say=lambda o: f"Validation MSE approx. {o['data']['validation_mse']:.3g} on the split."))
+    assert ladder_of(state)['rung'] == 1
+
+
+def test_a_nearer_unrecorded_quantity_keeps_a_farther_recorded_name_from_binding():
+    for text in ('Validation error improved with accuracy 0.00404.', 'Validation error fell as R-squared reached 0.00404.',
+                 'Validation error, AUC 0.00404.', 'Validation error and RMSE of 0.00404.'):
+        assert [names for _, names in _tokens(text)] == [()], text
+    _, state = run(Scripted([FIT], say=lambda o: f"Validation error improved with accuracy {o['data']['validation_mse']:.3g}."))
+    assert ladder_of(state)['next']['needs'] == ['unbound_number']
+
+
+def test_a_number_too_small_or_large_for_decimal_arithmetic_never_binds():
+    assert not _binds('1e-1000027', [0.0]) and not _binds('1e-1000027', [0]) and not _binds('1e1000000', [1.0])
+    assert _binds('0.004', [0.00404]) and not _binds('1e-5', [0.0])
 
 
 def test_any_retracted_record_of_a_doi_wins_over_a_duplicate_that_is_not():
