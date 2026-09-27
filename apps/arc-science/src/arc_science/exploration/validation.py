@@ -45,16 +45,20 @@ ALPHA = .05
 # degree share its statistic.
 CONTROL_DEGREE = 2
 # Every digit run, with any unit or multiplier suffix (12nM, 40x, 4242ms) and a leading dot
-# (.03). A run glued to a letter or dot, or to a hyphen after a letter of any script, is part
-# of a name (IL-6, ИЛ-6, β-2, p53, v1.2); after a digit and a hyphen it is the upper end of a
-# range (0.01-0.5).
-NUMBER = re.compile(r'(?<![\w.])(?<![^\W\d]-)(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z%]*)(?!\d|\.\d)')
+# (.03). A run glued to a letter, dot or caret is part of a name or an exponent (p53, v1.2,
+# R^2). One after a hyphen after a letter of any script is part of a name (IL-6, ИЛ-6, β-2)
+# unless that letter ends the number before it: then it is the upper end of a range (2nd-9th,
+# 0.004x-0.9x), as after a digit (0.01-0.5). _tokens applies that rule.
+NUMBER = re.compile(r'(?<![\w.^])(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z%]*)(?!\d|\.\d)')
+LETTER_HYPHEN = re.compile(r'[^\W\d]-')
 SCALAR = re.compile(r'-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?')
 # Suffixes that make a digit run a name, not a quantity: 2D, 3D.
 NAME_SUFFIXES = frozenset({'d'})
 # A written number binds only within this relative distance of the recorded value, on top of
 # matching it at the precision written: '1' never binds 1.199 and '0' never binds 0.004.
 RELATIVE = Decimal('.05')
+# Grant-ledger receipts for external reads began with commit 5be3383, 2026-09-21 16:03:35 UTC.
+RECEIPTS_FROM = 1790006615
 # DOIs, links and PubMed ids are identifiers, not stated quantities.
 IDENTIFIER = re.compile(r'https?://\S+|\b10\.\d{4,9}/\S+|\bPMID:?\s*\d+|\bPMC\d+', re.I)
 DOI = re.compile(r'\b10\.\d{4,9}/\S+')
@@ -74,34 +78,45 @@ QUANTITIES = ((re.compile(r'shuffled (?:validation )?(?:error|mse|loss)|null (?:
               (re.compile(r'\bdegrees?\b', re.I), ('degree',)),
               (re.compile(r'\b(?:permutations?|shuffles)\b', re.I), ('permutations',)),
               (re.compile(r'\bp(?:[- ]?value)?\s*[=<>≤]', re.I), ()),
-              # Quantities the tools never record: nearer than a recorded name, they keep it off.
+              # Quantities the tools never record: nearer than a recorded name, they keep it off. A
+              # spelled-out error of another kind ends where the generic 'error' does and starts
+              # earlier, so it wins the tie as the longer name.
               (re.compile(r'\b(?:accuracy|r[- ]?squared|r2|auc|auroc|f1|precision|recall|sensitivity|specificity|'
-                          r'correlation|rmse|mae|odds ratio|hazard ratio|slope|intercept)\b', re.I), ()))
+                          r'correlation|coefficient of determination|pearson|spearman|kendall|rho|ρ|tau|'
+                          r'standard deviation|variance|rmse|mae|mape|odds ratio|hazard ratio|slope|intercept|'
+                          r'(?:root[- ]mean[- ]squared?|mean[- ]absolute(?:[- ]percentage)?|standard|relative|absolute|'
+                          r'percentage|percent)[- ]error)\b', re.I), ()),
+              (re.compile(r'\br(?:²|\^2)|\br\s*[=<>≤≈]', re.I), ()))
 
 
 # A sentence ends at ; ! or ?, or at a full stop before a capital letter, so the stop of an
 # abbreviation (approx. 0.03, ca., vs., e.g.) keeps the name before it. The ceiling: a
 # sentence that opens with a digit or a lower-case letter is read as part of the one before.
 SENTENCE = re.compile(r'[;!?](?:\s|$)|\.\s+(?=[A-ZА-ЯЁΑ-Ω])')
+# A name after a number stays within its clause: 'Validation error 0.004, training error 0.002'.
+CLAUSE = re.compile(r'[,;:]')
 RANGE = ('-', '–', '—')
 
 
 def _quantity(window, after=False):
-    """(distance to the number, fields) of the quantity word nearest the number: the last
-    one in a window before it, the first one in a window after it; None when there is none."""
+    """(distance to the number, fields, end in the window) of the quantity word nearest the
+    number: the last one in a window before it, the first one in a window after it; None
+    when there is none."""
     best = None
     for pattern, fields in QUANTITIES:
         for m in pattern.finditer(window):
             key = (m.start(), -m.end()) if after else (len(window) - m.end(), m.start())
             if best is None or key < best[0]:
-                best = key, fields
-    return (best[0][0], best[1]) if best else None
+                best = key, fields, m.end()
+    return (best[0][0], best[1], best[2]) if best else None
 
 
 def _tokens(text):
     """(number, the recorded fields its nearest quantity word names, or None) per number."""
     text = IDENTIFIER.sub(' ', text)
-    found = [m for m in NUMBER.finditer(text) if m.group(2).lower() not in NAME_SUFFIXES]
+    raw = list(NUMBER.finditer(text))
+    found = [m for i, m in enumerate(raw) if m.group(2).lower() not in NAME_SUFFIXES and not (
+        LETTER_HYPHEN.fullmatch(text, m.start() - 2, m.start()) and not (i and raw[i - 1].end() == m.start() - 1))]
     # A range (0.01-0.5, 0.01 – 0.5) is one quantity: both ends take the name nearest the range.
     groups = []
     for i, m in enumerate(found):
@@ -109,13 +124,29 @@ def _tokens(text):
             groups[-1].append(m)
         else:
             groups.append([m])
+    # A number takes the name before it; a name after it only when none precedes it, and that
+    # name is then taken: it does not also name the next number. A nearer unrecorded name after
+    # the number still keeps the recorded one before it off ('error fell with 0.004 accuracy'),
+    # unless it sits nearer the next number and names that one ('error 0.004 with R2 0.9').
+    taken = 0
     for i, group in enumerate(groups):
-        before = SENTENCE.split(text[groups[i - 1][-1].end() if i else 0:group[0].start()])[-1]
-        after = SENTENCE.split(text[group[-1].end():groups[i + 1][0].start() if i + 1 < len(groups) else len(text)])[0]
-        # The nearer name wins; at equal distance the one before the number.
-        named = min((q for q in (_quantity(before), _quantity(after, after=True)) if q), key=lambda q: q[0], default=None)
+        start = max(groups[i - 1][-1].end() if i else 0, taken)
+        before = _quantity(SENTENCE.split(text[start:max(start, group[0].start())])[-1])
+        end = groups[i + 1][0].start() if i + 1 < len(groups) else len(text)
+        window = CLAUSE.split(SENTENCE.split(text[group[-1].end():end])[0])[0]
+        after = _quantity(window, after=True)
+        # The distance from the name to the next number, when that number is in the same clause.
+        onward = len(window) - after[2] if after and i + 1 < len(groups) and group[-1].end() + len(window) == end else None
+        if before and after and after[0] < before[0] and not after[1] and (onward is None or after[0] <= onward):
+            named = ()
+        elif before:
+            named = before[1]
+        elif after:
+            named, taken = after[1], group[-1].end() + after[2]
+        else:
+            named = None
         for m in group:
-            yield m.group(1), named[1] if named else None
+            yield m.group(1), named
 
 
 def numbers(texts) -> list[str]:
@@ -164,14 +195,21 @@ def _row(timeline_rows, action_id):
     return row
 
 
-def _predates_timeline(timeline_rows, observation):
-    """The timeline holds rows for the mission, and none of any kind (plan, tool, start, ...)
-    at or before the observation's round: it first saw the mission later, on a resume, so the
-    read ran before the timeline and the grant ledger existed (public reads from 2026-09-08,
-    receipts from 2026-09-21). An empty timeline proves no age: it may be lost or recreated,
-    which leaves the receipt unchecked rather than invalidating the mission (timeline.py)."""
-    return bool(timeline_rows) and not any(isinstance(r.get('round'), int) and r['round'] <= observation.round
-                                           for r in timeline_rows)
+def _predates_receipts(state, timeline_rows, observation):
+    """The read ran before the grant ledger wrote receipts (public reads from 2026-09-08,
+    receipts from RECEIPTS_FROM), shown by the mission's own hash-chained record: a resume it
+    declared before RECEIPTS_FROM follows the read's observation event. The timeline cannot
+    show that age: a lost one comes back empty, then gains the round-less interrupt row of a
+    restart and a resume row at a later round (timeline.py, service.py). A timeline row with a
+    round at or before the read's still contradicts it: the timeline was recording then.
+    ponytail: a legacy mission never resumed before RECEIPTS_FROM keeps receipt_unchecked;
+    reading the grant ledger itself would settle those."""
+    events = list(state.events)
+    seen = next((i for i, e in enumerate(events) if e.kind == 'observation' and e.detail == observation.id + ': ok'), None)
+    early = {c.id for c in state.changes if c.at < RECEIPTS_FROM}
+    declared = seen is not None and any(e.kind == 'change_declared' and e.detail.split(':', 1)[0] in early
+                                        for e in events[seen + 1:])
+    return declared and not any(isinstance(r.get('round'), int) and r['round'] <= observation.round for r in timeline_rows)
 
 
 def _traced(state, evidence, timeline_rows):
@@ -189,7 +227,7 @@ def _traced(state, evidence, timeline_rows):
         if row is not None and row.get('outcome') != 'ok':
             return 'timeline_not_ok', extra
         if external:
-            if row is None and timeline_rows is not None and _predates_timeline(timeline_rows, o):
+            if row is None and timeline_rows is not None and _predates_receipts(state, timeline_rows, o):
                 extra.append('receipt_predates_timeline')
                 continue
             if row is None:
@@ -279,11 +317,21 @@ def _recomputed(verification, subject):
     return None
 
 
+def _pool(state, branch, evidence, tool):
+    """Every observation of `tool` in the claim's evidence or ok on its branch: leaving one
+    out of the evidence does not hide it from the rungs that read it."""
+    pool = {o.id: o for o in evidence if o.tool == tool}
+    pool.update({o.id: o for o in state.observations if o.tool == tool and o.branch_id == branch.id
+                 and o.status == 'ok' and o.claim_eligible})
+    return list(pool.values())
+
+
 def _prespecified(state, branch, evidence):
     """The planner record that introduced the branch carries the same falsifier_test, and
-    its commit event precedes the first observation of any request the claim uses: the same
-    tool and arguments on the same dataset, on any branch. The tools are deterministic, so a
-    rerun under a new id or branch shows nothing the planner had not already seen."""
+    its commit event precedes the first observation of any request the claim uses, or that
+    the falsifier and null checks read from the branch: the same tool and arguments on the
+    same dataset, on any branch. The tools are deterministic, so a rerun under a new id or
+    branch shows nothing the planner had not already seen."""
     if branch.falsifier_test is None:
         return 'falsifier_test_missing'
     introduced = next((r for r in sorted((r for r in state.model_records if r.role == 'planner'), key=lambda r: r.round)
@@ -294,7 +342,8 @@ def _prespecified(state, branch, evidence):
     events = list(state.events)
     committed = next((i for i, e in enumerate(events) if e.kind == 'plan_committed' and e.round == introduced.round), None)
     request = lambda o: (o.tool, digest(o.action.arguments), o.dataset_digest)
-    requests = {request(o) for o in evidence}
+    requests = {request(o) for o in (*evidence, *_pool(state, branch, evidence, branch.falsifier_test.tool),
+                                     *_pool(state, branch, evidence, 'permutation_control'))}
     used = {o.id + ': ok' for o in state.observations if request(o) in requests}
     first = next((i for i, e in enumerate(events) if e.kind == 'observation' and e.detail in used), None)
     if committed is None or first is None or committed > first:
@@ -309,10 +358,8 @@ def _falsifier(state, branch, evidence):
     test = branch.falsifier_test
     if test is None:
         return 'falsifier_not_evaluated', None
-    pool = {o.id: o for o in evidence}
-    pool.update({o.id: o for o in state.observations if o.branch_id == branch.id and o.status == 'ok' and o.claim_eligible})
-    values = [o.data[test.metric] for o in pool.values() if o.tool == test.tool
-              and isinstance(o.data.get(test.metric), (int, float)) and not isinstance(o.data.get(test.metric), bool)]
+    values = [o.data[test.metric] for o in _pool(state, branch, evidence, test.tool)
+              if isinstance(o.data.get(test.metric), (int, float)) and not isinstance(o.data.get(test.metric), bool)]
     if not values:
         return 'falsifier_not_evaluated', None
     value = max(values) if test.direction == 'above' else min(values)
@@ -328,16 +375,14 @@ def _null(state, branch, evidence):
     adverse control stands however many later ones pass, and leaving it out of the evidence
     does not hide it; a control too small to reach ALPHA is uninformative, not adverse. A fit
     of another degree has no null here: its statistic was never computed on shuffled data."""
-    pool = {o.id: o for o in evidence if o.tool == 'permutation_control'}
-    pool.update({o.id: o for o in state.observations if o.tool == 'permutation_control' and o.branch_id == branch.id
-                 and o.status == 'ok' and o.claim_eligible})
+    pool = _pool(state, branch, evidence, 'permutation_control')
     fits = [o for o in evidence if o.tool == 'polynomial_fit']
     if not pool or not fits:
         return 'null_model_missing', None
     matched = [o.data['validation_mse'] for o in fits if o.data.get('degree') == CONTROL_DEGREE]
     if not matched:
         return 'null_model_mismatch', None
-    controls = [o.data for o in pool.values() if (o.data.get('permutations') or 0) > 0
+    controls = [o.data for o in pool if (o.data.get('permutations') or 0) > 0
                 and isinstance(o.data.get('minimum_shuffled_validation_mse'), (int, float))]
     if not controls:
         return 'null_model_missing', None

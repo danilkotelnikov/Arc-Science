@@ -542,6 +542,10 @@ def test_both_ends_of_a_hyphenated_range_must_bind():
     # The upper end names the same quantity as the lower end, so a true range binds.
     _, state = run(Scripted([FIT], say=lambda o: f"Validation error {o['data']['validation_mse']:.2g}-{o['data']['validation_mse']:.3g} at degree 2."))
     assert ladder_of(state)['rung'] == 1
+    # A lower end with an ordinal or multiplier suffix still has its upper end checked.
+    assert numbers(['The 2nd-9th degree fits', 'degrees 2x-9x', 'a 0.004x-0.9x error']) == ['2', '9', '2', '9', '0.004', '0.9']
+    _, state = run(Scripted([FIT], say=lambda o: 'The 2nd-9th degree fits were tried.'))
+    assert ladder_of(state)['next']['needs'] == ['unbound_number']
 
 
 def test_a_quantity_named_after_the_number_or_not_recorded_never_binds_elsewhere():
@@ -595,24 +599,39 @@ def test_a_slow_openalex_lookup_keeps_the_search_inside_the_tool_deadline_and_le
 
 
 def test_a_read_older_than_the_mission_timeline_is_legacy_and_a_lost_timeline_is_unchecked():
-    """Public reads ran from 2026-09-08; the timeline and its receipts came on 2026-09-21. A
-    mission the timeline first saw on a later resume ran its earlier reads without one. An
-    empty timeline, or one with any row at or before the read's round, proves no such age."""
+    """Public reads ran from 2026-09-08; grant-ledger receipts came on 2026-09-21. Only the
+    mission's own hash-chained record can show that a read is that old: a resume it declared
+    before receipts existed, after the read. The timeline alone cannot: a lost timeline comes
+    back empty, then gains the round-less interrupt row of a restart and a later resume row."""
+    from arc_science.exploration.changes import declare_resume
+    from arc_science.exploration.validation import RECEIPTS_FROM
     records = [r for r in EUROPEPMC['resultList']['result'] if r.get('doi') == LECUN]
     request, state = run(Scripted([READ], falsifier_test=None), extra_tools=reads(records), egress=True)
     resumed = [{'operation': 'resume', 'round': 1, 'outcome_source': 'recorded', 'outcome': 'resumed'},
                {'operation': 'plan', 'round': 1, 'outcome_source': 'recorded', 'outcome': 'ok'}]
-    ladder = ladder_of(state, rows=resumed)
+    legacy, _ = declare_resume(state, ('analysis', 'claim'), 'Resumed before receipts.', at=RECEIPTS_FROM - 1)
+    ladder = ladder_of(legacy, rows=resumed)
     assert ladder['rung'] == 1 and 'receipt_predates_timeline' in ladder['met'] and 'ledger_receipt' not in ladder['met']
-    assert rung_check(release.evaluate_release(request, state, None, event_chain_ok=True, timeline_rows=resumed)).state == 'satisfied'
-    # A deleted or recreated timeline is no evidence that the read is old.
-    assert ladder_of(state, rows=[])['next']['needs'] == ['receipt_unchecked']
-    assert rung_check(release.evaluate_release(request, state, None, event_chain_ok=True, timeline_rows=[])).state != 'satisfied'
-    # A plan row at the read's round shows the timeline was recording then, whatever round the other tools ran in.
+    assert rung_check(release.evaluate_release(request, legacy, None, event_chain_ok=True, timeline_rows=resumed)).state == 'satisfied'
+    # A deleted or recreated timeline is no evidence that the read is old: empty, holding only the
+    # round-less interrupt row the service writes at startup, or that row and a later resume.
+    interrupt = {'operation': 'interrupt', 'round': None, 'outcome_source': 'recorded', 'outcome': 'interrupted'}
+    for rows in ([], [interrupt], [interrupt, resumed[0]], resumed):
+        assert ladder_of(state, rows=rows)['next']['needs'] == ['receipt_unchecked'], rows
+        assert rung_check(release.evaluate_release(request, state, None, event_chain_ok=True, timeline_rows=rows)).state != 'satisfied'
+    # A resume declared once receipts existed, or declared before the read ran, proves no such age.
+    late, _ = declare_resume(state, ('analysis', 'claim'), 'Resumed after receipts.', at=RECEIPTS_FROM)
+    assert ladder_of(late, rows=resumed)['next']['needs'] == ['receipt_unchecked']
+    events = list(legacy.events)
+    events.insert(0, events.pop())
+    early = legacy.model_copy(update={'events': tuple(events)})
+    assert ladder_of(early, rows=resumed)['next']['needs'] == ['receipt_unchecked']
+    # A timeline row at or before the read's round shows the timeline was recording then.
     plan = {'operation': 'plan', 'round': 0, 'outcome_source': 'recorded', 'outcome': 'ok'}
     other = {'operation': 'tool', 'action_id': 'other', 'round': 1, 'outcome_source': 'recorded', 'outcome': 'ok', 'receipt_id': None}
-    assert ladder_of(state, rows=[plan, other])['next']['needs'] == ['receipt_unchecked']
-    assert ladder_of(state, rows=[{**other, 'round': 0}])['next']['needs'] == ['receipt_unchecked']
+    for rows in ([plan, other], [{**other, 'round': 0}]):
+        assert ladder_of(state, rows=rows)['next']['needs'] == ['receipt_unchecked']
+        assert ladder_of(legacy, rows=rows)['next']['needs'] == ['receipt_unchecked']
 
 
 def test_a_range_is_one_quantity_named_before_or_after_it_spaced_or_not():
@@ -643,10 +662,40 @@ def test_an_abbreviation_does_not_end_the_sentence_that_names_a_number():
 
 def test_a_nearer_unrecorded_quantity_keeps_a_farther_recorded_name_from_binding():
     for text in ('Validation error improved with accuracy 0.00404.', 'Validation error fell as R-squared reached 0.00404.',
-                 'Validation error, AUC 0.00404.', 'Validation error and RMSE of 0.00404.'):
+                 'Validation error, AUC 0.00404.', 'Validation error and RMSE of 0.00404.',
+                 'Validation error fell as R² reached 0.00404.', 'Validation error fell as R^2 reached 0.00404.',
+                 'Validation error fell; the coefficient of determination was 0.00404',
+                 'Root mean squared error 0.00404 on the split.', 'Root-mean-square error 0.00404 on the split.',
+                 'Mean absolute error of 0.00404.', 'Standard error of 0.00404.', 'Relative error 0.00404 on the split.',
+                 'Mean absolute percentage error 0.00404.', 'Pearson r of 0.00404 with the validation error',
+                 "Spearman's rho 0.00404 against the validation error", 'Validation error tracked r = 0.00404.',
+                 'Validation error improved with 0.00404 accuracy.'):
         assert [names for _, names in _tokens(text)] == [()], text
-    _, state = run(Scripted([FIT], say=lambda o: f"Validation error improved with accuracy {o['data']['validation_mse']:.3g}."))
+    for say in (lambda o: f"Validation error improved with accuracy {o['data']['validation_mse']:.3g}.",
+                lambda o: f"Validation error fell as R² reached {o['data']['validation_mse']:.3g}.",
+                lambda o: f"Root mean squared error {o['data']['validation_mse']:.3g} on the split."):
+        _, state = run(Scripted([FIT], say=say))
+        assert ladder_of(state)['next']['needs'] == ['unbound_number']
+    # Plain MSE is recorded, spelled out or not.
+    assert [names for _, names in _tokens('Validation mean squared error 0.00404.')] == [('training_mse', 'validation_mse', 'minimum_shuffled_validation_mse', 'mean_shuffled_validation_mse')]
+
+
+def test_a_quantity_word_names_one_number_and_never_crosses_to_its_neighbour():
+    """A name after a number binds it only when nothing before it names it, and a name taken
+    by one number is not the name of the next."""
+    for text in ('Validation error approximately 0.00195, training error approximately 0.00195.',
+                 'Validation error approximately 0.00195 and training error approximately 0.00195.'):
+        assert [names for _, names in _tokens(text)] == [('validation_mse',), ('training_mse',)], text
+    assert [names for _, names in _tokens('It reached 0.004 validation error at 2 degrees.')] == [('validation_mse',), ('degree',)]
+    assert [names for _, names in _tokens('0.004 validation error and 0.9 accuracy.')] == [('validation_mse',), ()]
+    # An unrecorded name nearer the next number names that one and leaves this one its own.
+    assert [names for _, names in _tokens('Validation error approximately 0.004 with R2 0.9.')] == [('validation_mse',), ()]
+    _, state = run(Scripted([FIT], say=lambda o: f"Validation error approximately {o['data']['training_mse']:.3g}, "
+                                                  f"training error approximately {o['data']['training_mse']:.3g}."))
     assert ladder_of(state)['next']['needs'] == ['unbound_number']
+    _, state = run(Scripted([FIT], say=lambda o: f"Validation error approximately {o['data']['validation_mse']:.3g}, "
+                                                  f"training error approximately {o['data']['training_mse']:.3g}."))
+    assert ladder_of(state)['rung'] == 1
 
 
 def test_a_number_too_small_or_large_for_decimal_arithmetic_never_binds():
@@ -694,3 +743,30 @@ def test_the_null_is_rejected_only_when_no_control_on_the_branch_beats_the_fit()
     hidden = scoped.model_copy(update={'evidence_ids': tuple(i for i in scoped.evidence_ids if i != 'big')})
     ladder = claim_ladder(adverse, hidden, timeline_rows=[], verification=passing(adverse), subject=release.subject_digest(adverse))
     assert 'null_not_rejected' in ladder['next']['needs']
+
+
+class ControlFirst(Replay):
+    """Round 0 runs the permutation control on branch 'peek'; round 1 opens 'curve' with its
+    falsifier and runs a fresh fit beside a rerun of the same control."""
+
+    async def propose(self, context):
+        if context['round'] == 0:
+            return {'branches': [{'id': 'peek', 'title': 'Peek', 'hypothesis': 'Look first.', 'falsifier': 'None.', 'parents': []}],
+                    'actions': [{**NULL, 'branch_id': 'peek'}], 'stop': False, 'reason': 'Look.'}
+        if context['round'] == 1:
+            branch = {'id': 'curve', 'title': 'Curved response', 'hypothesis': 'The response needs a quadratic term.',
+                      'falsifier': 'Validation error above the threshold.', 'parents': [], 'falsifier_test': FIT_ERROR}
+            return {'branches': [branch], 'actions': [{**FIT, 'branch_id': 'curve'}, {**NULL, 'id': 'null2', 'branch_id': 'curve'}],
+                    'stop': False, 'reason': 'Commit after looking at the null.'}
+        return {'stop': True, 'reason': 'Done.'}
+
+
+def test_the_controls_the_null_uses_must_be_prespecified_whether_the_claim_cites_them_or_not():
+    _, state = run(ControlFirst())
+    [scoped] = [b for b in state.claim_scope.branches if b.branch_id == 'curve']
+    assert set(scoped.evidence_ids) == {'fit', 'null2'}
+    for evidence_ids in (('fit', 'null2'), ('fit',)):
+        cited = scoped.model_copy(update={'evidence_ids': evidence_ids})
+        ladder = claim_ladder(state, cited, timeline_rows=[], verification=passing(state), subject=release.subject_digest(state))
+        assert 'null_rejected' in ladder['met'], evidence_ids
+        assert ladder['rung'] == 2 and ladder['next'] == {'rung': 3, 'needs': ['falsifier_after_observation']}, evidence_ids
