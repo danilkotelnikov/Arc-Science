@@ -161,7 +161,8 @@ def study_vocabulary(state: MissionState, request=None) -> dict:
     """The study's own vocabulary (D020), each word with its earliest recorded origin: the goal
     and the operator's chosen context (both fixed at creation), then operator decision notes and
     successful, claim-eligible observations in event-log order. Without the request the goal and
-    context are unknown and add nothing."""
+    context are unknown and add nothing. A planner_only context item (a prior mission, a memory
+    record a mission wrote) is earlier model output and adds nothing either."""
     first = {}
     for i, e in enumerate(state.events):
         key = e.detail if e.kind == 'observation' else e.detail.split(':', 1)[0] if e.kind == 'change_declared' else None
@@ -171,7 +172,8 @@ def study_vocabulary(state: MissionState, request=None) -> dict:
     timed += [(at(o.id + ': ok'), {'origin': 'observation', 'observation_id': o.id}, recorded_strings(o.data, o.action.arguments))
               for o in state.observations if o.status == 'ok' and o.claim_eligible]
     sources = [({'origin': 'goal'}, [request.goal]),
-               ({'origin': 'context'}, [text for item in request.context_items for text in (item.title, item.text)])] if request else []
+               ({'origin': 'context'}, [text for item in request.context_items if not item.planner_only
+                                     for text in (item.title, item.text)])] if request else []
     return vocabulary(sources + [(origin, texts) for _, origin, texts in sorted(timed, key=lambda t: t[0])])
 
 
@@ -256,6 +258,14 @@ def named(state: MissionState, scoped: ScopedBranch) -> dict:
     and source tokens name, whether or not the reference resolves: a missing timeline row or
     ledger receipt is then reported by tracing, and a retraction or a snapshot is still seen."""
     return referenced(scoped.supported_scope, {o.id: o for o in state.observations if o.status == 'ok' and o.claim_eligible})
+
+
+def name_origins(state: MissionState, texts, names: dict) -> dict:
+    """The observations the texts' resolved name tokens came from; tracing checks them as it
+    checks a referenced observation."""
+    ids = {names[s['value']].get('observation_id') for text in texts for s in parse(text)[0]
+           if s['kind'] == 'name' and s['value'] in names}
+    return {o.id: o for o in state.observations if o.id in ids}
 
 
 def effective(state: MissionState, scoped: ScopedBranch) -> dict:
@@ -620,12 +630,15 @@ def _evaluate(state, scoped, timeline_rows, receipts, verification, subject, req
     found = lookup(state, scoped, timeline_rows, receipts)
     cited = named(state, scoped)
     evidence = list(effective(state, scoped).values())
-    traced, extra = _traced(state, evidence, set(cited), timeline_rows, receipts)
+    names = study_vocabulary(state, request)
+    origins = name_origins(state, scoped.supported_scope, names)
+    traced, extra = _traced(state, list({**effective(state, scoped), **origins}.values()), set(cited) | set(origins),
+                            timeline_rows, receipts)
     survived, falsifier = _falsifier(state, branch, evidence)
     rejected, null = _null(state, branch, evidence)
     outcomes = {'evidence_present': None if evidence else 'no_evidence',
                 'observations_traced': traced,
-                'numbers_bound': _bound(scoped.supported_scope, found, study_vocabulary(state, request)),
+                'numbers_bound': _bound(scoped.supported_scope, found, names),
                 'fidelity_audit': _fidelity(state, evidence),
                 'no_retracted_source': _retraction(evidence),
                 'recomputed': _recomputed(verification, subject),

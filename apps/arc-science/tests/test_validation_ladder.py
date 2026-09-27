@@ -287,6 +287,44 @@ def test_a_name_resolves_only_against_the_studys_own_vocabulary():
         assert 'n500' not in study_vocabulary(other, request), update
 
 
+def test_earlier_model_agreement_in_the_chosen_context_adds_no_names():
+    """D020: a prior mission (its summary holds the model's hypotheses and scopes) and a memory
+    record a mission wrote are model output, planner_only; a name found only there stays
+    unresolved in the mission that attaches or forks it, as it was where the model wrote it."""
+    from arc_science.exploration.models import ContextItem
+    from arc_science.exploration.validation import study_vocabulary
+    request, state = run(Scripted([FIT], say=lambda o: 'Error {{fit.validation_mse}} for {{name:XQ9}}.'))
+    prior = {'ref': 'prior', 'title': 'Hypothesis: XQ9 drives growth', 'digest': 'a' * 64,
+             'text': json.dumps({'supported_scope': ['{{name:XQ9}} rises by {{o1.slope}}']})}
+    for item in (ContextItem(kind='mission', **prior), ContextItem(kind='memory', trust='model_output', **prior),
+                 ContextItem(kind='memory', source_uri='mission://mission-a/round/1', **prior)):
+        assert item.planner_only
+        chosen = request.model_copy(update={'context_items': (item,)})
+        assert not {'XQ9', 'o1'} & set(study_vocabulary(state, chosen)), item
+        assert ladder_of(state, request=chosen)['next']['needs'] == ['unresolved_reference'], item
+        assert rung_check(decide(chosen, state)).state == 'failed', item
+    # The operator's own record of the same text is recorded material and does resolve it.
+    own = request.model_copy(update={'context_items': (ContextItem(kind='memory', **prior),)})
+    assert ladder_of(state, request=own)['rung'] == 1
+
+
+def test_the_observation_a_name_comes_from_is_traced_like_a_referenced_one():
+    """A name whose only occurrence is a record of another branch's retrieval needs what a
+    reference to that retrieval needs: an ok timeline row and its receipt in the grant ledger."""
+    found = [{**SOUND[0], 'title': 'Deep learning with ResNet50 backbones.'}]
+    request, state = run(OtherBranch(peek=(READ,), curve=(FIT,), finding='Error {{fit.validation_mse}} with {{name:ResNet50}}.'),
+                         extra_tools=reads(found), egress=True)
+    ladder = ladder_of(state, request=request)
+    assert ladder['rung'] == 1 and 'ledger_receipt' in ladder['met']
+    for receipts, need in (((), 'receipt_missing'), (({**RECEIPT, 'outcome': 'failed'},), 'receipt_missing'), (None, 'receipt_unchecked')):
+        assert ladder_of(state, request=request, receipts=receipts)['next']['needs'] == [need], receipts
+    failed = [{**r, 'outcome': 'error'} if r['action_id'] == 'read' else r for r in traced(state)]
+    assert ladder_of(state, rows=failed, request=request)['next']['needs'] == ['timeline_not_ok']
+    # Without the name, that retrieval is not the claim's evidence and needs nothing.
+    _, quiet = run(OtherBranch(peek=(READ,), curve=(FIT,), finding='Error {{fit.validation_mse}}.'), extra_tools=reads(found), egress=True)
+    assert ladder_of(quiet, request=request, receipts=())['rung'] == 1
+
+
 def test_the_vocabulary_is_tokenised_for_exact_lookup_only():
     from arc_science.exploration.validation import words
     assert list(words('p53, BRCA1 and SARS-CoV-2 (IL-6/IL-8); H3K27ac_x 16S rRNA, 三百p53 TGF-β1; 0-5 x² 100 BRCA')) == [
