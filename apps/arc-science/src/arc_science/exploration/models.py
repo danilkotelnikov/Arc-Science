@@ -11,8 +11,36 @@ class Point(Record):
     x: float = Field(ge=-1e6, le=1e6)
     y: float = Field(ge=-1e12, le=1e12)
 
+CREW_ROLES = ('planner', 'reviewer', 'falsifier', 'vision')
+CrewRole = Literal['planner', 'reviewer', 'falsifier', 'vision']
+# A model id as a seat sends it: never an option-like word a CLI could read as a flag.
+ModelId = Annotated[str, Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$')]
+
+
+class CrewSeat(Record):
+    """One role's model and effort for this mission; provider, transport, endpoint and
+    credential stay the Settings seat's. effort None sends no level (the transport default)."""
+    model: ModelId
+    effort: Literal['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] | None = None
+
+
+# Mission context limits (contract C2).
+CONTEXT_MEMORY_LIMIT, CONTEXT_MISSION_LIMIT, CONTEXT_CHAR_LIMIT = 50, 5, 24_000
+
+
+class ContextItem(Record):
+    """Earlier work the operator attached, resolved by the service and frozen at creation:
+    a memory record (digest = its content digest) or a prior mission's supported scope and
+    claims (digest = its release subject digest). Evidence to weigh, never permission."""
+    kind: Literal['memory', 'mission']
+    ref: str = Field(min_length=1, max_length=200)
+    title: str = Field(max_length=300)
+    digest: Digest
+    text: str = Field(max_length=CONTEXT_CHAR_LIMIT)
+
+
 class MissionRequest(Versioned):
-    LATER_FIELDS = ('max_tokens', 'max_cost_usd', 'max_minutes')
+    LATER_FIELDS = ('max_tokens', 'max_cost_usd', 'max_minutes', 'crew', 'context_items')
     goal: str = Field(min_length=3, max_length=10000)
     mode: Literal['demo', 'live'] = 'demo'
     seed: int = Field(default=17, ge=0, le=2147483647)
@@ -28,11 +56,23 @@ class MissionRequest(Versioned):
     max_tokens: int | None = Field(default=None, ge=1000, le=5_000_000)
     max_cost_usd: float | None = Field(default=None, ge=0.01, le=500)
     max_minutes: int | None = Field(default=None, ge=1, le=1440)
+    # Per-role model and effort overrides for the live seats (contract C2); None is Settings as is.
+    crew: dict[CrewRole, CrewSeat] | None = None
+    context_items: tuple[ContextItem, ...] = Field(default=(), max_length=CONTEXT_MEMORY_LIMIT + CONTEXT_MISSION_LIMIT)
 
     @model_validator(mode='after')
     def egress_consent(self):
         if self.mode == 'live' and not self.allow_egress:
             raise ValueError('Live models require explicit permission to send mission data')
+        return self
+
+    @model_validator(mode='after')
+    def bounded_context(self):
+        kinds = [item.kind for item in self.context_items]
+        if kinds.count('memory') > CONTEXT_MEMORY_LIMIT or kinds.count('mission') > CONTEXT_MISSION_LIMIT:
+            raise ValueError('Mission context exceeds its item limits')
+        if sum(len(item.text) for item in self.context_items) > CONTEXT_CHAR_LIMIT:
+            raise ValueError('Mission context exceeds its character limit')
         return self
 
 class FalsifierTest(Record):

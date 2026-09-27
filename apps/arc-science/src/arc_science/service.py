@@ -14,7 +14,7 @@ import uuid
 import hmac
 import httpx
 import json
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from fastapi import Body, FastAPI, Depends, Header, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
@@ -23,7 +23,9 @@ from . import __version__
 from .contracts import digest
 from .transport import AccessGrant, ProviderError
 from .grants import GrantLedger
-from .exploration.models import Event, MissionRequest, MissionState
+from .exploration.models import (CONTEXT_CHAR_LIMIT, CONTEXT_MEMORY_LIMIT, CONTEXT_MISSION_LIMIT, CREW_ROLES, ContextItem,
+                                 Event, MissionRequest, MissionState, ModelId)
+from .exploration.effort import DEFAULT as DEFAULT_EFFORT, accepted_efforts
 from .exploration.engine import initialize, explore, MissionCancelled
 from .exploration.agents import DemoAgent, DemoVisionAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
@@ -92,6 +94,46 @@ class StartRequest(BaseModel):
 
 class RevokeRequest(BaseModel):
     reason:str=Field(default='',max_length=400)
+
+class CrewEntry(BaseModel):
+    """A crew entry as sent: the role name and effort are checked by the service, so a refusal
+    names the role, the level and the levels the seat accepts."""
+    model_config={'extra':'forbid'}
+    model:ModelId
+    effort:str|None=Field(default=None,max_length=20)
+
+class ContextRefs(BaseModel):
+    """Earlier work to attach to a mission, by reference; the service resolves the text."""
+    model_config={'extra':'forbid'}
+    memory_record_ids:list[str]=Field(default_factory=list,max_length=CONTEXT_MEMORY_LIMIT)
+    prior_mission_ids:list[str]=Field(default_factory=list,max_length=CONTEXT_MISSION_LIMIT)
+
+    @model_validator(mode='after')
+    def bounded_ids(self):
+        if any(not 1<=len(ref)<=200 for ref in self.memory_record_ids+self.prior_mission_ids):
+            raise ValueError('A context reference is 1 to 200 characters')
+        return self
+
+    def __bool__(self):return bool(self.memory_record_ids or self.prior_mission_ids)
+
+class MissionCreate(MissionRequest):
+    """The create body (contract C3): the request fields, the crew as sent and the context by
+    reference. context_items are resolved by the service and never accepted from a caller."""
+    crew:dict[str,CrewEntry]|None=None
+    context:ContextRefs|None=None
+
+    @model_validator(mode='before')
+    @classmethod
+    def no_items(cls,data):
+        if isinstance(data,dict) and 'context_items' in data:
+            raise ValueError('context_items are resolved by the service; send context references')
+        return data
+
+class RoutePreviewRequest(BaseModel):
+    model_config={'extra':'forbid'}
+    vision_review:bool=False
+    crew:dict[str,CrewEntry]|None=None
+    context:ContextRefs|None=None
 
 
 def _configured_native_session_secret():
@@ -246,6 +288,30 @@ def live_seats(vision_review=False):
     return live_route(vision_review)['seats']
 
 
+def with_crew(route,crew):
+    """The route with a mission's crew applied: per role, the model and effort replace the
+    Settings seat's; provider, transport, endpoint and credential stay. Applied before the
+    route is digested, so an approval covers the crew. Refusals carry crew codes."""
+    if not crew:return route
+    seats=dict(route['seats'])
+    for role,entry in crew.items():
+        if role not in CREW_ROLES:raise api_error(422,'crew.unknown_role',facts={'role':role})
+        seat=seats.get(role)
+        if seat is None:raise api_error(422,'crew.no_seat',facts={'role':role})
+        # A transport without effort control accepts only the default (the provider's own applies).
+        allowed=list(accepted_efforts(seat.provider,seat.transport,entry.model)) or [DEFAULT_EFFORT]
+        if entry.effort is not None and entry.effort not in allowed:
+            raise api_error(422,'crew.effort_not_supported',facts={'role':role,'effort':entry.effort,'allowed':allowed})
+        seats[role]=ModelEndpoint.model_validate({**seat.model_dump(),'model':entry.model,'effort':entry.effort})
+    return {**route,'seats':seats,'crew':sorted(crew)}
+
+
+def settings_seats(vision_review=False):
+    """The Settings seats a crew is checked against; a role without one is simply absent."""
+    try:return live_route(vision_review)['seats']
+    except Exception:return {}
+
+
 def refuse_uncosted(request,seats):
     """Fail closed: a cost budget needs every seat to report a cost per call, and only the
     Claude Code CLI does. Checked at creation and again against the route bound at start."""
@@ -272,6 +338,11 @@ def seat_plan(route):
 
 # What each kind of destination receives under a mission grant, in the operator's words.
 SEAT_CATEGORY='mission goal, dataset points, prior observations and assessments';SEAT_PURPOSE='planning, review and refutation'
+MISSION_CONTEXT_CATEGORY='mission_context: memory records and earlier mission findings the operator attached'
+
+
+def seat_category(context=False):
+    return SEAT_CATEGORY+'; '+MISSION_CONTEXT_CATEGORY if context else SEAT_CATEGORY
 CONNECTOR_CATEGORY='tool arguments the planner chooses';PUBLIC_READ_CATEGORY='query text the planner chooses'
 BIORENDER_CATEGORY='template search terms the planner chooses'
 # The origin each shipped public-read tool reaches (public_reads.py fixes the URLs).
@@ -291,13 +362,18 @@ def connector_destination(entry):
     return (entry.get('command','')+' '+shlex.join(entry.get('args') or [])).strip()
 
 
-def route_preview(route,settings_revision=None):
+def route_preview(route,settings_revision=None,context=False):
     """The grants a live route needs before its first start, one per destination, from the
     same snapshot `seat_plan` digests: seats, consented connectors, public reads and
-    BioRender when enabled. Passive: nothing is called and no secret is read."""
+    BioRender when enabled. Passive: nothing is called and no secret is read. A seat the
+    mission's crew overrides says so and is untested on that model; attached context adds
+    its data category to what the seats receive, and nothing else."""
     route_digest,_=seat_plan(route)
+    crew=route.get('crew',())
     seats=[{'role':role,'provider':e.provider,'transport':e.transport,'model':e.model,'effort':e.effort,'destination':seat_destination(e),
-            'destination_kind':'seat','data_category':SEAT_CATEGORY,'purpose':SEAT_PURPOSE} for role,e in route['seats'].items()]
+            'destination_kind':'seat','data_category':seat_category(context),'purpose':SEAT_PURPOSE,
+            'source':'mission' if role in crew else 'settings',**({'tested':False} if role in crew else {})}
+           for role,e in route['seats'].items()]
     connectors=[{'name':s['name'],'kind':'mcp','destination':connector_destination(s),'destination_kind':'mcp',
                  'data_category':CONNECTOR_CATEGORY,'purpose':'tool call'} for s in route['mcp_servers']]
     connectors+=[{'name':a['name'],'kind':'acp','destination':connector_destination(a),'destination_kind':'acp',
@@ -755,6 +831,53 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         except Exception as error:raise api_error(409,'mission.seats_unconfigured','Configure the model seats before starting: '+str(error)[:300]) from None
         return route_preview(route,settings_revision())
 
+    @app.post('/api/missions/preview',dependencies=[Depends(authorized)])
+    async def mission_preview_for(body:RoutePreviewRequest):
+        # The same preview for a mission as it would be created: its crew applied, its context named.
+        try:route=live_route(body.vision_review)
+        except Exception as error:raise api_error(409,'mission.seats_unconfigured','Configure the model seats before starting: '+str(error)[:300]) from None
+        return route_preview(with_crew(route,body.crew),settings_revision(),context=bool(body.context))
+
+    def mission_summary(goal,state):
+        """What a prior mission contributes: its goal, status and each claim's supported scope
+        and open uncertainty, as the claim scope derived them."""
+        titles={b.id:b.title for b in state.branches}
+        claims=[{'branch_id':b.branch_id,'title':titles.get(b.branch_id,''),'requested':b.requested,'status':b.status,
+                 'supported_scope':list(b.supported_scope),'scope_qualifier':b.scope_qualifier,
+                 'uncertainties':[u.reason+': '+u.detail for u in b.uncertainties]}
+                for b in (state.claim_scope.branches if state.claim_scope else ())]
+        return json.dumps({'goal':goal,'status':state.status,'claims':claims},ensure_ascii=False,separators=(',',':'))
+
+    def memory_record(ref):
+        try:record=memory_routes._operation('inspect',ref)
+        except Exception as why:
+            # The memory routes answer 404 for an unknown record; anything else is the store failing.
+            if getattr(why,'status_code',None)==404:raise api_error(404,'context.unknown_record',facts={'kind':'memory','ref':ref}) from None
+            raise api_error(503,'memory.unavailable') from None
+        # Only visible records: a disabled record is unknown to a mission.
+        if not isinstance(record,dict) or record.get('visibility')!='visible':
+            raise api_error(404,'context.unknown_record',facts={'kind':'memory','ref':ref})
+        return {'kind':'memory','ref':ref,'digest':record['content_digest'],'text':record['text'],
+                'title':f"{record.get('role','')} record {record.get('seq','')} of session {record.get('session_id','')}"[:300]}
+
+    async def resolve_context(refs):
+        """The attached records and missions as item dicts in the order named, each once."""
+        items=[await asyncio.to_thread(memory_record,ref) for ref in dict.fromkeys(refs.memory_record_ids)]
+        for ref in dict.fromkeys(refs.prior_mission_ids):
+            try:row=repository.get(ref)
+            except KeyError:raise api_error(404,'context.unknown_record',facts={'kind':'mission','ref':ref}) from None
+            state=MissionState.model_validate(row['state'])
+            items.append({'kind':'mission','ref':ref,'title':row['request']['goal'][:300],'digest':release_ledger.subject_digest(state),
+                          'text':mission_summary(row['request']['goal'],state)})
+        return items
+
+    @app.post('/api/missions/context/preview',dependencies=[Depends(authorized)])
+    async def context_preview(refs:ContextRefs):
+        # Read-only: what the context would hold and its size, for the composer to show.
+        items=await resolve_context(refs);total=sum(len(i['text']) for i in items)
+        return {'items':[{**{k:i[k] for k in ('kind','ref','title','digest')},'chars':len(i['text'])} for i in items],
+                'total_chars':total,'limit':CONTEXT_CHAR_LIMIT,'over_limit':total>CONTEXT_CHAR_LIMIT}
+
     @app.get('/api/missions/{mid}/grants',dependencies=[Depends(authorized)])
     async def mission_grants(mid:str):
         get(mid)
@@ -955,7 +1078,16 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 'publication_authorization':False}
 
     @app.post('/api/missions',status_code=201,dependencies=[Depends(authorized)])
-    async def new_mission(request:MissionRequest,idempotency_key:str|None=Header(default=None)):
+    async def new_mission(body:MissionCreate,idempotency_key:str|None=Header(default=None)):
+        # The crew is checked against the Settings seats now and applied again, from the
+        # Settings of the moment, when the route is bound at the first start.
+        if body.crew:with_crew({'seats':settings_seats(body.vision_review)},body.crew)
+        items=await resolve_context(body.context) if body.context else []
+        chars=sum(len(i['text']) for i in items)
+        if chars>CONTEXT_CHAR_LIMIT:raise api_error(409,'context.too_large',facts={'chars':chars,'limit':CONTEXT_CHAR_LIMIT})
+        request=MissionRequest.model_validate({**body.model_dump(mode='json',exclude={'crew','context'}),
+            **({'crew':{role:entry.model_dump() for role,entry in body.crew.items()}} if body.crew else {}),
+            **({'context_items':[ContextItem(**i) for i in items]} if items else {})})
         if request.mode=='live':
             try:live_seats_ready()
             except Exception:raise api_error(409,'mission.live_unconfigured') from None
@@ -969,7 +1101,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         try:
             row=repository.create(request,initialize(request),key=idempotency_key or uuid.uuid4().hex)
             memory_routes.schedule_capture(row['id'],MissionState.model_validate(row['state']))
-            return row
+            # A demo mission runs the fixture agents: its crew is recorded, not applied.
+            return {**row,'crew_applies':request.mode=='live'} if request.crew else row
         except RevisionConflict:raise api_error(409,'mission.idempotency_conflict') from None
         except ValueError:raise api_error(422,'mission.invalid') from None
 
@@ -1087,7 +1220,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                                        'falsifier':third.transport,'vision':vision.transport if vision else None})
                     def guard_seat(role,call,*args):
                         cfg=cfgs.get(role) or second
-                        return guard('seat',seat_destination(cfg),SEAT_CATEGORY,call,role=role,error=ProviderError)(*args)
+                        return guard('seat',seat_destination(cfg),seat_category(bool(request.context_items)),call,role=role,error=ProviderError)(*args)
                     agent=GuardedSeatAgent(agent,guard_seat)
                     if os.environ.get('ARC_PUBLIC_READS')=='1':
                         from .exploration.public_reads import public_tools
@@ -1168,6 +1301,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if request.mode=='live':
             try:route=live_route(request.vision_review)
             except Exception as error:raise api_error(409,'mission.seats_unconfigured','Configure the model seats before starting: '+str(error)[:300]) from None
+            route=with_crew(route,request.crew)
             refuse_uncosted(request,route['seats'])
             route_digest,detail=seat_plan(route)
             state=MissionState.model_validate(row['state'])
@@ -1184,7 +1318,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 if approval.approved_route_digest!=route_digest:
                     raise api_error(409,'mission.route_changed','The route changed since it was previewed; review it again'+(f'; settings revision {revision[:12]}' if revision else ''),
                                     facts={'route_digest':route_digest,'settings_revision':revision})
-                preview=route_preview(route,revision)
+                preview=route_preview(route,revision,context=bool(request.context_items))
                 approved={(g.destination,g.destination_kind) for g in approval.grants if g.scope=='mission'}
                 missing=[g for g in preview['required_grants'] if (g['destination'],g['destination_kind']) not in approved]
                 if missing:raise api_error(409,'mission.grant_missing','No grant approved for the '+missing[0]['destination_kind']+' destination '+missing[0]['destination'],

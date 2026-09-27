@@ -125,7 +125,10 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         # same-round report: a repair is reviewed with fresh eyes as a new candidate.
         artifacts=state.artifacts if reviewing is None else tuple(a for a in state.artifacts if a.round<state.round)+reviewing
         reports=state.visual_reports if reviewing is None else tuple(r for r in state.visual_reports if r.round<state.round)
-        return {'goal':request.goal,'round':state.round,'data_origin':state.data_origin,
+        # Earlier work the operator attached goes to the planner and reviewers only, and only
+        # when there is some, so contexts recorded without it keep their shape.
+        earlier={'mission_context':[i.model_dump(mode='json') for i in request.context_items]} if request.context_items and reviewing is None else {}
+        return {**earlier,'goal':request.goal,'round':state.round,'data_origin':state.data_origin,
                 'dataset':{'digest':state.dataset_digest,'n':len(state.points)},
                 'branches':[b.model_dump(mode='json') for b in state.branches],
                 'observations':[o.model_dump(mode='json') for o in state.observations],
