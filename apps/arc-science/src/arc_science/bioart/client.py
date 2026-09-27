@@ -82,9 +82,10 @@ def _holds_text(tail):
     """Three or more characters in a row, ASCII or any UTF-8 script: the shortest word or tag;
     or two printable bytes that no little-endian field of the remainder can hold. A field of
     an offset or length below 16 MiB may put two side by side (a PS length of 0x24144 is 'DA'),
-    but inside one 4-byte field whose top byte is NUL.
+    but inside one 4-byte field whose top byte is NUL; the PostScript length may put three
+    (_blank_length).
     ponytail: a headless section of 16 MiB or more with a printable pair is refused."""
-    return any(len(piece) >= 3 for run in _CONTROL.split(tail)
+    return any(len(piece) >= 3 for run in _CONTROL.split(_blank_length(tail))
                for piece in run.decode('utf-8', 'replace').split('\ufffd')) or any(
         tail[i] in _TEXT and tail[i + 1] in _TEXT and tail[min(i | 3, len(tail) - 1)] != 0 for i in range(len(tail) - 1))
 
@@ -103,6 +104,12 @@ def _eps_signature(data):
     return any((start == 0 or prefix[start - 1] == 0x0A) and _comment_lines(prefix[:start])
                and b'\x00' in prefix[start:] and not _holds_text(prefix[start:])
                for start in range(max(0, at - _DOS_HEADER), at))
+
+
+def _blank_length(tail):
+    """The remainder with its PostScript length field (bytes 4-7) blanked when that length is
+    below 16 MiB (top byte NUL): its three low bytes may all be printable (0x414243 is 'CBA')."""
+    return tail[:4] + b'\x00\x00\x00' + tail[7:] if len(tail) >= 8 and tail[7] == 0 else tail
 
 
 def _sniff(data, format):

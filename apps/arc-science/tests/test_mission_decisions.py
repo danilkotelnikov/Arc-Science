@@ -16,10 +16,10 @@ from arc_science import service
 from arc_science.contracts import digest
 from arc_science.error_codes import ERROR_CODES, STOP_CODES
 from arc_science.exploration import changes
-from arc_science.exploration.agents import DemoAgent
+from arc_science.exploration.agents import DemoAgent, DemoVisionAgent
 from arc_science.exploration.claims import build_claims
 from arc_science.exploration.engine import explore, operator_decisions, plan_digest
-from arc_science.exploration.evidence import evidence_graph, validate_evidence
+from arc_science.exploration.evidence import evidence_graph, validate_context, validate_evidence
 from arc_science.exploration.models import Change, MissionRequest, MissionState, OperatorDecision, Proposal
 from arc_science.exploration.providers import DIRECTIVE_FENCE_LABEL, PLAN_PROMPT, ModelEndpoint, render_prompt
 from test_claude_code_service import configured  # noqa: F401  (a fixture)
@@ -502,15 +502,17 @@ def test_a_round_stripped_with_its_dispatch_fact_after_a_budget_stop_does_not_ve
 
 
 def test_a_plan_left_pending_by_a_budget_stop_on_resume_verifies():
-    class Dear(Priced):
-        def take_provenance(self, role):
-            return {**super().take_provenance(role), 'cost_usd': 0.01}
-    request = gated(max_cost_usd=0.01)
-    state = decide(run(request, agent=Dear()), ('proposal', 'plan-0', 'pursue', ''))
-    stopped = run(request, agent=Dear(), initial=state)
-    # The spend check on resume stops the mission before the decided plan dispatches anything.
-    assert (stopped.status, stopped.stop_code, stopped.round, stopped.observations) == ('budget_exhausted', 'cost_limit', 0, ())
+    # Reachable states only: the gate pauses below the budget, the operator decides, and the
+    # resume's spend check (the clock has run on) stops before the decided plan dispatches.
+    request = gated(max_minutes=1)
+    paused = asyncio.run(explore(request, DemoAgent(), clock=lambda: 0))
+    assert (paused.status, paused.stop_code) == ('paused', 'awaiting_decision')
+    state = decide(paused, ('proposal', 'plan-0', 'pursue', ''))
+    stopped = asyncio.run(explore(request, DemoAgent(), initial=state, clock=lambda: 2))
+    assert (stopped.status, stopped.stop_code, stopped.round, stopped.observations) == ('budget_exhausted', 'time_limit', 0, ())
     validate_evidence(stopped)
+    validate_context(request, stopped)
+    evidence_graph(stopped)
 
 
 def test_actions_cut_by_the_action_limit_verify_without_observations():
@@ -572,6 +574,147 @@ def test_an_action_proposed_again_with_a_differently_typed_input_is_refused():
     state = run(gated(), agent, initial=decide(run(gated(), agent), ('branch', 'linear', 'park', '')))
     assert (state.status, state.stop_code, state.stop_facts) == ('error', 'action_reused', {'action_id': 'fit-linear'})
     validate_evidence(state)
+
+
+# --- residual: plans left pending by a stop, and what a stripped round leaves behind ---
+
+class Dear(Priced):
+    """The fixture at 0.01 USD per call."""
+    def take_provenance(self, role):
+        return {**super().take_provenance(role), 'cost_usd': 0.01}
+
+
+class Unmeasured(DemoAgent):
+    """The fixture whose calls answer without usage."""
+    def take_provenance(self, role):
+        return {'transport': 'fixture', 'role': role, 'outcome': 'ok', 'usage': None}
+
+
+class Wordy(DemoAgent):
+    """The fixture whose every call reports 2,000 input tokens."""
+    def take_provenance(self, role):
+        return {**super().take_provenance(role), 'usage': {'input_tokens': 2000, 'output_tokens': 0}}
+
+
+def later(first, then):
+    """A clock that reads `first` once, then `then` for ever."""
+    ticks = iter([first])
+    return lambda: next(ticks, then)
+
+
+@pytest.mark.parametrize('code,request_fields,agent,clock', [
+    ('cost_limit', {'max_cost_usd': 0.01}, Dear, None),
+    ('token_limit', {'max_tokens': 1000}, Wordy, None),
+    ('budget_unmeasurable', {'max_tokens': 10 ** 6}, Unmeasured, None),
+    ('time_limit', {'max_minutes': 1}, DemoAgent, later(0, 2)),
+])
+def test_a_budget_stop_at_the_gate_leaves_its_plan_pending_and_verifies(code, request_fields, agent, clock):
+    request = gated(**request_fields)
+    # The planner call crossed the budget: the gate's pause becomes the budget stop, before any declaration.
+    state = asyncio.run(explore(request, agent(), clock=clock))
+    assert (state.stop_code, state.round, state.observations, state.changes) == (code, 0, (), ())
+    assert [e.kind for e in state.events][-3:] == ['plan_committed', 'claim_scope_derived', 'mission_stopped']
+    validate_evidence(state)
+    validate_context(request, state)
+    evidence_graph(state)
+    # The same record under an auto gate cannot have come from the engine: its plan would have dispatched.
+    with pytest.raises(ValueError, match='unbound tool request'):
+        validate_context(MissionRequest(goal='Steer the fixture', **request_fields), state)
+
+
+def test_a_budget_stop_at_a_later_gate_verifies():
+    request = gated(max_rounds=4, max_cost_usd=0.01)
+    state = run(request, Priced(), initial=decide(run(request, Priced()), ('proposal', 'plan-0', 'pursue', '')))
+    assert (state.stop_code, state.round, [o.id for o in state.observations]) == ('cost_limit', 1, ['fit-linear'])
+    validate_evidence(state)
+    validate_context(request, state)
+
+
+def test_a_round_recorded_with_its_reservation_does_not_verify_once_stripped():
+    # An auto round is committed with its dispatch; stripped with that fact it cannot read as a
+    # gate pause, whatever interruption the record now names.
+    request = MissionRequest(goal='Probe', max_rounds=3)
+    saved = []
+    with pytest.raises(Exception):
+        asyncio.run(explore(request, DemoAgent(), emit=saved.append,
+                            cancelled=lambda: bool(saved) and any(o.round == 1 for o in saved[-1].observations)))
+    last = saved[-1]
+    for code in ('', 'interrupted', 'paused_by_operator', 'cancelled', 'service_failed'):
+        marked = last.model_copy(update={'status': 'paused', 'stop_code': code})
+        validate_evidence(marked)
+        stripped = strip_round(marked, 1)
+        stripped = without_dispatch(stripped, 1, len(stripped.observations))
+        with pytest.raises(ValueError, match='unbound tool request'):
+            validate_evidence(stripped)
+
+
+class PricedVision(DemoVisionAgent):
+    """The vision fixture at 0.003 USD per call."""
+    def take_provenance(self, role):
+        return {**super().take_provenance(role), 'cost_usd': 0.003}
+
+
+def strip_all(state, round):
+    """Everything a round's dispatch produced, gone: observations, renders, vision calls, repairs
+    and their events, the dispatch fact, and the reservation and call counts lowered to match."""
+    from arc_science.exploration.claim_scope import derive_claim_scope
+    data = state.model_dump(mode='json')
+    visions = [v for v in data['vision_records'] if v['round'] == round]
+    data['observations'] = [o for o in data['observations'] if o['round'] != round]
+    for key in ('artifacts', 'vision_records', 'visual_reports', 'repairs'):
+        data[key] = [item for item in data[key] if item['round'] != round]
+    data['events'] = [e for e in data['events'] if e['round'] != round or e['kind'] in (
+        'plan_committed', 'mission_stopped', 'claim_scope_derived', 'change_declared')]
+    data['actions_used'] = len(data['observations'])
+    data['model_calls_used'] -= len(visions)
+    stripped = MissionState.model_validate(data)
+    return stripped.model_copy(update={'claim_scope': derive_claim_scope(stripped)})
+
+
+def test_a_gated_round_stripped_after_a_later_spend_check_does_not_verify_against_its_request():
+    request = gated(max_rounds=4, max_cost_usd=0.0185, vision_review=True)
+    state = run(request, PricedVision(), initial=decide(run(request, PricedVision()), ('proposal', 'plan-0', 'pursue', '')))
+    state = run(request, PricedVision(), initial=decide(state, ('proposal', 'plan-1', 'pursue', '')))
+    # The round-1 tools ran and the vision call after them crossed the budget.
+    assert (state.stop_code, state.round) == ('cost_limit', 1)
+    assert {o.id for o in state.observations if o.round == 1} == {'fit-quadratic', 'shuffle-control'}
+    validate_evidence(state)
+    validate_context(request, state)
+    stripped = strip_all(state, 1)
+    # Read alone, the record could be a resume stopped before dispatch; its spend says it was not.
+    validate_evidence(stripped)
+    with pytest.raises(ValueError, match='unbound tool request'):
+        validate_context(request, stripped)
+
+
+def test_the_action_limit_excuse_and_the_dispatch_fact_bind_to_what_ran():
+    from arc_science.exploration.claim_scope import derive_claim_scope
+    request = MissionRequest(goal='Probe', max_rounds=3, max_cost_usd=0.01)
+    state = run(request, agent=Priced())
+    assert {o.id for o in state.observations if o.round == 1} == {'fit-quadratic', 'shuffle-control'}
+    data = state.model_dump(mode='json')
+    data['observations'] = [o for o in data['observations'] if o['id'] != 'shuffle-control']
+    data['events'] = [e for e in data['events'] if e['detail'] != 'shuffle-control: ok']
+    data['actions_used'] -= 1
+    data['claim_scope'] = derive_claim_scope(MissionState.model_validate(data)).model_dump(mode='json')
+    # The round-1 planner's remaining actions rewritten to excuse the unobserved action: the
+    # earlier planner says otherwise.
+    planners = {r['round']: r for r in data['model_records'] if r['role'] == 'planner'}
+    planners[1]['input_context']['remaining']['actions'] = 1
+    planners[1]['context_digest'] = digest(planners[1]['input_context'])
+    with pytest.raises(ValueError, match='remaining'):
+        validate_evidence(MissionState.model_validate(data))
+    # Every planner rewritten alike: the dispatch fact still names the removed run.
+    planners[0]['input_context']['remaining']['actions'] = 2
+    planners[0]['context_digest'] = digest(planners[0]['input_context'])
+    with pytest.raises(ValueError, match='dispatch'):
+        validate_evidence(MissionState.model_validate(data))
+    # Without that fact the record agrees with itself, but not with the request it ran under.
+    data['events'] = [e for e in data['events'] if not (e['kind'] == 'actions_dispatched' and e['round'] == 1)]
+    forged = MissionState.model_validate(data)
+    validate_evidence(forged)
+    with pytest.raises(ValueError, match='remaining'):
+        validate_context(request, forged)
 
 
 # --- service ---

@@ -35,7 +35,7 @@ from .catalog import BUILTIN_CATALOG, proposal_schema
 from .effort import applied_effort
 from .models import Proposal, Reconciliation
 from .providers import PLAN_PROMPT, REVIEW_PROMPT, render_prompt
-from .spend import count
+from .spend import count, reports_usage
 
 CALL_TIMEOUT = 75.0            # below the engine's 90 s deadline
 MAX_STDOUT = 1024 * 1024       # one JSON envelope or event list, never a stream
@@ -356,9 +356,10 @@ class Gemini:
         models = stats.get('models') if isinstance(stats.get('models'), dict) else {}
         reported = [e.get('tokens') if isinstance(e, dict) else None for e in models.values()]
         # Summed per key over the models reported (usually one). An empty report, or one where any
-        # model holds anything but counts, stays unmeasured rather than becoming a smaller count.
+        # model holds anything but counts or no usage spend.py reads, stays unmeasured rather than
+        # becoming a smaller count.
         spent_tokens = ({k: sum(t[k] for t in reported if k in t) for t in reported for k in t}
-                        if reported and all(isinstance(t, dict) and all(count(v) for v in t.values()) for t in reported)
+                        if reported and all(reports_usage(t) and all(count(v) for v in t.values()) for t in reported)
                         else None)
         try:
             if (stats.get('tools') or {}).get('totalCalls'):

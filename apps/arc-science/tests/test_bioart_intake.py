@@ -334,12 +334,12 @@ def _remainder(ps_length):
 
 
 @pytest.mark.parametrize('data', [
-    _remainder(0x4144), _remainder(147_780), _remainder(0x4E44), _remainder(0x7E7E),
+    _remainder(0x4144), _remainder(147_780), _remainder(0x4E44), _remainder(0x7E7E), _remainder(0x414243),
     _whole(_dos_eps()),
     _whole(_dos_eps(ps_length=0x00024144, tiff_offset=30 + 0x00024144, tiff_length=0x4D4D)),
     b'% ok\r\n' + b' \x00\x00\x00D\x0f' + b'\x00' * 16 + b'%!PS-Adobe-3.1 EPSF-3.0\r\n',        # 22 bytes
     b'% ok\r\n' + b' \x00\x00\x00D\x0f' + b'\x00' * 18 + b'%!PS-Adobe-3.1 EPSF-3.0\r\n',        # 24 bytes
-], ids=['length-DA', 'length-147780', 'length-DN', 'length-tildes', 'dos-header-30', 'dos-header-printable-fields',
+], ids=['length-DA', 'length-147780', 'length-DN', 'length-tildes', 'length-CBA', 'dos-header-30', 'dos-header-printable-fields',
         'remainder-22', 'remainder-24'])
 def test_eps_signature_accepts_dos_headers_whatever_their_field_bytes(tmp_path, data):
     """The DOS EPS header holds per-file offsets, lengths and a checksum: two of their bytes

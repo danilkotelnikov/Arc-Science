@@ -140,18 +140,57 @@ UNDISPATCHED = ("", "awaiting_decision", "interrupted", "paused_by_operator", "c
 CUT_OFF = ("", "interrupted", "paused_by_operator", "cancelled", "service_failed")
 
 
-def _undispatched(state, round_number):
-    """A stop that is not an interruption left the round's plan undispatched only when the record
-    holds no trace of a dispatch: no dispatch event and no reservation. A spend check stops before
-    a committed plan dispatches only on a resume, so a budget stop also needs a declaration after
-    the plan was committed."""
+def _pending(state, round_number):
+    """Why the latest committed plan has nothing run yet, or None. 'cut': an interruption (CUT_OFF)
+    cut its recorded dispatch short, with exactly the dispatched actions still reserved. 'gate':
+    nothing was dispatched or reserved, and the mission stopped after the plan was committed (the
+    gate's pause, or a budget stop in its place; declarations and further stops may follow). An
+    auto round commits its plan with its dispatch, so a gate stop needs a gated mission: from round
+    1 on a gated mission has recorded decisions, and validate_context checks round 0 and the spend
+    against the request."""
+    if (round_number != state.round or state.stop_code not in UNDISPATCHED
+            or any(o.round == round_number for o in state.observations)):
+        return None
     kinds = [(e.kind, e.round) for e in state.events]
-    if ("actions_dispatched", round_number) in kinds or state.actions_used != len(state.observations):
-        return False
-    if state.stop_code == "awaiting_decision":
-        return True
-    committed = kinds.index(("plan_committed", round_number)) if ("plan_committed", round_number) in kinds else len(kinds)
-    return any(kind == "change_declared" for kind, _ in kinds[committed:])
+    if ("plan_committed", round_number) not in kinds:
+        return None
+    committed = len(kinds) - 1 - kinds[::-1].index(("plan_committed", round_number))
+    dispatched = [e.detail for e in state.events if e.kind == "actions_dispatched" and e.round == round_number]
+    if dispatched:
+        reserved = state.actions_used - len(state.observations)
+        return "cut" if state.stop_code in CUT_OFF and reserved == len(dispatched[-1].split(", ")) else None
+    gated = round_number == 0 or any(change.kind == "decision" for change in state.changes)
+    stopped = any(kind == "mission_stopped" for kind, _ in kinds[committed + 1:])
+    return "gate" if gated and stopped and state.actions_used == len(state.observations) else None
+
+
+def _relied_pending(state):
+    """The _pending reason the latest plan's record relies on: some action of it neither ran nor was
+    withheld. None when it relies on none."""
+    record = next((r for r in state.model_records if r.role == "planner" and r.round == state.round), None)
+    if record is None:
+        return None
+    plan = Proposal.model_validate(record.payload)
+    withheld = {e.detail.partition(":")[0] for e in state.events if e.kind == "action_withheld" and e.round == state.round}
+    ran = {o.id for o in state.observations}
+    if plan.stop or all(a.id in ran or a.id in withheld for a in plan.actions):
+        return None
+    return _pending(state, state.round)
+
+
+def _budgets(state):
+    """The (rounds, actions) budget each planner context implies: what it was told remained plus
+    the rounds and actions used before it. Every planner of one mission implies the same one."""
+    budgets = set()
+    for record in state.model_records:
+        remaining = record.input_context.get("remaining") if record.role == "planner" else None
+        if remaining is None:
+            continue
+        rounds, actions = (remaining.get("rounds"), remaining.get("actions")) if isinstance(remaining, dict) else (None, None)
+        if not all(isinstance(v, int) and not isinstance(v, bool) for v in (rounds, actions)):
+            raise ValueError("Recorded planner context has malformed remaining rounds and actions")
+        budgets.add((rounds + record.round, actions + sum(o.round < record.round for o in state.observations)))
+    return budgets
 
 
 # Stops a stopping or empty plan makes when the operator accepts it (or no operator decides).
@@ -377,6 +416,8 @@ def validate_evidence(state: MissionState) -> None:
         if record.input_context.get("operator_directives", []) != told:
             raise ValueError("Planner context does not bind to the recorded operator decisions")
     withheld = _replay_decisions(state, planners, decisions)
+    if len(_budgets(state)) > 1:
+        raise ValueError("Recorded planner contexts disagree on the remaining rounds and actions")
     for index, event in enumerate(state.events[:-1]):
         # A cancellation after a stop, an interruption or a pause is a terminal operator
         # action, not a continuation; anything else must be a declared change.
@@ -424,8 +465,7 @@ def validate_evidence(state: MissionState) -> None:
             ran = sum(o.round == record.round for o in state.observations)
             # The action limit cut this plan's dispatch: its round ran every action it had left.
             capped = ran > 0 and ran == record.input_context.get("remaining", {}).get("actions")
-            pending = (record.round == state.round and state.stop_code in UNDISPATCHED and not ran
-                       and (state.stop_code in CUT_OFF or _undispatched(state, record.round)))
+            pending = _pending(state, record.round) is not None
             for action in packet.actions:
                 if action.branch_id not in available:
                     raise ValueError("Recorded proposal has an invalid action branch")
@@ -481,6 +521,15 @@ def validate_evidence(state: MissionState) -> None:
             raise ValueError("Final assessment payload binding mismatch")
     elif state.assessments:
         raise ValueError("Assessments require recorded reviewer payloads")
+    # What a round dispatched is what ran in it; only an interruption leaves a dispatch unobserved.
+    dispatched = {}
+    for event in state.events:
+        if event.kind == "actions_dispatched":
+            dispatched.setdefault(event.round, set()).update(event.detail.split(", "))
+    for round_number, ids in dispatched.items():
+        ran = {o.id for o in state.observations if o.round == round_number}
+        if ids != ran and (ran or _pending(state, round_number) != "cut"):
+            raise ValueError("Recorded dispatch does not bind to the observations of its round")
 
 
 def validate_context(request, state: MissionState) -> None:
@@ -494,6 +543,17 @@ def validate_context(request, state: MissionState) -> None:
     for context, expected in shown:
         if context.get("mission_context", []) != expected or ("mission_context" in context) != bool(expected):
             raise ValueError("Recorded model context does not bind to the context attached to the mission")
+    # The action-limit excuse reads the planner's remaining actions: they follow from the request.
+    if _budgets(state) - {(request.max_rounds, request.max_actions)}:
+        raise ValueError("Recorded planner context does not bind to the mission's remaining rounds and actions")
+    # A plan left pending at a gate needs a gated mission, and a spend stop in its place the spend
+    # that stops it: the record's calls are the ones the check read, so it recomputes exactly.
+    # ponytail: a time stop is not recomputable from the record (the clock is in the timeline).
+    if _relied_pending(state) == "gate":
+        from .engine import budget_stop  # the engine imports this module
+        if request.gate != "each_round" or (state.stop_code in ("token_limit", "cost_limit", "budget_unmeasurable")
+                                            and budget_stop(request, state, lambda: 0) != state.stop_code):
+            raise ValueError("Recorded proposal has an unbound tool request")
 
 
 def evidence_graph(state: MissionState) -> dict:

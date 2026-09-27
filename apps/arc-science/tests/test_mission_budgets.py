@@ -569,7 +569,7 @@ def test_codex_and_gemini_answers_refused_after_parsing_keep_their_usage():
     for provider, name, mode, model, usage in (
             ('openai', 'fake_codex.py', 'two-messages', 'gpt-5.5',
              {'input_tokens': 120, 'cached_input_tokens': 0, 'output_tokens': 15, 'reasoning_output_tokens': 0}),
-            ('gemini', 'fake_gemini.py', 'wrong-model', 'gemini-3-pro', {})):
+            ('gemini', 'fake_gemini.py', 'wrong-model', 'gemini-3-pro', None)):
         seat = CliAgent([sys.executable, str(fixtures / name), mode], model, model, provider=provider, environment=env)
         try:
             with pytest.raises(ProviderError):
@@ -577,7 +577,7 @@ def test_codex_and_gemini_answers_refused_after_parsing_keep_their_usage():
             call = seat.take_provenance('falsifier')
         finally:
             seat.close()
-        # Answered, so the call is rejected rather than failed; an empty usage is unmeasured, never zero.
+        # Answered, so the call is rejected rather than failed; an empty usage is unmeasured (None), never zero.
         assert (call['outcome'], call['usage'], call['cost_usd']) == ('rejected', usage, None), provider
 
 
@@ -668,7 +668,9 @@ def test_gemini_usage_that_is_not_a_count_is_not_made_into_one(prompt):
     assert refusal(Gemini.parse, payload, model='gemini-3-pro') == {'usage': None, 'cost_usd': None}
 
 
-@pytest.mark.parametrize('sibling', [{'tokens': 'garbage'}, {'tokens': None}, {}, 'n/a'])
+@pytest.mark.parametrize('sibling', [{'tokens': 'garbage'}, {'tokens': None}, {}, 'n/a',
+                                     # counts, but no usage spend.py can read: nothing, an uncounted key, no input
+                                     {'tokens': {}}, {'tokens': {'total': 900}}, {'tokens': {'candidates': 400}}])
 def test_one_malformed_model_entry_keeps_the_whole_gemini_usage_unmeasured(sibling):
     from arc_science.exploration.cli_seats import Gemini
     payload = {'response': '{}', 'stats': {'tools': {'totalCalls': 1},

@@ -40,6 +40,35 @@ def plan_digest(record):
     return digest(record)
 
 
+def budget_stop(request, state, clock, stop=lambda status, code, reason, **facts: code):
+    """The engine's stop for the first budget the recorded spend has reached, in the order the
+    engine checks them, else None; clock() -> minutes run, read only when a time budget is set.
+    Without a stop, the code alone: validation recomputes it from the record."""
+    if request.max_tokens is None and request.max_cost_usd is None and request.max_minutes is None:return None
+    used=spent(state);measured=len(tally(state)[0])
+    if request.max_tokens is not None:
+        if not used['measured']:
+            return stop('needs_input','budget_unmeasurable','A model call answered without reporting usable token usage, so the token budget cannot be enforced.',
+                        kind='tokens',limit=request.max_tokens,calls=used['calls'],measured_calls=measured)
+        tokens=used['input_tokens']+used['output_tokens']
+        if tokens>=request.max_tokens:
+            return stop('budget_exhausted','token_limit','Token budget reached; remaining alternatives are unresolved.',
+                        kind='tokens',spent=tokens,limit=request.max_tokens)
+    if request.max_cost_usd is not None:
+        if used['cost_usd'] is None:
+            return stop('needs_input','budget_unmeasurable','A model call answered without reporting its cost, so the cost budget cannot be enforced.',
+                        kind='cost_usd',limit=request.max_cost_usd,calls=used['calls'],measured_calls=measured)
+        if used['cost_usd']>=request.max_cost_usd:
+            return stop('budget_exhausted','cost_limit','Cost budget reached; remaining alternatives are unresolved.',
+                        kind='cost_usd',spent=used['cost_usd'],limit=request.max_cost_usd)
+    if request.max_minutes is not None:
+        minutes=clock()
+        if minutes>=request.max_minutes:
+            return stop('budget_exhausted','time_limit','Time budget reached; remaining alternatives are unresolved.',
+                        kind='minutes',spent=round(minutes,3),limit=request.max_minutes)
+    return None
+
+
 def operator_decisions(state):
     """Every recorded operator decision in order, with the change that carries it."""
     return [{'change_id': c.id, 'at': c.at, **d.model_dump(mode='json')}
@@ -166,29 +195,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         # ponytail: checked before each model step (one planner call, two concurrent reviewer
         # calls or one vision call), so a budget is overshot by at most one step's usage;
         # reserve worst-case tokens per step if exact caps matter.
-        if request.max_tokens is None and request.max_cost_usd is None and request.max_minutes is None:return None
-        used=spent(state);measured=len(tally(state)[0])
-        if request.max_tokens is not None:
-            if not used['measured']:
-                return stop('needs_input','budget_unmeasurable','A model call answered without reporting usable token usage, so the token budget cannot be enforced.',
-                            kind='tokens',limit=request.max_tokens,calls=used['calls'],measured_calls=measured)
-            tokens=used['input_tokens']+used['output_tokens']
-            if tokens>=request.max_tokens:
-                return stop('budget_exhausted','token_limit','Token budget reached; remaining alternatives are unresolved.',
-                            kind='tokens',spent=tokens,limit=request.max_tokens)
-        if request.max_cost_usd is not None:
-            if used['cost_usd'] is None:
-                return stop('needs_input','budget_unmeasurable','A model call answered without reporting its cost, so the cost budget cannot be enforced.',
-                            kind='cost_usd',limit=request.max_cost_usd,calls=used['calls'],measured_calls=measured)
-            if used['cost_usd']>=request.max_cost_usd:
-                return stop('budget_exhausted','cost_limit','Cost budget reached; remaining alternatives are unresolved.',
-                            kind='cost_usd',spent=used['cost_usd'],limit=request.max_cost_usd)
-        if request.max_minutes is not None:
-            minutes=clock()
-            if minutes>=request.max_minutes:
-                return stop('budget_exhausted','time_limit','Time budget reached; remaining alternatives are unresolved.',
-                            kind='minutes',spent=round(minutes,3),limit=request.max_minutes)
-        return None
+        return budget_stop(request,state,clock,stop)
     # A start or resume clears the previous stop's code; the next stop records its own.
     change(status='running',stop_code='',stop_facts={});commit()
     while state.round < request.max_rounds:

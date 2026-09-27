@@ -80,10 +80,11 @@ _ERROR = r'(?:[- ]set)?[- ](?:mean[- ]squared?[- ])?(?:error|mse|loss)'
 _SPLIT = r'(?:validation|held[- ]out|test|train(?:ing)?)'
 # A sample count: its split is resolved by _count from the split word nearest it.
 COUNT = ('n', 'n_train', 'n_validation')
-SPLIT_WORD = re.compile(r'\b(?:(validation|held[- ]out|test)|train(?:ing|ed)?)\b', re.I)
-# A lone letter names a statistic only right before its value: after a comparator, a colon,
-# 'of', or nothing but a hyphen (the window ends at the number).
-_BARE = r'(?=\s*(?:[=<>≤≥≈~:]|of\b|-?$))'
+SPLIT_WORD = re.compile(r'\b(?:(validation|held[- ]out|test(?:ing|ed)?)|train(?:ing|ed)?)\b', re.I)
+# A lone letter names a statistic only right before its value: after a comparator, a colon, an
+# opening parenthesis, 'of', a copula, 'test' or 'statistic', or nothing but a hyphen (the
+# window ends at the number).
+_BARE = r'(?=\s*(?:[=<>≤≥≈~:(]|(?:of|is|was|were|equals?|equalled|test|statistic)\b|-?$))'
 QUANTITIES = ((re.compile(r'shuffled (?:validation )?(?:error|mse|loss)|null (?:error|mse)', re.I), MSE[2:]),
               (re.compile(r'(?:validation|held[- ]out|test)' + _ERROR + r'|(?:error|mse|loss) on the (?:validation|held[- ]out|test)',
                           re.I), ('validation_mse',)),
@@ -108,14 +109,20 @@ QUANTITIES = ((re.compile(r'shuffled (?:validation )?(?:error|mse|loss)|null (?:
               (re.compile(r'\b(?:standard[- ](?:error|deviation)|std|stdev|sd|sem|se|variance|iqr|confidence interval|ci)'
                           r'[- ](?:of|in|for|on)[- ](?:the[- ])?(?:\w+[- ]){0,3}?(?:error|mse|loss)\b', re.I), ()),
               (re.compile(r'\br\^2|\b[pqrtz]' + _BARE, re.I), ()))
-# A statistic of an error, in the error's own clause, whatever stands between them: 'standard
-# error of the degree-2 validation error', "SD of the fit's validation error", 'SE (validation error)'.
-STATISTIC_OF = re.compile(r'\b(?:standard[- ](?:error|deviation)|std|stdev|s\.d\.|sd|sem|se|variance|iqr|interquartile range|'
-                          r'confidence interval|ci)\s*(?:\(|(?:of|in|for|on)\b)', re.I)
-ERROR_WORD = re.compile(r'\b(?:error|mse|loss)\b', re.I)
-# A split a preposition names right after a count word: '64 samples were in the validation set'.
-SPLIT_AFTER = re.compile(r'(?:\s+\w+){0,2}?\s+(?:in|of|from|for|on|within)\s+(?:the\s+|a\s+|its\s+)?'
-                         r'(?:(validation|held[- ]out|test)|train(?:ing|ed)?)\b', re.I)
+# A statistic of an error, whatever stands between them: 'standard error of the degree-2
+# validation error', 'the SD across folds of the validation errors', 'SE (validation error)'.
+# Between the two there is a preposition or a parenthesis and no verb or conjunction, which
+# would start another statement: 'the standard error of x was small, and the validation error'.
+STATISTIC = re.compile(r'\b(?:standard[- ](?:error|deviation)|std|stdev|s\.d\.|s\.e\.|sd|sem|se|variance|iqr|'
+                       r'interquartile range|confidence interval|ci)(?!\w)', re.I)
+STATISTIC_LINK = re.compile(r'\(|\b(?:of|in|for|on)\b', re.I)
+STATEMENT_BREAK = re.compile(r'\b(?:is|was|were|are|be|been|being|has|have|had|and|but|while|whereas|than)\b', re.I)
+ERROR_WORD = re.compile(r'\b(?:errors?|mses?|loss(?:es)?)\b', re.I)
+# A split the rest of a count's sentence names: after a preposition ('64 samples were later
+# reserved for validation', 'went to the validation set'), in parentheses ('n = 64 (validation)')
+# or as held out ('64 samples were held out').
+SPLIT_AFTER = re.compile(r'[^.;!?]*?(?:\b(?:in|of|from|for|on|within|to|into)\s+(?:(?:the|a|an|its|their)\s+)?|\(\s*|(?=held[- ]out))'
+                         r'(?:(validation|held[- ]out|test(?:ing|ed)?)|train(?:ing|ed)?)\b', re.I)
 # Superscript exponents are read as caret ones: x⁹ is x^9, R² is R^2.
 SUPERSCRIPT = re.compile('[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+')
 SUPERSCRIPT_DIGITS = str.maketrans('⁻⁰¹²³⁴⁵⁶⁷⁸⁹', '-0123456789')
@@ -151,17 +158,24 @@ def _joined(text, hyphen):
 
 def _count(before, between='', trailing=''):
     """The count fields a sample count names: those of the split word nearest it, the first
-    between the number and its count word, else one a preposition names right after the count
-    word (trailing), else the last before the number; with none, the whole data set."""
+    between the number and its count word, else one the rest of its sentence names (trailing,
+    SPLIT_AFTER), else the last in its sentence before the number; with none, the whole data set."""
     after = SPLIT_AFTER.match(trailing)
     nearest = SPLIT_WORD.findall(between)[:1] or ([after.group(1) or ''] if after else SPLIT_WORD.findall(before)[-1:])
     return (('n_validation',) if nearest[0] else ('n_train',)) if nearest else ('n',)
 
 
+def _adjacent(text):
+    """Only split words stand between a number and its count word: '48 training samples'."""
+    return SPLIT_WORD.sub('', text).strip(' -') == ''
+
+
 def _of_error(sentence):
-    """The last error word before the number has a statistic of it earlier in its clause."""
+    """The last error word before the number has a statistic of it earlier in its sentence (STATISTIC)."""
     errors = list(ERROR_WORD.finditer(sentence))
-    return bool(errors) and STATISTIC_OF.search(CLAUSE.split(sentence[:errors[-1].start()])[-1]) is not None
+    return bool(errors) and any(
+        STATISTIC_LINK.search(between) and not STATEMENT_BREAK.search(between)
+        for between in (sentence[m.end():errors[-1].start()] for m in STATISTIC.finditer(sentence[:errors[-1].start()])))
 
 
 def _tokens(text):
@@ -173,7 +187,9 @@ def _tokens(text):
         variable = text[m.start() - 2:m.start()] if m.start() >= 2 else ''
         if not (variable[1:] == '^' and variable[0].isalpha()):
             raw.append(m)
-        elif not (variable[0] in 'rR' and m.group(0) == '2'):
+        elif not (variable[0] in 'rR' and m.group(0) == '2' and (m.start() < 3 or not (
+                text[m.start() - 3].isalnum() or text[m.start() - 3] == '_'))):
+            # Only a standalone r or R squared is exempt: diameter^2 is the power of a variable.
             powers.append(m)
     found = [m for i, m in enumerate(raw) if m.group(2).lower() not in NAME_SUFFIXES and not (
         LETTER_HYPHEN.fullmatch(text, m.start() - 2, m.start()) and not (i and raw[i - 1].end() == m.start() - 1)
@@ -197,20 +213,27 @@ def _tokens(text):
         end = groups[i + 1][0].start() if i + 1 < len(groups) else len(text)
         window = CLAUSE.split(SENTENCE.split(text[group[-1].end():end])[0])[0]
         after = _quantity(window, after=True)
+        # The number's sentence before it and after it: a count's split may stand anywhere in it.
+        sentence = SENTENCE.split(text[:group[0].start()])[-1]
+        rest = SENTENCE.split(text[group[-1].end():])[0]
         # The distance from the name to the next number, when that number is in the same clause.
         onward = len(window) - after[2] if after and i + 1 < len(groups) and group[-1].end() + len(window) == end else None
-        if before and after and after[0] < before[0] and not after[1] and (onward is None or after[0] <= onward):
+        if after and after[1] is COUNT and _adjacent(window[:after[0]]):
+            # An explicit count word right after the number wins over any name before it.
+            named, taken = _count(sentence, window[:after[2]], rest[after[2]:]), group[-1].end() + after[2]
+        elif before and after and after[0] < before[0] and not after[1] and (onward is None or after[0] <= onward):
             named = ()
         elif before:
             named = before[1]
             if named is COUNT:
-                cut = after[2] if after and after[1] is COUNT else 0
-                named = _count(piece, window[:cut], window[cut:])
-            elif set(named) <= set(MSE) and _of_error(SENTENCE.split(text[:group[0].start()])[-1]):
+                # A later count word names this number only when nearer than the one before it.
+                cut = after[2] if after and after[1] is COUNT and after[0] < before[0] else 0
+                named = _count(sentence, window[:cut], rest[cut:])
+            elif set(named) <= set(MSE) and _of_error(sentence):
                 named = ()
         elif after:
             named, taken = after[1], group[-1].end() + after[2]
-            named = _count(piece, window[:after[2]], window[after[2]:]) if named is COUNT else named
+            named = _count(sentence, window[:after[2]], rest[after[2]:]) if named is COUNT else named
         else:
             named = None
         for m in group:
