@@ -1065,7 +1065,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         try:graph=evidence_graph(state)
         except ValueError:graph=None
         # 'routes' is additive and read-only here; the capsule's claims.json is unchanged.
-        return {'mission_id':mid,**build_claims(state,timeline.rows(mid),graph,row['release'],receipts=mission_receipts(mid)),
+        return {'mission_id':mid,**build_claims(state,timeline.rows(mid),graph,row['release'],receipts=mission_receipts(mid),
+                                                request=MissionRequest.model_validate(row['request'])),
                 'routes':route_states(state)}
 
     @app.get('/api/grants',dependencies=[Depends(authorized)])
@@ -1702,7 +1703,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         try:graph=evidence_graph(state)
         except ValueError:raise api_error(409,'mission.evidence_invalid') from None
         grants={'grants':ledger.list('mission',mid),'receipts':receipts,'receipts_truncated':len(receipts)>=1000}
-        data=export_capsule(request,state,release=release,claims=build_claims(state,rows,graph,release,receipts=receipts),timeline=rows,grants=grants)
+        data=export_capsule(request,state,release=release,claims=build_claims(state,rows,graph,release,receipts=receipts,request=request),timeline=rows,grants=grants)
         return Response(data,media_type='application/zip',headers={'Content-Disposition':f'attachment; filename="arc-{mid}.zip"'})
 
     @app.post('/api/missions/{mid}/verify',dependencies=[Depends(authorized)])

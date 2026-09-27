@@ -8,8 +8,9 @@ evidence has been checked, derived from persisted evidence only.
                     token; every cited source {{<observation id>}} is a literature retrieval the
                     mission recorded; the run passes a fidelity audit; and every work each
                     retrieval in the evidence returned was checked by OpenAlex and none is
-                    retracted. A name token {{name:<text>}} is the author's label for an
-                    identifier with digits (p53, SARS-CoV-2) and is not checked.
+                    retracted. A name token {{name:<text>}} for an identifier with digits
+                    (p53, SARS-CoV-2) resolves only when the text is a word of the study's own
+                    vocabulary (D020); it is checked against the study, not for meaning.
     L2 recomputed   the replay verification receipt passed for the current subject, and every
                     observation a number token references is replayable
     L3 prespecified the branch's measurable falsifier sits in a planner record committed before
@@ -35,6 +36,15 @@ row or receipt is reported as such and a retraction is still seen; tracing, fide
 prespecification, replayability and the falsifier and null checks read that one set. Only the
 supported scope bears the rungs.
 
+The study's vocabulary (D020) comes from recorded material only: the operator's goal, the titles
+and texts of the context items the operator chose, the operator's decision notes, and every string
+(values and keys, nested ones too) in the data of each successful, claim-eligible observation,
+except a string that repeats the action's own arguments (the model wrote those, such as a search
+query). A word is a maximal run of name characters, kept when it holds a letter and an ASCII digit;
+a name resolves when it is such a word exactly, case included. Model-written text (hypotheses,
+plans, findings, rationales, next tests) never adds a word. A hyphenated compound is one word, so
+p53 inside p53-dependent is not a word of its own.
+
 A rung counts only when every rung below it holds. No condition reads a seat's position:
 agreement between the reviewer and the falsifier never raises a rung. Pure: no I/O, and
 the inputs are never mutated. None of this is scientific validation.
@@ -58,18 +68,21 @@ RUNGS = {1: ('evidence_present', 'observations_traced', 'numbers_bound', 'fideli
          4: ('null_rejected', 'falsifier_survived'),
          5: ('external_replication',)}
 # Needs that record a defect in the evidence rather than a step not yet taken.
+# reference_not_replayable is permanent: a snapshot is never recomputed, whatever is verified later.
 DEFECTS = frozenset({'observation_unrecorded', 'timeline_not_ok', 'receipt_missing', 'unresolved_reference',
                      'malformed_reference', 'literal_numeral', 'retracted_source', 'action_mismatch',
                      'oracle_substitution', 'unregistered_tool', 'data_shrinkage', 'budget_shrinkage',
-                     'recomputation_failed'})
+                     'recomputation_failed', 'reference_not_replayable'})
 # The reference-grammar needs, the only ones a legacy mission's export waives (its claims predate references).
 GRAMMAR = frozenset({'malformed_reference', 'unresolved_reference', 'literal_numeral'})
-GUARANTEE = ('every number token in the supported scope is traced to a recorded value; '
-             'name tokens are author-labelled identifiers and are not checked')
+GUARANTEE = ('every number token in the supported scope is traced to a recorded value, and every name token occurs '
+             'verbatim in the study\'s own vocabulary (its goal, operator notes, chosen context and recorded data): '
+             'names are checked against that vocabulary, not for meaning')
 NOTE = ('L1 traced means reference traceability: ' + GUARANTEE + '. Each number is shown with its field name and '
         'observation id, and every cited source is a retrieval the mission recorded. The words around a reference, such '
-        'as a unit or an adjective, are the author\'s and are not checked; a name token is the author\'s label, not a '
-        'traced value; numbers written as words are outside the check; a work named only in prose is not a source.')
+        'as a unit or an adjective, are the author\'s and are not checked; a name token is not a traced value, and '
+        'model-written text adds no names to the vocabulary; numbers written as words are outside the check; a work '
+        'named only in prose is not a source.')
 # The significance level a permutation control must reach. The control records only its
 # best shuffle, so the bound (b+1)/(N+1) is known only for b = 0: 1/(N+1).
 ALPHA = .05
@@ -77,17 +90,89 @@ ALPHA = .05
 # degree share its statistic.
 CONTROL_DEGREE = 2
 # The reference grammar: {{id.field}} a recorded number, {{id}} a recorded retrieval,
-# {{name:text}} an identifier the author labels. No whitespace, no nesting; field is a
+# {{name:text}} an identifier from the study's vocabulary. No whitespace, no nesting; field is a
 # top-level key of Observation.data. A name's characters are checked by _name.
 TOKEN = re.compile(r'\{\{(?:name:([^\W_][\w-]*)|([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_-]+))?)\}\}')
 FIELD = re.compile('[A-Za-z0-9_-]+')
 LITERATURE = 'literature_search'
+DIGITS = '0123456789'
+
+
+def _letter(ch):
+    """A letter of any script that is not a numeral: 三, 百, 五 and 壹 are numerals, not letters."""
+    return ch.isalpha() and unicodedata.numeric(ch, None) is None
+
+
+def _name_char(ch):
+    return _letter(ch) or ch in DIGITS or ch == '-'
 
 
 def _name(text):
-    """A name: letters of any script, ASCII digits and hyphens, with at least one letter, so
-    16S, 5-HT2A and TGF-β1 are names and a bare quantity such as 0-5 is not."""
-    return any(ch.isalpha() for ch in text) and all(ch.isalpha() or ch in '0123456789-' for ch in text)
+    """A name: letters, ASCII digits and hyphens, with at least one letter, so 16S, 5-HT2A and
+    TGF-β1 are names and a bare quantity such as 0-5, or 三百, is not."""
+    return any(_letter(ch) for ch in text) and all(_name_char(ch) for ch in text)
+
+
+def words(text: str):
+    """The words of a text that hold a letter and an ASCII digit, in order: maximal runs of name
+    characters. Tokenisation for exact lookup, not interpretation."""
+    run = []
+    for ch in text + ' ':
+        if _name_char(ch):
+            run.append(ch)
+            continue
+        word, run = ''.join(run), []
+        if any(c in DIGITS for c in word) and any(_letter(c) for c in word):
+            yield word
+
+
+def _strings(value):
+    """Every string in a JSON value, in document order: itself, list items, object keys and values."""
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            yield item
+        elif isinstance(item, dict):
+            stack.extend(reversed([part for pair in item.items() for part in pair]))
+        elif isinstance(item, (list, tuple)):
+            stack.extend(reversed(item))
+
+
+def recorded_strings(data, arguments) -> list[str]:
+    """The strings of an observation's recorded data, except those that repeat a string of its
+    action's arguments (ignoring case): the model wrote the arguments, and a tool that echoes
+    them (a search query, an accession) does not make them recorded material."""
+    echoed = {s.casefold() for s in _strings(arguments)}
+    return [s for s in _strings(data) if s.casefold() not in echoed]
+
+
+def vocabulary(sources) -> dict:
+    """{word: origin} over (origin, texts) pairs in recorded order; the earliest occurrence wins."""
+    out = {}
+    for origin, texts in sources:
+        for text in texts:
+            for word in words(text):
+                out.setdefault(word, origin)
+    return out
+
+
+def study_vocabulary(state: MissionState, request=None) -> dict:
+    """The study's own vocabulary (D020), each word with its earliest recorded origin: the goal
+    and the operator's chosen context (both fixed at creation), then operator decision notes and
+    successful, claim-eligible observations in event-log order. Without the request the goal and
+    context are unknown and add nothing."""
+    first = {}
+    for i, e in enumerate(state.events):
+        key = e.detail if e.kind == 'observation' else e.detail.split(':', 1)[0] if e.kind == 'change_declared' else None
+        first.setdefault(key, i)
+    at = lambda key: first.get(key, len(state.events))
+    timed = [(at(c.id), {'origin': 'note'}, [d.note for d in c.decisions]) for c in state.changes if c.kind == 'decision']
+    timed += [(at(o.id + ': ok'), {'origin': 'observation', 'observation_id': o.id}, recorded_strings(o.data, o.action.arguments))
+              for o in state.observations if o.status == 'ok' and o.claim_eligible]
+    sources = [({'origin': 'goal'}, [request.goal]),
+               ({'origin': 'context'}, [text for item in request.context_items for text in (item.title, item.text)])] if request else []
+    return vocabulary(sources + [(origin, texts) for _, origin, texts in sorted(timed, key=lambda t: t[0])])
 
 
 def _pairs(text, pair):
@@ -189,12 +274,14 @@ def _works(observation):
     return works
 
 
-def resolve(token: dict, found: dict) -> dict:
+def resolve(token: dict, found: dict, names: dict | None = None) -> dict:
     """One token segment against what references can name: a number resolves to a recorded int
     or finite float field, a source to a literature retrieval and every work it returned, a name
-    to itself (it is the author's label and is never checked)."""
+    to itself when it is a word of the study's vocabulary `names`, with the word's origin."""
     if token['kind'] == 'name':
-        return {'token': token['text'], 'kind': 'name', 'observation_id': None, 'field': None, 'value': token['value'], 'resolved': True}
+        origin = (names or {}).get(token['value'])
+        return {'token': token['text'], 'kind': 'name', 'observation_id': None, 'field': None, 'value': token['value'],
+                'resolved': origin is not None, 'origin': origin}
     oid, field = token['observation_id'], token['field']
     o = found.get(oid)
     if field is None:
@@ -218,10 +305,11 @@ def _shown(r):
     return '[' + ('; '.join(_cite(w) for w in r['value']) or r['observation_id'] + ': no works returned') + ']'
 
 
-def segments(text: str, found: dict) -> list[dict]:
+def segments(text: str, found: dict, names: dict | None = None) -> list[dict]:
     """The text as the card shows it, one typed segment per occurrence, each {kind, text,
     observation_id, field, value, resolved, diagnostic, rendered}: a number as repr(value)
-    [field, observation id], a source as the works of its retrieval, a name as itself. An
+    [field, observation id], a source as the works of its retrieval, a name as itself with its
+    origin in the study's vocabulary (a name segment alone carries 'origin'). An
     unresolved token stays verbatim (unresolved_reference); a text segment with a numeral says
     literal_numeral; in a malformed text nothing resolves and every segment says
     malformed_reference. The rendered parts join to the rendered string."""
@@ -233,38 +321,40 @@ def segments(text: str, found: dict) -> list[dict]:
             out.append({'kind': 'text', 'text': part['text'], 'observation_id': None, 'field': None, 'value': None,
                         'resolved': None, 'diagnostic': 'malformed_reference' if not well else diagnostic, 'rendered': part['text']})
             continue
-        r = resolve(part, found if well else {})
+        r = resolve(part, found if well else {}, names if well else {})
         ok = well and r['resolved']
-        out.append({'kind': r['kind'], 'text': part['text'], 'observation_id': r['observation_id'], 'field': r['field'],
-                    'value': r['value'] if ok else None, 'resolved': ok,
-                    'diagnostic': None if ok else 'malformed_reference' if not well else 'unresolved_reference',
-                    'rendered': _shown(r) if ok else part['text']})
+        entry = {'kind': r['kind'], 'text': part['text'], 'observation_id': r['observation_id'], 'field': r['field'],
+                 'value': r['value'] if ok else None, 'resolved': ok,
+                 'diagnostic': None if ok else 'malformed_reference' if not well else 'unresolved_reference',
+                 'rendered': _shown(r) if ok else part['text']}
+        if r['kind'] == 'name':
+            entry['origin'] = r['origin'] if ok else None
+        out.append(entry)
     return out
 
 
-def render(text: str, found: dict) -> str:
-    return ''.join(part['rendered'] for part in segments(text, found))
+def render(text: str, found: dict, names: dict | None = None) -> str:
+    return ''.join(part['rendered'] for part in segments(text, found, names))
 
 
-def references(texts, found: dict) -> list[dict]:
-    """Each distinct reference of the texts, in order, with its diagnostic: a token that
-    resolves in one text and not in another is listed both ways."""
+def references(texts, found: dict, names: dict | None = None) -> list[dict]:
+    """Each distinct reference of the texts, in order, with its diagnostic (and a name's origin):
+    a token that resolves in one text and not in another is listed both ways."""
     out = []
     for text in texts:
-        for part in segments(text, found):
+        for part in segments(text, found, names):
             if part['kind'] != 'text':
-                entry = {'token': part['text'], 'kind': part['kind'], 'observation_id': part['observation_id'], 'field': part['field'],
-                         'value': part['value'], 'resolved': part['resolved'], 'diagnostic': part['diagnostic']}
+                entry = {'token': part['text'], **{key: value for key, value in part.items() if key not in ('text', 'rendered')}}
                 if entry not in out:
                     out.append(entry)
     return out
 
 
-def _bound(texts, found):
+def _bound(texts, found, names):
     parsed = [parse(text) for text in texts]
     if not all(well for _, well in parsed):
         return 'malformed_reference'
-    if not all(resolve(part, found)['resolved'] for parts, _ in parsed for part in parts if part['kind'] != 'text'):
+    if not all(resolve(part, found, names)['resolved'] for parts, _ in parsed for part in parts if part['kind'] != 'text'):
         return 'unresolved_reference'
     if any(literal_numerals(text) for text in texts):
         return 'literal_numeral'
@@ -522,7 +612,7 @@ def is_numeric(state: MissionState, scoped: ScopedBranch) -> bool:
         literal_numerals(text) for text in scoped.supported_scope)
 
 
-def _evaluate(state, scoped, timeline_rows, receipts, verification, subject):
+def _evaluate(state, scoped, timeline_rows, receipts, verification, subject, request):
     """Every condition's need (None when met), the extra met codes and the facts."""
     if isinstance(verification, dict):
         verification = VerificationReceipt.model_validate(verification)
@@ -535,7 +625,7 @@ def _evaluate(state, scoped, timeline_rows, receipts, verification, subject):
     rejected, null = _null(state, branch, evidence)
     outcomes = {'evidence_present': None if evidence else 'no_evidence',
                 'observations_traced': traced,
-                'numbers_bound': _bound(scoped.supported_scope, found),
+                'numbers_bound': _bound(scoped.supported_scope, found, study_vocabulary(state, request)),
                 'fidelity_audit': _fidelity(state, evidence),
                 'no_retracted_source': _retraction(evidence),
                 'recomputed': _recomputed(verification, subject),
@@ -548,18 +638,19 @@ def _evaluate(state, scoped, timeline_rows, receipts, verification, subject):
 
 
 def unmet(state: MissionState, scoped: ScopedBranch, rung: int, *, timeline_rows=None, receipts=None,
-          verification: VerificationReceipt | dict | None = None, subject: str | None = None) -> list[str]:
+          verification: VerificationReceipt | dict | None = None, subject: str | None = None, request=None) -> list[str]:
     """The need of every unmet condition of rungs 1..rung, whichever rung fails first."""
-    outcomes = _evaluate(state, scoped, timeline_rows, receipts, verification, subject)[0]
+    outcomes = _evaluate(state, scoped, timeline_rows, receipts, verification, subject, request)[0]
     return [outcomes[code] for n in range(1, rung + 1) for code in RUNGS[n] if outcomes[code]]
 
 
 def claim_ladder(state: MissionState, scoped: ScopedBranch, *, timeline_rows=None, receipts=None,
-                 verification: VerificationReceipt | dict | None = None, subject: str | None = None) -> dict:
+                 verification: VerificationReceipt | dict | None = None, subject: str | None = None, request=None) -> dict:
     """The ladder of one scoped claim. `timeline_rows` None means the timeline was not
     consulted, `receipts` None that the grant ledger was not; `subject` is the current
-    release subject digest the receipt must match."""
-    outcomes, extra, facts, survived = _evaluate(state, scoped, timeline_rows, receipts, verification, subject)
+    release subject digest the receipt must match; `request` (the MissionRequest) gives the goal
+    and chosen context of the study's vocabulary, and without it they add no names."""
+    outcomes, extra, facts, survived = _evaluate(state, scoped, timeline_rows, receipts, verification, subject, request)
     rung = 0
     while rung < 5 and all(outcomes[code] is None for code in RUNGS[rung + 1]):
         rung += 1

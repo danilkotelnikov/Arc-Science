@@ -170,7 +170,7 @@ def _claim_rungs(request, state, verification, subject, timeline_rows, receipts)
     for scoped in held:
         minimum = 2 if is_numeric(state, scoped) else 1
         every = unmet(state, scoped, minimum, timeline_rows=timeline_rows, receipts=receipts,
-                      verification=verification, subject=subject)
+                      verification=verification, subject=subject, request=request)
         needs = [need for need in every if not (legacy and need in GRAMMAR)]
         waived += len(needs) < len(every)
         if needs:
