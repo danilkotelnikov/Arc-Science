@@ -120,14 +120,17 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
     def unbound_call(role,transport):
         failed=transport.get('outcome')=='failed'
         return UnboundCall(role=role,round=state.round,outcome='failed' if failed else 'rejected',transport=transport)
-    def context(reviewing=None):
+    def context(reviewing=None,planning=False):
         # A vision seat sees earlier rounds plus exactly the batch it reviews, and no
         # same-round report: a repair is reviewed with fresh eyes as a new candidate.
         artifacts=state.artifacts if reviewing is None else tuple(a for a in state.artifacts if a.round<state.round)+reviewing
         reports=state.visual_reports if reviewing is None else tuple(r for r in state.visual_reports if r.round<state.round)
         # Earlier work the operator attached goes to the planner and reviewers only, and only
-        # when there is some, so contexts recorded without it keep their shape.
-        earlier={'mission_context':[i.model_dump(mode='json') for i in request.context_items]} if request.context_items and reviewing is None else {}
+        # when there is some, so contexts recorded without it keep their shape. A prior
+        # mission's claim statuses are earlier model agreement: the planner reads them, the two
+        # reviewers do not, so their support stays independent of that verdict.
+        items=[i.model_dump(mode='json') for i in request.context_items if planning or i.kind!='mission'] if reviewing is None else []
+        earlier={'mission_context':items} if items else {}
         return {**earlier,'goal':request.goal,'round':state.round,'data_origin':state.data_origin,
                 'dataset':{'digest':state.dataset_digest,'n':len(state.points)},
                 'branches':[b.model_dump(mode='json') for b in state.branches],
@@ -185,7 +188,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         try:
             if committed_plan is None:
                 if not reserve_calls(1): return stop('budget_exhausted','call_limit','Model-call limit reached.',**calls_left('plan',1))
-                planning_context=context()
+                planning_context=context(planning=True)
                 op=log('started',operation='plan',role='planner',round=state.round,model_requested=identity('planner'))
                 called=True
                 raw=await asyncio.wait_for(agent.propose(planning_context),timeout=90)

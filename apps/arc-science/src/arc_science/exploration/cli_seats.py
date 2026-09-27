@@ -34,7 +34,7 @@ from ..transport import ProviderError, strict_schema
 from .catalog import BUILTIN_CATALOG, proposal_schema
 from .effort import applied_effort
 from .models import Proposal, Reconciliation
-from .providers import PLAN_PROMPT, REVIEW_PROMPT
+from .providers import PLAN_PROMPT, REVIEW_PROMPT, render_prompt
 
 CALL_TIMEOUT = 75.0            # below the engine's 90 s deadline
 MAX_STDOUT = 1024 * 1024       # one JSON envelope or event list, never a stream
@@ -427,7 +427,8 @@ class CliAgent:
                 raise ProviderError('Runtime tool catalog cannot be represented safely') from None
         else:
             response_schema = schema.model_json_schema()
-        prompt = json.dumps({'context': context, 'response_schema': response_schema}, separators=(',', ':'))
+        # The same rendering as the HTTP seats: mission context in its fenced block.
+        prompt = render_prompt(context, response_schema)
         requested_effort, effort, effort_source = self.effort_for(role)
         record = {'transport': self.flavour.transport, 'contract': self.flavour.contract, 'provider': self.provider,
                   'role': role, 'requested_model': model, 'requested_effort': requested_effort,

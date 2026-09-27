@@ -298,11 +298,12 @@ def with_crew(route,crew):
         if role not in CREW_ROLES:raise api_error(422,'crew.unknown_role',facts={'role':role})
         seat=seats.get(role)
         if seat is None:raise api_error(422,'crew.no_seat',facts={'role':role})
-        # A transport without effort control accepts only the default (the provider's own applies).
-        allowed=list(accepted_efforts(seat.provider,seat.transport,entry.model)) or [DEFAULT_EFFORT]
+        # A seat or model without effort control accepts only the default, stored as None so no
+        # level is sent and the provider's own default applies.
+        accepted=list(accepted_efforts(seat.provider,seat.transport,entry.model));allowed=accepted or [DEFAULT_EFFORT]
         if entry.effort is not None and entry.effort not in allowed:
             raise api_error(422,'crew.effort_not_supported',facts={'role':role,'effort':entry.effort,'allowed':allowed})
-        seats[role]=ModelEndpoint.model_validate({**seat.model_dump(),'model':entry.model,'effort':entry.effort})
+        seats[role]=ModelEndpoint.model_validate({**seat.model_dump(),'model':entry.model,'effort':entry.effort if accepted else None})
     return {**route,'seats':seats,'crew':sorted(crew)}
 
 
@@ -838,15 +839,19 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         except Exception as error:raise api_error(409,'mission.seats_unconfigured','Configure the model seats before starting: '+str(error)[:300]) from None
         return route_preview(with_crew(route,body.crew),settings_revision(),context=bool(body.context))
 
-    def mission_summary(goal,state):
-        """What a prior mission contributes: its goal, status and each claim's supported scope
-        and open uncertainty, as the claim scope derived them."""
+    def mission_summary(mid,request,state):
+        """What a prior mission contributes: its goal, status, mode and data origin, its current
+        release status with the blocking reasons, and each claim's supported scope, evidence and
+        open uncertainty as the claim scope derived them. A demo run or a blocked release says so."""
         titles={b.id:b.title for b in state.branches}
         claims=[{'branch_id':b.branch_id,'title':titles.get(b.branch_id,''),'requested':b.requested,'status':b.status,
-                 'supported_scope':list(b.supported_scope),'scope_qualifier':b.scope_qualifier,
+                 'supported_scope':list(b.supported_scope),'scope_qualifier':b.scope_qualifier,'evidence_ids':list(b.evidence_ids),
                  'uncertainties':[u.reason+': '+u.detail for u in b.uncertainties]}
                 for b in (state.claim_scope.branches if state.claim_scope else ())]
-        return json.dumps({'goal':goal,'status':state.status,'claims':claims},ensure_ascii=False,separators=(',',':'))
+        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(mid))
+        return json.dumps({'goal':request.goal,'status':state.status,'mode':request.mode,'data_origin':state.data_origin,
+                           'release':{'status':decision.status,'blocking_reasons':list(decision.blocking_reasons)},'claims':claims},
+                          ensure_ascii=False,separators=(',',':'))
 
     def memory_record(ref):
         try:record=memory_routes._operation('inspect',ref)
@@ -868,7 +873,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             except KeyError:raise api_error(404,'context.unknown_record',facts={'kind':'mission','ref':ref}) from None
             state=MissionState.model_validate(row['state'])
             items.append({'kind':'mission','ref':ref,'title':row['request']['goal'][:300],'digest':release_ledger.subject_digest(state),
-                          'text':mission_summary(row['request']['goal'],state)})
+                          'text':mission_summary(ref,MissionRequest.model_validate(row['request']),state)})
         return items
 
     @app.post('/api/missions/context/preview',dependencies=[Depends(authorized)])
@@ -1319,8 +1324,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                     raise api_error(409,'mission.route_changed','The route changed since it was previewed; review it again'+(f'; settings revision {revision[:12]}' if revision else ''),
                                     facts={'route_digest':route_digest,'settings_revision':revision})
                 preview=route_preview(route,revision,context=bool(request.context_items))
-                approved={(g.destination,g.destination_kind) for g in approval.grants if g.scope=='mission'}
-                missing=[g for g in preview['required_grants'] if (g['destination'],g['destination_kind']) not in approved]
+                # The data category is part of what was approved: attached context changes what the
+                # seats receive but not the route digest, so a plain approval does not cover it.
+                approved={(g.destination,g.destination_kind,g.data_category) for g in approval.grants if g.scope=='mission'}
+                missing=[g for g in preview['required_grants'] if (g['destination'],g['destination_kind'],g['data_category']) not in approved]
                 if missing:raise api_error(409,'mission.grant_missing','No grant approved for the '+missing[0]['destination_kind']+' destination '+missing[0]['destination'],
                                            facts={'destination_kind':missing[0]['destination_kind'],'destination':missing[0]['destination']})
         change=None

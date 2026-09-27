@@ -126,6 +126,15 @@ def test_the_crew_overrides_model_and_effort_only_and_the_route_digest_covers_it
     assert service.with_crew(route, None) is route
 
 
+def test_a_model_without_effort_control_sends_no_level(seats):
+    """Claude Haiku 4.5 takes no effort: the default is accepted but stored as None, so neither
+    the CLI nor the API sends a level the model does not support."""
+    for effort in ('medium', None):
+        crewed = service.with_crew(service.live_route(), MissionRequest(
+            goal='Route', crew={'planner': {'model': 'claude-haiku-4-5-20251001', 'effort': effort}}).crew)
+        assert crewed['seats']['planner'].effort is None
+
+
 def test_the_preview_accepts_the_crew_and_marks_overridden_roles_untested(tmp_path, seats):
     with TestClient(app(tmp_path)) as c:
         plain = c.get('/api/missions/preview', headers=AUTH).json()

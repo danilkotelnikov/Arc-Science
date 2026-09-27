@@ -79,7 +79,7 @@ if 'Arc Science' not in stdin.split('\n\n', 1)[0]:
     violations = ['instructions do not lead the prompt']
 else:
     violations = contract_violations()
-request = json.loads(stdin[stdin.index('{"context"'):])
+request = json.JSONDecoder().raw_decode(stdin[stdin.index('{"context"'):])[0]  # a fenced block may follow
 schema_title = request['response_schema'].get('title', '')
 
 
