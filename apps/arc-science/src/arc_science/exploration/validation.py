@@ -45,12 +45,15 @@ ALPHA = .05
 # degree share its statistic.
 CONTROL_DEGREE = 2
 # Every digit run, with any unit or multiplier suffix (12nM, 40x, 4242ms) and a leading dot
-# (.03). A run glued to a letter, dot or caret is part of a name or an exponent (p53, v1.2,
-# R^2). One after a hyphen after a letter of any script is part of a name (IL-6, ИЛ-6, β-2)
-# unless that letter ends the number before it: then it is the upper end of a range (2nd-9th,
-# 0.004x-0.9x), as after a digit (0.01-0.5). _tokens applies that rule.
-NUMBER = re.compile(r'(?<![\w.^])(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z%]*)(?!\d|\.\d)')
+# (.03). A run glued to a letter or dot is part of a name (p53, v1.2), and the 2 of R^2 or
+# r^2 is part of its name; any other exponent is a number (2^9). One after a hyphen after a
+# letter of any script is part of a name (IL-6, ИЛ-6, β-2) unless that letter ends the number
+# before it: then it is the upper end of a range (2nd-9th, 0.004x-0.9x), as after a digit
+# (0.01-0.5); or ends a quantity word, which the hyphen joins to its value (degree-3, MSE-0.9).
+# _tokens applies that rule.
+NUMBER = re.compile(r'(?<![\w.])(?<![rR]\^)(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z%]*)(?!\d|\.\d)')
 LETTER_HYPHEN = re.compile(r'[^\W\d]-')
+QUANTITY_HYPHEN = re.compile(r'\b(?:degrees?|mse|error|loss|permutations?|shuffles|samples?)-$', re.I)
 SCALAR = re.compile(r'-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?')
 # Suffixes that make a digit run a name, not a quantity: 2D, 3D.
 NAME_SUFFIXES = frozenset({'d'})
@@ -71,22 +74,27 @@ MSE = ('training_mse', 'validation_mse', 'minimum_shuffled_validation_mse', 'mea
 # between its neighbouring numbers, decides what it must bind to (the one before it on a tie,
 # the longest at the same place); a p-value is never recorded, so it never binds. A number no quantity
 # word names binds nothing: R-squared or accuracy must not borrow an unrelated recorded field.
+# A qualifier, an optional 'set' and an optional spelled-out 'mean squared' before the error.
+_ERROR = r'(?:[- ]set)?[- ](?:mean[- ]squared?[- ])?(?:error|mse|loss)'
+_SPLIT = r'(?:validation|held[- ]out|test|train(?:ing)?)'
 QUANTITIES = ((re.compile(r'shuffled (?:validation )?(?:error|mse|loss)|null (?:error|mse)', re.I), MSE[2:]),
-              (re.compile(r'(?:validation|held[- ]out|test) (?:error|mse|loss)', re.I), ('validation_mse',)),
-              (re.compile(r'train(?:ing)? (?:error|mse|loss)', re.I), ('training_mse',)),
+              (re.compile(r'(?:validation|held[- ]out|test)' + _ERROR + r'|(?:error|mse|loss) on the (?:validation|held[- ]out|test)',
+                          re.I), ('validation_mse',)),
+              (re.compile(r'train(?:ing)?' + _ERROR + r'|(?:error|mse|loss) on the train(?:ing)?', re.I), ('training_mse',)),
               (re.compile(r'\b(?:mse|error|loss)\b', re.I), MSE),
               (re.compile(r'\bdegrees?\b', re.I), ('degree',)),
               (re.compile(r'\b(?:permutations?|shuffles)\b', re.I), ('permutations',)),
-              (re.compile(r'\bp(?:[- ]?value)?\s*[=<>≤]', re.I), ()),
+              (re.compile(r'\b(?:samples?|points|observations|measurements)\b', re.I), ('n', 'n_train', 'n_validation')),
+              (re.compile(r'\bp(?:[- ]?value)?\s*[=<>≤≥≈~]', re.I), ()),
               # Quantities the tools never record: nearer than a recorded name, they keep it off. A
-              # spelled-out error of another kind ends where the generic 'error' does and starts
-              # earlier, so it wins the tie as the longer name.
+              # spelled-out error of another kind ends where the generic 'error' (or 'validation
+              # error') does and starts earlier, so it wins the tie as the longer name.
               (re.compile(r'\b(?:accuracy|r[- ]?squared|r2|auc|auroc|f1|precision|recall|sensitivity|specificity|'
                           r'correlation|coefficient of determination|pearson|spearman|kendall|rho|ρ|tau|'
-                          r'standard deviation|variance|rmse|mae|mape|odds ratio|hazard ratio|slope|intercept|'
-                          r'(?:root[- ]mean[- ]squared?|mean[- ]absolute(?:[- ]percentage)?|standard|relative|absolute|'
-                          r'percentage|percent)[- ]error)\b', re.I), ()),
-              (re.compile(r'\br(?:²|\^2)|\br\s*[=<>≤≈]', re.I), ()))
+                          r'standard deviation|variance|rmse|nrmse|rmsd|mae|mape|sd|sem|se|odds ratio|hazard ratio|slope|intercept|'
+                          r'(?:root[- ]mean[- ]squared?|rms|mean[- ]absolute(?:[- ]percentage)?|standard|relative|absolute|'
+                          r'percentage|percent|normali[sz]ed)[- ](?:' + _SPLIT + r'(?:[- ]set)?[- ])?error)\b', re.I), ()),
+              (re.compile(r'\br(?:²|\^2)|\br\s*(?:[=<>≤≥≈~:]|of\b)|\br\s+$', re.I), ()))  # a bare r just before the number (the window ends at it)
 
 
 # A sentence ends at ; ! or ?, or at a full stop before a capital letter, so the stop of an
@@ -116,7 +124,8 @@ def _tokens(text):
     text = IDENTIFIER.sub(' ', text)
     raw = list(NUMBER.finditer(text))
     found = [m for i, m in enumerate(raw) if m.group(2).lower() not in NAME_SUFFIXES and not (
-        LETTER_HYPHEN.fullmatch(text, m.start() - 2, m.start()) and not (i and raw[i - 1].end() == m.start() - 1))]
+        LETTER_HYPHEN.fullmatch(text, m.start() - 2, m.start()) and not (i and raw[i - 1].end() == m.start() - 1)
+        and not QUANTITY_HYPHEN.search(text, max(0, m.start() - 16), m.start()))]
     # A range (0.01-0.5, 0.01 – 0.5) is one quantity: both ends take the name nearest the range.
     groups = []
     for i, m in enumerate(found):
@@ -331,7 +340,9 @@ def _prespecified(state, branch, evidence):
     its commit event precedes the first observation of any request the claim uses, or that
     the falsifier and null checks read from the branch: the same tool and arguments on the
     same dataset, on any branch. The tools are deterministic, so a rerun under a new id or
-    branch shows nothing the planner had not already seen."""
+    branch shows nothing the planner had not already seen. permutation_control draws every
+    shuffle in sequence from one fixed seed, so a control of any size is the start or the
+    extension of any other: all of them on a dataset are one request, whatever the count."""
     if branch.falsifier_test is None:
         return 'falsifier_test_missing'
     introduced = next((r for r in sorted((r for r in state.model_records if r.role == 'planner'), key=lambda r: r.round)
@@ -341,7 +352,7 @@ def _prespecified(state, branch, evidence):
         return 'falsifier_after_observation'
     events = list(state.events)
     committed = next((i for i, e in enumerate(events) if e.kind == 'plan_committed' and e.round == introduced.round), None)
-    request = lambda o: (o.tool, digest(o.action.arguments), o.dataset_digest)
+    request = lambda o: (o.tool, None if o.tool == 'permutation_control' else digest(o.action.arguments), o.dataset_digest)
     requests = {request(o) for o in (*evidence, *_pool(state, branch, evidence, branch.falsifier_test.tool),
                                      *_pool(state, branch, evidence, 'permutation_control'))}
     used = {o.id + ': ok' for o in state.observations if request(o) in requests}

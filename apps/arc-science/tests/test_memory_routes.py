@@ -175,7 +175,9 @@ def _error(response, status, code):
     detail = response.json()["detail"]
     assert set(detail) == {"code", "detail", "facts"}
     assert detail["code"] == code and code in MEMORY_ERROR_CODES
-    assert isinstance(detail["detail"], str) and detail["detail"]
+    # The visible copy is always the registry sentence, so the registry check covers it;
+    # anything variable travels in facts.
+    assert detail["detail"] == MEMORY_ERROR_CODES[code]
     assert isinstance(detail["facts"], dict)
     return detail
 
@@ -230,7 +232,11 @@ def test_worker_errors_map_to_codes(tmp_path, monkeypatch):
             assert detail["facts"] == {"record_id": "nope"}
             detail = _error(client.post("/api/memory/records/nope/disable", json={"declared_effects": ["magic"]}),
                             409, "memory.declaration_refused")
-            assert "magic" in detail["detail"]
+            assert "magic" in detail["facts"]["reason"]
+            # An over-long unknown effect stays out of the visible copy (R005: at most 90 characters).
+            detail = _error(client.post("/api/memory/records/nope/disable", json={"declared_effects": ["a" * 100]}),
+                            409, "memory.declaration_refused")
+            assert len(detail["detail"]) <= 90 and "a" * 50 in detail["facts"]["reason"]
 
             mem = routes._client_or_503()
             def raising(exc):

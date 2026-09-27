@@ -59,6 +59,50 @@ fn health_reports_protocol_version() {
     );
 }
 
+/// The digest the test locator (apps/arc-science/tests/test_memory_client.py) recomputes:
+/// per file of Cargo.toml, Cargo.lock and src/**/*.rs, sorted by '/'-separated relative path,
+/// "path\n" + hex sha256 of its bytes + "\n", all hashed with sha256.
+fn crate_sources_digest() -> String {
+    use sha2::{Digest, Sha256};
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = vec![root.join("Cargo.toml"), root.join("Cargo.lock")];
+    walk(&root.join("src"), &mut files);
+    let mut named: Vec<(String, std::path::PathBuf)> = files
+        .into_iter()
+        .map(|f| {
+            let rel = f
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            (rel, f)
+        })
+        .collect();
+    named.sort();
+    let mut all = Sha256::new();
+    for (rel, file) in named {
+        let one = hex::encode(Sha256::digest(std::fs::read(file).unwrap()));
+        all.update(format!("{rel}\n{one}\n").as_bytes());
+    }
+    hex::encode(all.finalize())
+}
+
+#[test]
+fn health_names_the_sources_the_worker_was_built_from() {
+    let health = call(&worker(), r#"{"op":"health"}"#);
+    assert_eq!(health["data"]["source_digest"], crate_sources_digest());
+}
+
 #[test]
 fn stats_over_json_report_storage_and_retrieval_modes() {
     let worker = worker();

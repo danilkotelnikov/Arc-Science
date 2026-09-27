@@ -1,7 +1,10 @@
 """Behavior tests for the Python memory client that drives arc-memory-worker."""
 from __future__ import annotations
 
+import functools
+import hashlib
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -14,15 +17,26 @@ CONFIGURED_WORKER = os.environ.get("ARC_MEMORY_WORKER")
 WORKER_CRATE = Path(__file__).resolve().parents[3] / "native" / "arc-memory"
 
 
-def worker_binary() -> Path:
-    """The service's own locator (ARC_MEMORY_WORKER) first, then the newest cargo build.
+def source_digest(crate: Path) -> str:
+    """The digest native/arc-memory/build.rs embeds and health reports: per file of
+    Cargo.toml, Cargo.lock and src/**/*.rs, sorted by relative path, "path\\n" + the hex
+    sha256 of its bytes + "\\n", all hashed with sha256."""
+    files = [crate / "Cargo.toml", crate / "Cargo.lock", *(crate / "src").rglob("*.rs")]
+    named = sorted((f.relative_to(crate).as_posix(), f) for f in files if f.is_file())
+    total = hashlib.sha256()
+    for rel, file in named:
+        total.update(f"{rel}\n{hashlib.sha256(file.read_bytes()).hexdigest()}\n".encode())
+    return total.hexdigest()
 
-    Setting ARC_MEMORY_WORKER declares that the worker-backed tests must run, so a
-    path that is not a file fails the test instead of skipping or falling back. Under
-    CI the variable is required, so a gate that forgot the worker goes red, not green.
-    A cargo build older than the crate sources fails too: a stale worker answers with
-    old behaviour, and its results would be read as evidence about the current code.
-    """
+
+@functools.lru_cache(maxsize=None)
+def _built_from(binary: str, mtime: float) -> str | None:
+    with tempfile.TemporaryDirectory() as tmp, MemoryClient(Path(binary), Path(tmp) / "memory.db") as mem:
+        return mem.health().get("source_digest")
+
+
+def _locate() -> Path:
+    """The service's own locator (ARC_MEMORY_WORKER) first, then the newest cargo build."""
     if CONFIGURED_WORKER:
         if not Path(CONFIGURED_WORKER).is_file():
             pytest.fail(f"ARC_MEMORY_WORKER is set but is not a file: {CONFIGURED_WORKER}")
@@ -34,13 +48,28 @@ def worker_binary() -> Path:
     name = "arc-memory-worker.exe" if os.name == "nt" else "arc-memory-worker"
     built = [t / p / name for t in targets for p in ("release", "debug") if (t / p / name).is_file()]
     if built:
-        newest = max(built, key=lambda b: b.stat().st_mtime)
-        sources = [WORKER_CRATE / "Cargo.toml", WORKER_CRATE / "Cargo.lock", *(WORKER_CRATE / "src").rglob("*.rs")]
-        edited = max((s.stat().st_mtime for s in sources if s.is_file()), default=0.0)
-        if newest.stat().st_mtime < edited:
-            pytest.fail(f"{newest} is older than the arc-memory sources; rebuild it or set ARC_MEMORY_WORKER")
-        return newest
+        return max(built, key=lambda b: b.stat().st_mtime)
     pytest.skip("arc-memory-worker binary not built")
+
+
+def worker_binary() -> Path:
+    """The located worker, only when it was built from these crate sources.
+
+    Setting ARC_MEMORY_WORKER declares that the worker-backed tests must run, so a
+    path that is not a file fails the test instead of skipping or falling back. Under
+    CI the variable is required, so a gate that forgot the worker goes red, not green.
+    A worker older than the crate sources, or built from other sources (another checkout
+    sharing the cargo target directory), fails too, configured or found: it answers with
+    other behaviour, and its results would be read as evidence about the current code.
+    """
+    binary = _locate()
+    sources = [WORKER_CRATE / "Cargo.toml", WORKER_CRATE / "Cargo.lock", *(WORKER_CRATE / "src").rglob("*.rs")]
+    edited = max((s.stat().st_mtime for s in sources if s.is_file()), default=0.0)
+    if binary.stat().st_mtime < edited:
+        pytest.fail(f"{binary} is older than the arc-memory sources; rebuild it")
+    if _built_from(str(binary), binary.stat().st_mtime) != source_digest(WORKER_CRATE):
+        pytest.fail(f"{binary} was built from other sources than {WORKER_CRATE}; rebuild it")
+    return binary
 
 
 def sample(text: str) -> dict:
@@ -243,15 +272,51 @@ def test_worker_binary_refuses_a_build_older_than_its_sources(tmp_path, monkeypa
         module.worker_binary()
 
 
-def test_worker_binary_takes_the_newest_build(tmp_path, monkeypatch):
+@pytest.mark.parametrize("builds,newest", [({"release": 1_000, "debug": 3_000}, "debug"),
+                                           ({"release": 3_000, "debug": 2_500}, "release")])
+def test_worker_binary_takes_the_newest_build(tmp_path, monkeypatch, builds, newest):
     import sys
     module = sys.modules[__name__]
-    crate, name = _fake_crate(tmp_path, {"release": 1_000, "debug": 3_000})
+    crate, name = _fake_crate(tmp_path, builds)
     monkeypatch.setattr(module, "CONFIGURED_WORKER", None)
     monkeypatch.setattr(module, "WORKER_CRATE", crate)
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
-    assert module.worker_binary() == crate / "target" / "debug" / name
+    assert module._locate() == crate / "target" / newest / name
+    # A shared CARGO_TARGET_DIR build newer than the crate's own wins over it.
+    shared = tmp_path / "shared" / "debug" / name
+    shared.parent.mkdir(parents=True)
+    shared.write_bytes(b"")
+    os.utime(shared, (4_000, 4_000))
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(tmp_path / "shared"))
+    assert module._locate() == shared
+
+
+def test_a_configured_worker_older_than_its_sources_is_refused(tmp_path, monkeypatch):
+    import sys
+    module = sys.modules[__name__]
+    crate, name = _fake_crate(tmp_path, {"release": 1_000})
+    monkeypatch.setattr(module, "CONFIGURED_WORKER", str(crate / "target" / "release" / name))
+    monkeypatch.setattr(module, "WORKER_CRATE", crate)
+    monkeypatch.delenv("CI", raising=False)
+    with pytest.raises(pytest.fail.Exception, match="older than the arc-memory sources"):
+        module.worker_binary()
+
+
+def test_a_worker_built_from_other_sources_is_refused(tmp_path, monkeypatch):
+    """A worker newer than these sources can still be built from another checkout that shares
+    the cargo target directory; the digest of its sources, reported by health, tells."""
+    import sys
+    module = sys.modules[__name__]
+    real = worker_binary()
+    crate, _ = _fake_crate(tmp_path, {})
+    os.utime(crate / "src" / "engine.rs", (1_000, 1_000))
+    monkeypatch.setattr(module, "WORKER_CRATE", crate)
+    for configured in (str(real), None):
+        monkeypatch.setattr(module, "CONFIGURED_WORKER", configured)
+        monkeypatch.setattr(module, "_locate", lambda: real)
+        with pytest.raises(pytest.fail.Exception, match="built from other sources"):
+            module.worker_binary()
 
 
 def test_client_errors_carry_the_worker_kind(tmp_path):

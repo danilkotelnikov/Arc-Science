@@ -3,7 +3,7 @@
 variable parts a translation needs. Codes follow `<area>.<reason>`."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import HTTPException
 
@@ -16,10 +16,12 @@ MEMORY_ERROR_CODES = {
     "memory.record_corrupt": "A stored memory record is damaged and cannot be read",
     "memory.operation_failed": "Memory operation failed; check the query, record or requested range",
     "memory.invalid_range": "The sequence range is reversed; from_seq must not exceed to_seq",
-    "memory.declaration_refused": "The declared effects do not cover this change",
+    "memory.declaration_refused": "The declared effects are unknown or do not cover this change",
     "memory.capture_incomplete": "Memory capture is incomplete; retained mission snapshots will be retried.",
 }
 
 
-def memory_error(status: int, code: str, detail: Optional[str] = None, **facts: Any) -> HTTPException:
-    return HTTPException(status, {"code": code, "detail": detail or MEMORY_ERROR_CODES[code], "facts": facts})
+def memory_error(status: int, code: str, **facts: Any) -> HTTPException:
+    """The detail is always the registry sentence, so the registry's length check covers every
+    visible memory error; anything variable (and possibly long) goes in facts."""
+    return HTTPException(status, {"code": code, "detail": MEMORY_ERROR_CODES[code], "facts": facts})

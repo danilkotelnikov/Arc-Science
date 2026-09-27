@@ -125,6 +125,7 @@ impl Worker {
                 "protocol": crate::PROTOCOL_VERSION,
                 "sqlite": crate::sqlite_version(),
                 "retrieval_modes": self.retrieval_modes(),
+                "source_digest": env!("ARC_MEMORY_SOURCE_DIGEST"),
             })),
             Request::Stats => match self.engine.stats() {
                 Ok(mut stats) => {

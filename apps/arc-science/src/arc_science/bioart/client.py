@@ -50,27 +50,38 @@ def _format_of(mimes):
     return None
 
 
-_DOS_REMAINDER = 23
-_TEXT = frozenset(range(0x20, 0x7f)) | {0x09, 0x0D}
+# A DOS EPS header is 30 bytes; NIH leaves a 23-byte remainder of one. Allow up to 32.
+_DOS_HEADER = 32
+# Bytes that end a run of text: C0 controls except TAB, and DEL.
+_CONTROL = re.compile(rb'[\x00-\x08\x0a-\x1f\x7f]')
 
 
 def _comment_lines(block):
     return block == b'' or (block.endswith(b'\n') and all(line.startswith(b'%') for line in block[:-1].split(b'\n')))
 
 
+def _holds_text(tail):
+    """Three or more characters in a row, ASCII or any UTF-8 script: the shortest word or tag.
+    A DOS header's offset, length and checksum fields often put two printable bytes side by
+    side (a PS length of 0x24144 is 'DA'), so two cannot be refused.
+    ponytail: a field whose three low bytes are all printable (a PS section of 2 MiB or more,
+    about 5% of those) is refused too; parse the header fields if such a file turns up."""
+    return any(len(piece) >= 3 for run in _CONTROL.split(tail)
+               for piece in run.decode('utf-8', 'replace').split('\ufffd'))
+
+
 def _eps_signature(data):
-    """Only '%' comment lines may precede %!PS-Adobe- within 4 KiB. NIH also leaves the
-    binary remainder (exactly 23 bytes, with NULs) of a DOS EPS header just before it.
-    Any of its bytes may be 0x0A, but it never holds two printable bytes in a row (the recorded
-    one has isolated ' ', 'D', 'd', 'N'), so no text, markup or script fits inside it."""
+    """Only '%' comment lines may precede %!PS-Adobe- within 4 KiB, then optionally a binary
+    DOS EPS header (at most 32 bytes, with a NUL, and no text in it). Its field bytes may be
+    0x0A, so every line start in that window is tried as the start of the header."""
     head = data[:4096]
     at = head.find(b'%!PS-Adobe-')
     if at < 0: return False
     prefix = head[:at]
     if _comment_lines(prefix): return True
-    lines, tail = prefix[:-_DOS_REMAINDER], prefix[-_DOS_REMAINDER:]
-    return (len(tail) == _DOS_REMAINDER and b'\x00' in tail and _comment_lines(lines)
-            and not any(a in _TEXT and b in _TEXT for a, b in zip(tail, tail[1:])))
+    return any((start == 0 or prefix[start - 1] == 0x0A) and _comment_lines(prefix[:start])
+               and b'\x00' in prefix[start:] and not _holds_text(prefix[start:])
+               for start in range(max(0, at - _DOS_HEADER), at))
 
 
 def _sniff(data, format):

@@ -279,7 +279,7 @@ class MemoryRoutes:
             try:
                 check_declaration(declared, MEMORY_DISABLE["derived"])
             except ChangeRefused as refused:
-                raise memory_error(409, "memory.declaration_refused", str(refused)) from None
+                raise memory_error(409, "memory.declaration_refused", reason=str(refused)) from None
             self._operation("disable", record_id)
             return {"disabled": True, "change": {"kind": MEMORY_DISABLE["kind"], "declared_effects": declared,
                                                  "derived_effects": [], "required_checks": [],

@@ -216,7 +216,27 @@ def test_a_missing_rasterizer_fails_the_svg_import_instead_of_skipping_it(tmp_pa
     provenance = {'origin': 'nih_bioart', 'title': 'Test', 'source_url': 'https://bioart.niaid.nih.gov/bioart/18',
                   'permission_note': 'Public Domain', 'external_rendering_authorized': True}
     try:
-        with pytest.raises(ValueError):
+        with pytest.raises(pytest.fail.Exception) as failed:
             import_vector(source, tmp_path / 'project', provenance)
     except Skipped:
         pytest.fail('a failed SVG render was turned into a skip')
+    assert 'No SVG rasterizer' in str(failed.value) and 'SVG conversion failed' not in str(failed.value)
+
+
+def test_a_test_that_supplies_its_own_rasterizer_still_renders(tmp_path, monkeypatch):
+    """The guard decides when a render is called, not at setup: a test that sets ARC_SVG2PNG
+    to a stub and fakes the process runs whether or not a real rasterizer is installed."""
+    import subprocess
+    from pathlib import Path
+    from arc_science import svg_raster
+    monkeypatch.setattr(svg_raster, 'cairo_available', lambda: False)
+    monkeypatch.delenv('ARC_SVG2PNG', raising=False)
+    with pytest.raises(pytest.fail.Exception, match='No SVG rasterizer'):
+        svg_raster.render_png_bytes(SAFE_SVG)
+    monkeypatch.setenv('ARC_SVG2PNG', str(tmp_path / 'arc-svg2png'))
+
+    def run(argv, **kwargs):
+        Path(argv[2]).write_bytes(b'png bytes')
+        return subprocess.CompletedProcess(argv, 0)
+    monkeypatch.setattr(svg_raster.subprocess, 'run', run)
+    assert svg_raster.render_png_bytes(SAFE_SVG) == b'png bytes'

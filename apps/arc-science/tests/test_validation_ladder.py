@@ -536,7 +536,9 @@ def test_a_number_too_large_for_decimal_arithmetic_is_unbound_and_never_raises()
 def test_both_ends_of_a_hyphenated_range_must_bind():
     assert numbers(['validation error 0.01-0.5 across degrees 2-9']) == ['0.01', '0.5', '2', '9']
     # A digit run after a hyphen glued to a letter is still part of a name.
-    assert numbers(['IL-6 and COVID-19 in a degree-2 fit']) == []
+    assert numbers(['IL-6 and COVID-19 in a β-2 fit']) == []
+    # After a quantity word the hyphen joins the word to its value: it is checked.
+    assert list(_tokens('a degree-2 fit')) == [('2', ('degree',))]
     _, state = run(Scripted([FIT], say=lambda o: f"Validation error {o['data']['validation_mse']:.2g}-0.9 on the split."))
     assert ladder_of(state)['next']['needs'] == ['unbound_number']
     # The upper end names the same quantity as the lower end, so a true range binds.
@@ -676,8 +678,8 @@ def test_a_nearer_unrecorded_quantity_keeps_a_farther_recorded_name_from_binding
                 lambda o: f"Root mean squared error {o['data']['validation_mse']:.3g} on the split."):
         _, state = run(Scripted([FIT], say=say))
         assert ladder_of(state)['next']['needs'] == ['unbound_number']
-    # Plain MSE is recorded, spelled out or not.
-    assert [names for _, names in _tokens('Validation mean squared error 0.00404.')] == [('training_mse', 'validation_mse', 'minimum_shuffled_validation_mse', 'mean_shuffled_validation_mse')]
+    # Plain MSE is recorded, spelled out or not, and keeps its validation qualifier.
+    assert [names for _, names in _tokens('Validation mean squared error 0.00404.')] == [('validation_mse',)]
 
 
 def test_a_quantity_word_names_one_number_and_never_crosses_to_its_neighbour():
@@ -747,22 +749,30 @@ def test_the_null_is_rejected_only_when_no_control_on_the_branch_beats_the_fit()
 
 class ControlFirst(Replay):
     """Round 0 runs the permutation control on branch 'peek'; round 1 opens 'curve' with its
-    falsifier and runs a fresh fit beside a rerun of the same control."""
+    falsifier and runs a fresh fit beside a rerun of the control, with `rerun` shuffles."""
+
+    def __init__(self, peek=32, rerun=32):
+        self.peek, self.rerun = peek, rerun
 
     async def propose(self, context):
         if context['round'] == 0:
             return {'branches': [{'id': 'peek', 'title': 'Peek', 'hypothesis': 'Look first.', 'falsifier': 'None.', 'parents': []}],
-                    'actions': [{**NULL, 'branch_id': 'peek'}], 'stop': False, 'reason': 'Look.'}
+                    'actions': [{**NULL, 'branch_id': 'peek', 'arguments': {'permutations': self.peek}}], 'stop': False, 'reason': 'Look.'}
         if context['round'] == 1:
             branch = {'id': 'curve', 'title': 'Curved response', 'hypothesis': 'The response needs a quadratic term.',
                       'falsifier': 'Validation error above the threshold.', 'parents': [], 'falsifier_test': FIT_ERROR}
-            return {'branches': [branch], 'actions': [{**FIT, 'branch_id': 'curve'}, {**NULL, 'id': 'null2', 'branch_id': 'curve'}],
+            return {'branches': [branch], 'actions': [{**FIT, 'branch_id': 'curve'},
+                                                      {**NULL, 'id': 'null2', 'branch_id': 'curve', 'arguments': {'permutations': self.rerun}}],
                     'stop': False, 'reason': 'Commit after looking at the null.'}
         return {'stop': True, 'reason': 'Done.'}
 
 
-def test_the_controls_the_null_uses_must_be_prespecified_whether_the_claim_cites_them_or_not():
-    _, state = run(ControlFirst())
+@pytest.mark.parametrize('peek,rerun', [(32, 32), (32, 33), (127, 128), (128, 127)])
+def test_the_controls_the_null_uses_must_be_prespecified_whether_the_claim_cites_them_or_not(peek, rerun):
+    """permutation_control draws its shuffles in sequence from one fixed seed, so a control
+    with fewer shuffles is the first part of a larger one: a peek at any size shows the
+    planner the statistic a later control of another size reports."""
+    _, state = run(ControlFirst(peek, rerun))
     [scoped] = [b for b in state.claim_scope.branches if b.branch_id == 'curve']
     assert set(scoped.evidence_ids) == {'fit', 'null2'}
     for evidence_ids in (('fit', 'null2'), ('fit',)):
@@ -770,3 +780,51 @@ def test_the_controls_the_null_uses_must_be_prespecified_whether_the_claim_cites
         ladder = claim_ladder(state, cited, timeline_rows=[], verification=passing(state), subject=release.subject_digest(state))
         assert 'null_rejected' in ladder['met'], evidence_ids
         assert ladder['rung'] == 2 and ladder['next'] == {'rung': 3, 'needs': ['falsifier_after_observation']}, evidence_ids
+
+
+# Carried-forward QA findings of EVIDENCE-MAJ.
+
+def test_every_form_of_an_unrecorded_statistic_keeps_a_recorded_name_off():
+    for text in ('Validation error, r \u2265 0.9', 'Validation error tracked r ~ 0.004.', 'Validation error tracked r of 0.004.',
+                 'Validation error tracked r: 0.004.', 'Validation error correlated with x at r 0.00404.',
+                 'Validation error, p \u2265 0.004.', 'Validation error, p \u2248 0.004.',
+                 'Validation RMS error 0.00404 on the split.', 'Relative validation error 0.00404 on the split.',
+                 'Percentage validation error 0.00404 on the split.', 'Normalized validation error 0.00404.',
+                 'Validation error, SD 0.00404.', 'Validation error, SEM 0.00404.', 'Validation error, SE 0.00404.',
+                 'Validation error and RMSD 0.00404.', 'Validation error and NRMSE 0.00404.'):
+        assert [names for _, names in _tokens(text)] == [()], text
+    _, state = run(Scripted([FIT], say=lambda o: f"Validation RMS error {o['data']['validation_mse']:.3g} on the split."))
+    assert ladder_of(state)['next']['needs'] == ['unbound_number']
+
+
+def test_a_spelled_out_or_set_qualified_validation_error_binds_only_the_validation_field():
+    for text in ('Validation mean squared error 0.00195 on the split.', 'Held-out mean squared error 0.00195 on the split.',
+                 'Validation-set error 0.00195.', 'Validation set MSE 0.00195.', 'Error on the validation split was 0.00195.'):
+        assert [names for _, names in _tokens(text)] == [('validation_mse',)], text
+    assert [names for _, names in _tokens('Training mean squared error 0.00195.')] == [('training_mse',)]
+    _, state = run(Scripted([FIT], say=lambda o: f"Validation mean squared error {o['data']['training_mse']:.3g} on the split."))
+    assert ladder_of(state)['next']['needs'] == ['unbound_number']
+    _, state = run(Scripted([FIT], say=lambda o: f"Held-out mean squared error {o['data']['validation_mse']:.3g} on the split."))
+    assert ladder_of(state)['rung'] == 1
+
+
+def test_a_value_hyphenated_to_its_quantity_word_is_checked():
+    for say in (lambda o: f"The degree-3 fit reached validation error {o['data']['validation_mse']:.3g}.",
+                lambda o: 'Validation MSE-0.9 on the split.'):
+        _, state = run(Scripted([FIT], say=say))
+        assert ladder_of(state)['next']['needs'] == ['unbound_number']
+    _, state = run(Scripted([FIT], say=lambda o: f"The degree-2 fit reached validation error {o['data']['validation_mse']:.3g}."))
+    assert ladder_of(state)['rung'] == 1
+
+
+def test_only_the_r_squared_exponent_is_exempt_from_binding():
+    assert numbers(['R^2 and r^2 of the fit']) == [] and numbers(['Degree 2^9.']) == ['2', '9']
+    _, state = run(Scripted([FIT], say=lambda o: 'Degree 2^9.'))
+    assert ladder_of(state)['next']['needs'] == ['unbound_number']
+
+
+def test_a_recorded_count_binds_through_its_own_name():
+    _, state = run(Scripted([FIT], say=lambda o: f"The validation set has {o['data']['n_validation']} samples."))
+    assert ladder_of(state)['rung'] == 1
+    _, state = run(Scripted([FIT], say=lambda o: 'The validation set has 17 samples.'))
+    assert ladder_of(state)['next']['needs'] == ['unbound_number']

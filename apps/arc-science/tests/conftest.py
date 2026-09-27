@@ -21,10 +21,17 @@ def _no_rasterizer():
 
 @pytest.fixture(autouse=True)
 def _fail_svg_rendering_without_a_rasterizer(monkeypatch):
-    """Any test that renders SVG fails naming the missing prerequisite, not 'SVG conversion failed'."""
-    if _no_rasterizer():
-        from arc_science import svg_raster
-        monkeypatch.setattr(svg_raster, 'render_png_bytes', lambda *a, **k: pytest.fail(_NO_RASTERIZER))
+    """Any test that renders SVG fails naming the missing prerequisite, not 'SVG conversion
+    failed'. It decides when the render is called, so a test that sets ARC_SVG2PNG itself
+    (to a stub, with a faked process) still runs without a real rasterizer."""
+    from arc_science import svg_raster
+    render = svg_raster.render_png_bytes
+
+    def guarded(*args, **kwargs):
+        if _no_rasterizer():
+            pytest.fail(_NO_RASTERIZER)
+        return render(*args, **kwargs)
+    monkeypatch.setattr(svg_raster, 'render_png_bytes', guarded)
 
 
 @pytest.fixture
