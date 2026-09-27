@@ -158,6 +158,7 @@ class RoutePreviewRequest(BaseModel):
     vision_review:bool=False
     crew:dict[str,CrewEntry]|None=None
     context:ContextRefs|None=None
+    gate:Literal['auto','each_round']='auto'
 
 
 def _configured_native_session_secret():
@@ -364,10 +365,12 @@ def seat_plan(route):
 # What each kind of destination receives under a mission grant, in the operator's words.
 SEAT_CATEGORY='mission goal, dataset points, prior observations and assessments';SEAT_PURPOSE='planning, review and refutation'
 MISSION_CONTEXT_CATEGORY='mission_context: memory records and earlier mission findings the operator attached'
+# A mission gated each_round sends the planner the operator's decisions, notes included.
+OPERATOR_DIRECTIVES_CATEGORY='operator_directives: the operator decisions on each plan, with their notes'
 
 
-def seat_category(context=False):
-    return SEAT_CATEGORY+'; '+MISSION_CONTEXT_CATEGORY if context else SEAT_CATEGORY
+def seat_category(context=False,directives=False):
+    return '; '.join([SEAT_CATEGORY]+[MISSION_CONTEXT_CATEGORY]*bool(context)+[OPERATOR_DIRECTIVES_CATEGORY]*bool(directives))
 CONNECTOR_CATEGORY='tool arguments the planner chooses';PUBLIC_READ_CATEGORY='query text the planner chooses'
 BIORENDER_CATEGORY='template search terms the planner chooses'
 # The origin each shipped public-read tool reaches (public_reads.py fixes the URLs).
@@ -387,16 +390,17 @@ def connector_destination(entry):
     return (entry.get('command','')+' '+shlex.join(entry.get('args') or [])).strip()
 
 
-def route_preview(route,settings_revision=None,context=False):
+def route_preview(route,settings_revision=None,context=False,directives=False):
     """The grants a live route needs before its first start, one per destination, from the
     same snapshot `seat_plan` digests: seats, consented connectors, public reads and
     BioRender when enabled. Passive: nothing is called and no secret is read. A seat the
     mission's crew overrides says so and is untested on that model; attached context adds
-    its data category to what the seats receive, and nothing else."""
+    its data category to what the seats receive, and nothing else; so does the gate each_round,
+    whose operator directives reach the planner."""
     route_digest,_=seat_plan(route)
     crew=route.get('crew',())
     seats=[{'role':role,'provider':e.provider,'transport':e.transport,'model':e.model,'effort':e.effort,'destination':seat_destination(e),
-            'destination_kind':'seat','data_category':seat_category(context),'purpose':SEAT_PURPOSE,
+            'destination_kind':'seat','data_category':seat_category(context,directives),'purpose':SEAT_PURPOSE,
             'source':'mission' if role in crew else 'settings',**({'tested':False} if role in crew else {})}
            for role,e in route['seats'].items()]
     connectors=[{'name':s['name'],'kind':'mcp','destination':connector_destination(s),'destination_kind':'mcp',
@@ -926,7 +930,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         # The same preview for a mission as it would be created: its crew applied, its context named.
         try:route=live_route(body.vision_review)
         except Exception as error:raise api_error(409,'mission.seats_unconfigured','Configure the model seats before starting: '+str(error)[:300]) from None
-        return route_preview(with_crew(route,body.crew),settings_revision(),context=bool(body.context))
+        return route_preview(with_crew(route,body.crew),settings_revision(),context=bool(body.context),directives=body.gate=='each_round')
 
     def mission_summary(mid,request,state):
         """What a prior mission contributes: its goal, status, mode and data origin, its current
@@ -1218,6 +1222,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             prior=[body.continues]+[ref for ref in (refs.prior_mission_ids if refs else []) if ref!=body.continues]
             refs=ContextRefs(memory_record_ids=refs.memory_record_ids if refs else [],prior_mission_ids=prior)
         items=await resolve_context(refs) if refs else []
+        # The parent leads, whatever else is attached.
+        items.sort(key=lambda i:(i['kind'],i['ref'])!=('mission',body.continues))
         chars=sum(len(i['text']) for i in items)
         if chars>CONTEXT_CHAR_LIMIT:raise api_error(409,'context.too_large',facts={'chars':chars,'limit':CONTEXT_CHAR_LIMIT})
         request=MissionRequest.model_validate({**body.model_dump(mode='json',exclude={'crew','context'}),
@@ -1355,7 +1361,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                                        'falsifier':third.transport,'vision':vision.transport if vision else None})
                     def guard_seat(role,call,*args):
                         cfg=cfgs.get(role) or second
-                        return guard('seat',seat_destination(cfg),seat_category(bool(request.context_items)),call,role=role,error=ProviderError)(*args)
+                        return guard('seat',seat_destination(cfg),seat_category(bool(request.context_items),request.gate=='each_round'),call,role=role,error=ProviderError)(*args)
                     agent=GuardedSeatAgent(agent,guard_seat)
                     if os.environ.get('ARC_PUBLIC_READS')=='1':
                         from .exploration.public_reads import public_tools
@@ -1453,7 +1459,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 if approval.approved_route_digest!=route_digest:
                     raise api_error(409,'mission.route_changed','The route changed since it was previewed; review it again'+(f'; settings revision {revision[:12]}' if revision else ''),
                                     facts={'route_digest':route_digest,'settings_revision':revision})
-                preview=route_preview(route,revision,context=bool(request.context_items))
+                preview=route_preview(route,revision,context=bool(request.context_items),directives=request.gate=='each_round')
                 # The data category is part of what was approved: attached context changes what the
                 # seats receive but not the route digest, so a plain approval does not cover it.
                 approved={(g.destination,g.destination_kind,g.data_category) for g in approval.grants if g.scope=='mission'}

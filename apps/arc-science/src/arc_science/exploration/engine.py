@@ -251,6 +251,19 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                     transport=transport),)
         change(branches=tuple(branches),model_records=records)
         event('plan_committed',plan.reason or 'Bounded exploratory actions proposed.')
+        # Gate each_round: nothing runs and nothing stops until the operator has decided on this round's plan.
+        if request.gate=='each_round' and not any(c.kind=='decision' and c.round==state.round for c in state.changes):
+            committed=next(r for r in state.model_records if r.role=='planner' and r.round==state.round)
+            return stop('paused','awaiting_decision',f"The plan for round {state.round} waits for the operator's decision.",
+                        round=state.round,plan_digest=plan_digest(committed))
+        decisions=operator_decisions(state)
+        if (plan.stop or not plan.actions) and any(d['round']==state.round and (d['directive'] in WITHHOLDS if d['target']=='proposal'
+                                                   else d['directive'] in ('pursue','request_test')) for d in decisions):
+            # The operator refused a plan that would end the mission, or asked for work it does not
+            # propose: the round closes and the planner is asked again with the directives.
+            event('round_closed','The operator asked for more work than this plan proposes; the planner is asked again.')
+            change(round=state.round+1);commit()
+            continue
         if plan.stop:
             if not state.observations: return stop('needs_input','no_observations',plan.reason or 'More evidence or tools are required.')
             if request.vision_review:
@@ -258,14 +271,8 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                 if reason:return stop('needs_input','vision_required',reason,cause=VISUAL_CAUSES.get(reason,'incomplete'))
             return stop('completed','plan_stop',plan.reason or 'Exploratory planning stopped; human review is still required.')
         if not plan.actions: return stop('needs_input','no_actions','No executable actions proposed; additional data or tools are required.')
-        # Gate each_round: nothing runs until the operator has decided on this round's plan.
-        if request.gate=='each_round' and not any(c.kind=='decision' and c.round==state.round for c in state.changes):
-            committed=next(r for r in state.model_records if r.role=='planner' and r.round==state.round)
-            return stop('paused','awaiting_decision',f"The plan for round {state.round} waits for the operator's decision.",
-                        round=state.round,plan_digest=plan_digest(committed))
         # Operator decisions withhold work, never evidence: the latest directive on a branch
         # stands across rounds, and a proposal directive covers its own round's plan.
-        decisions=operator_decisions(state)
         standing={d['target_id']:d for d in decisions if d['target']=='branch'}
         proposal=next((d for d in reversed(decisions) if d['target']=='proposal' and d['round']==state.round),None)
         actions=[];withheld=[]

@@ -21,7 +21,9 @@ from arc_science.exploration.claims import build_claims
 from arc_science.exploration.engine import explore, operator_decisions, plan_digest
 from arc_science.exploration.evidence import evidence_graph, validate_evidence
 from arc_science.exploration.models import Change, MissionRequest, MissionState, OperatorDecision
-from arc_science.exploration.providers import DIRECTIVE_FENCE_LABEL, PLAN_PROMPT, render_prompt
+from arc_science.exploration.providers import DIRECTIVE_FENCE_LABEL, PLAN_PROMPT, ModelEndpoint, render_prompt
+from test_claude_code_service import configured  # noqa: F401  (a fixture)
+from test_mission_context import fake_memory
 
 TOKEN = 'd' * 40
 AUTH = {'Authorization': 'Bearer ' + TOKEN}
@@ -35,6 +37,24 @@ class Capture(DemoAgent):
     async def propose(self, context):
         self.plans.append(context)
         return await super().propose(context)
+
+
+class Repropose(DemoAgent):
+    """The fixture, re-proposing the identical fit-linear action in round 1."""
+    def _plan(self, context):
+        plan = super()._plan(context)
+        if context['round'] == 1:
+            plan['actions'] = [{'id': 'fit-linear', 'branch_id': 'linear', 'tool': 'polynomial_fit', 'arguments': {'degree': 1}}] + plan['actions']
+        return plan
+
+
+class Unavailable(DemoAgent):
+    """The fixture, adding a round-0 action whose tool the mission does not offer."""
+    def _plan(self, context):
+        plan = super()._plan(context)
+        if context['round'] == 0:
+            plan['actions'] = plan['actions'] + [{'id': 'ghost', 'branch_id': 'linear', 'tool': 'no_such_tool', 'arguments': {}}]
+        return plan
 
 
 def run(request, agent=None, initial=None):
@@ -101,7 +121,8 @@ def test_park_withholds_the_branch_actions_and_pursue_proceeds():
     state = decide(state, ('branch', 'null-control', 'park', 'Not now.'), ('branch', 'quadratic', 'pursue', ''))
     change_id = state.changes[-1].id
     state = run(gated(), initial=state)
-    assert state.status == 'completed'
+    # The round-2 plan stops, and that too waits for the operator.
+    assert (state.status, state.stop_facts['round']) == ('paused', 2)
     assert [o.id for o in state.observations] == ['fit-linear', 'fit-quadratic']
     withheld = [e for e in state.events if e.kind == 'action_withheld']
     assert len(withheld) == 1 and withheld[0].round == 1
@@ -109,6 +130,50 @@ def test_park_withholds_the_branch_actions_and_pursue_proceeds():
     # Only the dispatched action was charged.
     assert state.actions_used == 2
     validate_evidence(state)
+    state = run(gated(), initial=decide(state, ('proposal', 'plan-2', 'pursue', '')))
+    assert (state.status, state.stop_code) == ('completed', 'plan_stop')
+
+
+def test_a_stop_plan_waits_for_the_operator_and_a_request_for_more_work_overrides_it():
+    state = run(gated(), initial=decide(run(gated()), ('proposal', 'plan-0', 'pursue', '')))
+    state = run(gated(), initial=decide(state, ('branch', 'null-control', 'park', '')))
+    plan = next(r for r in state.model_records if r.role == 'planner' and r.round == 2)
+    assert plan.payload['stop'] and (state.status, state.stop_code) == ('paused', 'awaiting_decision')
+    assert state.stop_facts == {'round': 2, 'plan_digest': plan_digest(plan)}
+    # Pursuing the parked branch refuses the stop: the round closes and the planner is asked again.
+    calls = state.model_calls_used
+    state = run(gated(), initial=decide(state, ('branch', 'null-control', 'pursue', '')))
+    assert any(e.kind == 'round_closed' and e.round == 2 for e in state.events)
+    assert not [r for r in state.model_records if r.round == 2 and r.role != 'planner']
+    assert state.stop_facts['round'] == 3 and state.model_calls_used == calls + 1
+    validate_evidence(state)
+    # Accepting the stop plan ends the mission.
+    state = run(gated(), initial=decide(state, ('proposal', 'plan-3', 'pursue', '')))
+    assert (state.status, state.stop_code) == ('completed', 'plan_stop')
+
+
+def test_a_withheld_action_proposed_again_runs_in_its_later_round_and_verifies():
+    state = run(gated(), agent=Repropose(), initial=decide(run(gated(), agent=Repropose()), ('branch', 'linear', 'park', '')))
+    assert state.observations == () and state.stop_facts['round'] == 1
+    state = run(gated(), agent=Repropose(), initial=decide(state, ('branch', 'linear', 'pursue', '')))
+    assert [(o.id, o.round) for o in state.observations] == [('fit-linear', 1), ('fit-quadratic', 1), ('shuffle-control', 1)]
+    validate_evidence(state)
+    evidence_graph(state)
+    state = run(gated(), agent=Repropose(), initial=decide(state, ('proposal', 'plan-2', 'pursue', '')))
+    assert state.status == 'completed'
+    validate_evidence(state)
+
+
+@pytest.mark.parametrize('directive', ['pursue', 'drop'])
+def test_a_gated_plan_naming_an_unavailable_tool_resumes_under_any_decision(directive):
+    state = run(gated(), agent=Unavailable())
+    assert state.stop_code == 'awaiting_decision'
+    state = run(gated(), agent=Unavailable(), initial=decide(state, ('proposal', 'plan-0', directive, '')))
+    ghost = [o for o in state.observations if o.id == 'ghost']
+    # Pursued, the engine refuses the request as the auto gate does; dropped, it never ran.
+    assert [o.status for o in ghost] == (['error'] if directive == 'pursue' else [])
+    validate_evidence(state)
+    evidence_graph(state)
 
 
 def test_dropping_the_proposal_closes_the_round_without_tools_or_reviews():
@@ -158,17 +223,18 @@ def test_request_test_and_every_directive_reach_the_next_planner_prompt_inside_t
 def test_a_decision_never_changes_a_claim_status_or_its_derivation():
     auto = run(MissionRequest(goal='Steer the fixture'))
     state = run(gated())
-    for round_number in range(2):
+    for round_number in range(3):
         state = run(gated(), initial=decide(state, ('proposal', f'plan-{round_number}', 'pursue', '')))
     assert state.status == 'completed'
     # Recording a decision leaves the claim scope and the claims untouched.
     paused = run(gated())
     assert decide(paused, ('branch', 'linear', 'park', '')).claim_scope == paused.claim_scope
     # Pursuing everything is the auto mission: the same claims, statuses, scopes and (when
-    # the ladder is derived) rungs.
+    # the ladder is derived) rungs. This holds while no spend budget binds: the directives are
+    # planner input, so a gated mission spends more tokens and can reach a budget sooner.
     claims = lambda s: build_claims(s, [], evidence_graph(s), None)['claims']
     assert claims(state) == claims(auto) and state.claim_scope == auto.claim_scope
-    assert [d['directive'] for d in operator_decisions(state)] == ['pursue', 'pursue']
+    assert [d['directive'] for d in operator_decisions(state)] == ['pursue', 'pursue', 'pursue']
 
 
 # --- service ---
@@ -229,6 +295,9 @@ def test_the_decision_route_records_a_declared_change_and_resumes(tmp_path):
         parked = c.post(f'/api/missions/{mid}/decisions', headers=AUTH, json=body(row, ('branch', 'null-control', 'park', '')))
         assert parked.status_code == 202 and parked.json()['status'] == 'scheduled'
         row = settled(c, mid)
+        assert row['state']['stop_facts']['round'] == 2
+        c.post(f'/api/missions/{mid}/decisions', headers=AUTH, json=body(row, ('proposal', 'plan-2', 'pursue', '')))
+        row = settled(c, mid)
         assert row['state']['status'] == 'completed'
         assert [o['id'] for o in row['state']['observations']] == ['fit-linear', 'fit-quadratic']
         verified = c.post(f'/api/missions/{mid}/verify', headers=AUTH).json()
@@ -275,6 +344,12 @@ def test_a_finished_mission_is_continued_by_a_fork(tmp_path):
         item = request['context_items'][0]
         assert (item['kind'], item['ref']) == ('mission', first)
         assert 'supported_scope' in json.loads(item['text'])['claims'][0]
+        # With memory attached too, the parent is still the first context item.
+        c.app.state.memory_routes._operation = fake_memory
+        both = c.post('/api/missions', headers=AUTH, json={'goal': 'Continue with memory', 'continues': first,
+                                                          'context': {'memory_record_ids': ['rec-2']}})
+        assert both.status_code == 201, both.text
+        assert [(i['kind'], i['ref']) for i in both.json()['request']['context_items']] == [('mission', first), ('memory', 'rec-2')]
         rows = {r['id']: r for r in c.get('/api/missions', headers=AUTH).json()}
         assert rows[fork.json()['id']]['continues'] == first and rows[first]['continues'] is None
         assert c.get(f"/api/missions/{fork.json()['id']}/tree", headers=AUTH).json()['continues'] == first
@@ -292,3 +367,35 @@ def test_the_timeline_answers_only_rows_after_a_sequence(tmp_path):
         assert delta['rows'] == [r for r in full['rows'] if r['sequence'] > after] and delta['count'] == len(delta['rows'])
         assert c.get(f"/api/missions/{mid}/timeline?after={full['cursor']}", headers=AUTH).json()['rows'] == []
         assert c.get(f'/api/missions/{mid}/timeline?after=-1', headers=AUTH).status_code == 422
+
+
+def test_a_gated_route_names_the_operator_directives_the_planner_receives(tmp_path, monkeypatch):
+    seat = ModelEndpoint(provider='anthropic', transport='cli', endpoint='claude', model='claude-opus-5', credential_ref='planner')
+    monkeypatch.setattr(service, 'live_route', lambda vision_review=False: {'seats': {'planner': seat, 'reviewer': seat, 'falsifier': seat},
+                                                                             'mcp_servers': [], 'acp_agents': []})
+    assert service.OPERATOR_DIRECTIVES_CATEGORY not in service.seat_category(True)
+    with TestClient(app(tmp_path)) as c:
+        plain = c.post('/api/missions/preview', headers=AUTH, json={}).json()
+        steered = c.post('/api/missions/preview', headers=AUTH, json={'gate': 'each_round'}).json()
+    assert steered['route_digest'] == plain['route_digest']
+    assert all(service.OPERATOR_DIRECTIVES_CATEGORY in s['data_category'] for s in steered['seats'])
+    assert not any('operator_directives' in s['data_category'] for s in plain['seats'])
+
+
+def test_a_gated_live_mission_needs_the_approval_of_the_directive_category(configured, tmp_path):
+    with TestClient(app(tmp_path)) as c:
+        made = c.post('/api/missions', headers=AUTH, json={'goal': 'Live and steered', 'mode': 'live', 'allow_egress': True,
+                                                           'max_rounds': 1, 'gate': 'each_round'})
+        assert made.status_code == 201, made.text
+        mid = made.json()['id']
+        plain = c.post('/api/missions/preview', headers=AUTH, json={}).json()
+        refused_start = c.post(f'/api/missions/{mid}/start', headers=AUTH,
+                               json={'approved_route_digest': plain['route_digest'], 'grants': plain['required_grants']})
+        assert refused_start.status_code == 409 and refused_start.json()['detail']['code'] == 'mission.grant_missing', refused_start.text
+        preview = c.post('/api/missions/preview', headers=AUTH, json={'gate': 'each_round'}).json()
+        started = c.post(f'/api/missions/{mid}/start', headers=AUTH,
+                         json={'approved_route_digest': preview['route_digest'], 'grants': preview['required_grants']})
+        assert started.status_code == 202, started.text
+        assert settled(c, mid)['state']['stop_code'] == 'awaiting_decision'
+        seat_grants = [g for g in c.get(f'/api/missions/{mid}/grants', headers=AUTH).json()['grants'] if g['destination_kind'] == 'seat']
+        assert seat_grants and all('operator_directives' in g['data_category'] for g in seat_grants)

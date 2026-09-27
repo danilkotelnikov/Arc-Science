@@ -71,17 +71,22 @@ def build_tree(state, timeline_rows, decisions, *, mission_id='', revision=0, co
                      [f'plan-{r}'] + [f'branch-{p}' for p in branch.parents], title=branch.title, hypothesis=branch.hypothesis,
                      falsifier=branch.falsifier, route=routes.get(branch.id))
         for action in actions if not payload.get('stop') else []:
-            if action['id'] in actions_seen:
-                continue
-            actions_seen.add(action['id'])
             ran = observed.get(action['id'])
-            action_state = 'dispatched' if ran else 'withheld' if (r, action['id']) in withheld else 'pending'
-            node(f"action-{action['id']}", 'action', r, lanes.get(action['branch_id'], 0), action_state, [f'plan-{r}'],
-                 tool=action['tool'], branch_id=action['branch_id'], timing=_timing(timeline_rows, action['id']))
-            edge(f"action-{action['id']}", f"branch-{action['branch_id']}", 'targets')
+            if ran and ran.round < r:
+                continue   # listed again after it ran; drawn where it ran
+            # One node per plan that proposes the action: withheld in one round, it can run in a later one.
+            action_id = f"action-{action['id']}" + (f'@{r}' if action['id'] in actions_seen else '')
+            actions_seen.add(action['id'])
+            ran = ran if ran and ran.round == r else None
+            held = (r, action['id']) in withheld
+            action_state = 'dispatched' if ran else 'withheld' if held else 'pending'
+            node(action_id, 'action', r, lanes.get(action['branch_id'], 0), action_state, [f'plan-{r}'],
+                 tool=action['tool'], branch_id=action['branch_id'],
+                 timing=_timing([] if held else timeline_rows, action['id']))
+            edge(action_id, f"branch-{action['branch_id']}", 'targets')
             if ran:
                 node(f'observation-{ran.id}', 'observation', ran.round, lanes.get(ran.branch_id, 0), ran.status,
-                     [f"action-{action['id']}"], tool=ran.tool, claim_eligible=ran.claim_eligible)
+                     [action_id], tool=ran.tool, claim_eligible=ran.claim_eligible)
         visual_of = {}
         for index, record in enumerate(state.vision_records):
             if record.round != r:

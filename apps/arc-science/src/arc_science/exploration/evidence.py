@@ -333,13 +333,15 @@ def validate_evidence(state: MissionState) -> None:
                 try:
                     validate_arguments(action.tool, action.arguments, tools)
                 except ValueError:
+                    # A request the operator withheld never ran; one that ran was refused.
                     denied = observations.get(action.id)
-                    if not denied or denied.action != action or denied.status != "error":
+                    if denied and (denied.action != action or denied.status != "error"):
                         raise ValueError("Recorded proposal has an unbound tool request") from None
                 if action.id in planned_actions and planned_actions[action.id][0] != action:
                     raise ValueError("Recorded proposal reuses an action identity")
-                if action.id not in planned_actions:
-                    planned_actions[action.id] = (action, record.round)
+                # An identical action may be proposed again after it was withheld; it runs in
+                # one of the rounds that proposed it.
+                planned_actions.setdefault(action.id, (action, set()))[1].add(record.round)
         elif record.role in {"analyst", "falsifier"}:
             packet = Reconciliation.model_validate(record.payload)
             for assessment in packet.assessments:
@@ -364,7 +366,7 @@ def validate_evidence(state: MissionState) -> None:
             raise ValueError("Final branch state does not bind to recorded proposals")
         for observation in state.observations:
             planned = planned_actions.get(observation.id)
-            if not planned or planned != (observation.action, observation.round):
+            if not planned or planned[0] != observation.action or observation.round not in planned[1]:
                 raise ValueError("Observation does not bind to a recorded proposal")
         if Counter(canonical(item) for item in state.assessments) != Counter(
             canonical(item) for item in expected_assessments

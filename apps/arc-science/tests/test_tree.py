@@ -103,6 +103,20 @@ def test_an_awaiting_plan_and_a_parked_branch_show_what_the_operator_chose_and_w
     assert n['plan-1']['facts']['withheld'] == ['shuffle-control'] and n['plan-0']['state'] == 'accepted'
 
 
+def test_a_withheld_action_proposed_again_is_drawn_in_each_round_with_its_own_outcome():
+    from test_mission_decisions import Repropose
+    state = run(gated(), agent=Repropose(), initial=decide(run(gated(), agent=Repropose()), 'branch', 'linear', 'park'))
+    state = run(gated(), agent=Repropose(), initial=decide(state, 'branch', 'linear', 'pursue'))
+    t = tree(state)
+    well_formed(t)
+    n = nodes(t)
+    first, later = n['action-fit-linear'], n['action-fit-linear@1']
+    assert (first['depth'], first['state'], first['parents']) == (0, 'withheld', ['plan-0'])
+    assert (later['depth'], later['state'], later['parents']) == (1, 'dispatched', ['plan-1'])
+    assert n['observation-fit-linear']['parents'] == ['action-fit-linear@1'] and n['observation-fit-linear']['depth'] == 1
+    assert n['plan-0']['facts']['withheld'] == ['fit-linear'] and n['plan-1']['facts']['withheld'] == []
+
+
 def test_visual_reviews_and_repairs_hang_from_what_they_reviewed():
     state = run(MissionRequest(goal='Tree of the fixture', vision_review=True), agent=DemoVisionAgent())
     t = tree(state)

@@ -59,7 +59,7 @@ class MissionRequest(Versioned):
     # Per-role model and effort overrides for the live seats (contract C2); None is Settings as is.
     crew: dict[CrewRole, CrewSeat] | None = None
     context_items: tuple[ContextItem, ...] = Field(default=(), max_length=CONTEXT_MEMORY_LIMIT + CONTEXT_MISSION_LIMIT)
-    # each_round pauses after every committed plan with actions until the operator decides (C6).
+    # each_round pauses after every committed plan, a stopping one too, until the operator decides (C6).
     gate: Literal['auto', 'each_round'] = 'auto'
     # The finished mission this one continues (a fork); its supported scope is attached as context.
     continues: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{1,80}$')
