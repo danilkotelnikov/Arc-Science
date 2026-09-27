@@ -142,6 +142,31 @@ def test_revoking_a_remembered_grant_refuses_the_next_call(client):
     assert remembered_grants(c)[0]['state'] == 'revoked' and len(receipts(c, grant['id'])) == 1
 
 
+def test_remembering_again_supersedes_the_earlier_grant(tmp_path):
+    """One remembered grant per destination and category: a second remember revokes the first
+    in the same step, so revoking the one the operator sees ends the consent."""
+    ledger = GrantLedger(tmp_path / 'grants.db')
+    first = ledger.remember(HOST, 'detector', CATEGORY)
+    second = ledger.remember(HOST, 'detector', CATEGORY)
+    assert ledger.get(first['id'])['state'] == 'revoked' and ledger.get(second['id'])['state'] == 'active'
+    other = ledger.remember(HOST, 'detector', 'the submitted text and instructions')
+    assert ledger.get(second['id'])['state'] == 'active' and other['state'] == 'active'
+    ledger.revoke(second['id'])
+    assert ledger.remembered(HOST, CATEGORY, reserve=False) is None
+
+
+def test_revoking_the_newest_of_two_remembered_consents_refuses_the_next_call(client):
+    c = client
+    assert detect(c, allow_egress=True, remember_days=30).status_code == 200
+    c.app.state.grants.clock.at += 10 * DAY
+    assert detect(c, allow_egress=True, remember_days=30).status_code == 200
+    newest = remembered_grants(c)[0]
+    assert [g['state'] for g in remembered_grants(c)].count('active') == 1 and newest['state'] == 'active'
+    assert c.post(f'/api/grants/{newest["id"]}/revoke', headers=AUTH, json={}).status_code == 200
+    refused = detect(c)
+    assert refused.status_code == 422 and refused.json()['detail']['code'] == 'prose.consent_required'
+
+
 def test_a_grant_for_a_different_category_or_destination_is_refused(client):
     c = client
     ledger = c.app.state.grants
@@ -174,22 +199,36 @@ def cli_probe(monkeypatch, tmp_path):
     monkeypatch.setattr(service, 'claude_code_command', lambda: [sys.executable, str(fake), 'success'])
 
 
-def test_a_remembered_probe_consent_passes_the_consent_gate(cli_probe, tmp_path):
+def test_a_remembered_probe_consent_is_reused_for_the_same_executable_only(cli_probe, tmp_path, monkeypatch):
+    probe = lambda **body: c.post('/api/providers/claude-code/probe', headers=AUTH, json=body)  # noqa: E731
     with TestClient(service.create_app(data_dir=tmp_path / 'data', token=TOKEN)) as c:
-        assert c.post('/api/providers/claude-code/probe', headers=AUTH, json={}).status_code == 422
-        probe = c.post('/api/providers/claude-code/probe', headers=AUTH, json={'spend_tokens': True, 'remember_days': 30})
-        assert probe.status_code == 200 and all(r['ok'] for r in probe.json()['results'])
+        assert probe().status_code == 422
+        first = probe(spend_tokens=True, remember_days=30)
+        assert first.status_code == 200 and all(r['ok'] for r in first.json()['results'])
         [grant] = remembered_grants(c)
-        assert (grant['destination'], grant['destination_kind']) == ('provider:anthropic', 'seat')
+        # The grant names where the tokens go: the CLI executable, as a mission seat grant does.
+        assert (grant['destination'], grant['destination_kind']) == (sys.executable, 'seat')
         assert [r['outcome'] for r in receipts(c, grant['id'])] == ['ok']
-        # Without the flag it is past consent and meets the cooldown instead.
-        again = c.post('/api/providers/claude-code/probe', headers=AUTH, json={})
-        assert again.status_code == 429 and again.json()['detail']['code'] == 'probe.cooldown'
-        # Another provider is not covered.
-        other = c.post('/api/providers/openai/probe', headers=AUTH, json={})
-        assert other.status_code == 422 and other.json()['detail']['code'] == 'probe.consent_required'
+        # A call refused by the cooldown sends nothing and writes no remembered grant.
+        cooled = probe(spend_tokens=True, remember_days=30)
+        assert cooled.status_code == 429 and cooled.json()['detail']['code'] == 'probe.cooldown'
+        assert [g['id'] for g in remembered_grants(c)] == [grant['id']]
+        # Past the cooldown, a call without the flag runs under the remembered grant.
+        c.app.state.probe_last['at'] = float('-inf')
+        again = probe()
+        assert again.status_code == 200, again.text
+        assert [r['outcome'] for r in receipts(c, grant['id'])] == ['ok', 'ok']
+        assert c.app.state.grants.get(grant['id'])['uses'] == 2
+        # Another executable is another destination: the old grant does not cover it.
+        c.app.state.probe_last['at'] = float('-inf')
+        fake = Path(__file__).parent / 'fixtures' / 'fake_claude.py'
+        monkeypatch.setattr(service, 'claude_code_command', lambda: [str(tmp_path / 'other-claude.exe'), str(fake), 'success'])
+        moved = probe()
+        assert moved.status_code == 422 and moved.json()['detail']['code'] == 'probe.consent_required'
+        assert len(receipts(c, grant['id'])) == 2
+        monkeypatch.setattr(service, 'claude_code_command', lambda: [sys.executable, str(fake), 'success'])
         c.post(f'/api/grants/{grant["id"]}/revoke', headers=AUTH, json={})
-        assert c.post('/api/providers/claude-code/probe', headers=AUTH, json={}).json()['detail']['code'] == 'probe.consent_required'
+        assert probe().json()['detail']['code'] == 'probe.consent_required'
 
 
 def test_a_remembered_prose_seat_consent_is_reused_and_recorded(tmp_path, monkeypatch):

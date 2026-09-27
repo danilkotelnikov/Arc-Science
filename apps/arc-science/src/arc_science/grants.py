@@ -115,6 +115,13 @@ class GrantLedger:
                  granted_at=now,expires_at=expires_at,max_uses=max_uses)
         with self._db() as db:
             db.execute('BEGIN IMMEDIATE')
+            if subject_kind=='remembered':
+                # One remembered grant per destination and category: the new one supersedes the
+                # rest in this step, so revoking the one the operator sees ends the consent.
+                for old in db.execute(_GRANTS_SQL+" WHERE g.subject_kind='remembered' AND g.destination=? AND g.data_category=?",
+                                      (row['destination'],row['data_category'])).fetchall():
+                    if _state(old,now)=='active':
+                        db.execute('INSERT INTO grant_events(grant_id,kind,at,detail) VALUES (?,?,?,?)',(old['id'],'revoked',now,'superseded by '+row['id']))
             db.execute('INSERT INTO grants('+','.join(_GRANT_COLUMNS)+') VALUES ('+','.join(':'+c for c in _GRANT_COLUMNS)+')',row)
             db.execute('INSERT INTO grant_events(grant_id,kind,at,detail) VALUES (?,?,?,?)',(row['id'],'created',now,source))
             db.commit()

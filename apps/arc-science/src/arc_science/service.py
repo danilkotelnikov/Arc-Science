@@ -420,20 +420,23 @@ def _finisher(ledger,grant_id,destination,destination_kind,data_category,request
 def consent_covered(ledger,destination,destination_kind,data_category,purpose,*,given,remember_days):
     """The consent gate of a per-call route: True when the request body carries the consent
     flag, or an active remembered grant covers exactly this destination and data category.
-    The flag with remember_days writes that remembered grant; only this request body can, so
-    model output, memory and connector text never do. remember_days alone is refused."""
+    Nothing is written here; remember_days alone is refused."""
     if remember_days and not given:raise api_error(422,'consent.remember_needs_consent')
-    if given:
-        if remember_days:ledger.remember(destination,destination_kind,data_category,purpose)
-        return True
-    return ledger.remembered(destination,data_category,reserve=False) is not None
+    return bool(given) or ledger.remembered(destination,data_category,reserve=False) is not None
 
 
 def consent_grant(ledger,destination,destination_kind,data_category,purpose,request_digest=None,*,given,remember_days):
     """At the point of sending: finish(outcome, reason) under a reserved grant, or None when
-    nothing covers the call any more (revoked or expired since the gate). A remembered grant
-    is used when the call has no flag or asked to remember; the flag alone is a 'once' grant."""
-    grant=ledger.remembered(destination,data_category) if (remember_days or not given) else None
+    nothing covers the call any more (revoked or expired since the gate). The flag with
+    remember_days writes the remembered grant now, after the route's own refusals, and it
+    supersedes any earlier one; only this request body can, so model output, memory and
+    connector text never do. Without the flag the remembered grant is used; the flag alone
+    is a 'once' grant."""
+    if given and remember_days:
+        grant=ledger.remember(destination,destination_kind,data_category,purpose)
+        grant=grant if ledger.reserve(grant['id']) else None
+    else:
+        grant=None if given else ledger.remembered(destination,data_category)
     if grant is not None:return _finisher(ledger,grant['id'],destination,destination_kind,data_category,request_digest)
     return request_grant(ledger,destination,destination_kind,data_category,purpose,request_digest) if given else None
 
@@ -1020,7 +1023,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             transport_cache[provider]={'at':time.monotonic(),'value':value}
         return {**transport_cache[provider]['value'],'last_probe':probes[name]}
 
-    probe_lock=asyncio.Lock();probe_last={'at':0.0}
+    probe_lock=asyncio.Lock();probe_last=app.state.probe_last={'at':0.0}
     PROBE_COOLDOWN=30.0
     PROBE_INSTRUCTIONS='You are Arc Science\'s readiness probe. Return only the JSON object {"ok": true}.'
 
@@ -1038,19 +1041,24 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         provider='anthropic' if provider=='claude-code' else provider
         if provider not in PROVIDERS:raise api_error(404,'provider.unknown',facts={'provider':provider})
         name=CLI_TRANSPORTS[provider][1] if provider in CLI_TRANSPORTS else None
-        # The body's spend_tokens, or a remembered consent to probe this provider.
-        grant_args=('provider:'+provider,'seat',*PROBE_GRANT);given=dict(given=consent.spend_tokens,remember_days=consent.remember_days)
-        if not consent_covered(ledger,*grant_args,**given):raise api_error(422,'probe.consent_required')
         settings=operator_settings.current() or {}
         try:seats=provider_seats(settings,provider)
         except Exception as error:raise api_error(409,'probe.seat_invalid',str(error),facts={'provider':provider}) from None
         if not seats:raise api_error(409,'probe.no_seat',f'No seat uses the provider {provider}',facts={'provider':provider})
+        # Consent names where the tokens go, as a mission seat grant does: the endpoint origin
+        # or the CLI executable. The body's spend_tokens, or a remembered grant for each of them.
+        destinations=list(dict.fromkeys(seat_destination(e) for e in seats.values()))
+        given=dict(given=consent.spend_tokens,remember_days=consent.remember_days)
+        if not all(consent_covered(ledger,d,'seat',*PROBE_GRANT,**given) for d in destinations):raise api_error(422,'probe.consent_required')
         if probe_lock.locked():raise api_error(409,'probe.busy')
         if time.monotonic()-probe_last['at']<PROBE_COOLDOWN:
             raise api_error(429,'probe.cooldown',facts={'retry_after_s':max(1,int(PROBE_COOLDOWN-(time.monotonic()-probe_last['at']))+1)})
         async with probe_lock:
-            finish=consent_grant(ledger,*grant_args,**given)
-            if finish is None:raise api_error(422,'probe.consent_required')
+            finishes={d:consent_grant(ledger,d,'seat',*PROBE_GRANT,**given) for d in destinations}
+            if None in finishes.values():
+                for f in finishes.values():
+                    if f is not None:f('denied','consent withdrawn before the probe')
+                raise api_error(422,'probe.consent_required')
             probe_last['at']=time.monotonic()
             try:
                 command=_cli_command(settings,provider) if any(e.transport=='cli' for e in seats.values()) else None
@@ -1061,7 +1069,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                     verified=(probe_subject(provider,'cli',e.model,e.effort,executable_sha256=executable_sha256) if e.transport=='cli'
                               else probe_subject(provider,'api',e.model,e.effort,endpoint=origin(e.endpoint),credential_ref=e.credential_ref))
                     distinct.setdefault(subject_digest(verified),(verified,e,[]))[2].append(role)
-                results=[]
+                results=[];calls={d:[] for d in destinations}
                 async with httpx.AsyncClient(trust_env=False) as client:
                     for digest_value,(verified,e,roles) in distinct.items():
                         record={'model':e.model,'effort':e.effort,'roles':roles,'transport':e.transport,'subject':verified,'subject_digest':digest_value}
@@ -1082,6 +1090,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                                             'duration_ms':int((time.monotonic()-started)*1000)})
                         finally:
                             if seat is not None and hasattr(seat,'close'):seat.close()
+                        calls[seat_destination(e)].append(results[-1]['ok'])
                 at=int(time.time());reply={'at':at,'transport':name if command else 'api','provider':provider,'results':results}
                 (root/'providers').mkdir(parents=True,exist_ok=True)
                 for key,transport in ((name,'cli'),(provider,'api')):
@@ -1089,11 +1098,13 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                     if not mine:continue
                     probes[key]={'at':at,'transport':key if transport=='cli' else 'api','provider':provider,'results':mine}
                     with (root/'providers'/(key+'-probes.jsonl')).open('a',encoding='utf-8') as log:log.write(json.dumps(probes[key])+'\n')
-                finish('ok' if all(r['ok'] for r in results) else 'failed')
+                # One receipt per destination, naming how many model calls went there.
+                for d,finish in finishes.items():finish('ok' if all(calls[d]) else 'failed',f'{len(calls[d])} model call(s)')
                 return reply
             except BaseException as error:
                 # Every reserved use has a receipt, even when the probe itself breaks.
-                finish('failed',type(error).__name__);raise
+                for finish in finishes.values():finish('failed',type(error).__name__)
+                raise
 
     from .readiness import create_router as readiness_router
     readiness_api=readiness_router(authorized=authorized,root=root,repository=repository,cli_transport=cli_transport,cli_transports=CLI_TRANSPORTS,
