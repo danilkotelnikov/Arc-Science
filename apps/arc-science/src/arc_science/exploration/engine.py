@@ -178,12 +178,13 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             return stop('budget_exhausted','action_limit','Action limit reached; untested alternatives remain unresolved.',
                         max_actions=request.max_actions,actions_used=state.actions_used)
         if over_budget() is not None:return state
-        op=None
+        op=None;called=False
         try:
             if committed_plan is None:
                 if not reserve_calls(1): return stop('budget_exhausted','call_limit','Model-call limit reached.',**calls_left('plan',1))
                 planning_context=context()
                 op=log('started',operation='plan',role='planner',round=state.round,model_requested=identity('planner'))
+                called=True
                 raw=await asyncio.wait_for(agent.propose(planning_context),timeout=90)
                 plan=Proposal.model_validate(raw)
             else:
@@ -208,10 +209,10 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             if len({a.id for a in plan.actions})!=len(plan.actions): raise ProposalRejected('Duplicate actions')
             if any(a.branch_id not in ids for a in plan.actions): raise ProposalRejected('Unknown branch')
         except Exception as why:
-            if op:
-                log('finished',op,outcome='error',detail='Planning failed validation or provider execution.')
-                transport=unbound('planner')
-                if transport is not None:change(unbound_calls=state.unbound_calls+(unbound_call('planner',transport),))
+            if op:log('finished',op,outcome='error',detail='Planning failed validation or provider execution.')
+            # Accounting never depends on the optional timeline logger.
+            transport=unbound('planner') if called else None
+            if transport is not None:change(unbound_calls=state.unbound_calls+(unbound_call('planner',transport),))
             # Only the engine's own refusals are quoted; provider and schema errors may carry model text.
             reason=' Rejected: '+str(why)+'.' if isinstance(why,ProposalRejected) else ''
             return stop('error','planning_failed','Planning failed validation or provider execution. No synthetic fallback was used.'+reason,

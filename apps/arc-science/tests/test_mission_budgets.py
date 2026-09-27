@@ -4,8 +4,11 @@ a budget the calls cannot measure fails closed; a cost budget is refused up fron
 bound seat cannot report cost; list rows carry round, max_rounds and updated_at."""
 import asyncio
 import sqlite3
+import sys
 import time
+from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -14,11 +17,13 @@ from arc_science import service
 from arc_science.contracts import canonical, digest
 from arc_science.error_codes import ERROR_CODES, STOP_CODES
 from arc_science.exploration.agents import DemoAgent, DemoVisionAgent
+from arc_science.exploration.cli_seats import CliAgent
 from arc_science.exploration.engine import explore, initialize
 from arc_science.exploration.models import MissionRequest, MissionState, ModelRecord, UnboundCall, VisionRecord
-from arc_science.exploration.providers import ModelEndpoint, SeatAgent
+from arc_science.exploration.providers import HTTPAgent, ModelEndpoint, SeatAgent
 from arc_science.exploration.repository import MissionRepository
 from arc_science.exploration.spend import running_minutes, spent
+from arc_science.transport import AccessGrant, ProviderError
 from test_claude_code_service import configured  # noqa: F401  (a fixture)
 
 TOKEN = 'b' * 40
@@ -328,6 +333,86 @@ def test_budget_stops_are_registered():
     for code in ('token_limit', 'cost_limit', 'time_limit', 'budget_unmeasurable'):
         assert STOP_CODES[code]
     assert ERROR_CODES['budget.cost_unreported']
+
+
+def test_a_planner_answer_rejected_without_a_logger_still_keeps_its_usage():
+    class BadPlan(DemoAgent):
+        def _plan(self, context):
+            plan = super()._plan(context)
+            return {**plan, 'actions': [{**plan['actions'][0], 'branch_id': 'nowhere'}]} if plan['actions'] else plan
+    final = run(MissionRequest(goal='Bad plan', max_tokens=5_000_000), BadPlan())  # no log= passed
+    assert final.stop_code == 'planning_failed'
+    assert [(c.role, c.outcome) for c in final.unbound_calls] == [('planner', 'rejected')]
+    assert spent(final)['unrecorded_calls'] == 0 and spent(final)['input_tokens'] > 0
+
+
+# --- answers a live transport rejects keep their usage ---
+
+FAKE_CLAUDE = Path(__file__).parent / 'fixtures' / 'fake_claude.py'
+
+
+def claude_seat(mode):
+    return CliAgent([sys.executable, str(FAKE_CLAUDE), mode], 'claude-opus-5', environment={'PATH': 'x', 'SystemRoot': 'C:/Windows'})
+
+
+def test_a_cli_answer_that_fails_the_schema_keeps_its_usage_and_cost():
+    seat = claude_seat('prose')  # a paid envelope whose result is prose, not the schema
+    try:
+        with pytest.raises(ProviderError):
+            asyncio.run(seat.assess('falsifier', {'goal': 'g'}))
+        call = seat.take_provenance('falsifier')
+    finally:
+        seat.close()
+    assert (call['outcome'], call['usage'], call['cost_usd']) == ('rejected', {'input_tokens': 10, 'output_tokens': 20}, 0.001)
+    assert call['observed_model'] == 'claude-opus-5' and 'reason' in call
+
+
+def test_rejected_cli_reviews_count_against_a_cost_budget():
+    planner, reviewer = claude_seat('success'), claude_seat('prose')
+    try:
+        # Each fake call costs 0.001, three a round; only with the rejected reviews counted is 0.01 reached.
+        final = run(MissionRequest(goal='Rejected CLI reviews', max_rounds=8, max_cost_usd=0.01, allow_egress=True),
+                    SeatAgent({'planner': planner, 'reviewer': reviewer}))
+    finally:
+        planner.close()
+        reviewer.close()
+    # Uncounted, the reviews let the mission run all 8 rounds (24 paid calls) while reporting 0.008.
+    assert (final.status, final.stop_code) == ('budget_exhausted', 'cost_limit')
+    assert final.stop_facts['spent'] == pytest.approx(0.01) and final.round == 3
+    assert [(c.role, c.outcome) for c in final.unbound_calls] == [('analyst', 'rejected'), ('falsifier', 'rejected')] * 3
+    assert spent(final)['unrecorded_calls'] == 0 and spent(final)['calls'] == 10
+
+
+def http_seat(body):
+    cfg = ModelEndpoint(provider='anthropic', endpoint='https://api.example/v1/messages', model='m', credential_ref='k')
+
+    def grant(ref, principal, project):
+        return AccessGrant(token='s', principal=principal, project_id=project, resource=cfg.endpoint,
+                           credential_ref=ref, expires_at=int(time.time()) + 300, auth_style='x-api-key')
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body)))
+    return HTTPAgent(cfg, client=client, resolver=grant, project='p', principal='local')
+
+
+@pytest.mark.parametrize('body', [
+    {'model': 'm', 'stop_reason': 'max_tokens', 'content': [{'type': 'text', 'text': '{"assess'}]},  # cut off, billed in full
+    {'model': 'm', 'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': '{"assessments": "no"}'}]},  # fails the schema
+    {'model': 'other', 'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': '{}'}]},  # identity mismatch
+])
+def test_an_http_answer_rejected_after_a_200_keeps_its_usage(body):
+    seat = http_seat({**body, 'usage': {'input_tokens': 12000, 'output_tokens': 800}})
+    with pytest.raises(ProviderError):
+        asyncio.run(seat.assess('falsifier', {'goal': 'g'}))
+    call = seat.take_provenance('falsifier')
+    assert (call['outcome'], call['usage']) == ('rejected', {'input_tokens': 12000, 'output_tokens': 800})
+    # Rejected without usage it is unmeasured, so a set budget fails closed rather than undercounting.
+    seat = http_seat(body)
+    with pytest.raises(ProviderError):
+        asyncio.run(seat.assess('falsifier', {'goal': 'g'}))
+    call = seat.take_provenance('falsifier')
+    assert (call['outcome'], call['usage']) == ('rejected', None)
+    state = state_with([record('planner', {'usage': {'input_tokens': 1, 'output_tokens': 1}})], calls=2)
+    out = spent(state.model_copy(update={'unbound_calls': (UnboundCall(role='falsifier', round=0, outcome='rejected', transport=call),)}))
+    assert (out['measured'], out['unrecorded_calls']) == (False, 0)
 
 
 # --- the service ---

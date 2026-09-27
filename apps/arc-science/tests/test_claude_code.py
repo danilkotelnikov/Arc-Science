@@ -69,7 +69,8 @@ def test_every_failure_is_a_provider_error_without_a_synthetic_fallback(mode, ex
         with pytest.raises(ProviderError) as error:
             run(seat.propose(context()))
         assert expected in str(error.value)
-        assert seat.calls[-1]['outcome'] == 'failed'
+        # A paid answer that fails the schema is rejected with its usage kept; the rest failed.
+        assert seat.calls[-1]['outcome'] == ('rejected' if mode == 'prose' else 'failed')
         assert 'OAuth session' not in json.dumps(seat.calls) or mode == 'auth'
     finally:
         seat.close()

@@ -138,6 +138,9 @@ class HTTPAgent:
             payload,observed,usage=await self._request(cfg,instructions,context,schema,artifacts,applied)
         except ProviderError as error:
             record.update(outcome='failed',reason=str(error),duration_ms=int((time.monotonic()-started)*1000))
+            if hasattr(error,'answered_usage'):
+                # The provider answered and billed; only the answer is refused, so its usage counts.
+                record.update(outcome='rejected',usage=error.answered_usage)
             self.calls.append(record);raise
         record.update(outcome='ok',observed_model=observed,identity_source='response_model',identity_verified=True,
                       usage=usage,duration_ms=int((time.monotonic()-started)*1000),
@@ -193,6 +196,7 @@ class HTTPAgent:
                                         'schema':strict_schema(response_schema)}}
                 if effort:body['reasoning']={'effort':effort}
         headers['Content-Type']='application/json'
+        answered=False;usage=None
         try:
             async with self.client.stream('POST',url,content=canonical(body),headers=headers,
                                           timeout=75,follow_redirects=False) as response:
@@ -202,6 +206,9 @@ class HTTPAgent:
                     data.extend(chunk)
                     if len(data)>1024*1024:raise ProviderError('Provider response exceeds limit')
             result=json.loads(data)
+            answered=isinstance(result,dict)
+            usage=result.get('usageMetadata' if cfg.provider=='gemini' else 'usage') if answered else None
+            usage=usage if isinstance(usage,dict) else None
             if cfg.provider=='gemini':
                 observed=str(result.get('modelVersion',''))
                 if not (observed==cfg.model or (DATED_SUFFIX.search(observed) and DATED_SUFFIX.sub('',observed)==cfg.model)):
@@ -209,11 +216,9 @@ class HTTPAgent:
                 candidates=result.get('candidates') or []
                 if len(candidates)!=1 or candidates[0].get('finishReason')!='STOP':raise ProviderError('Incomplete provider output')
                 blocks=[p['text'] for p in (candidates[0].get('content') or {}).get('parts',[]) if 'text' in p and not p.get('thought')]
-                usage=result.get('usageMetadata')
             else:
                 observed=result.get('model')
                 if observed!=cfg.model:raise ProviderError('Observed model identity does not match configuration')
-                usage=result.get('usage')
                 if cfg.provider=='anthropic':
                     if result.get('stop_reason')!='end_turn':raise ProviderError('Incomplete provider output')
                     blocks=[p['text'] for p in result.get('content',[]) if p.get('type')=='text']
@@ -222,9 +227,12 @@ class HTTPAgent:
                     blocks=[p['text'] for m in result.get('output',[]) if m.get('type')=='message'
                             for p in m.get('content',[]) if p.get('type')=='output_text']
             if len(blocks)!=1:raise ProviderError('Missing or ambiguous provider response')
-            return schema.model_validate_json(blocks[0]).model_dump(mode='json'),observed,usage if isinstance(usage,dict) else None
-        except ProviderError:raise
-        except Exception:raise ProviderError('Provider request or schema validation failed') from None
+            return schema.model_validate_json(blocks[0]).model_dump(mode='json'),observed,usage
+        except Exception as error:
+            failure=error if isinstance(error,ProviderError) else ProviderError('Provider request or schema validation failed')
+            if answered:failure.answered_usage=usage
+            if failure is error:raise
+            raise failure from None
 
 
 class SeatAgent:

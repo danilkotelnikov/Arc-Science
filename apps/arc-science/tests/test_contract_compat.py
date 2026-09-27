@@ -35,14 +35,14 @@ def raw(name, part):
 
 
 def needs_rasterizer():
-    # The completed vector carries rendered plots; replay re-renders them. An acceptance run
-    # sets ARC_REQUIRE_RASTERIZER=1 so a missing rasterizer fails instead of skipping.
+    # The completed vector carries rendered plots; replay re-renders them. A missing rasterizer
+    # fails: these checks are the legacy gate. ARC_ALLOW_NO_RASTERIZER=1 is the explicit opt-out.
     from arc_science.svg_raster import cairo_available
     if not os.environ.get('ARC_SVG2PNG') and not cairo_available():
         message = 'No SVG rasterizer: set ARC_SVG2PNG or install cairosvg to re-render the legacy plots'
-        if os.environ.get('ARC_REQUIRE_RASTERIZER') == '1':
-            pytest.fail(message)
-        pytest.skip(message)
+        if os.environ.get('ARC_ALLOW_NO_RASTERIZER') == '1':
+            pytest.skip(message)
+        pytest.fail(message)
 
 
 # The store schema of the release the vectors come from, before the updated_at column.

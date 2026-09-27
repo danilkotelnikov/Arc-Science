@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import io
 import json
-import os
 import time
 import zipfile
 
@@ -15,6 +14,7 @@ from arc_science.exploration.agents import DemoAgent
 from arc_science.exploration.claims import route_states
 from arc_science.exploration.engine import explore, initialize
 from arc_science.exploration.models import MissionRequest, MissionState, ModelRecord
+from test_contract_compat import needs_rasterizer
 
 TOKEN = 't' * 40
 AUTH = {'Authorization': 'Bearer ' + TOKEN}
@@ -32,12 +32,6 @@ def finished(c, mid):
             return row
         time.sleep(.01)
     raise AssertionError('mission did not finish')
-
-
-def needs_rasterizer():
-    from arc_science.svg_raster import cairo_available
-    if not os.environ.get('ARC_SVG2PNG') and not cairo_available():
-        pytest.skip('No SVG rasterizer: set ARC_SVG2PNG or install cairosvg so the demo mission has artifacts')
 
 
 @pytest.fixture(scope='module')

@@ -438,6 +438,7 @@ class CliAgent:
         started = time.monotonic()
         call = uuid.uuid4().hex[:12]
         files = self.flavour.files(self.workdir, call, instructions, response_schema)
+        answer = None
         try:
             stdout, stderr, returncode = await run_process(
                 self.flavour.arguments(self.command, model, instructions, effort, self.workdir, files),
@@ -445,15 +446,16 @@ class CliAgent:
                 self.flavour.environment(self.environment, files), self.timeout, self.flavour.label)
             answer = self.flavour.parse(stdout, stderr, returncode, files, model)
             payload = schema.model_validate_json(answer.text.strip()).model_dump(mode='json')
-        except ProviderError as error:
-            record.update(outcome='failed', reason=str(error), duration_ms=int((time.monotonic() - started) * 1000))
+        except Exception as error:
+            reason = str(error) if isinstance(error, ProviderError) else 'Provider request or schema validation failed'
+            record.update(outcome='failed', reason=reason, duration_ms=int((time.monotonic() - started) * 1000))
+            if answer is not None:
+                # The model answered and was paid; only its answer is refused, so its usage counts.
+                record.update(outcome='rejected', observed_model=answer.observed_model, usage=answer.usage, cost_usd=answer.cost_usd)
             self.calls.append(record)
-            raise
-        except Exception:
-            record.update(outcome='failed', reason='Provider request or schema validation failed',
-                          duration_ms=int((time.monotonic() - started) * 1000))
-            self.calls.append(record)
-            raise ProviderError('Provider request or schema validation failed') from None
+            if isinstance(error, ProviderError):
+                raise
+            raise ProviderError(reason) from None
         finally:
             for path in files.values():
                 with_suppress_unlink(path)
