@@ -6,6 +6,7 @@ import json
 import math
 from pathlib import Path
 import re
+import struct
 import time
 from urllib.parse import urlencode, urlsplit
 
@@ -52,6 +53,9 @@ def _format_of(mimes):
 
 # A DOS EPS header is 30 bytes; NIH leaves a 23-byte remainder of one. Allow up to 32.
 _DOS_HEADER = 32
+# A whole DOS header: magic, PS offset and length, WMF and TIFF preview offset and length, checksum.
+_DOS = struct.Struct('<4s6IH')
+_DOS_MAGIC = b'\xc5\xd0\xd3\xc6'
 # Bytes that end a run of text: C0 controls except TAB, and DEL.
 _CONTROL = re.compile(rb'[\x00-\x08\x0a-\x1f\x7f]')
 
@@ -60,25 +64,37 @@ def _comment_lines(block):
     return block == b'' or (block.endswith(b'\n') and all(line.startswith(b'%') for line in block[:-1].split(b'\n')))
 
 
+def _dos_header(prefix):
+    """A whole DOS header right before the PostScript is parsed: its fields are binary
+    integers, so any of their bytes may be printable. The PostScript starts where the header
+    ends, and each preview is absent or lies after the PostScript section."""
+    start = len(prefix) - _DOS.size
+    if start < 0 or not _comment_lines(prefix[:start]): return False
+    magic, ps_offset, ps_length, *previews, _ = _DOS.unpack(prefix[start:])
+    return (magic == _DOS_MAGIC and ps_offset == _DOS.size and ps_length > 0
+            and all((offset, length) == (0, 0) or (offset >= ps_offset + ps_length and length > 0)
+                    for offset, length in zip(previews[::2], previews[1::2])))
+
+
 def _holds_text(tail):
     """Three or more characters in a row, ASCII or any UTF-8 script: the shortest word or tag.
-    A DOS header's offset, length and checksum fields often put two printable bytes side by
-    side (a PS length of 0x24144 is 'DA'), so two cannot be refused.
-    ponytail: a field whose three low bytes are all printable (a PS section of 2 MiB or more,
-    about 5% of those) is refused too; parse the header fields if such a file turns up."""
+    A headless remainder's offset, length and checksum fields often put two printable bytes
+    side by side (a PS length of 0x24144 is 'DA'), so two cannot be refused."""
     return any(len(piece) >= 3 for run in _CONTROL.split(tail)
                for piece in run.decode('utf-8', 'replace').split('\ufffd'))
 
 
 def _eps_signature(data):
     """Only '%' comment lines may precede %!PS-Adobe- within 4 KiB, then optionally a binary
-    DOS EPS header (at most 32 bytes, with a NUL, and no text in it). Its field bytes may be
-    0x0A, so every line start in that window is tried as the start of the header."""
+    DOS EPS header. A header with its magic is parsed (_dos_header). The headless remainder
+    NIH serves (at most 32 bytes) has no fields left to parse: it must hold a NUL and no text,
+    and since its bytes may be 0x0A, every line start in that window is tried as its start."""
     head = data[:4096]
     at = head.find(b'%!PS-Adobe-')
     if at < 0: return False
     prefix = head[:at]
     if _comment_lines(prefix): return True
+    if _DOS_MAGIC in prefix: return _dos_header(prefix)
     return any((start == 0 or prefix[start - 1] == 0x0A) and _comment_lines(prefix[:start])
                and b'\x00' in prefix[start:] and not _holds_text(prefix[start:])
                for start in range(max(0, at - _DOS_HEADER), at))

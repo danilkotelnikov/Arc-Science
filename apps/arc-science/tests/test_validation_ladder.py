@@ -819,12 +819,61 @@ def test_a_value_hyphenated_to_its_quantity_word_is_checked():
 
 def test_only_the_r_squared_exponent_is_exempt_from_binding():
     assert numbers(['R^2 and r^2 of the fit']) == [] and numbers(['Degree 2^9.']) == ['2', '9']
-    _, state = run(Scripted([FIT], say=lambda o: 'Degree 2^9.'))
-    assert ladder_of(state)['next']['needs'] == ['unbound_number']
+    assert numbers(['The fit scales as r^9.']) == ['9']
+    for say in (lambda o: 'Degree 2^9.', lambda o: 'The fit scales as r^9.', lambda o: 'The fit scales as x^9.'):
+        _, state = run(Scripted([FIT], say=say))
+        assert ladder_of(state)['next']['needs'] == ['unbound_number']
+
+
+def test_the_power_of_a_variable_names_a_term_of_the_fit_and_takes_no_other_name():
+    """x^2 is a term of every fit of degree 2 or more; its 2 never takes the name of the value next to it."""
+    assert ('0.004', ('validation_mse',)) in list(_tokens('Adding x^2 lowered the validation error to 0.004.'))
+    for text in ('Adding x^2 lowered the validation error to {v}.', 'Adding an x^2 term gave validation error {v}.',
+                 'Validation error {v} with the x^2 term.'):
+        _, state = run(Scripted([FIT], say=lambda o: text.format(v=f"{o['data']['validation_mse']:.3g}")))
+        assert ladder_of(state)['rung'] == 1, text
+
+
+# Fix round 1 of TRACKS-MAJ: every statistic binds only to what it names.
+
+def test_every_written_form_of_an_unrecorded_statistic_keeps_the_recorded_name_off():
+    for written in ('p-value: ', 'p value ', 'p of ', 'p ', 'std ', 'IQR ', 'q-value ', 'FDR ', 'adjusted p ', 'padj ',
+                    't = ', 'z-score ', 'effect size ', 'standard error of the validation error '):
+        text = f'Validation error, {written}0.004.'
+        assert [names for _, names in _tokens(text)] == [()], text
+    for text in ('Validation median error 0.002.', 'Validation log loss 0.002.', 'Validation cross-entropy loss 0.002.'):
+        assert [names for _, names in _tokens(text)] == [()], text
+    for say in (lambda o: f"Validation error, p-value: {o['data']['validation_mse']:.3g}.",
+                lambda o: f"Validation error, std {o['data']['validation_mse']:.3g}.",
+                lambda o: f"Validation median error {o['data']['training_mse']:.3g}."):
+        _, state = run(Scripted([FIT], say=say))
+        assert ladder_of(state)['next']['needs'] == ['unbound_number']
+
+
+def test_a_value_hyphenated_to_an_unrecorded_statistic_is_checked_and_binds_nothing():
+    for text in ('Validation error, RMSE-0.3.', 'Validation error, accuracy-0.99.', 'Validation error, AUC-0.9.',
+                 'Validation error, r-squared-0.9.', 'Validation error with p-0.001.'):
+        assert [names for _, names in _tokens(text)] == [()], text
+    assert numbers(['IL-6 and COVID-19 in a β-2 fit']) == []
+    v = lambda o: f"{o['data']['validation_mse']:.3g}"
+    for say in (lambda o: f'Validation error {v(o)} with RMSE-0.3 on the split.', lambda o: f'Validation error {v(o)}, accuracy-0.99.',
+                lambda o: f'Validation error {v(o)} with p-0.001.', lambda o: f'Validation error {v(o)} on n-500 samples.'):
+        _, state = run(Scripted([FIT], say=say))
+        assert ladder_of(state)['next']['needs'] == ['unbound_number']
 
 
 def test_a_recorded_count_binds_through_its_own_name():
-    _, state = run(Scripted([FIT], say=lambda o: f"The validation set has {o['data']['n_validation']} samples."))
-    assert ladder_of(state)['rung'] == 1
-    _, state = run(Scripted([FIT], say=lambda o: 'The validation set has 17 samples.'))
-    assert ladder_of(state)['next']['needs'] == ['unbound_number']
+    for say in (lambda o: f"The validation set has {o['data']['n_validation']} samples.",
+                lambda o: f"Validation samples: {o['data']['n_validation']}.",
+                lambda o: f"Training used {o['data']['n_train']} samples.",
+                lambda o: f"The fit used {o['data']['n_train']} training samples and {o['data']['n_validation']} validation samples."):
+        _, state = run(Scripted([FIT], say=say))
+        assert ladder_of(state)['rung'] == 1
+    # A count of the other split, or one no split names, binds nothing.
+    for say in (lambda o: 'The validation set has 17 samples.',
+                lambda o: f"The validation set has {o['data']['n_train']} samples.",
+                lambda o: f"The training set has {o['data']['n_validation']} samples.",
+                lambda o: f"Training used {o['data']['n_validation']} samples.",
+                lambda o: f"The fit used {o['data']['n_validation']} samples."):
+        _, state = run(Scripted([FIT], say=say))
+        assert ladder_of(state)['next']['needs'] == ['unbound_number']

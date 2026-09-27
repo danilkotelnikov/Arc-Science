@@ -45,15 +45,16 @@ ALPHA = .05
 # degree share its statistic.
 CONTROL_DEGREE = 2
 # Every digit run, with any unit or multiplier suffix (12nM, 40x, 4242ms) and a leading dot
-# (.03). A run glued to a letter or dot is part of a name (p53, v1.2), and the 2 of R^2 or
-# r^2 is part of its name; any other exponent is a number (2^9). One after a hyphen after a
-# letter of any script is part of a name (IL-6, ИЛ-6, β-2) unless that letter ends the number
-# before it: then it is the upper end of a range (2nd-9th, 0.004x-0.9x), as after a digit
-# (0.01-0.5); or ends a quantity word, which the hyphen joins to its value (degree-3, MSE-0.9).
-# _tokens applies that rule.
-NUMBER = re.compile(r'(?<![\w.])(?<![rR]\^)(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z%]*)(?!\d|\.\d)')
+# (.03). A run glued to a letter or dot is part of a name (p53, v1.2). The 2 of R^2 or r^2 is
+# part of its name; any other exponent of a letter is the power of a variable (x^2, r^9), a
+# term only a fit of that degree or more has; an exponent of a digit is a number (2^9). One
+# after a hyphen after a letter of any script is part of a name (IL-6, ИЛ-6, β-2) unless that
+# letter ends the number before it: then it is the upper end of a range (2nd-9th,
+# 0.004x-0.9x), as after a digit (0.01-0.5); or ends a quantity word, recorded or not, which
+# the hyphen joins to its value (degree-3, MSE-0.9, RMSE-0.3, n-500). _tokens applies these rules.
+NUMBER = re.compile(r'(?<![\w.])(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z%]*)(?!\d|\.\d)')
 LETTER_HYPHEN = re.compile(r'[^\W\d]-')
-QUANTITY_HYPHEN = re.compile(r'\b(?:degrees?|mse|error|loss|permutations?|shuffles|samples?)-$', re.I)
+POWER = 'power'
 SCALAR = re.compile(r'-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?')
 # Suffixes that make a digit run a name, not a quantity: 2D, 3D.
 NAME_SUFFIXES = frozenset({'d'})
@@ -77,6 +78,12 @@ MSE = ('training_mse', 'validation_mse', 'minimum_shuffled_validation_mse', 'mea
 # A qualifier, an optional 'set' and an optional spelled-out 'mean squared' before the error.
 _ERROR = r'(?:[- ]set)?[- ](?:mean[- ]squared?[- ])?(?:error|mse|loss)'
 _SPLIT = r'(?:validation|held[- ]out|test|train(?:ing)?)'
+# A sample count: its split is resolved by _count from the split word nearest it.
+COUNT = ('n', 'n_train', 'n_validation')
+SPLIT_WORD = re.compile(r'\b(?:(validation|held[- ]out|test)|train(?:ing|ed)?)\b', re.I)
+# A lone letter names a statistic only right before its value: after a comparator, a colon,
+# 'of', or nothing but a hyphen (the window ends at the number).
+_BARE = r'(?=\s*(?:[=<>≤≥≈~:]|of\b|-?$))'
 QUANTITIES = ((re.compile(r'shuffled (?:validation )?(?:error|mse|loss)|null (?:error|mse)', re.I), MSE[2:]),
               (re.compile(r'(?:validation|held[- ]out|test)' + _ERROR + r'|(?:error|mse|loss) on the (?:validation|held[- ]out|test)',
                           re.I), ('validation_mse',)),
@@ -84,17 +91,23 @@ QUANTITIES = ((re.compile(r'shuffled (?:validation )?(?:error|mse|loss)|null (?:
               (re.compile(r'\b(?:mse|error|loss)\b', re.I), MSE),
               (re.compile(r'\bdegrees?\b', re.I), ('degree',)),
               (re.compile(r'\b(?:permutations?|shuffles)\b', re.I), ('permutations',)),
-              (re.compile(r'\b(?:samples?|points|observations|measurements)\b', re.I), ('n', 'n_train', 'n_validation')),
-              (re.compile(r'\bp(?:[- ]?value)?\s*[=<>≤≥≈~]', re.I), ()),
+              (re.compile(r'\b(?:samples?|data[- ]points|observations|measurements)\b|\bn' + _BARE, re.I), COUNT),
               # Quantities the tools never record: nearer than a recorded name, they keep it off. A
               # spelled-out error of another kind ends where the generic 'error' (or 'validation
               # error') does and starts earlier, so it wins the tie as the longer name.
               (re.compile(r'\b(?:accuracy|r[- ]?squared|r2|auc|auroc|f1|precision|recall|sensitivity|specificity|'
                           r'correlation|coefficient of determination|pearson|spearman|kendall|rho|ρ|tau|'
-                          r'standard deviation|variance|rmse|nrmse|rmsd|mae|mape|sd|sem|se|odds ratio|hazard ratio|slope|intercept|'
+                          r'standard deviation|variance|rmse|nrmse|rmsd|mae|mape|sd|sem|se|std|stdev|iqr|interquartile range|'
+                          r'odds ratio|hazard ratio|slope|intercept|effect size|cohen\'?s d|'
+                          r'[pq][- ]?values?|fdr|false discovery rate|padj|p[- ]?adj(?:usted)?|adjusted p(?:[- ]?values?)?|'
+                          r'[tz][- ]?stat(?:istic)?s?|[tz][- ]?scores?|'
                           r'(?:root[- ]mean[- ]squared?|rms|mean[- ]absolute(?:[- ]percentage)?|standard|relative|absolute|'
-                          r'percentage|percent|normali[sz]ed)[- ](?:' + _SPLIT + r'(?:[- ]set)?[- ])?error)\b', re.I), ()),
-              (re.compile(r'\br(?:²|\^2)|\br\s*(?:[=<>≤≥≈~:]|of\b)|\br\s+$', re.I), ()))  # a bare r just before the number (the window ends at it)
+                          r'percentage|percent|normali[sz]ed|median|log|cross[- ]entropy)[- ](?:' + _SPLIT +
+                          r'(?:[- ]set)?[- ])?(?:error|loss))\b', re.I), ()),
+              # A statistic of an error is not the error: 'standard error of the validation error'.
+              (re.compile(r'\b(?:standard[- ](?:error|deviation)|std|stdev|sd|sem|se|variance|iqr|confidence interval|ci)'
+                          r'[- ](?:of|in|for|on)[- ](?:the[- ])?(?:\w+[- ]){0,3}?(?:error|mse|loss)\b', re.I), ()),
+              (re.compile(r'\br(?:²|\^2)|\b[pr]' + _BARE + r'|\b[tz](?=\s*[=<>≤≥≈~:])', re.I), ()))
 
 
 # A sentence ends at ; ! or ?, or at a full stop before a capital letter, so the stop of an
@@ -119,13 +132,34 @@ def _quantity(window, after=False):
     return (best[0][0], best[1], best[2]) if best else None
 
 
+def _joined(text, hyphen):
+    """A quantity word, recorded or not, ends right at the hyphen: it joins the word to its value."""
+    near = _quantity(text[max(0, hyphen - 48):hyphen])
+    return near is not None and near[0] == 0
+
+
+def _count(before, after=''):
+    """The count fields a sample count names: those of the split word nearest it, the first
+    between the number and its count word, else the last before the number; with none, the
+    whole data set."""
+    nearest = SPLIT_WORD.findall(after)[:1] or SPLIT_WORD.findall(before)[-1:]
+    return (('n_validation',) if nearest[0] else ('n_train',)) if nearest else ('n',)
+
+
 def _tokens(text):
-    """(number, the recorded fields its nearest quantity word names, or None) per number."""
+    """(number, the recorded fields its nearest quantity word names, or None) per number; the
+    power of a variable comes last, named POWER."""
     text = IDENTIFIER.sub(' ', text)
-    raw = list(NUMBER.finditer(text))
+    raw, powers = [], []
+    for m in NUMBER.finditer(text):
+        variable = text[m.start() - 2:m.start()] if m.start() >= 2 else ''
+        if not (variable[1:] == '^' and variable[0].isalpha()):
+            raw.append(m)
+        elif not (variable[0] in 'rR' and m.group(0) == '2'):
+            powers.append(m)
     found = [m for i, m in enumerate(raw) if m.group(2).lower() not in NAME_SUFFIXES and not (
         LETTER_HYPHEN.fullmatch(text, m.start() - 2, m.start()) and not (i and raw[i - 1].end() == m.start() - 1)
-        and not QUANTITY_HYPHEN.search(text, max(0, m.start() - 16), m.start()))]
+        and not _joined(text, m.start() - 1))]
     # A range (0.01-0.5, 0.01 – 0.5) is one quantity: both ends take the name nearest the range.
     groups = []
     for i, m in enumerate(found):
@@ -140,7 +174,8 @@ def _tokens(text):
     taken = 0
     for i, group in enumerate(groups):
         start = max(groups[i - 1][-1].end() if i else 0, taken)
-        before = _quantity(SENTENCE.split(text[start:max(start, group[0].start())])[-1])
+        piece = SENTENCE.split(text[start:max(start, group[0].start())])[-1]
+        before = _quantity(piece)
         end = groups[i + 1][0].start() if i + 1 < len(groups) else len(text)
         window = CLAUSE.split(SENTENCE.split(text[group[-1].end():end])[0])[0]
         after = _quantity(window, after=True)
@@ -149,13 +184,16 @@ def _tokens(text):
         if before and after and after[0] < before[0] and not after[1] and (onward is None or after[0] <= onward):
             named = ()
         elif before:
-            named = before[1]
+            named = _count(piece) if before[1] is COUNT else before[1]
         elif after:
             named, taken = after[1], group[-1].end() + after[2]
+            named = _count(piece, window[:after[2]]) if named is COUNT else named
         else:
             named = None
         for m in group:
             yield m.group(1), named
+    for m in powers:
+        yield m.group(1), POWER
 
 
 def numbers(texts) -> list[str]:
@@ -173,6 +211,14 @@ def _fields(evidence, names):
                 yield value
             elif isinstance(value, str) and SCALAR.fullmatch(value.strip()):
                 yield float(value)
+
+
+def _bound(token, names, evidence) -> bool:
+    """The power of a variable binds when a recorded fit has that term (degree at least the
+    power); any other number binds the recorded field its name names (_binds)."""
+    if names == POWER:
+        return token.isdigit() and any(1 <= int(token) <= degree for degree in _fields(evidence, ('degree',)))
+    return _binds(token, list(_fields(evidence, names)))
 
 
 def _binds(token, values) -> bool:
@@ -421,7 +467,7 @@ def claim_ladder(state: MissionState, scoped: ScopedBranch, *, timeline_rows=Non
     used = set(scoped.evidence_ids)
     evidence = [o for o in state.observations if o.id in used and o.status == 'ok' and o.claim_eligible]
     traced, extra = _traced(state, evidence, timeline_rows)
-    unbound = any(not _binds(token, list(_fields(evidence, names)))
+    unbound = any(not _bound(token, names, evidence)
                   for text in scoped.supported_scope for token, names in _tokens(text))
     survived, falsifier = _falsifier(state, branch, evidence)
     rejected, null = _null(state, branch, evidence)

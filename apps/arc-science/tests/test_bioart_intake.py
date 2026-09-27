@@ -336,3 +336,30 @@ def test_eps_signature_accepts_dos_headers_whatever_their_field_bytes(tmp_path, 
     assert _eps_signature(data)
     client, _ = provider(tmp_path, 'EPS', data)
     assert client.verify(client.fetch(18, 64, 'EPS').receipt_path)['format'] == 'EPS'
+
+
+@pytest.mark.parametrize('ps_length, tiff_offset, tiff_length', [
+    (0x414243, 0, 0), (0x302030, 0, 0), (0x414141, 0, 0), (1000, 1030, 0x414243), (0x7E7E7E, 30 + 0x7E7E7E, 0x7E7E7E),
+], ids=['length-CBA', 'length-0-0', 'length-AAA', 'tiff-length-CBA', 'tildes-everywhere'])
+def test_a_whole_dos_header_is_parsed_so_any_field_bytes_pass(tmp_path, ps_length, tiff_offset, tiff_length):
+    """A 30-byte DOS header's fields are binary integers: three printable bytes in a length
+    field (a PS section of 2 MiB or more) are not text."""
+    from arc_science.bioart.client import _eps_signature
+    data = _dos_eps(ps_length=ps_length, tiff_offset=tiff_offset, tiff_length=tiff_length) + b'%!PS-Adobe-3.0 EPSF-3.0\r\n'
+    assert _eps_signature(data)
+    client, _ = provider(tmp_path, 'EPS', data)
+    assert client.verify(client.fetch(18, 64, 'EPS').receipt_path)['format'] == 'EPS'
+
+
+@pytest.mark.parametrize('header', [
+    _dos_eps(ps_offset=31),                                       # the PostScript does not start where the header says
+    _dos_eps(ps_offset=0x41414141),
+    _dos_eps(ps_length=0),
+    _dos_eps(ps_length=1000, tiff_offset=40, tiff_length=10),     # a preview inside the PostScript section
+    _dos_eps(ps_length=1000, tiff_offset=0, tiff_length=10),      # a preview length with no offset
+    b'\xc5\xd0\xd3\xc6<script>alert(1)</script>x',          # 30 bytes of text behind the magic
+], ids=['offset-31', 'offset-text', 'empty-ps', 'tiff-overlaps', 'tiff-no-offset', 'script-behind-magic'])
+def test_a_dos_header_with_inconsistent_fields_is_refused(header):
+    from arc_science.bioart.client import _eps_signature
+    assert len(header) == 30
+    assert not _eps_signature(header + b'%!PS-Adobe-3.0 EPSF-3.0\r\n')
