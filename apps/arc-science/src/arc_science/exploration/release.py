@@ -16,7 +16,7 @@ from ..contracts import digest
 from .models import (CheckState, MissionCheck, MissionRequest, MissionState, ReleaseCheck,
                      ReleaseDecision, VerificationReceipt)
 from .claim_scope import DERIVATION_VERSION, derive_claim_scope
-from .validation import DEFECTS, claim_ladder, is_numeric
+from .validation import DEFECTS, GRAMMAR, GUARANTEE, is_numeric, unmet
 from .vision import current_artifacts
 
 POLICY = {'version': 'arc-mission-release-1',
@@ -155,13 +155,12 @@ def _claim_scope(state):
 
 
 def _claim_rungs(request, state, verification, subject, timeline_rows, receipts):
-    """Under the reference policy every assessed claim reaches its minimum rung: L2 when it
-    rests on numbers (numerical evidence, a number reference or a typed numeral), L1 otherwise.
-    An untested hypothesis claims nothing and is held to no rung. A legacy mission's claims
-    were written before references existed: its ladder is shown, its export eligibility stays."""
-    if request.ladder_policy == 'legacy':
-        return 'not_applicable', ('A legacy mission: its claims predate reference-traced numbers, so its ladder is shown '
-                                  'but does not hold export to a minimum rung.'), ()
+    """Every assessed claim meets every condition of its minimum rung: L2 when it rests on
+    numbers (numerical evidence, a number reference or a typed numeral), L1 otherwise. An
+    untested hypothesis claims nothing and is held to no rung. A legacy mission's claims were
+    written before references existed: only the reference-grammar needs are waived for it, and
+    every other unmet condition still blocks. The displayed ladder is never changed by this."""
+    legacy = request.ladder_policy == 'legacy'
     if state.claim_scope is None:
         return 'not_applicable', 'No claim scope is recorded yet; the claim_scope check covers a stopped mission without one.', ()
     held = [b for b in state.claim_scope.branches if b.status != 'unassessed']
@@ -170,16 +169,19 @@ def _claim_rungs(request, state, verification, subject, timeline_rows, receipts)
     short, defect = [], False
     for scoped in held:
         minimum = 2 if is_numeric(state, scoped) else 1
-        ladder = claim_ladder(state, scoped, timeline_rows=timeline_rows, receipts=receipts, verification=verification, subject=subject)
-        if ladder['rung'] < minimum:
-            needs = ladder['next']['needs']
+        needs = [need for need in unmet(state, scoped, minimum, timeline_rows=timeline_rows, receipts=receipts,
+                                        verification=verification, subject=subject) if not (legacy and need in GRAMMAR)]
+        if needs:
             defect = defect or any(need in DEFECTS for need in needs)
-            short.append(scoped.branch_id + ' at L' + str(ladder['rung']) + ', needs L' + str(minimum) + ' (' + ', '.join(needs) + ')')
+            short.append(scoped.branch_id + ' needs L' + str(minimum) + ' (' + ', '.join(needs) + ')')
     if short:
         # A defect in the evidence fails; a step not yet taken (verification) is unknown.
         return ('failed' if defect else 'unknown'), 'Below the minimum rung: ' + '; '.join(short)[:600], ()
-    return 'satisfied', ('All ' + str(len(held)) + ' assessed claims reach their minimum rung (numeric L2, others L1); '
-                         'a rung records how far the evidence was checked, never that a claim is true.'), ()
+    return 'satisfied', ('All ' + str(len(held)) + ' assessed claims reach their minimum rung (numeric L2, others L1): '
+                         + GUARANTEE + '. '
+                         + ('A legacy mission predates references, so the reference grammar is waived and every other '
+                            'condition holds. ' if legacy else '')
+                         + 'A rung records how far the evidence was checked, never that a claim is true.'), ()
 
 
 def _replay(name, receipt: VerificationReceipt | None, current_subject, state):

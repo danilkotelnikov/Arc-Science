@@ -437,7 +437,7 @@ class CliAgent:
         return await self._call(self.model, PLAN_PROMPT, context, Proposal, role='planner')
 
     async def assess(self, role, context):
-        return await self._call(self.model_for(role), review_prompt(role, context), context, Reconciliation, role=role)
+        return await self._call(self.model_for(role), review_prompt(role), context, Reconciliation, role=role)
 
     async def review_visual(self, context, artifacts):
         if self.vision is None:
@@ -460,7 +460,7 @@ class CliAgent:
         else:
             response_schema = schema.model_json_schema()
         # The same rendering as the HTTP seats: mission context in its fenced block.
-        prompt = render_prompt(context, response_schema)
+        prompt = render_prompt(context, response_schema, references=schema is Reconciliation)
         requested_effort, effort, effort_source = self.effort_for(role)
         record = {'transport': self.flavour.transport, 'contract': self.flavour.contract, 'provider': self.provider,
                   'role': role, 'requested_model': model, 'requested_effort': requested_effort,

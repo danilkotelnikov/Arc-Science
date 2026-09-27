@@ -385,7 +385,7 @@ if args[:2] == ['auth', 'status']:
 if args == ['--version']:
     print('9.9.9'); sys.exit(0)
 model = args[args.index('--model') + 1]
-request = json.loads(sys.stdin.read())
+request = json.JSONDecoder().raw_decode(sys.stdin.read())[0]  # the JSON head; a fenced block or the reference listing may follow
 ctx = request['context']
 if request['response_schema'].get('title') == 'Reconciliation':
     text = json.dumps({'assessments': [], 'summary': 'nothing'})

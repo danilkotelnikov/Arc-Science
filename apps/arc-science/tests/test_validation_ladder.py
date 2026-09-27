@@ -29,7 +29,7 @@ from arc_science.exploration.engine import explore
 from arc_science.exploration.evidence import evidence_graph
 from arc_science.exploration.models import MissionRequest, MissionState, VerificationReceipt
 from arc_science.exploration.public_reads import public_tools
-from arc_science.exploration.validation import RUNGS, claim_ladder, parse, resolve
+from arc_science.exploration.validation import RUNGS, claim_ladder, parse, request_identity, resolve
 from test_settings import stub  # noqa: F401  (fixture reuse)
 
 FIXTURES = Path(__file__).parent / 'fixtures'
@@ -48,9 +48,11 @@ class Scripted(DemoAgent):
     every successful observation with the finding `say(observation)`; `models` gives the
     seats distinct identities so agreement yields provisional support."""
 
-    def __init__(self, actions, *, falsifier_test=FIT_ERROR, say=None, models=MODELS):
+    def __init__(self, actions, *, falsifier_test=FIT_ERROR, say=None, models=MODELS, next_test='', doubt=None):
         self.actions, self.falsifier_test, self.models = actions, falsifier_test, models
         self.say = say or (lambda observation: 'Consistent with the recorded analysis.')
+        # `doubt(observation)`, when given, is the falsifier's challenge; `next_test` both seats' proposal.
+        self.next_test, self.doubt = next_test, doubt
 
     def model_for(self, role):
         return (self.models or {}).get(role, self.model)
@@ -67,8 +69,10 @@ class Scripted(DemoAgent):
 
     async def assess(self, role, context):
         ok = [o for o in context['observations'] if o['status'] == 'ok']
-        return {'assessments': [{'branch_id': 'curve', 'position': 'support', 'evidence_ids': [o['id'] for o in ok],
-                                 'finding': self.say(ok[0]) if ok else 'Nothing ran.'}]}
+        doubt = self.doubt if role == 'falsifier' else None
+        return {'assessments': [{'branch_id': 'curve', 'position': 'challenge' if doubt else 'support',
+                                 'evidence_ids': [o['id'] for o in ok], 'next_test': self.next_test,
+                                 'finding': (doubt or self.say)(ok[0]) if ok else 'Nothing ran.'}]}
 
 
 FIT = {'id': 'fit', 'tool': 'polynomial_fit', 'arguments': {'degree': 2}}
@@ -125,12 +129,24 @@ def decide(request, state, verification=None, rows=None, receipts=(RECEIPT,)):
 
 # The reference grammar and its resolution.
 
+def tokens(text):
+    """(well formed, each token as (its text, kind, observation id or name, field)), duplicates kept."""
+    found, well = parse(text)
+    return well, [(t['text'], t['kind'], t.get('observation_id') or t.get('value'), t.get('field')) for t in found if t['kind'] != 'text']
+
+
 def test_the_reference_grammar_accepts_only_whole_tokens():
-    tokens, well = parse('Error {{fit.validation_mse}} twice {{fit.validation_mse}}; source {{read}} and {{fit-2_b.n_train}}.')
-    assert well and tokens == [('{{fit.validation_mse}}', 'fit', 'validation_mse'), ('{{fit.validation_mse}}', 'fit', 'validation_mse'),
-                               ('{{read}}', 'read', None), ('{{fit-2_b.n_train}}', 'fit-2_b', 'n_train')]
-    assert parse('Adjacent {{a.x}}{{b}} tokens and {single} braces or a set {x, y}.') == ([('{{a.x}}', 'a', 'x'), ('{{b}}', 'b', None)], True)
-    assert parse('No references at all.') == ([], True)
+    assert tokens('Error {{fit.validation_mse}} twice {{fit.validation_mse}}; source {{read}} and {{fit-2_b.n_train}}.') == (True, [
+        ('{{fit.validation_mse}}', 'number', 'fit', 'validation_mse'), ('{{fit.validation_mse}}', 'number', 'fit', 'validation_mse'),
+        ('{{read}}', 'source', 'read', None), ('{{fit-2_b.n_train}}', 'number', 'fit-2_b', 'n_train')])
+    assert tokens('Adjacent {{a.x}}{{b}} tokens and {single} braces or a set {x, y}.') == (
+        True, [('{{a.x}}', 'number', 'a', 'x'), ('{{b}}', 'source', 'b', None)])
+    assert tokens('No references at all.') == (True, [])
+    # The parser splits a text into typed segments, one per occurrence, that rebuild it exactly.
+    text = 'Error {{fit.validation_mse}} in {{name:p53}}, {{name:p53}} and {{read}}.'
+    found, well = parse(text)
+    assert well and ''.join(t['text'] for t in found) == text
+    assert [t['kind'] for t in found] == ['text', 'number', 'text', 'name', 'text', 'name', 'text', 'source', 'text']
     malformed = ('{{fit.validation_mse}', '{fit.validation_mse}}', 'open {{ only', 'close }} only', '{{}}', '{{fit.}}', '{{.x}}',
                  # nested
                  '{{{{fit.degree}}}}', '{{fit.{{fit.degree}}}}', '{{{fit.degree}}}', '{{fit.degree}}}',
@@ -140,6 +156,47 @@ def test_the_reference_grammar_accepts_only_whole_tokens():
                  '{{fit.data.n}}', '{{fit/degree}}', '{{fit.válidation}}', '{{fit:degree}}', '{{fit.degree|x}}')
     for text in malformed:
         assert not parse(text)[1], text
+
+
+def test_a_name_token_labels_an_identifier_with_digits():
+    """{{name:<text>}}: a letter, then letters, digits and hyphens. It is the author's label, not
+    a traced value: exempt from the numeral check, never a number and never resolved against evidence."""
+    for name in ('p53', 'BRCA1', 'IL-6', 'SARS-CoV-2', 'H3K27ac', 'GPT-5', 'x'):
+        assert tokens('The {{name:' + name + '}} line.') == (True, [('{{name:' + name + '}}', 'name', name, None)]), name
+    for text in ('{{name:}}', '{{name:5p}}', '{{name:-p53}}', '{{name:GPT-5.5}}', '{{name:p 53}}', '{{name: p53}}', '{{name:p_53}}',
+                 '{{name:p53}', '{{name:p53.x}}', '{{name:IL-6/IL-8}}', '{{name:β2}}', '{{Name:p53}}', '{{name:p53:x}}',
+                 # nested
+                 '{{name:{{name:p53}}}}', '{{name:{{fit.degree}}}}', '{{{{name:p53}}}}', '{{name:p53}}}'):
+        assert not parse(text)[1], text
+    said = 'Error {{fit.validation_mse}} for {{name:p53}}, {{name:SARS-CoV-2}} and {{name:H3K27ac}}.'
+    _, state = run(Scripted([FIT], say=lambda o: said))
+    ladder = ladder_of(state)
+    assert ladder['rung'] == 1 and 'numbers_bound' in ladder['met']
+    assert 'not checked' in ladder['note'] and 'name token' in ladder['note']
+    [card] = build_claims(state, traced(state), None, None)['claims']
+    fit = state.observations[0].data
+    assert card['supported_scope_rendered'][0] == f"analyst: Error {fit['validation_mse']!r} [validation_mse, fit] for p53, SARS-CoV-2 and H3K27ac."
+    assert [(r['kind'], r['value']) for r in card['references']] == [
+        ('number', fit['validation_mse']), ('name', 'p53'), ('name', 'SARS-CoV-2'), ('name', 'H3K27ac')]
+    # A name is never a number: a claim whose only digits sit in names is not numeric and is held to L1.
+    request, named = run(Scripted([READ], falsifier_test=None, say=lambda o: 'The {{name:BRCA1}} review is {{read}}.'),
+                         extra_tools=reads(SOUND), egress=True)
+    assert ladder_of(named)['rung'] == 1 and rung_check(decide(request, named)).state == 'satisfied'
+    # The same digits typed bare are numerals; a malformed name token is malformed.
+    for said, need in (('The p53 line.', 'literal_numeral'), ('The {{name:GPT-5.5}} run.', 'malformed_reference'),
+                       ('The {{name:p53} line.', 'malformed_reference'), ('The {{name:{{name:p53}}}} line.', 'malformed_reference')):
+        _, state = run(Scripted([FIT], say=lambda o, s=said: s))
+        assert ladder_of(state)['next']['needs'] == [need], said
+    # Scope limit: a quantity written as a name passes the grammar, but it is shown as a name the
+    # author labelled, never as a traced value, and it makes nothing numeric.
+    request, disguised = run(Scripted([READ], falsifier_test=None, say=lambda o: 'Recall rose to {{name:r0-93}} in {{read}}.'),
+                             extra_tools=reads(SOUND), egress=True)
+    [card] = build_claims(disguised, traced(disguised), None, None, receipts=[RECEIPT])['claims']
+    [shown] = [t for t in card['supported_scope_segments'][0] if t['kind'] == 'name']
+    assert shown == {'kind': 'name', 'text': '{{name:r0-93}}', 'observation_id': None, 'field': None, 'value': 'r0-93',
+                     'resolved': True, 'diagnostic': None, 'rendered': 'r0-93'}
+    assert [r for r in card['references'] if r['kind'] == 'number'] == []
+    assert rung_check(decide(request, disguised)).state == 'satisfied'
 
 
 def test_a_reference_resolves_only_to_a_finite_top_level_number_of_a_member_observation():
@@ -160,38 +217,70 @@ def test_a_reference_resolves_only_to_a_finite_top_level_number_of_a_member_obse
     # A number is never a source, and only a literature retrieval is one.
     assert resolved('{{fit}}') == {'token': '{{fit}}', 'kind': 'source', 'observation_id': 'fit', 'field': None,
                                    'value': None, 'resolved': False}
-    # Membership is the claim's evidence: an observation of the branch the claim leaves out never resolves.
+    # Lookup is mission-wide: an observation the claim leaves out of its evidence resolves when it
+    # has an ok timeline row, and then counts as the claim's evidence; without the row it does not.
     _, state = run(Scripted([FIT, NULL], say=lambda o: BOUND[:-1] + ' against {{null.minimum_shuffled_validation_mse}}.'))
     assert ladder_of(state)['rung'] == 1
     [scoped] = state.claim_scope.branches
-    ladder = ladder_of(state, scoped=scoped.model_copy(update={'evidence_ids': ('fit',)}))
+    narrowed = scoped.model_copy(update={'evidence_ids': ('fit',)})
+    assert ladder_of(state, scoped=narrowed)['rung'] == 1
+    ladder = ladder_of(state, scoped=narrowed, rows=[r for r in traced(state) if r['action_id'] != 'null'])
     assert ladder['rung'] == 0 and ladder['next']['needs'] == ['unresolved_reference'] and ladder['verdict'] == 'blocked'
 
 
 class OtherBranch(DemoAgent):
-    """Round 0 fits on branch 'peek'; round 1 opens 'curve', whose finding references the peek fit."""
+    """Round 0 runs `peek` on branch 'peek'; round 1 opens 'curve', which runs `curve` and whose
+    finding may reference the peek observations."""
+    def __init__(self, peek=(FIT,), curve=(DESCRIBE,), finding='Error {{fit.validation_mse}} over {{describe.n}} points.'):
+        self.peek, self.curve, self.finding = peek, curve, finding
+
     def model_for(self, role):
         return MODELS[role]
 
     async def propose(self, context):
         if context['round'] == 0:
             return {'branches': [{'id': 'peek', 'title': 'Peek', 'hypothesis': 'Look.', 'falsifier': 'None.', 'parents': []}],
-                    'actions': [{**FIT, 'branch_id': 'peek'}], 'stop': False, 'reason': 'Look.'}
+                    'actions': [{**a, 'branch_id': 'peek'} for a in self.peek], 'stop': False, 'reason': 'Look.'}
         if context['round'] == 1:
             return {'branches': [{'id': 'curve', 'title': 'Curve', 'hypothesis': 'Quadratic.', 'falsifier': 'None.', 'parents': []}],
-                    'actions': [{**DESCRIBE, 'branch_id': 'curve'}], 'stop': False, 'reason': 'Describe.'}
+                    'actions': [{**a, 'branch_id': 'curve'} for a in self.curve], 'stop': False, 'reason': 'Compare.'}
         return {'stop': True, 'reason': 'Done.'}
 
     async def assess(self, role, context):
         ok = [o['id'] for o in context['observations'] if o['status'] == 'ok' and o['branch_id'] == 'curve']
-        return {'assessments': [{'branch_id': 'curve', 'position': 'support', 'evidence_ids': ok,
-                                 'finding': 'Error {{fit.validation_mse}} over {{describe.n}} points.'}] if ok else []}
+        return {'assessments': [{'branch_id': 'curve', 'position': 'support', 'evidence_ids': ok, 'finding': self.finding}] if ok else []}
 
 
-def test_a_reference_to_another_branch_never_resolves():
+def test_a_reference_to_another_branch_resolves_with_its_provenance_and_joins_the_evidence():
     _, state = run(OtherBranch())
     ladder = ladder_of(state)
-    assert ladder['rung'] == 0 and ladder['next']['needs'] == ['unresolved_reference']
+    assert ladder['rung'] == 1 and 'numbers_bound' in ladder['met'] and 'timeline_ok' in ladder['met']
+    [card] = [c for c in build_claims(state, traced(state), None, None)['claims'] if c['branch_id'] == 'curve']
+    assert card['references'][0]['resolved'] and card['references'][0]['observation_id'] == 'fit'
+    # The referenced observation is on the card's evidence list and counts for the claim.
+    assert {e['id']: e['counts_for_scope'] for e in card['evidence']} == {'describe': True, 'fit': True}
+    # Without an ok timeline row the other branch's observation is not in the lookup.
+    for rows in ([r for r in traced(state) if r['action_id'] != 'fit'], [{**r, 'outcome': 'error'} if r['action_id'] == 'fit' else r
+                                                                          for r in traced(state)]):
+        assert ladder_of(state, rows=rows)['next']['needs'] == ['unresolved_reference']
+    # A connector (not claim-eligible) observation never resolves, on any branch.
+    hidden = state.model_copy(update={'observations': tuple(o.model_copy(update={'claim_eligible': False}) if o.id == 'fit' else o
+                                                           for o in state.observations)})
+    assert ladder_of(hidden)['next']['needs'] == ['unresolved_reference']
+
+
+def test_a_cross_branch_source_is_checked_for_retraction_and_needs_its_receipt():
+    _, state = run(OtherBranch(peek=(READ,), curve=(FIT,), finding='Consistent with {{read}}.'), extra_tools=reads(RECORDS), egress=True)
+    ladder = ladder_of(state, verification=passing(state))
+    assert ladder['rung'] == 0 and ladder['next']['needs'] == ['retracted_source'] and ladder['verdict'] == 'blocked'
+    # Not referenced, the other branch's retrieval is not the claim's evidence.
+    _, quiet = run(OtherBranch(peek=(READ,), curve=(FIT,), finding='Consistent.'), extra_tools=reads(RECORDS), egress=True)
+    assert ladder_of(quiet)['rung'] == 1
+    # A cross-branch read resolves only with its receipt in the grant ledger.
+    _, sound = run(OtherBranch(peek=(READ,), curve=(FIT,), finding='Consistent with {{read}}.'), extra_tools=reads(SOUND), egress=True)
+    assert ladder_of(sound)['rung'] == 1 and 'ledger_receipt' in ladder_of(sound)['met']
+    for receipts in ((), ({**RECEIPT, 'outcome': 'failed'},), None):
+        assert ladder_of(sound, receipts=receipts)['next']['needs'] == ['unresolved_reference'], receipts
 
 
 def test_references_to_recorded_values_reach_l1_within_the_stated_scope_limits():
@@ -246,15 +335,57 @@ def test_the_claim_card_renders_number_references_with_their_field_and_observati
     assert card['supported_scope_rendered'] == ['analyst: ' + rendered, 'falsifier: ' + rendered]
     assert card['references'] == [
         {'token': '{{fit.validation_mse}}', 'kind': 'number', 'observation_id': 'fit', 'field': 'validation_mse',
-         'value': fit['validation_mse'], 'resolved': True},
-        {'token': '{{fit.degree}}', 'kind': 'number', 'observation_id': 'fit', 'field': 'degree', 'value': 2, 'resolved': True},
-        {'token': '{{fit.accuracy}}', 'kind': 'number', 'observation_id': 'fit', 'field': 'accuracy', 'value': None, 'resolved': False}]
+         'value': fit['validation_mse'], 'resolved': True, 'diagnostic': None},
+        {'token': '{{fit.degree}}', 'kind': 'number', 'observation_id': 'fit', 'field': 'degree', 'value': 2, 'resolved': True,
+         'diagnostic': None},
+        {'token': '{{fit.accuracy}}', 'kind': 'number', 'observation_id': 'fit', 'field': 'accuracy', 'value': None, 'resolved': False,
+         'diagnostic': 'unresolved_reference'}]
     assert card['ladder']['rung'] == 0 and 'reference traceability' in card['ladder']['note']
-    # A malformed text is shown verbatim and none of its tokens resolve.
+    # Typed segments beside each rendered string, one per occurrence; they rebuild it exactly.
+    for rendered, parts in zip(card['supported_scope_rendered'], card['supported_scope_segments']):
+        assert ''.join(p['rendered'] for p in parts) == rendered
+    parts = card['supported_scope_segments'][0]
+    assert [p['kind'] for p in parts] == ['text', 'number', 'text', 'number', 'text', 'number', 'text']
+    assert parts[1] == {'kind': 'number', 'text': '{{fit.validation_mse}}', 'observation_id': 'fit', 'field': 'validation_mse',
+                        'value': fit['validation_mse'], 'resolved': True, 'diagnostic': None,
+                        'rendered': repr(fit['validation_mse']) + ' [validation_mse, fit]'}
+    assert parts[5]['diagnostic'] == 'unresolved_reference' and parts[5]['rendered'] == '{{fit.accuracy}}'
+    # A malformed text is shown verbatim, none of its tokens resolve and every segment says so.
     _, state = run(Scripted([FIT], say=lambda o: 'Error {{fit.validation_mse}} and {{fit.degree}.'))
     [card] = build_claims(state, traced(state), None, None)['claims']
     assert card['supported_scope_rendered'] == card['supported_scope']
     assert [r['resolved'] for r in card['references']] == [False]
+    assert {p['diagnostic'] for p in card['supported_scope_segments'][0]} == {'malformed_reference'}
+
+
+def test_every_finding_text_is_rendered_but_only_the_supported_scope_bears_the_rungs():
+    """Uncertainty details, next tests and each role's finding are rendered with their own
+    diagnostics; they lie outside the ladder's guarantee (a next test is an instruction)."""
+    doubt = lambda o: 'Error {{fit.validation_mse}} may not hold for {{name:BRCA1}}; {{fit.accuracy}} is unknown.'
+    _, state = run(Scripted([FIT], say=lambda o: BOUND, doubt=doubt, next_test='Collect 100 samples beyond {{fit.n_train}}.'))
+    [card] = build_claims(state, traced(state), None, None)['claims']
+    fit = state.observations[0].data
+    value = repr(fit['validation_mse']) + ' [validation_mse, fit]'
+    [challenge] = [u for u in card['uncertainties'] if u['reason'] == 'challenged']
+    assert challenge['detail'] == doubt(None)
+    assert challenge['detail_rendered'] == 'Error ' + value + ' may not hold for BRCA1; {{fit.accuracy}} is unknown.'
+    assert [p['diagnostic'] for p in challenge['detail_segments'] if p['diagnostic']] == ['unresolved_reference']
+    for test in card['next_tests']:
+        assert test['test'] == 'Collect 100 samples beyond {{fit.n_train}}.'
+        assert test['test_rendered'] == 'Collect 100 samples beyond ' + repr(fit['n_train']) + ' [n_train, fit].'
+        assert test['test_segments'][0] == {'kind': 'text', 'text': 'Collect 100 samples beyond ', 'observation_id': None,
+                                            'field': None, 'value': None, 'resolved': None, 'diagnostic': 'literal_numeral',
+                                            'rendered': 'Collect 100 samples beyond '}
+    findings = {f['role']: f for f in card['findings']}
+    assert findings['falsifier']['finding_rendered'] == challenge['detail_rendered']
+    assert findings['analyst']['finding_rendered'] == card['supported_scope_rendered'][0].split(': ', 1)[1]
+    assert ''.join(p['rendered'] for p in findings['analyst']['finding_segments']) == findings['analyst']['finding_rendered']
+    # Their references are listed apart from the scope's, labelled outside the ladder.
+    assert {r['token'] for r in card['outside_ladder_references']} == {
+        '{{fit.validation_mse}}', '{{name:BRCA1}}', '{{fit.accuracy}}', '{{fit.n_train}}', '{{fit.degree}}'}
+    assert 'instruction' in card['outside_ladder_note'] and 'ladder' in card['outside_ladder_note']
+    # The typed numeral and the unresolved reference outside the scope leave the rung alone.
+    assert card['ladder']['rung'] == 1 and card['ladder']['verdict'] != 'blocked'
 
 
 # Literature retrievals: sources, retractions and ledger receipts.
@@ -673,6 +804,53 @@ def test_the_controls_the_null_uses_must_be_prespecified_whether_the_claim_cites
         assert ladder['rung'] == 2 and ladder['next'] == {'rung': 3, 'needs': ['falsifier_after_observation']}, evidence_ids
 
 
+def test_permutation_controls_of_any_size_are_one_request():
+    _, state = run(ControlFirst(32, 128))
+    peek, rerun = [o for o in state.observations if o.tool == 'permutation_control']
+    assert peek.action.arguments != rerun.action.arguments and request_identity(peek) == request_identity(rerun)
+    # Every other tool's request is its arguments: fits of another degree are other requests.
+    _, fits = run(Scripted([FIT, {**FIT, 'id': 'cubic', 'arguments': {'degree': 3}}, {**FIT, 'id': 'again'}]))
+    quadratic, cubic, again = fits.observations
+    assert request_identity(quadratic) == request_identity(again) != request_identity(cubic)
+
+
+class ReadFirst(Replay):
+    """Round 0 reads the literature on branch 'peek': no numerical observation precedes the
+    commit. Round 1 opens 'curve' with its falsifier, a fit, a control and a literature read,
+    `query` for the second read (the first read's own query makes it the identical request)."""
+
+    def __init__(self, query=READ['arguments']['query']):
+        self.query = query
+
+    async def propose(self, context):
+        if context['round'] == 0:
+            return {'branches': [{'id': 'peek', 'title': 'Peek', 'hypothesis': 'Read first.', 'falsifier': 'None.', 'parents': []}],
+                    'actions': [{**READ, 'branch_id': 'peek'}], 'stop': False, 'reason': 'Read.'}
+        if context['round'] == 1:
+            branch = {'id': 'curve', 'title': 'Curved response', 'hypothesis': 'The response needs a quadratic term.',
+                      'falsifier': 'Validation error above the threshold.', 'parents': [], 'falsifier_test': FIT_ERROR}
+            return {'branches': [branch], 'actions': [{**FIT, 'branch_id': 'curve'}, {**NULL, 'branch_id': 'curve'},
+                                                      {**READ, 'id': 'read2', 'branch_id': 'curve', 'arguments': {'query': self.query}}],
+                    'stop': False, 'reason': 'Commit after reading.'}
+        return {'stop': True, 'reason': 'Done.'}
+
+
+def test_an_identical_non_numerical_request_before_the_commit_keeps_l3_unmet():
+    """The only earlier observation is a literature read (not in NUMERICAL_CATALOG), so only the
+    request-identity rule can tell that the claim's read was seen before the falsifier."""
+    other = {'query': 'another fixture'}
+    receipts = (RECEIPT, {**RECEIPT, 'id': 'receipt-2', 'request_digest': digest(other)})
+    for query, rung in ((READ['arguments']['query'], 2), (other['query'], 4)):
+        _, state = run(ReadFirst(query), extra_tools=reads(SOUND), egress=True)
+        assert [o.tool for o in state.observations][0] == 'literature_search' and 'literature_search' not in NUMERICAL_CATALOG
+        rows = [{**r, 'receipt_id': 'receipt-2'} if r['action_id'] == 'read2' and query != READ['arguments']['query'] else r
+                for r in traced(state)]
+        ladder = ladder_of(state, rows=rows, receipts=receipts, verification=passing(state))
+        assert ladder['rung'] == rung, (query, ladder['next'])
+        if rung == 2:
+            assert ladder['next'] == {'rung': 3, 'needs': ['falsifier_after_observation']}
+
+
 def test_context_or_a_noted_directive_before_the_commit_keeps_l3_unmet():
     """Judged from the persisted planner inputs up to the record that committed the falsifier:
     earlier model agreement keeps its own code; any other attached item, whatever it says, and
@@ -769,7 +947,30 @@ def test_release_holds_a_non_numeric_claim_to_l1_and_a_number_reference_makes_a_
     assert ladder_of(counted)['rung'] == 1
     check = rung_check(decide(request, counted))
     assert check.state == 'unknown' and 'needs L2' in check.reason and 'recomputation_missing' in check.reason
-    assert rung_check(decide(request, counted, passing(counted))).state == 'satisfied'
+    # A search's hit_count is a snapshot, traced but never recomputed: L2 stays out of reach.
+    check = rung_check(decide(request, counted, passing(counted)))
+    assert check.state != 'satisfied' and 'reference_not_replayable' in check.reason
+
+
+def test_l2_needs_every_number_reference_to_be_replayable_on_any_branch():
+    request, counted = run(Scripted([FIT, READ], say=lambda o: BOUND[:-1] + ' among {{read.hit_count}} works.'),
+                           extra_tools=reads(SOUND), egress=True)
+    ladder = ladder_of(counted, verification=passing(counted))
+    assert ladder['rung'] == 1 and ladder['next'] == {'rung': 2, 'needs': ['reference_not_replayable']}
+    assert 'recomputed' in ladder['met'] and 'references_replayable' not in ladder['met']
+    # Replayable references and a passing receipt reach L2; a source reference and a name are not numbers.
+    _, plain = run(Scripted([FIT, READ], say=lambda o: BOUND[:-1] + ' for {{name:BRCA1}}, see {{read}}.'),
+                   extra_tools=reads(SOUND), egress=True)
+    ladder = ladder_of(plain, verification=passing(plain))
+    assert ladder['rung'] >= 2 and 'references_replayable' in ladder['met']
+    # A non-replayable snapshot referenced from another branch withholds L2 as well.
+    _, cross = run(OtherBranch(peek=(READ,), curve=(FIT,), finding='Error {{fit.validation_mse}} among {{read.hit_count}} works.'),
+                   extra_tools=reads(SOUND), egress=True)
+    ladder = ladder_of(cross, verification=passing(cross))
+    assert ladder['rung'] == 1 and ladder['next'] == {'rung': 2, 'needs': ['reference_not_replayable']}
+    # A stored observation that claims to be replayable counts only when a trusted tool made it.
+    forged = cross.model_copy(update={'observations': tuple(o.model_copy(update={'replayable': True}) for o in cross.observations)})
+    assert ladder_of(forged, verification=passing(forged))['next']['needs'] == ['reference_not_replayable']
 
 
 def needs_rasterizer():
@@ -791,7 +992,7 @@ def test_legacy_missions_show_the_ladder_but_keep_their_export_eligibility():
     # legacy mission, and its version-3 scope is what the current rule derives: it stays eligible untouched.
     assert 'claim_rungs' not in [c.name for c in state.release.checks] and state.claim_scope.derivation_version == 'arc-claim-scope-3'
     decision = release.current_decision(request, state, event_chain_ok=True, timeline_rows=[], receipts=[])
-    assert rung_check(decision).state == 'not_applicable' and 'legacy' in rung_check(decision).reason
+    assert rung_check(decision).state == 'satisfied' and 'legacy' in rung_check(decision).reason
     assert decision.eligible_for_human_review, decision.blocking_reasons
     # The ladder is still shown.
     cards = build_claims(state, [], evidence_graph(state), decision.model_dump(mode='json'))['claims']
@@ -811,40 +1012,146 @@ def test_legacy_missions_still_verify_and_stay_eligible():
     assert report['integrity'] and report['reproduction_passed'], report['failures']
     fresh = release.evaluate_release(request, state, release.receipt_from_report(report, state), event_chain_ok=True,
                                      timeline_rows=[], receipts=[])
-    assert rung_check(fresh).state == 'not_applicable' and fresh.eligible_for_human_review
+    assert rung_check(fresh).state == 'satisfied' and fresh.eligible_for_human_review
+
+
+def test_a_legacy_mission_waives_only_the_reference_grammar():
+    """Stored-style legacy missions (ladder_policy absent from the stored request) predate
+    references: typed numerals and unresolved or malformed references are waived; every other
+    unmet L1 or L2 condition still blocks export, defect or not."""
+    typed = 'Validation error 0.4242 on the split.'
+    for said in (typed, 'Error {{fit.accuracy}}.', 'Error {{fit.validation_mse}.'):
+        request, state = run(Scripted([FIT], say=lambda o, s=said: s), policy='legacy')
+        assert 'ladder_policy' not in request.model_dump(mode='json')
+        verified = decide(request, state, passing(state))
+        assert rung_check(verified).state == 'satisfied' and verified.eligible_for_human_review, said
+        assert ladder_of(state, verification=passing(state))['rung'] == 0  # the displayed ladder is unchanged
+        # The same claim under the reference policy is blocked.
+        assert rung_check(decide(request.model_copy(update={'ladder_policy': 'references'}), state, passing(state))).state == 'failed'
+        # Unverified, the numeric claim still lacks L2 (recomputed): not waived.
+        assert rung_check(decide(request, state)).state == 'unknown' and 'recomputation_missing' in rung_check(decide(request, state)).reason
+    # A recorded retracted source blocks export, and a waived syntax failure beside it does not hide it.
+    for said in ('Consistent with the recorded analysis.', typed):
+        request, cited = run(Scripted([FIT, READ], say=lambda o, s=said: s), extra_tools=reads(RECORDS), egress=True, policy='legacy')
+        blocked = decide(request, cited, passing(cited))
+        check = rung_check(blocked)
+        assert check.state == 'failed' and 'retracted_source' in check.reason and 'literal_numeral' not in check.reason, said
+        with pytest.raises(release.ReleaseBlocked, match='claim_rungs:failed'):
+            release.assert_exportable(request, cited.model_copy(update={'release': blocked}), event_chain_ok=True,
+                                      timeline_rows=traced(cited), receipts=[RECEIPT])
+    # A condition outside DEFECTS still blocks: an external read whose receipt cannot be checked.
+    request, read = run(Scripted([READ], falsifier_test=None, say=lambda o: typed), extra_tools=reads(SOUND), egress=True, policy='legacy')
+    assert rung_check(decide(request, read, passing(read))).state == 'satisfied'
+    check = rung_check(decide(request, read, passing(read), receipts=None))
+    assert check.state == 'unknown' and 'receipt_unchecked' in check.reason
 
 
 # Prompts: the review seats are told the syntax and the fields they may reference.
 
+def recorded(i, *, id=None, fields=('validation_mse',), branch='curve'):
+    return {'id': id or 'obs-' + format(i, '03d'), 'branch_id': branch, 'tool': 'polynomial_fit', 'status': 'ok', 'claim_eligible': True,
+            'data': {field: 0.5 for field in fields}}
+
+
 def test_the_review_prompts_carry_the_reference_syntax_and_the_recorded_fields():
-    import sys
-    from arc_science.exploration.cli_seats import CliAgent
-    from arc_science.exploration.providers import HTTPAgent, ModelEndpoint, review_prompt
+    from arc_science.exploration.providers import REVIEW_PROMPT, recorded_fields, render_prompt, review_prompt
     _, state = run(Scripted([FIT, NULL, READ]), extra_tools=reads(SOUND), egress=True)
     context = {'observations': [o.model_dump(mode='json') for o in state.observations]}
-    prompt = review_prompt('falsifier', context)
+    listing = recorded_fields(context)
     for field in ('degree', 'training_mse', 'validation_mse', 'n_train', 'n_validation'):
-        assert '{{fit.' + field + '}}' in prompt, field
-    assert '{{null.minimum_shuffled_validation_mse}}' in prompt and '{{null.permutations}}' in prompt
-    assert '{{read}}' in prompt and '{{read.hit_count}}' in prompt and 'curve' in prompt
-    assert '{{fit.coefficients}}' not in prompt and '{{fit.split}}' not in prompt
+        assert '{{fit.' + field + '}}' in listing, field
+    assert '{{null.minimum_shuffled_validation_mse}}' in listing and '{{null.permutations}}' in listing
+    assert '{{read}}' in listing and '{{read.hit_count}}' in listing and 'curve' in listing
+    assert '{{fit.coefficients}}' not in listing and '{{fit.split}}' not in listing
+    # Newest first, every observation listed, nothing left out.
+    assert [line.split()[1] for line in listing.splitlines()] == ['read', 'null', 'fit']
+    prompt = review_prompt('falsifier')
+    assert prompt.startswith(REVIEW_PROMPT) and prompt.endswith('Role: falsifier')
     assert '{{<observation id>.<field>}}' in prompt and '{{<observation id>}}' in prompt and 'numeral' in prompt
-    assert prompt.endswith('Role: falsifier')
-    # Both seat transports send exactly this prompt.
-    seen = []
+    # Names with digits go in a name token, and a quantity is never written as a name.
+    assert '{{name:<name>}}' in prompt and '{{name:SARS-CoV-2}}' in prompt and 'never' in prompt and 'quantity' in prompt
+    # The listing travels in the user message the review seats share, never in the instructions.
+    assert '{{fit.degree}}' not in prompt
+    schema = {'title': 'Reconciliation'}
+    message = render_prompt(context, schema, references=True)
+    assert message.startswith(render_prompt(context, schema)) and listing in message
+    assert listing not in render_prompt(context, schema)
 
-    async def capture(model, instructions, context, schema, *, role):
-        seen.append(instructions)
-    seat = ModelEndpoint(provider='openai', endpoint='https://api.openai.com/v1/responses', model='a', credential_ref='reviewer')
-    http = HTTPAgent(seat, client=None, resolver=None, project='p', principal='x')
-    cli = CliAgent([sys.executable], 'm', 'm', provider='anthropic')
+
+def test_the_listing_is_bounded_newest_first_and_says_what_it_left_out():
+    from arc_science.exploration.providers import LIST_CHARS, LIST_ENTRIES, LIST_ID, recorded_fields
+    assert (LIST_ENTRIES, LIST_CHARS, LIST_ID) == (40, 4000, 40)
+    # At most 40 entries, newest first; the rest are counted and still valid to reference.
+    listing = recorded_fields({'observations': [recorded(i) for i in range(50)]})
+    lines = listing.splitlines()
+    assert [line.split()[1] for line in lines[:-1]] == ['obs-' + format(i, '03d') for i in range(49, 9, -1)]
+    assert lines[-1].startswith('10 ') and 'not listed' in lines[-1] and 'still valid' in lines[-1]
+    # Exactly 40 fit with nothing left out and no count line.
+    assert 'not listed' not in recorded_fields({'observations': [recorded(i) for i in range(40)]})
+    # The character budget is spent at whole entries: every listed entry is complete, and the next
+    # newest entry would not have fit.
+    wide = [recorded(i, fields=['field_' + format(k, '02d') + '_' + 'x' * 20 for k in range(8)]) for i in range(40)]
+    listing = recorded_fields({'observations': wide})
+    lines = listing.splitlines()
+    entries, tail = lines[:-1], lines[-1]
+    assert len('\n'.join(entries)) <= LIST_CHARS < len('\n'.join(entries + [entries[0]]))
+    assert all(line.count('{{') == 8 for line in entries)
+    assert tail.startswith(str(40 - len(entries)) + ' ') and [line.split()[1] for line in entries] == [
+        'obs-' + format(i, '03d') for i in range(39, 39 - len(entries), -1)]
+    # Complete ids only: an id longer than 40 characters is left out and counted, never cut.
+    ids = ['a' * 40, 'b' * 41]
+    listing = recorded_fields({'observations': [recorded(0, id=i) for i in ids]})
+    assert '- ' + 'a' * 40 + ' ' in listing and 'b' * 40 not in listing and listing.splitlines()[-1].startswith('1 ')
+    assert recorded_fields({'observations': []}) == '- none yet'
+
+
+def test_both_transports_send_the_listing_in_the_user_message_not_the_system_prompt(monkeypatch):
+    import sys
+    import time
+    from arc_science.exploration import cli_seats
+    from arc_science.exploration.cli_seats import CliAgent
+    from arc_science.exploration.providers import HTTPAgent, ModelEndpoint, recorded_fields
+    from arc_science.transport import AccessGrant, ProviderError
+    context = {'goal': 'g', 'round': 1, 'branches': [], 'assessments': [], 'observations': [recorded(i) for i in range(3)]}
+    listing = recorded_fields(context)
+    sent = []
+
+    async def capture(arguments, stdin_text, *rest):
+        sent.append((arguments, stdin_text))
+        raise ProviderError('captured')
+    monkeypatch.setattr(cli_seats, 'run_process', capture)
+    cli = CliAgent([sys.executable, str(FIXTURES / 'fake_claude.py'), 'success'], 'm', 'm', provider='anthropic',
+                   environment={'PATH': 'x', 'SystemRoot': 'C:/Windows', 'TEMP': 'C:/Temp'})
     try:
-        for agent in (http, cli):
-            agent._call = capture
-            asyncio.run(agent.assess('falsifier', context))
+        with pytest.raises(ProviderError):
+            asyncio.run(cli.assess('falsifier', context))
+        with pytest.raises(ProviderError):
+            asyncio.run(cli.propose(context))
     finally:
         cli.close()
-    assert seen == [prompt, prompt]
+    (review_argv, review_stdin), (_, plan_stdin) = sent
+    system = review_argv[review_argv.index('--system-prompt') + 1]
+    assert 'Role: falsifier' in system and '{{obs-000.validation_mse}}' not in system
+    assert listing in review_stdin and listing not in plan_stdin
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(503)
+    cfg = ModelEndpoint(provider='openai', endpoint='https://api.openai.com/v1/responses', model='gpt-5.6', credential_ref='reviewer')
+
+    async def call():
+        async with ASYNC_CLIENT(transport=httpx.MockTransport(handler)) as http:
+            agent = HTTPAgent(cfg, client=http, project='p', principal='u',
+                              resolver=lambda ref, principal, project: AccessGrant(token='t', principal=principal, project_id=project,
+                                                                                    resource=cfg.endpoint, credential_ref=ref,
+                                                                                    expires_at=int(time.time()) + 60))
+            with pytest.raises(ProviderError):
+                await agent.assess('falsifier', context)
+    asyncio.run(call())
+    [body] = bodies
+    assert 'Role: falsifier' in body['instructions'] and '{{obs-000.validation_mse}}' not in body['instructions']
+    assert listing in body['input'][0]['content'][0]['text']
 
 
 # A service journey: grants, the read, its receipt in the ledger, verification and export.
@@ -859,7 +1166,7 @@ if args[:2] == ['auth', 'status']:
 if args == ['--version']:
     print('9.9.9'); sys.exit(0)
 model = args[args.index('--model') + 1]
-request = json.loads(sys.stdin.read())
+request = json.JSONDecoder().raw_decode(sys.stdin.read())[0]  # the JSON head; a fenced block or the reference listing may follow
 ctx = request['context']
 if request['response_schema'].get('title') == 'Proposal':
     if ctx['observations']:

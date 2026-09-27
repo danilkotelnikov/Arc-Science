@@ -2,14 +2,16 @@
 evidence has been checked, derived from persisted evidence only.
 
     L0 asserted     model text only
-    L1 traced       reference traceability: evidence exists and is recorded; every number the
-                    supported scope shows is a reference {{<observation id>.<field>}} to a
-                    recorded value of an observation in the claim's evidence, and no numeral is
-                    typed outside a reference; every cited source {{<observation id>}} is a
-                    literature retrieval the mission recorded; the run passes a fidelity audit;
-                    and every work each retrieval in the evidence returned was checked by OpenAlex
-                    and none is retracted
-    L2 recomputed   the replay verification receipt passed for the current subject
+    L1 traced       reference traceability: evidence exists and is recorded; every number token
+                    {{<observation id>.<field>}} in the supported scope is traced to a recorded
+                    value of an observation of the mission, and no numeral is typed outside a
+                    token; every cited source {{<observation id>}} is a literature retrieval the
+                    mission recorded; the run passes a fidelity audit; and every work each
+                    retrieval in the evidence returned was checked by OpenAlex and none is
+                    retracted. A name token {{name:<text>}} is the author's label for an
+                    identifier with digits (p53, SARS-CoV-2) and is not checked.
+    L2 recomputed   the replay verification receipt passed for the current subject, and every
+                    observation a number token references is replayable
     L3 prespecified the branch's measurable falsifier sits in a planner record committed before
                     any successful numerical observation of the dataset, on any branch, and
                     before any observation of a request the claim uses; no earlier work or
@@ -24,6 +26,12 @@ reference: a unit or an adjective next to it is the author's. Numbers written as
 outside the numeral check by definition, and a work named only in prose is not a source.
 L3 cannot guarantee that the operator, who writes the goal before the mission starts, had not
 seen the data elsewhere.
+
+A reference resolves against the whole mission: the claim's branch evidence and every other
+successful, claim-eligible observation with an ok timeline row (and, for an external read, its
+receipt in the grant ledger). The claim's effective evidence is its branch evidence plus every
+observation its supported scope references; tracing, fidelity, retraction, prespecification and
+replayability read that one set. Only the supported scope bears the rungs.
 
 A rung counts only when every rung below it holds. No condition reads a seat's position:
 agreement between the reviewer and the falsifier never raises a rung. Pure: no I/O, and
@@ -43,7 +51,7 @@ from .models import Action, ContextItem, MissionState, ScopedBranch, Verificatio
 NAMES = ('asserted', 'traced', 'recomputed', 'prespecified', 'severe', 'replicated')
 # The conditions of each rung; each is met or answered by exactly one need code.
 RUNGS = {1: ('evidence_present', 'observations_traced', 'numbers_bound', 'fidelity_audit', 'no_retracted_source'),
-         2: ('recomputed',),
+         2: ('recomputed', 'references_replayable'),
          3: ('falsifier_prespecified',),
          4: ('null_rejected', 'falsifier_survived'),
          5: ('external_replication',)}
@@ -52,19 +60,24 @@ DEFECTS = frozenset({'observation_unrecorded', 'timeline_not_ok', 'receipt_missi
                      'malformed_reference', 'literal_numeral', 'retracted_source', 'action_mismatch',
                      'oracle_substitution', 'unregistered_tool', 'data_shrinkage', 'budget_shrinkage',
                      'recomputation_failed'})
-NOTE = ('L1 traced means reference traceability: every number shown is a recorded value of an observation in the '
-        "claim's evidence, shown with its field name and observation id, and every cited source is a retrieval the "
-        'mission recorded. The words around a reference, such as a unit or an adjective, are the author\'s and are not '
-        'checked; numbers written as words are outside the check; a work named only in prose is not a source.')
+# The reference-grammar needs, the only ones a legacy mission's export waives (its claims predate references).
+GRAMMAR = frozenset({'malformed_reference', 'unresolved_reference', 'literal_numeral'})
+GUARANTEE = ('every number token in the supported scope is traced to a recorded value; '
+             'name tokens are author-labelled identifiers and are not checked')
+NOTE = ('L1 traced means reference traceability: ' + GUARANTEE + '. Each number is shown with its field name and '
+        'observation id, and every cited source is a retrieval the mission recorded. The words around a reference, such '
+        'as a unit or an adjective, are the author\'s and are not checked; a name token is the author\'s label, not a '
+        'traced value; numbers written as words are outside the check; a work named only in prose is not a source.')
 # The significance level a permutation control must reach. The control records only its
 # best shuffle, so the bound (b+1)/(N+1) is known only for b = 0: 1/(N+1).
 ALPHA = .05
 # permutation_control refits this degree on every shuffle (tools.py); only fits of the same
 # degree share its statistic.
 CONTROL_DEGREE = 2
-# The reference grammar: {{id.field}} a recorded number, {{id}} a recorded retrieval. No
-# whitespace, no nesting; field is a top-level key of Observation.data.
-TOKEN = re.compile(r'\{\{([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_-]+))?\}\}')
+# The reference grammar: {{id.field}} a recorded number, {{id}} a recorded retrieval,
+# {{name:text}} an identifier the author labels. No whitespace, no nesting; field is a
+# top-level key of Observation.data.
+TOKEN = re.compile(r'\{\{(?:name:([A-Za-z][A-Za-z0-9-]*)|([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_-]+))?)\}\}')
 FIELD = re.compile('[A-Za-z0-9_-]+')
 LITERATURE = 'literature_search'
 
@@ -73,24 +86,41 @@ def _pairs(text, pair):
     return [i for i in range(len(text) - 1) if text[i:i + 2] == pair]
 
 
-def parse(text: str) -> tuple[list[tuple[str, str, str | None]], bool]:
-    """(tokens, well formed): each token as (its text, observation id, field or None for a
-    source), duplicates kept. The text is malformed when any '{{' does not open a token or any
+def parse(text: str) -> tuple[list[dict], bool]:
+    """(segments, well formed): the one parser of the reference grammar. The text as typed
+    segments in order, one per occurrence, that rebuild it exactly: {kind: text, text},
+    {kind: number, text, observation_id, field}, {kind: source, text, observation_id} or
+    {kind: name, text, value}. The text is malformed when any '{{' does not open a token or any
     '}}' does not close one: unmatched, nested, empty, spaced or other characters."""
+    out, at = [], 0
     found = list(TOKEN.finditer(text))
+    for m in found:
+        if m.start() > at:
+            out.append({'kind': 'text', 'text': text[at:m.start()]})
+        name, oid, field = m.groups()
+        out.append({'kind': 'name', 'text': m.group(), 'value': name} if name is not None else
+                   {'kind': 'number' if field else 'source', 'text': m.group(), 'observation_id': oid, 'field': field})
+        at = m.end()
+    if at < len(text):
+        out.append({'kind': 'text', 'text': text[at:]})
     starts, ends = {m.start() for m in found}, {m.end() - 2 for m in found}
     well = all(i in starts for i in _pairs(text, '{{')) and all(i in ends for i in _pairs(text, '}}'))
-    return [(m.group(), m.group(1), m.group(2)) for m in found], well
+    return out, well
 
 
 def _numeral(ch):
     return ch.isdigit() or unicodedata.numeric(ch, None) is not None
 
 
+def _typed(text):
+    return any(_numeral(ch) for ch in text)
+
+
 def literal_numerals(text: str) -> bool:
     """A numeral of any script (ASCII, fullwidth, superscript, fractions, Roman, CJK) outside
-    the references. A number written as a word is not a numeral."""
-    return any(_numeral(ch) for ch in TOKEN.sub(' ', text))
+    the tokens; a name token's digits are the author's label. A number written as a word is
+    not a numeral."""
+    return any(_typed(segment['text']) for segment in parse(text)[0] if segment['kind'] == 'text')
 
 
 def is_number(value) -> bool:
@@ -99,9 +129,39 @@ def is_number(value) -> bool:
 
 
 def members(state: MissionState, scoped: ScopedBranch) -> dict:
-    """The claim's evidence as claim_scope derives it: successful, claim-eligible observations."""
+    """The claim's branch evidence as claim_scope derives it: successful, claim-eligible observations."""
     used = set(scoped.evidence_ids)
     return {o.id: o for o in state.observations if o.id in used and o.status == 'ok' and o.claim_eligible}
+
+
+def lookup(state: MissionState, scoped: ScopedBranch, timeline_rows=None, receipts=None) -> dict:
+    """What a reference can name, mission-wide: the claim's branch evidence and every other
+    successful, claim-eligible observation with an ok timeline row and, for an external read,
+    its receipt in the grant ledger. Without the timeline (None) only the branch evidence."""
+    found = members(state, scoped)
+    ledger = None if receipts is None else {r.get('id'): r for r in receipts}
+    for o in state.observations:
+        if o.id in found or o.status != 'ok' or not o.claim_eligible:
+            continue
+        row = _row(timeline_rows or (), o.id)
+        if row is None or row.get('outcome') != 'ok':
+            continue
+        if o.tool not in NUMERICAL_CATALOG and (ledger is None or not _ledgered(ledger.get(row.get('receipt_id')), o)):
+            continue
+        found[o.id] = o
+    return found
+
+
+def referenced(texts, found: dict) -> dict:
+    """The observations the texts' number and source tokens name, among those found."""
+    return {s['observation_id']: found[s['observation_id']] for text in texts for s in parse(text)[0]
+            if s['kind'] in ('number', 'source') and s['observation_id'] in found}
+
+
+def effective(state: MissionState, scoped: ScopedBranch, found: dict) -> dict:
+    """The claim's effective evidence: its branch evidence plus every observation its supported
+    scope references."""
+    return {**members(state, scoped), **referenced(scoped.supported_scope, found)}
 
 
 def _works(observation):
@@ -114,28 +174,20 @@ def _works(observation):
     return works
 
 
-def resolve(token, evidence: dict) -> dict:
-    """One token against the claim's evidence (members): a number resolves to a recorded
-    int or finite float field, a source to a literature retrieval and every work it returned."""
-    text, oid, field = token
-    o = evidence.get(oid)
+def resolve(token: dict, found: dict) -> dict:
+    """One token segment against what references can name: a number resolves to a recorded int
+    or finite float field, a source to a literature retrieval and every work it returned, a name
+    to itself (it is the author's label and is never checked)."""
+    if token['kind'] == 'name':
+        return {'token': token['text'], 'kind': 'name', 'observation_id': None, 'field': None, 'value': token['value'], 'resolved': True}
+    oid, field = token['observation_id'], token['field']
+    o = found.get(oid)
     if field is None:
         works = _works(o) if o is not None and o.tool == LITERATURE else None
-        return {'token': text, 'kind': 'source', 'observation_id': oid, 'field': None, 'value': works, 'resolved': works is not None}
+        return {'token': token['text'], 'kind': 'source', 'observation_id': oid, 'field': None, 'value': works, 'resolved': works is not None}
     value = o.data.get(field) if o is not None else None
     ok = is_number(value)
-    return {'token': text, 'kind': 'number', 'observation_id': oid, 'field': field, 'value': value if ok else None, 'resolved': ok}
-
-
-def references(texts, evidence: dict) -> list[dict]:
-    """Each distinct token of the texts, in order; a token of a malformed text never resolves."""
-    out = {}
-    for text in texts:
-        tokens, well = parse(text)
-        for token in tokens:
-            if token[0] not in out:
-                out[token[0]] = resolve(token, evidence) if well else {**resolve(token, {}), 'value': None, 'resolved': False}
-    return list(out.values())
+    return {'token': token['text'], 'kind': 'number', 'observation_id': oid, 'field': field, 'value': value if ok else None, 'resolved': ok}
 
 
 def _cite(work):
@@ -143,31 +195,75 @@ def _cite(work):
     return ' '.join(part for part in (work['title'], '(' + ident + ')' if ident else None) if part)
 
 
-def render(text: str, evidence: dict) -> str:
-    """The text as the card shows it: a number as repr(value) [field, observation id], a
-    source as the works of its retrieval; an unresolved token, or any token of a malformed
-    text, stays verbatim."""
-    if not parse(text)[1]:
-        return text
-
-    def show(m):
-        r = resolve((m.group(), m.group(1), m.group(2)), evidence)
-        if not r['resolved']:
-            return m.group()
-        if r['kind'] == 'number':
-            return repr(r['value']) + ' [' + r['field'] + ', ' + r['observation_id'] + ']'
-        return '[' + ('; '.join(_cite(w) for w in r['value']) or r['observation_id'] + ': no works returned') + ']'
-    return TOKEN.sub(show, text)
+def _shown(r):
+    if r['kind'] == 'name':
+        return r['value']
+    if r['kind'] == 'number':
+        return repr(r['value']) + ' [' + r['field'] + ', ' + r['observation_id'] + ']'
+    return '[' + ('; '.join(_cite(w) for w in r['value']) or r['observation_id'] + ': no works returned') + ']'
 
 
-def _bound(texts, evidence):
+def segments(text: str, found: dict) -> list[dict]:
+    """The text as the card shows it, one typed segment per occurrence, each {kind, text,
+    observation_id, field, value, resolved, diagnostic, rendered}: a number as repr(value)
+    [field, observation id], a source as the works of its retrieval, a name as itself. An
+    unresolved token stays verbatim (unresolved_reference); a text segment with a numeral says
+    literal_numeral; in a malformed text nothing resolves and every segment says
+    malformed_reference. The rendered parts join to the rendered string."""
+    parts, well = parse(text)
+    out = []
+    for part in parts:
+        if part['kind'] == 'text':
+            diagnostic = None if not well else 'literal_numeral' if _typed(part['text']) else None
+            out.append({'kind': 'text', 'text': part['text'], 'observation_id': None, 'field': None, 'value': None,
+                        'resolved': None, 'diagnostic': 'malformed_reference' if not well else diagnostic, 'rendered': part['text']})
+            continue
+        r = resolve(part, found if well else {})
+        ok = well and r['resolved']
+        out.append({'kind': r['kind'], 'text': part['text'], 'observation_id': r['observation_id'], 'field': r['field'],
+                    'value': r['value'] if ok else None, 'resolved': ok,
+                    'diagnostic': None if ok else 'malformed_reference' if not well else 'unresolved_reference',
+                    'rendered': _shown(r) if ok else part['text']})
+    return out
+
+
+def render(text: str, found: dict) -> str:
+    return ''.join(part['rendered'] for part in segments(text, found))
+
+
+def references(texts, found: dict) -> list[dict]:
+    """Each distinct reference of the texts, in order, with its diagnostic: a token that
+    resolves in one text and not in another is listed both ways."""
+    out = []
+    for text in texts:
+        for part in segments(text, found):
+            if part['kind'] != 'text':
+                entry = {'token': part['text'], 'kind': part['kind'], 'observation_id': part['observation_id'], 'field': part['field'],
+                         'value': part['value'], 'resolved': part['resolved'], 'diagnostic': part['diagnostic']}
+                if entry not in out:
+                    out.append(entry)
+    return out
+
+
+def _bound(texts, found):
     parsed = [parse(text) for text in texts]
     if not all(well for _, well in parsed):
         return 'malformed_reference'
-    if not all(resolve(token, evidence)['resolved'] for tokens, _ in parsed for token in tokens):
+    if not all(resolve(part, found)['resolved'] for parts, _ in parsed for part in parts if part['kind'] != 'text'):
         return 'unresolved_reference'
     if any(literal_numerals(text) for text in texts):
         return 'literal_numeral'
+    return None
+
+
+def _replayable(texts, found):
+    """Every observation a number token references is one a trusted numerical tool made and the
+    capsule replays; a snapshot such as a search's hit_count is traced but never recomputed."""
+    for text in texts:
+        for part in parse(text)[0]:
+            o = found.get(part.get('observation_id')) if part['kind'] == 'number' else None
+            if o is not None and not (o.replayable and o.tool in NUMERICAL_CATALOG):
+                return 'reference_not_replayable'
     return None
 
 
@@ -317,6 +413,13 @@ def _context_before(planners, introduced):
     return 'context_before_commit' if items or notes else None
 
 
+def request_identity(o) -> tuple:
+    """What makes two observations one request: the same tool and arguments on the same dataset.
+    permutation_control draws every shuffle in sequence from one fixed seed, so all controls on
+    a dataset are one request, whatever the count."""
+    return o.tool, None if o.tool == 'permutation_control' else digest(o.action.arguments), o.dataset_digest
+
+
 def _prespecified(state, branch, evidence):
     """The planner record that introduced the branch carries the same falsifier_test, no
     planner input up to it held earlier work or an operator note, and its commit event
@@ -337,7 +440,7 @@ def _prespecified(state, branch, evidence):
         return context
     events = list(state.events)
     committed = next((i for i, e in enumerate(events) if e.kind == 'plan_committed' and e.round == introduced.round), None)
-    request = lambda o: (o.tool, None if o.tool == 'permutation_control' else digest(o.action.arguments), o.dataset_digest)
+    request = request_identity
     requests = {request(o) for o in (*evidence, *_pool(state, branch, evidence, branch.falsifier_test.tool),
                                      *_pool(state, branch, evidence, 'permutation_control'))}
     used = {o.id + ': ok' for o in state.observations if request(o) in requests}
@@ -396,11 +499,45 @@ def _null(state, branch, evidence):
 
 
 def is_numeric(state: MissionState, scoped: ScopedBranch) -> bool:
-    """Numerical-tool evidence, a number reference or a literal numeral makes a claim numeric."""
+    """Numerical-tool evidence, a number reference or a literal numeral makes a claim numeric;
+    a name token never does."""
     used = set(scoped.evidence_ids)
     return any(o.id in used and o.tool in NUMERICAL_CATALOG for o in state.observations) or any(
-        field is not None for text in scoped.supported_scope for _, _, field in parse(text)[0]) or any(
+        part['kind'] == 'number' for text in scoped.supported_scope for part in parse(text)[0]) or any(
         literal_numerals(text) for text in scoped.supported_scope)
+
+
+def _evaluate(state, scoped, timeline_rows, receipts, verification, subject):
+    """Every condition's need (None when met), the extra met codes and the facts."""
+    if isinstance(verification, dict):
+        verification = VerificationReceipt.model_validate(verification)
+    branch = next(b for b in state.branches if b.id == scoped.branch_id)
+    found = lookup(state, scoped, timeline_rows, receipts)
+    own = list(members(state, scoped).values())
+    evidence = list(effective(state, scoped, found).values())
+    cited = set(referenced(scoped.supported_scope, found))
+    traced, extra = _traced(state, evidence, cited, timeline_rows, receipts)
+    survived, falsifier = _falsifier(state, branch, own)
+    rejected, null = _null(state, branch, own)
+    outcomes = {'evidence_present': None if evidence else 'no_evidence',
+                'observations_traced': traced,
+                'numbers_bound': _bound(scoped.supported_scope, found),
+                'fidelity_audit': _fidelity(state, evidence),
+                'no_retracted_source': _retraction(evidence),
+                'recomputed': _recomputed(verification, subject),
+                'references_replayable': _replayable(scoped.supported_scope, found),
+                'falsifier_prespecified': _prespecified(state, branch, evidence),
+                'null_rejected': rejected,
+                'falsifier_survived': survived,
+                'external_replication': 'external_replication'}
+    return outcomes, extra, {'falsifier': falsifier, 'null_model': null}, survived
+
+
+def unmet(state: MissionState, scoped: ScopedBranch, rung: int, *, timeline_rows=None, receipts=None,
+          verification: VerificationReceipt | dict | None = None, subject: str | None = None) -> list[str]:
+    """The need of every unmet condition of rungs 1..rung, whichever rung fails first."""
+    outcomes = _evaluate(state, scoped, timeline_rows, receipts, verification, subject)[0]
+    return [outcomes[code] for n in range(1, rung + 1) for code in RUNGS[n] if outcomes[code]]
 
 
 def claim_ladder(state: MissionState, scoped: ScopedBranch, *, timeline_rows=None, receipts=None,
@@ -408,25 +545,7 @@ def claim_ladder(state: MissionState, scoped: ScopedBranch, *, timeline_rows=Non
     """The ladder of one scoped claim. `timeline_rows` None means the timeline was not
     consulted, `receipts` None that the grant ledger was not; `subject` is the current
     release subject digest the receipt must match."""
-    if isinstance(verification, dict):
-        verification = VerificationReceipt.model_validate(verification)
-    branch = next(b for b in state.branches if b.id == scoped.branch_id)
-    member = members(state, scoped)
-    evidence = list(member.values())
-    referenced = {oid for text in scoped.supported_scope for _, oid, _ in parse(text)[0]}
-    traced, extra = _traced(state, evidence, referenced, timeline_rows, receipts)
-    survived, falsifier = _falsifier(state, branch, evidence)
-    rejected, null = _null(state, branch, evidence)
-    outcomes = {'evidence_present': None if evidence else 'no_evidence',
-                'observations_traced': traced,
-                'numbers_bound': _bound(scoped.supported_scope, member),
-                'fidelity_audit': _fidelity(state, evidence),
-                'no_retracted_source': _retraction(evidence),
-                'recomputed': _recomputed(verification, subject),
-                'falsifier_prespecified': _prespecified(state, branch, evidence),
-                'null_rejected': rejected,
-                'falsifier_survived': survived,
-                'external_replication': 'external_replication'}
+    outcomes, extra, facts, survived = _evaluate(state, scoped, timeline_rows, receipts, verification, subject)
     rung = 0
     while rung < 5 and all(outcomes[code] is None for code in RUNGS[rung + 1]):
         rung += 1
@@ -446,4 +565,4 @@ def claim_ladder(state: MissionState, scoped: ScopedBranch, *, timeline_rows=Non
     return {'rung': rung, 'name': NAMES[rung], 'met': met,
             'next': {'rung': rung + 1, 'needs': needs} if rung < 5 else None,
             'verdict': verdict, 'density': max(1, min(5, rung + 1)),
-            'facts': {'falsifier': falsifier, 'null_model': null}, 'note': NOTE}
+            'facts': facts, 'note': NOTE}
