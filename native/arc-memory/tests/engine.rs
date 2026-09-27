@@ -926,21 +926,27 @@ fn stats_count_bytes_and_records_after_appends_and_a_disable() {
     );
     assert_eq!(stats["last_capture_ms"], 30);
 
-    let conn = rusqlite::Connection::open(&path).unwrap();
-    let (pages, page_size): (i64, i64) = conn
+    // bytes.db is the memory.db file as the operator sees it on disk; pages that
+    // live only in the un-checkpointed WAL are counted once, under bytes.wal.
+    let db = std::fs::metadata(&path).unwrap().len();
+    let wal = std::fs::metadata(dir.path().join("memory.db-wal"))
+        .unwrap()
+        .len();
+    assert!(wal > 0, "the open WAL holds the appends");
+    assert_eq!(stats["bytes"]["db"], db);
+    assert_eq!(stats["bytes"]["wal"], wal);
+    let (pages, page_size): (i64, i64) = rusqlite::Connection::open(&path)
+        .unwrap()
         .query_row(
             "SELECT page_count, page_size FROM pragma_page_count, pragma_page_size",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
-    assert!(pages > 0);
-    assert_eq!(stats["bytes"]["db"], pages * page_size);
-    let wal = std::fs::metadata(dir.path().join("memory.db-wal"))
-        .unwrap()
-        .len();
-    assert!(wal > 0, "the open WAL holds the appends");
-    assert_eq!(stats["bytes"]["wal"], wal);
+    assert!(
+        (pages * page_size) as u64 > db,
+        "the logical page total includes WAL-only pages, so it is not the file size"
+    );
 }
 
 /// `in_step` compares the lexical index with the visible records; an index row

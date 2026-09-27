@@ -330,8 +330,8 @@ impl Engine {
         Ok(rows)
     }
 
-    /// Storage facts read from the database itself: byte totals (on-disk pages, the
-    /// WAL file, unique text raw and compressed, and every record's text as
+    /// Storage facts read from the database itself: byte totals (the memory.db and
+    /// -wal file lengths, unique text raw and compressed, and every record's text as
     /// captured), row counts, and whether the lexical index is in step with the
     /// visible records (same row count, current layout version).
     pub fn stats(&self) -> Result<Value> {
@@ -356,16 +356,17 @@ impl Engine {
         let embeddings = count("SELECT COUNT(*) FROM embeddings")?;
         let index_rows = count("SELECT COUNT(*) FROM records_fts")?;
         let version = count("PRAGMA user_version")?;
-        let db = count("SELECT page_count * page_size FROM pragma_page_count, pragma_page_size")?;
         let journal: String = self
             .conn
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
-        let wal = match self.conn.path() {
-            Some(path) if !path.is_empty() => std::fs::metadata(format!("{path}-wal"))
+        // File lengths as seen on disk: pages still only in the WAL count once, there.
+        let file_len = |suffix: &str| match self.conn.path() {
+            Some(path) if !path.is_empty() => std::fs::metadata(format!("{path}{suffix}"))
                 .map(|meta| meta.len())
                 .unwrap_or(0),
             _ => 0,
         };
+        let (db, wal) = (file_len(""), file_len("-wal"));
         Ok(json!({
             "engine": format!("sqlite-{}", journal.to_lowercase()),
             "sqlite_version": crate::sqlite_version(),
@@ -637,11 +638,7 @@ fn read_raw(row: &Row) -> rusqlite::Result<Raw> {
 }
 
 fn read_budget_error() -> Error {
-    std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        "retrieval exceeds the bounded read budget; narrow the session range or search limit",
-    )
-    .into()
+    Error::ReadBudget
 }
 
 fn hydrate_bounded(raw: Raw, remaining: &mut usize) -> Result<StoredRecord> {

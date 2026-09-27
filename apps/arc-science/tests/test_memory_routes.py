@@ -183,7 +183,7 @@ def _error(response, status, code):
 def test_memory_error_codes_are_registered_english_sentences():
     from arc_science.memory.codes import MEMORY_ERROR_CODES
     for reason in ("worker_unconfigured", "worker_unavailable", "worker_disconnected",
-                   "record_not_found", "read_budget", "operation_failed"):
+                   "record_not_found", "read_budget", "operation_failed", "record_corrupt"):
         assert f"memory.{reason}" in MEMORY_ERROR_CODES
     for code, english in MEMORY_ERROR_CODES.items():
         assert code.startswith("memory.") and english and english[0].isupper()
@@ -233,9 +233,12 @@ def test_worker_errors_map_to_codes(tmp_path, monkeypatch):
             response = client.post("/api/memory/search", json={"project": "p", "query": "q"})
             detail = _error(response, 409, "memory.operation_failed")
             assert detail["facts"] == {"operation": "search"} and "private" not in response.text
+            # A session read names its real cause: only a budget refusal is a budget error.
             monkeypatch.setattr(mem, "session_fetch", raising(MemoryError("anything")))
-            detail = _error(client.get("/api/memory/sessions/s", params={"project": "p"}), 409, "memory.read_budget")
+            detail = _error(client.get("/api/memory/sessions/s", params={"project": "p"}), 409, "memory.operation_failed")
             assert detail["facts"] == {"operation": "session_fetch"}
+            monkeypatch.setattr(mem, "session_fetch", raising(MemoryError("over", kind="read_budget")))
+            _error(client.get("/api/memory/sessions/s", params={"project": "p"}), 409, "memory.read_budget")
             monkeypatch.setattr(mem, "stats", raising(MemoryUnavailable("memory worker closed the connection")))
             _error(client.get("/api/memory/stats"), 503, "memory.worker_disconnected")
     finally:
@@ -467,3 +470,22 @@ def test_shutdown_reconciliation_keeps_one_followup_for_final_snapshot(tmp_path)
     with MemoryClient(worker_binary(), tmp_path/'memory.db') as mem:
         records = mem.session_fetch(PROJECT, 'mission')
         assert json.loads(records[-1]['text'])['status'] == 'paused'
+
+
+def test_corrupt_session_record_reports_integrity_not_read_budget(tmp_path):
+    import sqlite3
+    routes = MemoryRoutes(tmp_path, worker_binary(), _authorized)
+    app = FastAPI()
+    app.include_router(routes.router)
+    try:
+        with TestClient(app) as client:
+            routes._client_or_503().append(sample("hydrogen bond note"))
+            with sqlite3.connect(tmp_path / "memory.db") as conn:
+                conn.execute("UPDATE blobs SET original_size = original_size - 1")
+            detail = _error(client.get("/api/memory/sessions/s", params={"project": "p"}), 500, "memory.record_corrupt")
+            assert detail["facts"] == {"operation": "session_fetch"}
+            with sqlite3.connect(tmp_path / "memory.db") as conn:
+                conn.execute("UPDATE blobs SET original_size = 9000000")
+            _error(client.get("/api/memory/sessions/s", params={"project": "p"}), 409, "memory.read_budget")
+    finally:
+        routes.close()

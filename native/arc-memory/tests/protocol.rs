@@ -198,3 +198,42 @@ fn worker_binary_serves_over_stdio() {
     let value: serde_json::Value = serde_json::from_slice(&frame).unwrap();
     assert_eq!(value["data"]["protocol"], "arc-memory/1");
 }
+
+/// Every error names its cause as a machine `kind`, so a caller never has to guess
+/// a corrupt record from a read-budget refusal or a storage failure.
+#[test]
+fn errors_carry_a_machine_kind_for_their_cause() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("memory.db");
+    let worker = Worker::new(Engine::open(&path).unwrap(), None);
+    call(&worker, RECORD);
+    let fetch = r#"{"op":"session_fetch","project":"p","session":"s"}"#;
+    let kind = |response: serde_json::Value| {
+        assert_eq!(response["status"], "error");
+        response["kind"].as_str().unwrap_or("<missing>").to_owned()
+    };
+
+    assert_eq!(
+        kind(call(&worker, r#"{"op":"inspect","record_id":"nope"}"#)),
+        "not_found"
+    );
+    assert_eq!(kind(call(&worker, r#"{"op":"nope"}"#)), "bad_request");
+    assert_eq!(
+        kind(call(
+            &worker,
+            r#"{"op":"semantic","scope":{"project":"p","session":null,"agent":null},"query":"q","limit":1}"#
+        )),
+        "unsupported"
+    );
+
+    let tamper = |sql: &str| {
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute(sql, [])
+            .unwrap()
+    };
+    tamper("UPDATE blobs SET original_size = original_size - 1");
+    assert_eq!(kind(call(&worker, fetch)), "corrupt");
+    tamper("UPDATE blobs SET original_size = 9000000");
+    assert_eq!(kind(call(&worker, fetch)), "read_budget");
+}

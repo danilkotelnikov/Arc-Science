@@ -211,12 +211,13 @@ class MemoryRoutes:
         except MemoryUnavailable:
             raise memory_error(503, "memory.worker_disconnected") from None
         except MemoryError as exc:
-            if method in {"inspect", "disable"} and str(exc) == "record not found":
+            # The worker's kind names the cause; message matching covers a worker that predates it.
+            message = str(exc)
+            if method in {"inspect", "disable"} and (exc.kind == "not_found" or message == "record not found"):
                 raise memory_error(404, "memory.record_not_found", record_id=args[0]) from None
-            if method == "session_fetch":
-                raise memory_error(409, "memory.read_budget", "Session exceeds the read budget or is unreadable; "
-                                   "retry with a narrower sequence range", operation=method) from None
-            if "read budget" in str(exc) or "frame limit" in str(exc):
+            if exc.kind == "corrupt":
+                raise memory_error(500, "memory.record_corrupt", operation=method) from None
+            if exc.kind == "read_budget" or "read budget" in message or "frame limit" in message:
                 raise memory_error(409, "memory.read_budget", operation=method) from None
             raise memory_error(409, "memory.operation_failed", operation=method) from None
 

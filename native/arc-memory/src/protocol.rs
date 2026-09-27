@@ -2,7 +2,7 @@
 //!
 //! Frames are a 4-byte little-endian length prefix followed by a JSON body. Each
 //! request is one operation; each response reports `ok` with data or `error` with a
-//! message. A malformed or unknown request is answered with an error, never a panic.
+//! message and a machine `kind` naming the cause. A malformed or unknown request is answered with an error, never a panic.
 use std::io::{self, Read, Write};
 
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use crate::embedding::Embedder;
 use crate::engine::Engine;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::record::{NewRecord, Scope};
 
 /// Largest frame the worker will read (16 MiB), guarding against a bad length.
@@ -65,17 +65,21 @@ pub enum Request {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Response {
     Ok { data: Value },
-    Error { error: String },
+    Error { error: String, kind: &'static str },
 }
 
 impl Response {
     fn ok(data: Value) -> Self {
         Response::Ok { data }
     }
-    fn error(message: impl Into<String>) -> Self {
+    fn error(kind: &'static str, message: impl Into<String>) -> Self {
         Response::Error {
             error: message.into(),
+            kind,
         }
+    }
+    fn failed(error: Error) -> Self {
+        Response::error(error.kind(), error.to_string())
     }
 }
 
@@ -104,7 +108,7 @@ impl Worker {
     pub fn handle_bytes(&self, frame: &[u8]) -> Response {
         match serde_json::from_slice::<Request>(frame) {
             Ok(request) => self.handle(request),
-            Err(error) => Response::error(format!("bad request: {error}")),
+            Err(error) => Response::error("bad_request", format!("bad request: {error}")),
         }
     }
 
@@ -114,7 +118,7 @@ impl Worker {
         | Request::Hybrid { limit, .. } = &request
             && !(1..=100).contains(limit)
         {
-            return Response::error("limit must be between 1 and 100");
+            return Response::error("bad_request", "limit must be between 1 and 100");
         }
         match request {
             Request::Health => Response::ok(json!({
@@ -127,11 +131,11 @@ impl Worker {
                     stats["retrieval_modes"] = json!(self.retrieval_modes());
                     Response::ok(stats)
                 }
-                Err(error) => Response::error(error.to_string()),
+                Err(error) => Response::failed(error),
             },
             Request::Append { record } => match self.engine.append(&record) {
                 Ok(id) => Response::ok(json!({ "record_id": id })),
-                Err(error) => Response::error(error.to_string()),
+                Err(error) => Response::failed(error),
             },
             Request::Inspect { record_id } => serialize(self.engine.inspect(&record_id)),
             Request::Search {
@@ -150,7 +154,7 @@ impl Worker {
                     || to_seq.is_some_and(|seq| seq < 0)
                     || matches!((from_seq, to_seq), (Some(from), Some(to)) if from > to)
                 {
-                    return Response::error("invalid session sequence range");
+                    return Response::error("bad_request", "invalid session sequence range");
                 }
                 serialize(
                     self.engine
@@ -159,7 +163,7 @@ impl Worker {
             }
             Request::Disable { record_id } => match self.engine.disable(&record_id) {
                 Ok(()) => Response::ok(json!({ "disabled": true })),
-                Err(error) => Response::error(error.to_string()),
+                Err(error) => Response::failed(error),
             },
             Request::Semantic {
                 scope,
@@ -169,7 +173,7 @@ impl Worker {
                 Some(embedder) => {
                     serialize(self.engine.semantic_search(&scope, embedder, &query, limit))
                 }
-                None => Response::error("no embedder configured"),
+                None => Response::error("unsupported", "no embedder configured"),
             },
             Request::Hybrid {
                 scope,
@@ -179,14 +183,14 @@ impl Worker {
                 Some(embedder) => {
                     serialize(self.engine.hybrid_search(&scope, embedder, &query, limit))
                 }
-                None => Response::error("no embedder configured"),
+                None => Response::error("unsupported", "no embedder configured"),
             },
             Request::Embed => match self.embedder.as_deref() {
                 Some(embedder) => match self.engine.embed_pending(embedder) {
                     Ok(count) => Response::ok(json!({ "embedded": count })),
-                    Err(error) => Response::error(error.to_string()),
+                    Err(error) => Response::failed(error),
                 },
-                None => Response::error("no embedder configured"),
+                None => Response::error("unsupported", "no embedder configured"),
             },
         }
     }
@@ -197,9 +201,9 @@ fn serialize<T: Serialize>(result: Result<T>) -> Response {
     match result {
         Ok(value) => match serde_json::to_value(value) {
             Ok(data) => Response::ok(data),
-            Err(_) => Response::error("failed to serialize result"),
+            Err(_) => Response::error("storage", "failed to serialize result"),
         },
-        Err(error) => Response::error(error.to_string()),
+        Err(error) => Response::failed(error),
     }
 }
 
@@ -243,10 +247,11 @@ pub fn serve<R: Read, W: Write>(worker: &Worker, input: &mut R, output: &mut W) 
     while let Some(frame) = read_frame(input)? {
         let response = worker.handle_bytes(&frame);
         let body = serde_json::to_vec(&response).unwrap_or_else(|_| {
-            br#"{"status":"error","error":"failed to serialize response"}"#.to_vec()
+            br#"{"status":"error","kind":"storage","error":"failed to serialize response"}"#
+                .to_vec()
         });
         if body.len() > MAX_FRAME {
-            write_frame(output, br#"{"status":"error","error":"response exceeds frame limit; narrow the query or session range"}"#)?;
+            write_frame(output, br#"{"status":"error","kind":"read_budget","error":"response exceeds frame limit; narrow the query or session range"}"#)?;
         } else {
             write_frame(output, &body)?;
         }

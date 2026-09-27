@@ -14,8 +14,14 @@ CONFIGURED_WORKER = os.environ.get("ARC_MEMORY_WORKER")
 
 
 def worker_binary() -> Path:
-    """The service's own locator (ARC_MEMORY_WORKER) first, then the cargo target dir."""
-    if CONFIGURED_WORKER and Path(CONFIGURED_WORKER).is_file():
+    """The service's own locator (ARC_MEMORY_WORKER) first, then the cargo target dir.
+
+    Setting ARC_MEMORY_WORKER declares that the worker-backed tests must run, so a
+    path that is not a file fails the test instead of skipping or falling back.
+    """
+    if CONFIGURED_WORKER:
+        if not Path(CONFIGURED_WORKER).is_file():
+            pytest.fail(f"ARC_MEMORY_WORKER is set but is not a file: {CONFIGURED_WORKER}")
         return Path(CONFIGURED_WORKER)
     root = Path(__file__).resolve().parents[3]
     target = Path(os.environ.get("CARGO_TARGET_DIR") or root / "native" / "arc-memory" / "target")
@@ -177,3 +183,31 @@ def test_rejects_oversized_response_before_reading_payload():
     with pytest.raises(MemErr, match='frame'):
         mem.health()
     assert mem._proc.killed, 'invalid framing must retire a desynchronized worker'
+
+
+def test_configured_worker_that_is_missing_fails_instead_of_skipping(tmp_path, monkeypatch):
+    # ARC_MEMORY_WORKER declares that the worker-backed tests must run; a wrong path is
+    # a broken run, not a quiet skip or a silent fall-back to another build.
+    import test_memory_client as module
+
+    monkeypatch.setattr(module, "CONFIGURED_WORKER", str(tmp_path / "missing-worker.exe"))
+    with pytest.raises(pytest.fail.Exception, match="ARC_MEMORY_WORKER"):
+        module.worker_binary()
+
+
+def test_client_errors_carry_the_worker_kind(tmp_path):
+    import sqlite3
+    from arc_science.memory.client import MemoryError as MemErr
+
+    with MemoryClient(worker_binary(), tmp_path / "memory.db") as mem:
+        with pytest.raises(MemErr) as missing:
+            mem.inspect("does-not-exist")
+        assert missing.value.kind == "not_found"
+
+        mem.append(sample("hydrogen bond note"))
+        with sqlite3.connect(tmp_path / "memory.db") as conn:
+            conn.execute("UPDATE blobs SET original_size = original_size - 1")
+        with pytest.raises(MemErr) as corrupt:
+            mem.session_fetch("p", "s")
+        assert corrupt.value.kind == "corrupt"
+    assert MemErr("legacy worker message").kind is None
