@@ -50,21 +50,26 @@ def _format_of(mimes):
     return None
 
 
+_DOS_REMAINDER = 23
+_TEXT = frozenset(range(0x20, 0x7f)) | {0x09, 0x0D}
+
+
+def _comment_lines(block):
+    return block == b'' or (block.endswith(b'\n') and all(line.startswith(b'%') for line in block[:-1].split(b'\n')))
+
+
 def _eps_signature(data):
     """Only '%' comment lines may precede %!PS-Adobe- within 4 KiB. NIH also leaves the
-    binary remainder (23 bytes, with NULs) of a DOS EPS header just before it; allow <= 32.
-    Its offset/length/checksum bytes may include 0x0A, so try every line start in that window."""
+    binary remainder (exactly 23 bytes, with NULs) of a DOS EPS header just before it.
+    Its offset/length/checksum bytes may include 0x0A, but no piece between them may be plain text."""
     head = data[:4096]
     at = head.find(b'%!PS-Adobe-')
     if at < 0: return False
     prefix = head[:at]
-    for start in range(max(0, at - 32), at + 1):
-        if start and prefix[start - 1] != 0x0A: continue
-        tail = prefix[start:]
-        comments = prefix[:start - 1].split(b'\n') if start else []
-        if all(line.startswith(b'%') for line in comments) and (tail == b'' or b'\x00' in tail):
-            return True
-    return False
+    if _comment_lines(prefix): return True
+    lines, tail = prefix[:-_DOS_REMAINDER], prefix[-_DOS_REMAINDER:]
+    return (len(tail) == _DOS_REMAINDER and b'\x00' in tail and _comment_lines(lines)
+            and all(piece == b'' or not _TEXT.issuperset(piece) for piece in tail.split(b'\n')))
 
 
 def _sniff(data, format):

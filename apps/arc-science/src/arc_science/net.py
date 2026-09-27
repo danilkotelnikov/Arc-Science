@@ -55,9 +55,12 @@ def system_proxy(target: str | None = None) -> str | None:
     proxies = urllib.request.getproxies()
     parts = urlsplit(target or 'https://')
     host = parts.hostname or ''
-    # host:port lets a port-specific NO_PROXY entry match; urllib also tries the bare host.
-    netloc = f'{host}:{parts.port}' if parts.port is not None and ':' not in host else host
-    if host and (_loopback(host) or urllib.request.proxy_bypass_environment(netloc, proxies)
+    # host:effective-port lets a port-specific NO_PROXY entry match; urllib also tries the
+    # bare host. IPv6 keeps its brackets there, and a bare IPv6 entry is matched separately.
+    port = parts.port or {'http': 80, 'https': 443}.get(parts.scheme)
+    named = f'[{host}]' if ':' in host else host
+    netlocs = [f'{named}:{port}' if port else named] + ([host] if ':' in host else [])
+    if host and (_loopback(host) or any(urllib.request.proxy_bypass_environment(n, proxies) for n in netlocs)
                  or _registry_bypass(host)):
         return None
     proxy = proxies.get(parts.scheme or 'https') or proxies.get('all')

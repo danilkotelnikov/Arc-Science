@@ -259,7 +259,19 @@ def test_eps_dos_header_bytes_may_contain_a_newline(tmp_path):
     b'% ok\r\nplain text line, longer than the binary window\n \x00\x00\x01',
     b'% ok\r\n' + b'\x00' * 33,                  # a binary run longer than 32 bytes
     b'% ok\r\n \x01\x02\n\x03',                   # a short run with no NUL is not a DOS header
-], ids=['text-line', 'long-run', 'no-nul'])
+    # short text lines with a NUL inside the 32-byte window
+    b'<html><body>\n\x00\n',
+    b'% ok\n<script>x</script>\n\x00\n',
+    b'rm -rf /\n\x00',
+    b'#!/bin/sh\x00\n',
+    b'plain text\n\x00',
+    b'% ok\r\nshort text\n\x00',
+    b'<html>\x00</html>\n',
+    # a 23-byte remainder whose newline-split pieces include a line of plain text
+    b'% ok\r\n' + b'\x00' * 11 + b'\n<script>xy;',
+    b'% ok\r\n' + b'<script>xy;\n' + b'\x00' * 11,
+], ids=['text-line', 'long-run', 'no-nul', 'html-lines', 'script-after-comment', 'shell-line', 'shebang-nul',
+        'plain-text-nul', 'comment-then-text', 'html-nul-line', 'text-after-binary', 'text-before-binary'])
 def test_eps_signature_still_refuses_other_prefixes(prefix):
     from arc_science.bioart.client import _eps_signature
     assert not _eps_signature(prefix + b'%!PS-Adobe-3.1 EPSF-3.0\r\n')

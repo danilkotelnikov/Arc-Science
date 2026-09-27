@@ -206,6 +206,22 @@ def test_a_port_specific_no_proxy_entry_bypasses_that_port_only(system_proxy):
     assert resolve('https://mcp.corp.example/mcp') == PROXY
 
 
+def test_a_port_specific_no_proxy_entry_matches_the_scheme_default_port(system_proxy):
+    from arc_science.net import system_proxy as resolve
+    system_proxy({'https': PROXY, 'http': PROXY, 'no': 'mcp.corp.example:443'})
+    assert resolve('https://mcp.corp.example/mcp') is None
+    assert resolve('https://mcp.corp.example:443/mcp') is None
+    assert resolve('http://mcp.corp.example/mcp') == PROXY  # port 80 is not the listed port
+
+
+def test_ipv6_no_proxy_entries_match_with_and_without_a_port(system_proxy):
+    from arc_science.net import system_proxy as resolve
+    system_proxy({'https': PROXY, 'no': '[2001:db8::123]:8443,2001:db8::7'})
+    assert resolve('https://[2001:db8::123]:8443/x') is None
+    assert resolve('https://[2001:db8::123]:9443/x') == PROXY
+    assert resolve('https://[2001:db8::7]/x') is None
+
+
 def test_all_proxy_applies_when_no_scheme_specific_proxy_is_set(system_proxy):
     from arc_science.net import ProxyUnsupported, system_proxy as resolve
     system_proxy({'all': PROXY})
