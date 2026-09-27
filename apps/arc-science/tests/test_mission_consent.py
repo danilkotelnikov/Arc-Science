@@ -315,3 +315,57 @@ def test_a_probe_revoked_between_model_calls_sends_no_further_call(cli_probe, tm
         assert results[0]['ok'] and not results[1]['ok'] and results[1]['error'] == 'consent withdrawn'
         [receipt] = receipts(c, grant['id'])
         assert receipt['outcome'] == 'denied'
+
+
+# --- fix round: local refusals come before any consent is written ---
+
+SAMPLE = 'It is important to note that we utilize the assay in order to measure binding at 4.2 nM (n = 3).'
+
+
+@pytest.fixture
+def prose_seat(tmp_path, monkeypatch):
+    from arc_science.exploration.providers import ModelEndpoint
+    fake = Path(__file__).parent / 'fixtures' / 'fake_claude.py'
+    monkeypatch.setattr(service, 'claude_code_command', lambda: [sys.executable, str(fake), 'success'])
+    monkeypatch.setattr(service, 'configured_prose_endpoint', lambda settings=None: ModelEndpoint(
+        provider='anthropic', transport='cli', endpoint='claude', model='claude-sonnet-5', credential_ref='prose'))
+    with TestClient(service.create_app(data_dir=tmp_path / 'data', token=TOKEN)) as c:
+        c.app.state.grants.clock = Clock()
+        yield c
+
+
+def test_a_blank_humanise_request_writes_no_grant_and_spends_no_use(prose_seat):
+    c = prose_seat
+    post = lambda **body: c.post('/api/prose/humanise', headers=AUTH, json=body)  # noqa: E731
+    assert post(text=SAMPLE, allow_egress=True, remember_days=30).status_code == 200
+    [grant] = remembered_grants(c)
+    before = c.get('/api/grants', headers=AUTH).json()
+    # Three spaces pass the schema; the empty-text refusal comes before the grant is touched.
+    blank = post(text='   ', allow_egress=True, remember_days=30)
+    assert blank.status_code == 422 and blank.json()['detail']['code'] == 'prose.empty'
+    # Under the remembered grant without the flag: refused, and no use is spent.
+    assert post(text='   ').json()['detail']['code'] == 'prose.empty'
+    assert c.get('/api/grants', headers=AUTH).json() == before
+    assert [r['outcome'] for r in receipts(c, grant['id'])] == ['ok']
+
+
+def test_a_detection_refused_for_its_audit_key_writes_no_grant(client, monkeypatch):
+    c = client
+    assert detect(c, allow_egress=True, remember_days=30).status_code == 200
+    [grant] = remembered_grants(c)
+    before = c.get('/api/grants', headers=AUTH).json()
+
+    def broken():
+        raise prose.ProseRefused('audit_key', 'The audit key is not 32 bytes')
+    monkeypatch.setattr(c.app.state.detector, '_key', broken)
+    for body in ({'allow_egress': True, 'remember_days': 30}, {}):
+        refused = detect(c, **body)
+        assert refused.status_code == 409 and refused.json()['detail']['code'] == 'prose.audit_key'
+    assert c.get('/api/grants', headers=AUTH).json() == before
+    assert len(receipts(c, grant['id'])) == 1
+
+
+def test_the_capabilities_say_a_remembered_grant_can_stand_in_for_the_flag(client):
+    consent = client.get('/api/prose/rules', headers=AUTH).json()['detection']['consent']
+    assert 'remembered' in consent and '30' in consent
+    assert client.get('/api/capabilities', headers=AUTH).json()['prose']['detection']['consent'] == consent

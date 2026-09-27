@@ -268,10 +268,10 @@ def test_a_withheld_action_proposed_again_with_other_inputs_is_refused_before_it
     validate_evidence(state)
 
 
-def stopping():
+def stopping(agent=None):
     """The fixture paused on its round-2 stop plan, null-control parked in round 1."""
-    state = run(gated(), initial=decide(run(gated()), ('proposal', 'plan-0', 'pursue', '')))
-    state = run(gated(), initial=decide(state, ('branch', 'null-control', 'park', '')))
+    state = run(gated(), agent, initial=decide(run(gated(), agent), ('proposal', 'plan-0', 'pursue', '')))
+    state = run(gated(), agent, initial=decide(state, ('branch', 'null-control', 'park', '')))
     assert state.stop_facts['round'] == 2
     return state
 
@@ -302,7 +302,8 @@ def test_an_unrun_unbound_request_verifies_only_with_its_withheld_event():
     validate_evidence(state)
     tampered = MissionState.model_validate({**state.model_dump(), 'events': [
         e.model_dump() for e in state.events if not (e.kind == 'action_withheld' and e.detail.startswith('ghost:'))]})
-    with pytest.raises(ValueError, match='unbound tool request'):
+    # The replay of the drop finds the withheld event missing before the request check does.
+    with pytest.raises(ValueError, match='Withheld action does not bind'):
         validate_evidence(tampered)
     # Pursued, it ran and was refused; without that refusal it was silently skipped.
     state = run(gated(), agent=Unavailable(), initial=decide(run(gated(), agent=Unavailable()), ('proposal', 'plan-0', 'pursue', '')))
@@ -321,8 +322,136 @@ def test_a_recorded_decision_binds_to_its_plan_its_withheld_actions_and_later_pl
     validate_evidence(state)
     data = state.model_dump(mode='json')
     data['changes'][0]['decisions'][0][field] = value
+    with pytest.raises(ValueError, match='declaration'):
+        validate_evidence(MissionState.model_validate(data))
+    # Resealed, the decision still has to bind to its plan, its withheld work and later planners.
+    reseal(data, 0)
     with pytest.raises(ValueError, match='decision'):
         validate_evidence(MissionState.model_validate(data))
+
+
+# --- fix round 3: refused stop plans, the last decision, withheld binding, input identity ---
+
+class GhostStop(DemoAgent):
+    """The fixture, whose stop plans still list an action on a tool the mission does not offer."""
+    def _plan(self, context):
+        plan = super()._plan(context)
+        if plan['stop']:
+            plan['actions'] = [{'id': 'ghost', 'branch_id': 'linear', 'tool': 'no_such_tool', 'arguments': {}}]
+        return plan
+
+
+def test_a_refused_stop_plan_that_lists_an_unbound_action_still_verifies_and_resumes():
+    agent = GhostStop()
+    state = stopping(agent)
+    validate_evidence(state)
+    state = run(gated(), agent, initial=decide(state, ('proposal', 'plan-2', 'request_test', 'Test it more')))
+    assert (state.status, state.stop_facts['round']) == ('paused', 3)
+    validate_evidence(state)
+    # A stop plan dispatches nothing, accepted or refused: the mission ends and still verifies.
+    state = run(gated(), agent, initial=decide(state, ('proposal', 'plan-3', 'pursue', '')))
+    assert (state.status, state.stop_code) == ('completed', 'plan_stop')
+    assert not [o for o in state.observations if o.id == 'ghost']
+    validate_evidence(state)
+    evidence_graph(state)
+
+
+def reseal(data, index=-1):
+    """Rewrite a change's declaration seal to match its (tampered) decisions, and the base digest
+    of every change declared after it, as a thorough forger would."""
+    change = data['changes'][index]
+    event = next(e for e in data['events'] if e['kind'] == 'change_declared' and e['detail'].startswith(change['id'] + ':'))
+    event['detail'] = event['detail'].rsplit('; decisions ', 1)[0] + '; decisions ' + digest(change['decisions'])
+    for later in data['changes']:
+        at = next(i for i, e in enumerate(data['events']) if e['kind'] == 'change_declared' and e['detail'].startswith(later['id'] + ':'))
+        later['base_digest'] = digest(data['events'][:at])
+
+
+def finished_on_a_branch_decision():
+    """Round 1 decided on a branch alone and run to the round limit: no later planner binds it."""
+    state = run(gated(max_rounds=2), initial=decide(run(gated(max_rounds=2)), ('proposal', 'plan-0', 'pursue', '')))
+    state = run(gated(max_rounds=2), initial=decide(state, ('branch', 'quadratic', 'pursue', '')))
+    assert (state.status, state.stop_code) == ('budget_exhausted', 'round_limit')
+    return state
+
+
+@pytest.mark.parametrize('ending', ['stop', 'branch'])
+@pytest.mark.parametrize('directive', ['drop', 'park', 'request_test'])
+def test_the_last_decision_cannot_be_rewritten(ending, directive):
+    done = (run(gated(), initial=decide(stopping(), ('proposal', 'plan-2', 'pursue', ''))) if ending == 'stop'
+            else finished_on_a_branch_decision())
+    validate_evidence(done)
+    data = done.model_dump(mode='json')
+    data['changes'][-1]['decisions'][0]['directive'] = directive
+    # The declaration seal covers the decision itself.
+    with pytest.raises(ValueError, match='declaration'):
+        validate_evidence(MissionState.model_validate(data))
+    if ending == 'branch' and directive == 'request_test':
+        return  # a test request withholds nothing, so the recorded work is what it would have done
+    # Resealed, the recorded outcome still contradicts it: the stop was refused or the branch withheld.
+    reseal(data)
+    with pytest.raises(ValueError, match='operator decision'):
+        validate_evidence(MissionState.model_validate(data))
+
+
+def test_the_note_of_the_last_decision_is_sealed_too():
+    done = run(gated(), initial=decide(stopping(), ('proposal', 'plan-2', 'pursue', '')))
+    data = done.model_dump(mode='json')
+    data['changes'][-1]['decisions'][0]['note'] = 'forged'
+    with pytest.raises(ValueError, match='declaration'):
+        validate_evidence(MissionState.model_validate(data))
+
+
+def test_accepting_a_stopping_plan_wins_over_pursuing_a_parked_branch():
+    # null-control was parked in round 1: pursued alone it would refuse the stop.
+    state = run(gated(), initial=decide(stopping(), ('proposal', 'plan-2', 'pursue', ''), ('branch', 'null-control', 'pursue', '')))
+    assert (state.status, state.stop_code) == ('completed', 'plan_stop')
+    assert not any(e.kind == 'round_closed' and e.round == 2 for e in state.events)
+    validate_evidence(state)
+
+
+def test_a_finished_round_stripped_of_its_observations_does_not_verify():
+    from arc_science.exploration.claim_scope import derive_claim_scope
+    state = run(MissionRequest(goal='Probe pending', max_model_calls=1), agent=Unavailable())
+    assert (state.status, state.stop_code, state.round) == ('budget_exhausted', 'call_limit', 0)
+    data = state.model_dump(mode='json')
+    data['observations'], data['artifacts'] = [], []
+    data['events'] = [e for e in data['events'] if e['kind'] not in ('observation', 'artifact_rendered')]
+    stripped = MissionState.model_validate(data)
+    stripped = stripped.model_copy(update={'claim_scope': derive_claim_scope(stripped)})
+    with pytest.raises(ValueError, match='unbound tool request'):
+        validate_evidence(stripped)
+
+
+def test_a_withheld_event_must_cite_the_decision_in_force_and_no_run():
+    from arc_science.exploration.models import Event
+    state = run(gated(), agent=Repropose(), initial=decide(run(gated(), agent=Repropose()), ('branch', 'linear', 'park', '')))
+    parked = state.changes[-1].id
+    state = run(gated(), agent=Repropose(), initial=decide(state, ('branch', 'linear', 'pursue', '')))
+    assert ('fit-linear', 1) in [(o.id, o.round) for o in state.observations]
+    last = max(i for i, e in enumerate(state.events) if e.kind == 'change_declared')
+    forged = Event(kind='action_withheld', round=1, detail=f'fit-linear: branch linear; park by decision {parked}')
+    events = state.events[:last + 1] + (forged,) + state.events[last + 1:]
+    with pytest.raises(ValueError, match='Withheld action does not bind'):
+        validate_evidence(state.model_copy(update={'events': events}))
+
+
+class Retyped(DemoAgent):
+    """The fixture with fit-linear asking for degree True in round 0, then 1 in round 1."""
+    def _plan(self, context):
+        plan = super()._plan(context)
+        if context['round'] == 0:
+            plan['actions'] = [{**plan['actions'][0], 'arguments': {'degree': True}}]
+        if context['round'] == 1:
+            plan['actions'] = [{'id': 'fit-linear', 'branch_id': 'linear', 'tool': 'polynomial_fit', 'arguments': {'degree': 1}}] + plan['actions']
+        return plan
+
+
+def test_an_action_proposed_again_with_a_differently_typed_input_is_refused():
+    agent = Retyped()
+    state = run(gated(), agent, initial=decide(run(gated(), agent), ('branch', 'linear', 'park', '')))
+    assert (state.status, state.stop_code, state.stop_facts) == ('error', 'action_reused', {'action_id': 'fit-linear'})
+    validate_evidence(state)
 
 
 # --- service ---

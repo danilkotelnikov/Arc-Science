@@ -9,7 +9,7 @@ import asyncio
 import time
 from .models import (MissionRequest, MissionState, Branch, Proposal, Reconciliation,
                      Observation, Assessed, Event, ModelRecord, VisionRecord, RepairCycle, VisualReport, UnboundCall,
-                     WITHHOLDS, operator_directives)
+                     asks_for_more, operator_directives, withholding)
 from .tools import synthetic_data, execute_numeric, CATALOG, TOOL_VERSION
 from .artifacts import artifact_for_observation
 from .claim_scope import derive_claim_scope
@@ -17,9 +17,9 @@ from .repair import POLICY_DIGEST as REPAIR_POLICY_DIGEST, repair_plan, with_out
 from .vision import VISUAL_PROMPT_VERSION, current_artifacts, required_visual_reason, visual_context, validate_report
 from .catalog import (BIORENDER_CATALOG, BUILTIN_CATALOG, PUBLIC_CATALOG, TrustedPublicTools,
                       trusted_replay, trusted_version, validate_arguments, validate_catalog)
-from .evidence import validate_evidence
+from .evidence import validate_context, validate_evidence
 from .spend import spent, tally
-from ..contracts import digest
+from ..contracts import canonical, digest
 
 # The vision_required cause of each reason required_visual_reason can return: a review that
 # found problems is recorded as such, never as a coverage gap.
@@ -44,19 +44,6 @@ def operator_decisions(state):
     """Every recorded operator decision in order, with the change that carries it."""
     return [{'change_id': c.id, 'at': c.at, **d.model_dump(mode='json')}
             for c in state.changes if c.kind == 'decision' for d in c.decisions]
-
-def asks_for_more(decisions, round_number):
-    """Whether this round's decisions refuse a stopping plan. The latest decision on a target
-    stands. A proposal decision answers the plan itself: pursue accepts it, anything else asks
-    again. Without one, a request_test on a branch, or a pursue on a branch parked or dropped in
-    an earlier round, asks for work the plan does not propose."""
-    now=[d for d in decisions if d['round']==round_number]
-    proposal=next((d['directive'] for d in reversed(now) if d['target']=='proposal'),None)
-    if proposal:return proposal!='pursue'
-    before={d['target_id']:d['directive'] for d in decisions if d['target']=='branch' and d['round']<round_number}
-    latest={d['target_id']:d['directive'] for d in now if d['target']=='branch'}
-    return any(v=='request_test' or (v=='pursue' and before.get(k) in WITHHOLDS) for k,v in latest.items())
-
 
 class MissionCancelled(RuntimeError): pass
 
@@ -100,7 +87,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
     if state.request_digest!=digest(request): raise ValueError('The mission contract changed')
     if state.dataset_digest!=digest([p.model_dump(mode='json') for p in state.points]):
         raise ValueError('Frozen dataset changed')
-    validate_evidence(state)
+    validate_evidence(state);validate_context(request,state)
     if state.status in {'completed','budget_exhausted','needs_input','cancelled'}: return state
     if state.claim_scope is not None:
         # A resumed mission may change its evidence; the old scope no longer applies.
@@ -152,9 +139,9 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         reports=state.visual_reports if reviewing is None else tuple(r for r in state.visual_reports if r.round<state.round)
         # Earlier work the operator attached goes to the planner and reviewers only, and only
         # when there is some, so contexts recorded without it keep their shape. A prior
-        # mission's claim statuses are earlier model agreement: the planner reads them, the two
-        # reviewers do not, so their support stays independent of that verdict.
-        items=[i.model_dump(mode='json') for i in request.context_items if planning or i.kind!='mission'] if reviewing is None else []
+        # mission's claim statuses, and memory a mission wrote, are earlier model agreement: the
+        # planner reads them, the two reviewers do not, so their support stays independent.
+        items=[i.model_dump(mode='json') for i in request.context_items if planning or not i.planner_only] if reviewing is None else []
         earlier={'mission_context':items} if items else {}
         # Every operator directive so far goes to the planner as operator input, never to the reviewers.
         directives=operator_directives(operator_decisions(state)) if planning else []
@@ -246,7 +233,8 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             # so only earlier plans, not observations, show its identity is taken.
             earlier={a.id:a for r in state.model_records if r.role=='planner' and r.round<state.round
                      for a in Proposal.model_validate(r.payload).actions}
-            reused=next((a.id for a in plan.actions if a.id in earlier and earlier[a.id]!=a),None)
+            # Compared as canonical JSON: model equality reads True and 1 as the same input.
+            reused=next((a.id for a in plan.actions if a.id in earlier and canonical(earlier[a.id])!=canonical(a)),None)
         except Exception as why:
             if op:log('finished',op,outcome='error',detail='Planning failed validation or provider execution.')
             # Accounting never depends on the optional timeline logger.
@@ -292,14 +280,12 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         if not plan.actions: return stop('needs_input','no_actions','No executable actions proposed; additional data or tools are required.')
         # Operator decisions withhold work, never evidence: the latest directive on a branch
         # stands across rounds, and a proposal directive covers its own round's plan.
-        standing={d['target_id']:d for d in decisions if d['target']=='branch'}
-        proposal=next((d for d in reversed(decisions) if d['target']=='proposal' and d['round']==state.round),None)
         actions=[];withheld=[]
         for a in plan.actions:
             # Already ran (its identity was checked against the earlier plans before commit).
             if any(o.id==a.id for o in state.observations):continue
-            why=proposal if proposal and proposal['directive'] in WITHHOLDS else standing.get(a.branch_id)
-            if why and why['directive'] in WITHHOLDS:withheld.append((a,why));continue
+            why=withholding(decisions,state.round,a.branch_id)
+            if why:withheld.append((a,why));continue
             actions.append(a)
         for a,why in withheld:
             if not any(e.kind=='action_withheld' and e.round==state.round and e.detail.startswith(a.id+':') for e in state.events):

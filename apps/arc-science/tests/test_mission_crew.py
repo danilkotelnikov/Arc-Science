@@ -229,3 +229,19 @@ def test_a_live_mission_runs_its_crew(configured, tmp_path):
         assert models == {'planner': 'claude-fable-5-1', 'analyst': 'claude-sonnet-5', 'falsifier': 'claude-sonnet-5'}
         planner = next(r for r in state['model_records'] if r['role'] == 'planner')
         assert planner['transport']['requested_model'] == 'claude-fable-5-1' and planner['transport'].get('requested_effort') == 'low'
+
+
+# --- fix round: model ids a Settings seat accepts ---
+
+def test_a_crew_model_id_with_a_slash_or_colon_is_accepted_where_the_seat_accepts_it(tmp_path, seats):
+    with TestClient(app(tmp_path)) as c:
+        for model in ('org/model', 'local-model:q4'):
+            made = c.post('/api/missions', headers=AUTH, json={'goal': 'Crew', 'crew': {'reviewer': {'model': model}}})
+            assert made.status_code == 201, made.text
+            assert made.json()['request']['crew'] == {'reviewer': {'model': model, 'effort': None}}
+        # The Gemini seat itself refuses such an id; the refusal carries a crew code, not a 500.
+        refused(c.post('/api/missions', headers=AUTH, json={'goal': 'Crew', 'crew': {'falsifier': {'model': 'org/model'}}}),
+                422, 'crew.model_not_supported', {'role': 'falsifier'})
+    # Never option-like, whatever the transport.
+    with pytest.raises(ValidationError):
+        MissionRequest(goal='Bad crew', crew={'reviewer': {'model': '-m/x'}})

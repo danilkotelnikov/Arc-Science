@@ -140,8 +140,15 @@ def declare(state, kind, declared, note: str, at: int | None = None, decisions=(
                     required_checks=checks, base_digest=base, note=note[:400], round=state.round,
                     at=int(time.time()) if at is None else at, decisions=tuple(decisions))
     event = Event(kind='change_declared', round=state.round,
-                  detail=change.id + ': ' + kind + '; declared ' + ', '.join(declared) + '; derived ' + ', '.join(derived))
+                  detail=change.id + ': ' + kind + '; declared ' + ', '.join(declared) + '; derived ' + ', '.join(derived)
+                  + decisions_seal(change.decisions))
     return state.model_copy(update={'changes': state.changes + (change,), 'events': state.events + (event,)}), change
+
+
+def decisions_seal(decisions) -> str:
+    """The declaration's binding of the decisions a change records: their digest, so the
+    decisions cannot be rewritten after the event chain moves on. Empty for a change without any."""
+    return '; decisions ' + digest([d.model_dump(mode='json') for d in decisions]) if decisions else ''
 
 
 def obligation_states(change, decision) -> tuple[dict, ...]:

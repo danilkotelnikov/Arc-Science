@@ -19,7 +19,9 @@ import hashlib
 from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 from fastapi import Body, FastAPI, Depends, Header, Query, Response
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from . import __version__
@@ -313,6 +315,26 @@ def live_seats(vision_review=False):
     return live_route(vision_review)['seats']
 
 
+BODY_LIMIT=1024*1024
+
+
+class BodyLimit:
+    """Pure ASGI: counts the body bytes a request actually sends, with or without
+    Content-Length, and refuses the read with the coded 413 once they pass the limit."""
+    def __init__(self,app):self.app=app
+
+    async def __call__(self,scope,receive,send):
+        if scope['type']!='http':return await self.app(scope,receive,send)
+        seen=0
+        async def limited():
+            nonlocal seen
+            message=await receive()
+            seen+=len(message.get('body',b''))
+            if seen>BODY_LIMIT:raise api_error(413,'request.too_large',facts={'limit_bytes':BODY_LIMIT})
+            return message
+        await self.app(scope,limited,send)
+
+
 def with_crew(route,crew):
     """The route with a mission's crew applied: per role, the model and effort replace the
     Settings seat's; provider, transport, endpoint and credential stay. Applied before the
@@ -328,7 +350,8 @@ def with_crew(route,crew):
         accepted=list(accepted_efforts(seat.provider,seat.transport,entry.model));allowed=accepted or [DEFAULT_EFFORT]
         if entry.effort is not None and entry.effort not in allowed:
             raise api_error(422,'crew.effort_not_supported',facts={'role':role,'effort':entry.effort,'allowed':allowed})
-        seats[role]=ModelEndpoint.model_validate({**seat.model_dump(),'model':entry.model,'effort':entry.effort if accepted else None})
+        try:seats[role]=ModelEndpoint.model_validate({**seat.model_dump(),'model':entry.model,'effort':entry.effort if accepted else None})
+        except ValueError:raise api_error(422,'crew.model_not_supported',facts={'role':role}) from None
     return {**route,'seats':seats,'crew':sorted(crew)}
 
 
@@ -672,15 +695,21 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         held['sent']=True;return held['finish']
     detector=prose_module.Detector(root);detector.egress=detector_egress
     app.state.detector=detector
+    def prose_capabilities():
+        # The detector asks for the flag on each call; this service also accepts a remembered grant.
+        found=detector.capabilities()
+        return {**found,'detection':{**found['detection'],'consent':'allow_egress: true on the request, or an active 30-day '
+                'remembered grant for this destination and data category; the text leaves this machine'}}
 
     # Prose control: a rule-based local rewrite that never touches scientific content,
-    # and third-party detection that needs consent on every request because the text
-    # leaves this machine. Neither result is an authorship or validity claim.
+    # and third-party detection that needs consent (the request's flag or a remembered
+    # grant) because the text leaves this machine. Neither result is an authorship or
+    # validity claim.
     @app.get('/api/prose/rules',dependencies=[Depends(authorized)])
     async def prose_rules():
         return {'rules':list(prose_module.RULE_TABLE),'rules_version':prose_module.RULES_VERSION,
                 'protected_classes':[name for name,_ in prose_module.PROTECTED],'protection_version':prose_module.PROTECTION_VERSION,
-                **detector.capabilities()}
+                **prose_capabilities()}
 
     def prose_error(refused):
         status={'consent_required':422,'bounds':422,'empty':422,'too_long':422,'refused_instruction':422,'disabled':409,'busy':409,
@@ -725,6 +754,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             line({'status':'refused_instruction'})
             prose_error(prose_module.ProseRefused('refused_instruction','The instruction asks for detector evasion or impersonation, which this '
                 'behaviour does not do; the reader-facing edit is available without it',[{'change':'instruction','class':'refused','literal':matched}]))
+        # The seat's own refusals ahead of egress run before any consent is written or used.
+        if not body.text.strip():prose_error(prose_module.ProseRefused('empty','Nothing to rewrite'))
+        if len(body.text)>prose_module.MAX_CHARS:
+            prose_error(prose_module.ProseRefused('too_long',f'Text exceeds {prose_module.MAX_CHARS} characters'))
         try:cfg=configured_prose_endpoint()
         except Exception as error:raise api_error(409,'prose.seat_unusable','The prose seat is not usable: '+str(error)[:300]) from None
         if cfg is None:raise api_error(409,'prose.seat_unconfigured')
@@ -781,6 +814,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             if not prose_module.MIN_CHARS<=len(body.text)<=prose_module.MAX_CHARS:
                 prose_error(prose_module.ProseRefused('bounds',f'Text must be {prose_module.MIN_CHARS} to {prose_module.MAX_CHARS} characters'))
             if detector.busy:prose_error(prose_module.ProseRefused('busy','A detection request is already in flight'))
+            # The audit key is a local prerequisite of the attempt record.
+            try:detector._key()
+            except prose_module.ProseRefused as refused:prose_error(refused)
             finish=consent_grant(ledger,prose_module.DETECTION_HOST,'detector',*DETECTION_GRANT,
                                  hashlib.sha256(body.text.encode('utf-8')).hexdigest(),**consent)
         held={'finish':finish,'sent':False};reset=detect_grant.set(held)
@@ -877,16 +913,29 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     memory_routes.set_snapshot_source(memory_snapshots)
     app.include_router(memory_routes.router)
 
+    # A body without Content-Length (chunked) is counted as it arrives; the route reading it
+    # gets the coded 413 instead of more bytes, before validation and before authentication.
+    # Added first, so it sits inside the header middleware and the route sees its refusal directly.
+    app.add_middleware(BodyLimit)
+
     @app.middleware('http')
     async def security_headers(request,call_next):
-        if request.headers.get('content-length','0').isdigit() and int(request.headers.get('content-length','0'))>1024*1024:
-            return JSONResponse({'detail':api_error(413,'request.too_large',facts={'limit_bytes':1024*1024}).detail},status_code=413)
+        if request.headers.get('content-length','0').isdigit() and int(request.headers.get('content-length','0'))>BODY_LIMIT:
+            return JSONResponse({'detail':api_error(413,'request.too_large',facts={'limit_bytes':BODY_LIMIT}).detail},status_code=413)
         response=await call_next(request)
         response.headers['X-Content-Type-Options']='nosniff'
         response.headers['Referrer-Policy']='no-referrer'
         response.headers['Cache-Control']='no-store'
         response.headers.setdefault('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
         return response
+
+    @app.exception_handler(StarletteHTTPException)
+    async def coded_http_error(request,why):
+        # FastAPI answers a body it cannot decode with a plain-text 400 (no route here raises one); it gets the request.invalid code.
+        if why.status_code==400 and not isinstance(why.detail,dict):
+            return JSONResponse({'detail':api_error(400,'request.invalid',facts={'errors':[
+                {'loc':['body'],'type':'body_unreadable','msg':str(why.detail)[:200]}]}).detail},status_code=400)
+        return await http_exception_handler(request,why)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request,why):
@@ -955,7 +1004,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         # Only visible records: a disabled record is unknown to a mission.
         if not isinstance(record,dict) or record.get('visibility')!='visible':
             raise api_error(404,'context.unknown_record',facts={'kind':'memory','ref':ref})
-        return {'kind':'memory','ref':ref,'digest':record['content_digest'],'text':record['text'],
+        # The trust label and source travel with the text: a record a mission wrote is earlier
+        # model agreement, which the engine shows the planner only.
+        labels={k:str(record[k])[:limit] for k,limit in (('trust',40),('source_uri',400)) if record.get(k)}
+        return {'kind':'memory','ref':ref,'digest':record['content_digest'],'text':record['text'],**labels,
                 'title':f"{record.get('role','')} record {record.get('seq','')} of session {record.get('session_id','')}"[:300]}
 
     async def resolve_context(refs):
@@ -1204,7 +1256,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 'public_network_tools_enabled':os.environ.get('ARC_PUBLIC_READS')=='1',
                 'biorender':biorender,
                 'blender':'batch adapter retained; renderer availability must be checked separately',
-                'prose':detector.capabilities(),
+                'prose':prose_capabilities(),
                 'publication_authorization':False}
 
     @app.post('/api/missions',status_code=201,dependencies=[Depends(authorized)])
@@ -1221,7 +1273,15 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 raise api_error(409,'fork.not_finished',facts={'mission_id':body.continues,'status':parent['state']['status']})
             prior=[body.continues]+[ref for ref in (refs.prior_mission_ids if refs else []) if ref!=body.continues]
             refs=ContextRefs(memory_record_ids=refs.memory_record_ids if refs else [],prior_mission_ids=prior)
-        items=await resolve_context(refs) if refs else []
+        named=sorted([('memory',r) for r in dict.fromkeys(refs.memory_record_ids)]+[('mission',r) for r in dict.fromkeys(refs.prior_mission_ids)]) if refs else []
+        earlier=repository.by_key(idempotency_key) if idempotency_key else None
+        if earlier is not None:
+            # A retry reuses the context frozen by the first request instead of resolving it again,
+            # so a prior mission that moved on since does not turn the retry into a conflict.
+            frozen=MissionRequest.model_validate(earlier['request']).context_items
+            if sorted((i.kind,i.ref) for i in frozen)!=named:raise api_error(409,'mission.idempotency_conflict')
+            items=[i.model_dump(mode='json') for i in frozen]
+        else:items=await resolve_context(refs) if refs else []
         # The parent leads, whatever else is attached.
         items.sort(key=lambda i:(i['kind'],i['ref'])!=('mission',body.continues))
         chars=sum(len(i['text']) for i in items)

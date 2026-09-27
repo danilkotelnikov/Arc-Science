@@ -545,3 +545,50 @@ def test_claude_code_seats_can_carry_a_cost_budget(configured, tmp_path):
                       json={'goal': 'Priced CLI', 'mode': 'live', 'allow_egress': True, 'max_cost_usd': 1})
         assert made.status_code == 201, made.text
         assert made.json()['request']['max_cost_usd'] == 1
+
+
+# --- fix round: a refusal after the envelope parsed keeps the envelope's usage and cost ---
+
+@pytest.mark.parametrize('mode', ['wrong-model', 'two-models', 'tool'])
+def test_a_cli_answer_refused_after_its_envelope_parsed_keeps_its_usage_and_cost(mode):
+    seat = claude_seat(mode)
+    try:
+        with pytest.raises(ProviderError):
+            asyncio.run(seat.assess('falsifier', {'goal': 'g'}))
+        call = seat.take_provenance('falsifier')
+    finally:
+        seat.close()
+    assert (call['outcome'], call['usage'], call['cost_usd']) == ('rejected', {'input_tokens': 10, 'output_tokens': 20}, 0.001)
+    assert 'reason' in call
+
+
+def test_codex_and_gemini_answers_refused_after_parsing_keep_their_usage():
+    fixtures = Path(__file__).parent / 'fixtures'
+    env = {'PATH': 'x', 'SystemRoot': 'C:/Windows', 'TEMP': 'C:/Temp'}
+    for provider, name, mode, model, usage in (
+            ('openai', 'fake_codex.py', 'two-messages', 'gpt-5.5',
+             {'input_tokens': 120, 'cached_input_tokens': 0, 'output_tokens': 15, 'reasoning_output_tokens': 0}),
+            ('gemini', 'fake_gemini.py', 'wrong-model', 'gemini-3-pro', {})):
+        seat = CliAgent([sys.executable, str(fixtures / name), mode], model, model, provider=provider, environment=env)
+        try:
+            with pytest.raises(ProviderError):
+                asyncio.run(seat.assess('falsifier', {'goal': 'g'}))
+            call = seat.take_provenance('falsifier')
+        finally:
+            seat.close()
+        # Answered, so the call is rejected rather than failed; an empty usage is unmeasured, never zero.
+        assert (call['outcome'], call['usage'], call['cost_usd']) == ('rejected', usage, None), provider
+
+
+def test_cli_reviews_that_attempt_a_tool_count_against_a_cost_budget():
+    planner, reviewer = claude_seat('success'), claude_seat('tool')
+    try:
+        final = run(MissionRequest(goal='Tool-attempting CLI reviews', max_rounds=8, max_cost_usd=0.01, allow_egress=True),
+                    SeatAgent({'planner': planner, 'reviewer': reviewer}))
+    finally:
+        planner.close()
+        reviewer.close()
+    # Uncounted, the refused reviews let the mission run to round 8 while reporting 0.008.
+    assert (final.status, final.stop_code) == ('budget_exhausted', 'cost_limit')
+    assert final.stop_facts['spent'] == pytest.approx(0.01) and final.round == 3
+    assert spent(final)['unrecorded_calls'] == 0

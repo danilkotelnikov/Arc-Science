@@ -66,6 +66,11 @@ class MissionRepository:
             db.commit()
         return self.get(mid)
 
+    def by_key(self,key):
+        """The mission created under this idempotency key, or None."""
+        with self._connect() as db:row=db.execute('SELECT * FROM missions WHERE creation_key=?',(key,)).fetchone()
+        return self._row(row) if row else None
+
     def get(self,mid):
         with self._connect() as db:return self._row(db.execute('SELECT * FROM missions WHERE id=?',(mid,)).fetchone())
 

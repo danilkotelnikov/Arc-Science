@@ -6,9 +6,10 @@ from types import SimpleNamespace
 
 from ..contracts import canonical, digest
 from .catalog import validate_arguments, validate_catalog
-from .changes import MISSION_CHANGES, required_checks
+from .changes import MISSION_CHANGES, decisions_seal, required_checks
 from .claim_scope import DERIVATION_VERSION, derive_claim_scope
-from .models import WITHHOLDS, Assessed, Branch, MissionState, Proposal, Reconciliation, operator_directives
+from .models import (Assessed, Branch, MissionState, Proposal, Reconciliation, asks_for_more, operator_directives,
+                     withholding)
 from .repair import POLICIES
 from .vision import current_artifacts, validate_report, visual_context
 
@@ -127,6 +128,61 @@ def _context_index(record, state):
     if Counter(canonical(item) for item in visual_reports) != expected_reports:
         raise ValueError("Recorded context does not contain the available visual reports")
     return branch_ids, observation_status
+
+
+# Stops that can leave the latest committed plan with nothing dispatched: the gate, a budget,
+# or an operator or service interruption. A stop after dispatch (call_limit before review,
+# render_failed, vision_required) leaves the round's observations behind.
+UNDISPATCHED = ("", "awaiting_decision", "interrupted", "paused_by_operator", "cancelled",
+                "token_limit", "cost_limit", "time_limit", "budget_unmeasurable")
+# Stops a stopping or empty plan makes when the operator accepts it (or no operator decides).
+PLAN_STOPS = ("plan_stop", "no_observations", "vision_required", "no_actions")
+
+
+def _replay_decisions(state, planners, decisions):
+    """Re-derive what the engine did with each committed plan from the decisions in force when
+    it ran, and require the record to say exactly that. A gated round is decided before any of
+    its work runs, so those are the decisions of that round and the earlier ones. Returns the
+    withheld (round, action id) pairs."""
+    plain = [{"change_id": change.id, **decision.model_dump(mode="json")} for change, decision in decisions]
+    cited = {}
+    for event in state.events:
+        if event.kind != "action_withheld":
+            continue
+        action_id, _, rest = event.detail.partition(": branch ")
+        branch_id, _, rest = rest.partition("; ")
+        directive, _, change_id = rest.partition(" by decision ")
+        if (event.round, action_id) in cited:
+            raise ValueError("Withheld action is recorded twice")
+        cited[(event.round, action_id)] = (branch_id, directive, change_id)
+    withheld = set(cited)
+    closed = {event.round for event in state.events if event.kind == "round_closed"}
+    ran = {observation.id: observation.round for observation in state.observations}
+    for round_number, record in planners.items():
+        plan = Proposal.model_validate(record.payload)
+        if plan.stop or not plan.actions:
+            # Refused, the round closed and the planner was asked again; accepted, it ended there.
+            refused, asked = round_number in closed, asks_for_more(plain, round_number)
+            if refused != asked and (refused or state.round > round_number or state.stop_code in PLAN_STOPS):
+                raise ValueError("Recorded round outcome does not follow from the operator decisions")
+            continue
+        processed = state.round > round_number or round_number in ran.values()
+        for action in plan.actions:
+            if ran.get(action.id, round_number) < round_number:
+                continue  # it ran in an earlier round, so this plan never dispatched it
+            why = withholding(plain, round_number, action.branch_id)
+            recorded = cited.pop((round_number, action.id), None)
+            if why is None:
+                if recorded is not None:
+                    raise ValueError("Withheld action does not bind to an operator decision")
+                continue
+            if ran.get(action.id) == round_number:
+                raise ValueError("An action ran although the operator decision in force withheld it")
+            if recorded != (action.branch_id, why["directive"], why["change_id"]) and (recorded or processed):
+                raise ValueError("Withheld action does not bind to an operator decision")
+    if cited:
+        raise ValueError("Withheld action does not bind to an operator decision")
+    return withheld
 
 
 def validate_evidence(state: MissionState) -> None:
@@ -277,7 +333,10 @@ def validate_evidence(state: MissionState) -> None:
             raise ValueError("Change is not bound to exactly one declaration event")
         index = indexes[0]
         expected = MISSION_CHANGES[change.kind]["derived"]
+        # The decisions a change records are sealed into its declaration event.
+        seal, detail = decisions_seal(change.decisions), state.events[index].detail
         if (change.derived_effects != expected or change.required_checks != required_checks(expected)
+                or not detail.endswith(seal) or ("; decisions " in detail) != bool(seal)
                 or state.events[index].round != change.round
                 or change.base_digest != digest([e.model_dump(mode="json") for e in state.events[:index]])):
             raise ValueError("Change record does not bind to its declaration")
@@ -298,21 +357,7 @@ def validate_evidence(state: MissionState) -> None:
         told = operator_directives([d.model_dump(mode="json") for _, d in decisions if d.round < record.round])
         if record.input_context.get("operator_directives", []) != told:
             raise ValueError("Planner context does not bind to the recorded operator decisions")
-    withheld = set()
-    for event in state.events:
-        if event.kind != "action_withheld":
-            continue
-        action_id, _, rest = event.detail.partition(": branch ")
-        branch_id, _, rest = rest.partition("; ")
-        directive, _, change_id = rest.partition(" by decision ")
-        plan = planners.get(event.round)
-        action = next((a for a in Proposal.model_validate(plan.payload).actions if a.id == action_id), None) if plan else None
-        if (action is None or action.branch_id != branch_id or directive not in WITHHOLDS or not any(
-                change.id == change_id and d.directive == directive and d.round <= event.round
-                and (d.target_id == branch_id if d.target == "branch" else d.round == event.round)
-                for change, d in decisions)):
-            raise ValueError("Withheld action does not bind to an operator decision")
-        withheld.add((event.round, action_id))
+    withheld = _replay_decisions(state, planners, decisions)
     for index, event in enumerate(state.events[:-1]):
         # A cancellation after a stop, an interruption or a pause is a terminal operator
         # action, not a continuation; anything else must be a declared change.
@@ -365,16 +410,21 @@ def validate_evidence(state: MissionState) -> None:
                 except ValueError:
                     # One that ran was refused; one that never ran was withheld by the operator,
                     # or its plan (the latest, with nothing run yet) waits to run.
+                    # A stop plan dispatches nothing, and neither does the latest plan while no
+                    # tool of its round has run and the mission stopped short of dispatch.
                     denied = observations.get(action.id)
-                    pending = record.round == state.round and all(o.round != record.round for o in state.observations)
-                    if (denied.action != action or denied.status != "error") if denied else not (
-                            (record.round, action.id) in withheld or pending):
+                    pending = (record.round == state.round and state.stop_code in UNDISPATCHED
+                               and all(o.round != record.round for o in state.observations))
+                    if (canonical(denied.action) != canonical(action) or denied.status != "error") if denied else not (
+                            packet.stop or (record.round, action.id) in withheld or pending):
                         raise ValueError("Recorded proposal has an unbound tool request") from None
-                if action.id in planned_actions and planned_actions[action.id][0] != action:
+                if action.id in planned_actions and canonical(planned_actions[action.id][0]) != canonical(action):
                     raise ValueError("Recorded proposal reuses an action identity")
                 # An identical action may be proposed again after it was withheld; it runs in
-                # one of the rounds that proposed it.
-                planned_actions.setdefault(action.id, (action, set()))[1].add(record.round)
+                # one of the rounds that proposed it, never in a round whose plan stopped.
+                rounds = planned_actions.setdefault(action.id, (action, set()))[1]
+                if not packet.stop:
+                    rounds.add(record.round)
         elif record.role in {"analyst", "falsifier"}:
             packet = Reconciliation.model_validate(record.payload)
             for assessment in packet.assessments:
@@ -399,7 +449,8 @@ def validate_evidence(state: MissionState) -> None:
             raise ValueError("Final branch state does not bind to recorded proposals")
         for observation in state.observations:
             planned = planned_actions.get(observation.id)
-            if not planned or planned[0] != observation.action or observation.round not in planned[1]:
+            if (not planned or canonical(planned[0]) != canonical(observation.action)
+                    or observation.round not in planned[1]):
                 raise ValueError("Observation does not bind to a recorded proposal")
         if Counter(canonical(item) for item in state.assessments) != Counter(
             canonical(item) for item in expected_assessments
@@ -407,6 +458,19 @@ def validate_evidence(state: MissionState) -> None:
             raise ValueError("Final assessment payload binding mismatch")
     elif state.assessments:
         raise ValueError("Assessments require recorded reviewer payloads")
+
+
+def validate_context(request, state: MissionState) -> None:
+    """Every recorded model call was shown exactly the attached context its role receives from
+    the frozen request: all of it for the planner, none of the planner-only items for the two
+    reviewers, none at all for a vision seat. Absent when there is nothing to show."""
+    planner = [item.model_dump(mode="json") for item in request.context_items]
+    reviewer = [item.model_dump(mode="json") for item in request.context_items if not item.planner_only]
+    shown = [(record.input_context, planner if record.role == "planner" else reviewer) for record in state.model_records]
+    shown += [(record.input_context.get("mission") or {}, []) for record in state.vision_records]
+    for context, expected in shown:
+        if context.get("mission_context", []) != expected or ("mission_context" in context) != bool(expected):
+            raise ValueError("Recorded model context does not bind to the context attached to the mission")
 
 
 def evidence_graph(state: MissionState) -> dict:

@@ -353,3 +353,30 @@ def test_a_malformed_or_oversized_request_is_refused_with_a_code(tmp_path):
         assert detail['facts']['errors'][0]['loc'] == ['body', 'goal'] and detail['facts']['errors'][0]['type'] == 'string_too_short'
         big = c.post('/api/missions', headers={**AUTH, 'Content-Type': 'application/json'}, content=b'{"goal":"' + b'a' * (1024 * 1024) + b'"}')
         assert big.status_code == 413 and big.json()['detail']['code'] == 'request.too_large'
+
+
+def test_a_chunked_oversized_body_is_refused_on_the_bytes_received(tmp_path):
+    def chunks(*parts):
+        yield from parts
+    with TestClient(service.create_app(data_dir=tmp_path, token=TOKEN)) as c:
+        json_type = {'Content-Type': 'application/json'}
+        # No Content-Length: the limit counts what arrives, before validation and before auth.
+        big = c.post('/api/missions', headers={**AUTH, **json_type}, content=chunks(b'{"goal":"', b'a' * (3 * 1024 * 1024), b'"}'))
+        assert big.status_code == 413 and big.json()['detail']['code'] == 'request.too_large'
+        padded = c.post('/api/missions', headers={**AUTH, **json_type}, content=chunks(b' ' * (1024 * 1024 + 1), b'{"goal":"Valid mission"}'))
+        assert padded.status_code == 413 and padded.json()['detail']['facts'] == {'limit_bytes': 1024 * 1024}
+        anonymous = c.post('/api/missions', headers=json_type, content=chunks(b' ' * (2 * 1024 * 1024)))
+        assert anonymous.status_code == 413
+        assert c.get('/api/missions', headers=AUTH).json() == []
+        # Under the limit, a chunked body is read as usual.
+        small = c.post('/api/missions', headers={**AUTH, **json_type}, content=chunks(b'{"goal":', b'"Valid mission"}'))
+        assert small.status_code == 201, small.text
+
+
+def test_a_body_that_cannot_be_decoded_is_refused_with_a_code(tmp_path):
+    with TestClient(service.create_app(data_dir=tmp_path, token=TOKEN)) as c:
+        bad = c.post('/api/missions', headers={**AUTH, 'Content-Type': 'application/json'}, content=bytes([0xff]))
+        assert bad.status_code == 400
+        detail = bad.json()['detail']
+        assert detail['code'] == 'request.invalid' and detail['detail'] == ERROR_CODES['request.invalid']
+        assert detail['facts']['errors'][0]['loc'] == ['body']

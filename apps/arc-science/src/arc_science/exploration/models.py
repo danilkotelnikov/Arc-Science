@@ -13,8 +13,10 @@ class Point(Record):
 
 CREW_ROLES = ('planner', 'reviewer', 'falsifier', 'vision')
 CrewRole = Literal['planner', 'reviewer', 'falsifier', 'vision']
-# A model id as a seat sends it: never an option-like word a CLI could read as a flag.
-ModelId = Annotated[str, Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$')]
+# A model id as a seat sends it: never an option-like word a CLI could read as a flag. Slashes
+# and colons (org/model, local-model:q4) are allowed as Settings allows them; a seat whose
+# provider refuses them (the Gemini API) refuses the crew entry with its own code.
+ModelId = Annotated[str, Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$')]
 
 
 class CrewSeat(Record):
@@ -28,15 +30,26 @@ class CrewSeat(Record):
 CONTEXT_MEMORY_LIMIT, CONTEXT_MISSION_LIMIT, CONTEXT_CHAR_LIMIT = 50, 5, 24_000
 
 
-class ContextItem(Record):
+class ContextItem(Versioned):
     """Earlier work the operator attached, resolved by the service and frozen at creation:
     a memory record (digest = its content digest) or a prior mission's supported scope and
-    claims (digest = its release subject digest). Evidence to weigh, never permission."""
+    claims (digest = its release subject digest). Evidence to weigh, never permission.
+    A memory record keeps its trust label and source, so a seat can weigh it."""
+    LATER_FIELDS = ('trust', 'source_uri')
     kind: Literal['memory', 'mission']
     ref: str = Field(min_length=1, max_length=200)
     title: str = Field(max_length=300)
     digest: Digest
     text: str = Field(max_length=CONTEXT_CHAR_LIMIT)
+    trust: str | None = Field(default=None, max_length=40)
+    source_uri: str | None = Field(default=None, max_length=400)
+
+    @property
+    def planner_only(self) -> bool:
+        """Earlier model agreement: a prior mission, or a memory record a mission wrote (model
+        output, or an engine event such as a derived claim scope). The planner reads it; the two
+        reviewers do not, so their support stays independent of that earlier verdict."""
+        return self.kind == 'mission' or self.trust == 'model_output' or (self.source_uri or '').startswith('mission://')
 
 
 class MissionRequest(Versioned):
@@ -408,6 +421,31 @@ def operator_directives(decisions):
     """What the planner reads of each decision (JSON dicts): the engine sends it, evidence checks it."""
     return [{**{k: d[k] for k in ('target', 'target_id', 'directive', 'note', 'round')}, 'ask': ASKS[d['directive']]}
             for d in decisions]
+
+
+def asks_for_more(decisions, round_number):
+    """Whether this round's decisions (JSON dicts, in order) refuse a stopping plan. The latest
+    decision on a target stands. A proposal decision answers the plan itself: pursue accepts it,
+    anything else asks again. Without one, a request_test on a branch, or a pursue on a branch
+    parked or dropped in an earlier round, asks for work the plan does not propose."""
+    now = [d for d in decisions if d['round'] == round_number]
+    proposal = next((d['directive'] for d in reversed(now) if d['target'] == 'proposal'), None)
+    if proposal:
+        return proposal != 'pursue'
+    before = {d['target_id']: d['directive'] for d in decisions if d['target'] == 'branch' and d['round'] < round_number}
+    latest = {d['target_id']: d['directive'] for d in now if d['target'] == 'branch'}
+    return any(v == 'request_test' or (v == 'pursue' and before.get(k) in WITHHOLDS) for k, v in latest.items())
+
+
+def withholding(decisions, round_number, branch_id):
+    """The decision (JSON dict with its change_id) that withholds an action of this round's plan
+    on this branch, or None: a withholding proposal decision of the round covers its whole plan,
+    otherwise the latest decision on the branch stands across rounds."""
+    known = [d for d in decisions if d['round'] <= round_number]
+    proposal = next((d for d in reversed(known) if d['target'] == 'proposal' and d['round'] == round_number), None)
+    why = proposal if proposal and proposal['directive'] in WITHHOLDS else next(
+        (d for d in reversed(known) if d['target'] == 'branch' and d['target_id'] == branch_id), None)
+    return why if why and why['directive'] in WITHHOLDS else None
 
 
 class Change(Versioned):

@@ -63,6 +63,7 @@ ERROR_CODES = {
     'crew.unknown_role': 'The crew names a role that is not planner, reviewer, falsifier or vision',
     'crew.no_seat': 'The crew names a role that has no configured seat for this mission',
     'crew.effort_not_supported': 'The seat cannot express this effort on this model',
+    'crew.model_not_supported': 'The seat does not accept this model id',
     'context.unknown_record': 'An attached memory record or mission does not exist or is not visible',
     'context.too_large': 'The attached context is longer than the mission context limit',
     'memory.unavailable': 'The memory store is not available; try again or attach no memory records',

@@ -123,6 +123,14 @@ def one_observed_model(models, requested, label):
     return str(observed)
 
 
+def answered(error, usage, cost=None):
+    """A refusal made after the provider answered: the usage and cost it reported travel with
+    the error, so the paid call is recorded as a rejected answer, not a failed call."""
+    if usage is not None or cost is not None:
+        error.answered = {'usage': usage, 'cost_usd': cost}
+    return error
+
+
 @dataclass(frozen=True)
 class Answer:
     text: str
@@ -182,12 +190,15 @@ class Claude:
             raise ProviderError(cls.label + ' returned no JSON envelope')
         if envelope.get('type') != 'result' or envelope.get('is_error'):
             raise ProviderError(cls.label + ' reported a failed call: ' + failure_category(str(envelope.get('result', ''))))
-        observed = one_observed_model(envelope.get('modelUsage'), model, cls.label)
-        if envelope.get('permission_denials'):
-            raise ProviderError(cls.label + ' attempted a tool action; the call is refused')
-        text = envelope.get('result')
-        if not isinstance(text, str) or not text.strip():
-            raise ProviderError('Missing or ambiguous provider response')
+        try:
+            observed = one_observed_model(envelope.get('modelUsage'), model, cls.label)
+            if envelope.get('permission_denials'):
+                raise ProviderError(cls.label + ' attempted a tool action; the call is refused')
+            text = envelope.get('result')
+            if not isinstance(text, str) or not text.strip():
+                raise ProviderError('Missing or ambiguous provider response')
+        except ProviderError as error:
+            raise answered(error, envelope.get('usage'), envelope.get('total_cost_usd')) from None
         return Answer(text, observed, 'claude_code_modelUsage', envelope.get('usage'), envelope.get('total_cost_usd'))
 
 
@@ -242,7 +253,7 @@ class Codex:
                     events.append(json.loads(line))
                 except ValueError:
                     raise ProviderError(cls.label + ' returned no JSON envelope') from None
-        messages, errors, notes, usage = [], [], [], None
+        messages, errors, notes, usage, attempted = [], [], [], None, None
         for event in events:
             if not isinstance(event, dict):
                 raise ProviderError(cls.label + ' returned no JSON envelope')
@@ -262,25 +273,27 @@ class Codex:
                 elif item_type == 'reasoning':
                     pass
                 else:
-                    raise ProviderError(cls.label + ' attempted a tool action (' + str(item_type) + '); the call is refused')
+                    attempted = attempted or str(item_type)
             elif kind in ('error', 'turn.failed'):
                 error = event.get('error') if isinstance(event.get('error'), dict) else event
                 errors.append(str(error.get('message', '')))
             elif kind == 'turn.completed':
                 usage = event.get('usage')
+        if attempted:
+            raise answered(ProviderError(cls.label + ' attempted a tool action (' + attempted + '); the call is refused'), usage)
         if returncode != 0 or errors:
             text = ' '.join(errors) or stderr[-STDERR_TAIL:].decode('utf-8', errors='replace')
             raise ProviderError(cls.label + ' exited with status ' + str(returncode) + ': ' + failure_reason(text))
         if not events:
             raise ProviderError(cls.label + ' returned no JSON envelope')
         if len(messages) != 1 or not messages[0].strip():
-            raise ProviderError('Missing or ambiguous provider response')
+            raise answered(ProviderError('Missing or ambiguous provider response'), usage)
         try:
             last = files['last'].read_text(encoding='utf-8')
         except OSError:
-            raise ProviderError(cls.label + ' wrote no final message') from None
+            raise answered(ProviderError(cls.label + ' wrote no final message'), usage) from None
         if last.strip() != messages[0].strip():
-            raise ProviderError(cls.label + ' final message and event stream disagree')
+            raise answered(ProviderError(cls.label + ' final message and event stream disagree'), usage)
         return Answer(messages[0], None, 'requested_only', usage, None, tuple(dict.fromkeys(notes)))
 
 
@@ -332,12 +345,20 @@ class Gemini:
         if not isinstance(data, dict):
             raise ProviderError(cls.label + ' returned no JSON envelope')
         stats = data.get('stats') or {}
-        if (stats.get('tools') or {}).get('totalCalls'):
-            raise ProviderError(cls.label + ' attempted a tool action; the call is refused')
-        observed = one_observed_model(stats.get('models'), model, cls.label)
-        text = data.get('response')
-        if not isinstance(text, str) or not text.strip():
-            raise ProviderError('Missing or ambiguous provider response')
+        models = stats.get('models') if isinstance(stats.get('models'), dict) else {}
+        reported = [e['tokens'] for e in models.values() if isinstance(e, dict) and isinstance(e.get('tokens'), dict)]
+        # Summed per key over the models reported (usually one); an empty report stays unmeasured, not zero.
+        spent_tokens = ({k: sum(t[k] for t in reported if isinstance(t.get(k), (int, float))) for t in reported for k in t}
+                        if reported else None)
+        try:
+            if (stats.get('tools') or {}).get('totalCalls'):
+                raise ProviderError(cls.label + ' attempted a tool action; the call is refused')
+            observed = one_observed_model(stats.get('models'), model, cls.label)
+            text = data.get('response')
+            if not isinstance(text, str) or not text.strip():
+                raise ProviderError('Missing or ambiguous provider response')
+        except ProviderError as error:
+            raise answered(error, spent_tokens) from None
         usage = (stats.get('models') or {}).get(observed, {}).get('tokens')
         return Answer(text, observed, 'gemini_cli_stats_models', usage if isinstance(usage, dict) else None)
 
@@ -453,6 +474,9 @@ class CliAgent:
             if answer is not None:
                 # The model answered and was paid; only its answer is refused, so its usage counts.
                 record.update(outcome='rejected', observed_model=answer.observed_model, usage=answer.usage, cost_usd=answer.cost_usd)
+            elif getattr(error, 'answered', None):
+                # Refused while parsing, after the provider answered: the same, with what it reported.
+                record.update(outcome='rejected', **error.answered)
             self.calls.append(record)
             if isinstance(error, ProviderError):
                 raise

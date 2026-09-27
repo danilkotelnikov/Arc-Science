@@ -404,3 +404,74 @@ def test_a_context_mission_needs_the_approval_of_its_own_data_category(configure
         assert state['stop_code'] == 'round_limit', state['stop_reason']
         seat_grants = [g for g in c.get(f'/api/missions/{mid}/grants', headers=AUTH).json()['grants'] if g['destination_kind'] == 'seat']
         assert seat_grants and all('mission_context' in g['data_category'] for g in seat_grants)
+
+
+# --- fix round: memory a mission wrote, verified context, idempotent retries ---
+
+CAPTURED = {'record_id': 'cap-1', 'project_id': 'p', 'session_id': 'm-a', 'agent_id': 'analyst', 'seq': 3, 'role': 'analyst',
+            'text': '{"assessments":[{"branch_id":"h1","position":"support"}]}', 'content_digest': 'f' * 64,
+            'visibility': 'visible', 'trust': 'model_output', 'source_uri': 'mission://m-a/round/1/analyst/3'}
+
+
+def test_memory_a_mission_wrote_keeps_its_trust_and_reaches_the_planner_only(client):
+    RECORDS['cap-1'] = CAPTURED
+    try:
+        made = client.post('/api/missions', headers=AUTH, json={'goal': 'Use earlier work',
+                                                                'context': {'memory_record_ids': ['cap-1', 'rec-2']}})
+    finally:
+        del RECORDS['cap-1']
+    assert made.status_code == 201, made.text
+    captured, plain = made.json()['request']['context_items']
+    assert (captured['trust'], captured['source_uri']) == ('model_output', 'mission://m-a/round/1/analyst/3')
+    assert 'trust' not in plain and 'source_uri' not in plain
+    request = MissionRequest.model_validate(made.json()['request'])
+    # An engine event a mission wrote is earlier agreement too, whatever its trust label.
+    event = ContextItem(kind='memory', ref='cap-2', title='event', digest='e' * 64, trust='operator',
+                        text='[claim_scope_derived] provisionally_supported: 1', source_uri='mission://m-a/round/2/event/9')
+    request = request.model_copy(update={'context_items': request.context_items + (event,)})
+    agent = Recorder()
+    state = asyncio.run(explore(request, agent))
+    expected = [i.model_dump(mode='json') for i in request.context_items]
+    assert all(c['mission_context'] == expected for role, c in agent.contexts if role == 'planner')
+    assert all(c['mission_context'] == [expected[1]] for role, c in agent.contexts if role != 'planner')
+    assert all('model_output' not in json.dumps(r.input_context) for r in state.model_records if r.role != 'planner')
+
+
+def test_verification_recomputes_the_context_of_each_call_from_the_frozen_request():
+    from arc_science.exploration.capsule import export_capsule, verify_capsule
+    request = MissionRequest(goal='Verified context', max_rounds=2, context_items=(item(),))
+    state = asyncio.run(explore(request, DemoAgent()))
+    assert verify_capsule(export_capsule(request, state))['failures'] == []
+    for tamper in ('remove', 'replace'):
+        records = list(state.model_records)
+        index = next(i for i, r in enumerate(records) if r.role == 'analyst')
+        context = dict(records[index].input_context)
+        if tamper == 'remove':
+            del context['mission_context']
+        else:
+            context['mission_context'] = [item(text='Something the reviewer was never shown.').model_dump(mode='json')]
+        records[index] = records[index].model_copy(update={'input_context': context, 'context_digest': digest(context)})
+        forged = state.model_copy(update={'model_records': tuple(records)})
+        report = verify_capsule(export_capsule(request, forged))
+        assert report['reproduction_passed'] is False
+        assert any(f.startswith('model context:') for f in report['failures'])
+        # A resume refuses it too.
+        with pytest.raises(ValueError, match='context attached'):
+            asyncio.run(explore(request, DemoAgent(), initial=forged))
+
+
+def test_an_idempotent_retry_returns_the_frozen_mission_after_its_prior_mission_moved_on(client):
+    prior = client.post('/api/missions', headers=AUTH, json={'goal': 'Earlier curve study', 'max_rounds': 2}).json()['id']
+    body = {'goal': 'Build on it', 'context': {'prior_mission_ids': [prior], 'memory_record_ids': ['rec-2']}}
+    key = {**AUTH, 'Idempotency-Key': 'retry-1'}
+    first = client.post('/api/missions', headers=key, json=body)
+    assert first.status_code == 201, first.text
+    client.post(f'/api/missions/{prior}/start', headers=AUTH)
+    settled(client, prior)
+    again = client.post('/api/missions', headers=key, json=body)
+    assert again.status_code == 201, again.text
+    assert again.json()['id'] == first.json()['id']
+    assert again.json()['request']['context_items'] == first.json()['request']['context_items']
+    # The same key with other attachments is still a different request.
+    other = client.post('/api/missions', headers=key, json={'goal': 'Build on it', 'context': {'prior_mission_ids': [prior]}})
+    refused(other, 409, 'mission.idempotency_conflict', {})
