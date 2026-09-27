@@ -133,8 +133,11 @@ def _context_index(record, state):
 # Stops that can leave the latest committed plan with nothing dispatched: the gate, a budget,
 # or an operator or service interruption. A stop after dispatch (call_limit before review,
 # render_failed, vision_required) leaves the round's observations behind.
-UNDISPATCHED = ("", "awaiting_decision", "interrupted", "paused_by_operator", "cancelled",
+UNDISPATCHED = ("", "awaiting_decision", "interrupted", "paused_by_operator", "cancelled", "service_failed",
                 "token_limit", "cost_limit", "time_limit", "budget_unmeasurable")
+# Of those, the stops that can cut a started dispatch short before any observation is recorded.
+# A budget stop is checked only before a dispatch starts or after its observations are recorded.
+CUT_OFF = ("", "interrupted", "paused_by_operator", "cancelled", "service_failed")
 # Stops a stopping or empty plan makes when the operator accepts it (or no operator decides).
 PLAN_STOPS = ("plan_stop", "no_observations", "vision_required", "no_actions")
 
@@ -414,7 +417,9 @@ def validate_evidence(state: MissionState) -> None:
                     # tool of its round has run and the mission stopped short of dispatch.
                     denied = observations.get(action.id)
                     pending = (record.round == state.round and state.stop_code in UNDISPATCHED
-                               and all(o.round != record.round for o in state.observations))
+                               and all(o.round != record.round for o in state.observations)
+                               and (state.stop_code in CUT_OFF or not any(
+                                   e.kind == "actions_dispatched" and e.round == record.round for e in state.events)))
                     if (canonical(denied.action) != canonical(action) or denied.status != "error") if denied else not (
                             packet.stop or (record.round, action.id) in withheld or pending):
                         raise ValueError("Recorded proposal has an unbound tool request") from None

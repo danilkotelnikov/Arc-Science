@@ -69,9 +69,11 @@ def test_every_failure_is_a_provider_error_without_a_synthetic_fallback(mode, ex
         with pytest.raises(ProviderError) as error:
             run(seat.propose(context()))
         assert expected in str(error.value)
-        # A paid answer refused after its envelope parsed (schema, identity, tool attempt) is
+        # A paid answer refused after its envelope parsed (schema, identity, tool attempt, or an
+        # error envelope that reports usage, as the fixture's auth and credit envelopes do) is
         # rejected with its usage kept; the rest failed.
-        assert seat.calls[-1]['outcome'] == ('rejected' if mode in ('prose', 'wrong-model', 'two-models', 'tool') else 'failed')
+        assert seat.calls[-1]['outcome'] == ('rejected' if mode in ('prose', 'wrong-model', 'two-models', 'tool', 'auth', 'credits')
+                                             else 'failed')
         assert 'OAuth session' not in json.dumps(seat.calls) or mode == 'auth'
     finally:
         seat.close()

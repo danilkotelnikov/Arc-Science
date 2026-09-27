@@ -3,6 +3,7 @@ per-call transport records; token, cost and time budgets enforced before each mo
 a budget the calls cannot measure fails closed; a cost budget is refused up front when a
 bound seat cannot report cost; list rows carry round, max_rounds and updated_at."""
 import asyncio
+import json
 import sqlite3
 import sys
 import time
@@ -592,3 +593,76 @@ def test_cli_reviews_that_attempt_a_tool_count_against_a_cost_budget():
     assert (final.status, final.stop_code) == ('budget_exhausted', 'cost_limit')
     assert final.stop_facts['spent'] == pytest.approx(0.01) and final.round == 3
     assert spent(final)['unrecorded_calls'] == 0
+
+
+# --- fix round: every refusal after the provider answered is recorded as answered ---
+
+FAKE_CODEX = Path(__file__).parent / 'fixtures' / 'fake_codex.py'
+CODEX_USAGE = {'input_tokens': 120, 'cached_input_tokens': 0, 'output_tokens': 15, 'reasoning_output_tokens': 0}
+
+
+def codex_seat(mode):
+    return CliAgent([sys.executable, str(FAKE_CODEX), mode], 'gpt-5.5', 'gpt-5.5', provider='openai',
+                    environment={'PATH': 'x', 'SystemRoot': 'C:/Windows', 'TEMP': 'C:/Temp'})
+
+
+def test_a_codex_review_that_attempts_a_tool_keeps_the_usage_of_its_completed_turn():
+    seat = codex_seat('tool-usage')
+    try:
+        with pytest.raises(ProviderError, match='attempted a tool action'):
+            asyncio.run(seat.assess('falsifier', {'goal': 'g'}))
+        call = seat.take_provenance('falsifier')
+    finally:
+        seat.close()
+    assert (call['outcome'], call['usage'], call['cost_usd']) == ('rejected', CODEX_USAGE, None)
+
+
+def test_codex_reviews_that_attempt_a_tool_count_against_a_token_budget():
+    planner, reviewer = codex_seat('success'), codex_seat('tool-usage')
+    try:
+        final = run(MissionRequest(goal='Tool-attempting Codex reviews', max_rounds=8, max_tokens=1000, allow_egress=True),
+                    SeatAgent({'planner': planner, 'reviewer': reviewer}))
+    finally:
+        planner.close()
+        reviewer.close()
+    # Without their usage the refused reviews would run the mission to round 8 or leave it unmeasurable.
+    assert (final.status, final.stop_code) == ('budget_exhausted', 'token_limit')
+    assert final.round < 8 and spent(final)['measured'] and spent(final)['unrecorded_calls'] == 0
+
+
+def refusal(parse, payload, returncode=0, model='claude-x'):
+    with pytest.raises(ProviderError) as caught:
+        parse(json.dumps(payload).encode(), b'', returncode, {}, model)
+    return getattr(caught.value, 'answered', None)
+
+
+CLAUDE_OK = {'type': 'result', 'is_error': False, 'result': '{}', 'modelUsage': {'claude-x': {}}}
+
+
+def test_an_answered_refusal_without_usage_is_unmeasured_not_unrecorded():
+    from arc_science.exploration.cli_seats import Claude, Gemini
+    # The envelope parsed, so the call answered: its record is rejected with no usage (unmeasured), never failed.
+    assert refusal(Gemini.parse, {'response': '{}', 'stats': {'tools': {'totalCalls': 1}}}, model='gemini-3-pro') == {
+        'usage': None, 'cost_usd': None}
+    assert refusal(Claude.parse, {**CLAUDE_OK, 'permission_denials': [{'tool_name': 'Bash'}]}) == {'usage': None, 'cost_usd': None}
+    rejected = state_with([]).model_copy(update={'model_calls_used': 1, 'unbound_calls': (
+        UnboundCall(role='analyst', round=0, outcome='rejected', transport={'outcome': 'rejected', 'usage': None, 'cost_usd': None}),)})
+    assert spent(rejected)['measured'] is False
+
+
+@pytest.mark.parametrize('returncode', [0, 1])
+def test_a_claude_error_envelope_keeps_the_usage_and_cost_it_reports(returncode):
+    from arc_science.exploration.cli_seats import Claude
+    usage = {'input_tokens': 10, 'output_tokens': 20}
+    failed = {'type': 'result', 'is_error': True, 'result': 'API Error: overloaded', 'modelUsage': {}}
+    assert refusal(Claude.parse, {**failed, 'usage': usage, 'total_cost_usd': 0.001}, returncode) == {'usage': usage, 'cost_usd': 0.001}
+    # An error envelope that reports nothing was not a paid answer: the call stays failed.
+    assert refusal(Claude.parse, failed, returncode) is None
+
+
+@pytest.mark.parametrize('prompt', [True, '120', -5, float('nan')])
+def test_gemini_usage_that_is_not_a_count_is_not_made_into_one(prompt):
+    from arc_science.exploration.cli_seats import Gemini
+    payload = {'response': '{}', 'stats': {'tools': {'totalCalls': 1},
+                                           'models': {'gemini-3-pro': {'tokens': {'prompt': prompt, 'candidates': 5}}}}}
+    assert refusal(Gemini.parse, payload, model='gemini-3-pro') == {'usage': None, 'cost_usd': None}

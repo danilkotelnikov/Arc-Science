@@ -198,7 +198,11 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         if state.actions_used>=request.max_actions and committed_plan is None:
             return stop('budget_exhausted','action_limit','Action limit reached; untested alternatives remain unresolved.',
                         max_actions=request.max_actions,actions_used=state.actions_used)
-        if over_budget() is not None:return state
+        # A dispatch cut short by an interruption completes before the next spend check, as it
+        # would have without the interruption: its tools were committed before any check ran.
+        cut=(committed_plan is not None and any(e.kind=='actions_dispatched' and e.round==state.round for e in state.events)
+             and not any(o.round==state.round for o in state.observations))
+        if not cut and over_budget() is not None:return state
         op=None;called=False
         try:
             if committed_plan is None:
@@ -297,7 +301,10 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             continue
         reserved=max(0,state.actions_used-len(state.observations))
         actions=actions[:request.max_actions-state.actions_used+reserved]
-        # Reserve before dispatch; an interrupted attempt is conservatively charged.
+        # Reserve before dispatch; an interrupted attempt is conservatively charged. The dispatch
+        # is recorded with the reservation: a latest plan whose tools were dispatched is no longer
+        # pending, unless an interruption cut the dispatch short.
+        if actions:event('actions_dispatched',', '.join(a.id for a in actions))
         change(actions_used=state.actions_used+max(0,len(actions)-reserved));commit()
         semaphore=asyncio.Semaphore(request.max_parallel)
         async def execute(action):

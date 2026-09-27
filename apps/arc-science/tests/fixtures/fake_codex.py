@@ -105,6 +105,10 @@ emit({'type': 'item.completed', 'item': {'id': 'item_0', 'type': 'error',
 if mode == 'tool':
     emit({'type': 'item.started', 'item': {'id': 'item_1', 'type': 'command_execution', 'command': 'ls'}})
     sys.exit(0)
+if mode == 'tool-usage':
+    # The real CLI: the sandbox refuses the command and the turn still completes with its usage.
+    emit({'type': 'item.started', 'item': {'id': 'item_1', 'type': 'command_execution', 'command': 'ls'}})
+    emit({'type': 'item.completed', 'item': {'id': 'item_1', 'type': 'command_execution', 'command': 'ls', 'exit_code': 1}})
 if mode == 'error-item':
     emit({'type': 'item.completed', 'item': {'id': 'item_1', 'type': 'error', 'message': 'Rate limit reached for this account'}})
 if mode == 'turn-failed':

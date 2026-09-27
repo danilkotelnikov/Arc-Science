@@ -245,3 +245,21 @@ def test_a_crew_model_id_with_a_slash_or_colon_is_accepted_where_the_seat_accept
     # Never option-like, whatever the transport.
     with pytest.raises(ValidationError):
         MissionRequest(goal='Bad crew', crew={'reviewer': {'model': '-m/x'}})
+
+
+def test_an_idempotent_retry_returns_the_frozen_mission_whatever_the_settings_now_hold(tmp_path, seats, monkeypatch):
+    monkeypatch.setattr(service, '_secret', lambda ref: 'secret')
+    key = {**AUTH, 'Idempotency-Key': 'crew-retry'}
+    body = {'goal': 'Crewed retry', 'mode': 'live', 'allow_egress': True, 'crew': {'reviewer': {'model': 'gpt-5.6'}}}
+    with TestClient(app(tmp_path)) as c:
+        first = c.post('/api/missions', headers=key, json=body)
+        assert first.status_code == 201, first.text
+        # The reviewer seat is removed and the live seats stop being ready after the first request.
+        del seats['reviewer']
+        monkeypatch.setattr(service, 'live_seats_ready', lambda: (_ for _ in ()).throw(ValueError('not ready')))
+        again = c.post('/api/missions', headers=key, json=body)
+        assert again.status_code == 201, again.text
+        assert again.json()['id'] == first.json()['id']
+        # A different request under the same key is still a conflict, and a new key is checked afresh.
+        refused(c.post('/api/missions', headers=key, json={**body, 'goal': 'Other'}), 409, 'mission.idempotency_conflict', {})
+        refused(c.post('/api/missions', headers=AUTH, json=body), 422, 'crew.no_seat', {'role': 'reviewer'})

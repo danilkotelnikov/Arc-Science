@@ -73,8 +73,8 @@ def test_every_codex_failure_is_a_provider_error(mode, expected):
     try:
         with pytest.raises(ProviderError, match=expected):
             run(seat.propose(context()))
-        # Refused after the turn completed, the paid call keeps its usage as a rejected answer.
-        assert seat.calls[-1]['outcome'] == ('rejected' if mode in ('two-messages', 'mismatch', 'no-last') else 'failed')
+        # Refused once its events parsed, the call answered: a rejected answer, with its usage when the turn completed.
+        assert seat.calls[-1]['outcome'] == ('rejected' if mode in ('tool', 'two-messages', 'mismatch', 'no-last') else 'failed')
     finally:
         seat.close()
 

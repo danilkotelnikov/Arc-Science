@@ -1261,9 +1261,6 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
 
     @app.post('/api/missions',status_code=201,dependencies=[Depends(authorized)])
     async def new_mission(body:MissionCreate,idempotency_key:str|None=Header(default=None)):
-        # The crew is checked against the Settings seats now and applied again, from the
-        # Settings of the moment, when the route is bound at the first start.
-        if body.crew:with_crew({'seats':settings_seats(body.vision_review)},body.crew)
         refs=body.context
         if body.continues:
             # A fork continues a finished mission, whose supported scope is its first context item.
@@ -1275,6 +1272,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             refs=ContextRefs(memory_record_ids=refs.memory_record_ids if refs else [],prior_mission_ids=prior)
         named=sorted([('memory',r) for r in dict.fromkeys(refs.memory_record_ids)]+[('mission',r) for r in dict.fromkeys(refs.prior_mission_ids)]) if refs else []
         earlier=repository.by_key(idempotency_key) if idempotency_key else None
+        # An idempotent retry returns the frozen mission: the Settings of the moment are checked
+        # only for a new one. The crew is checked against the Settings seats now and applied
+        # again, from the Settings of the moment, when the route is bound at the first start.
+        if body.crew and earlier is None:with_crew({'seats':settings_seats(body.vision_review)},body.crew)
         if earlier is not None:
             # A retry reuses the context frozen by the first request instead of resolving it again,
             # so a prior mission that moved on since does not turn the retry into a conflict.
@@ -1289,7 +1290,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         request=MissionRequest.model_validate({**body.model_dump(mode='json',exclude={'crew','context'}),
             **({'crew':{role:entry.model_dump() for role,entry in body.crew.items()}} if body.crew else {}),
             **({'context_items':[ContextItem(**i) for i in items]} if items else {})})
-        if request.mode=='live':
+        if request.mode=='live' and earlier is None:
             try:live_seats_ready()
             except Exception:raise api_error(409,'mission.live_unconfigured') from None
             if request.vision_review:

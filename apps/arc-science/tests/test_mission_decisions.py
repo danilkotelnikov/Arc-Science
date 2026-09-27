@@ -423,6 +423,72 @@ def test_a_finished_round_stripped_of_its_observations_does_not_verify():
         validate_evidence(stripped)
 
 
+def test_a_service_failure_before_dispatch_leaves_the_latest_plan_pending():
+    state = decide(run(gated(), agent=Unavailable()), ('proposal', 'plan-0', 'pursue', ''))
+    # The worker failed before explore dispatched anything (an MCP server that would not open, a lost credential).
+    failed = state.model_copy(update={'status': 'error', 'stop_code': 'service_failed'})
+    validate_evidence(failed)
+    resumed = run(gated(), agent=Unavailable(), initial=failed)
+    assert [o.status for o in resumed.observations if o.id == 'ghost'] == ['error']
+    validate_evidence(resumed)
+
+
+class PricedGhost(DemoAgent):
+    """The fixture at 0.003 USD per call, adding an action on a tool the mission does not offer in round 1."""
+    def take_provenance(self, role):
+        return {**super().take_provenance(role), 'cost_usd': 0.003}
+
+    def _plan(self, context):
+        plan = super()._plan(context)
+        if context['round'] == 1:
+            plan['actions'] = plan['actions'] + [{'id': 'ghost', 'branch_id': 'linear', 'tool': 'no_such_tool', 'arguments': {}}]
+        return plan
+
+
+def strip_round(state, round):
+    from arc_science.exploration.claim_scope import derive_claim_scope
+    data = state.model_dump(mode='json')
+    gone = {o['id'] for o in data['observations'] if o['round'] == round}
+    data['observations'] = [o for o in data['observations'] if o['id'] not in gone]
+    data['artifacts'] = [a for a in data['artifacts'] if a['source_observation_id'] not in gone]
+    data['events'] = [e for e in data['events'] if not (e['round'] == round and e['kind'] in ('observation', 'artifact_rendered'))]
+    stripped = MissionState.model_validate(data)
+    return stripped.model_copy(update={'claim_scope': derive_claim_scope(stripped)})
+
+
+def test_a_round_stripped_after_a_budget_stop_that_followed_its_dispatch_does_not_verify():
+    state = run(MissionRequest(goal='Probe', max_rounds=3, max_cost_usd=0.01), agent=PricedGhost())
+    # The round-1 tools ran, then the spend check before reconciliation stopped the mission.
+    assert (state.status, state.stop_code, state.round) == ('budget_exhausted', 'cost_limit', 1)
+    assert {o.id for o in state.observations if o.round == 1} == {'fit-quadratic', 'shuffle-control', 'ghost'}
+    validate_evidence(state)
+    with pytest.raises(ValueError, match='unbound tool request'):
+        validate_evidence(strip_round(state, 1))
+
+
+def test_a_dispatch_cut_by_a_restart_verifies_and_completes_before_a_budget_stop():
+    from arc_science.exploration.engine import MissionCancelled
+    request = gated(max_minutes=1)
+    state = decide(run(request, agent=Unavailable()), ('proposal', 'plan-0', 'pursue', ''))
+    saved = []
+    def emit(current):
+        saved.append(current)
+    def cut():
+        # The service stopped once the reservation and the dispatch were committed.
+        return any(e.kind == 'actions_dispatched' for e in saved[-1].events) if saved else False
+    with pytest.raises(MissionCancelled):
+        asyncio.run(explore(request, Unavailable(), initial=state, emit=emit, cancelled=cut, clock=lambda: 0))
+    last = saved[-1]
+    assert not last.observations and last.actions_used == 2
+    interrupted = last.model_copy(update={'status': 'paused', 'stop_code': 'interrupted'})
+    validate_evidence(interrupted)
+    # Resumed past the time budget: the cut dispatch completes, then the spend check stops the mission.
+    final = asyncio.run(explore(request, Unavailable(), initial=interrupted, clock=lambda: 2))
+    assert (final.status, final.stop_code) == ('budget_exhausted', 'time_limit')
+    assert [o.status for o in final.observations if o.id == 'ghost'] == ['error'] and final.actions_used == 2
+    validate_evidence(final)
+
+
 def test_a_withheld_event_must_cite_the_decision_in_force_and_no_run():
     from arc_science.exploration.models import Event
     state = run(gated(), agent=Repropose(), initial=decide(run(gated(), agent=Repropose()), ('branch', 'linear', 'park', '')))

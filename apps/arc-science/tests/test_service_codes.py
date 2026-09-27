@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException
 
 from arc_science import error_codes, grants, readiness, service
 from arc_science.contracts import canonical
@@ -371,6 +372,37 @@ def test_a_chunked_oversized_body_is_refused_on_the_bytes_received(tmp_path):
         # Under the limit, a chunked body is read as usual.
         small = c.post('/api/missions', headers={**AUTH, **json_type}, content=chunks(b'{"goal":', b'"Valid mission"}'))
         assert small.status_code == 201, small.text
+
+
+def test_the_body_limit_sums_the_messages_of_a_streamed_body():
+    # The test client hands the app one message; a server streams a chunked body in pieces,
+    # each under the limit, so the limit must count their sum.
+    piece = 400 * 1024
+    messages = [{'type': 'http.request', 'body': b' ' * piece, 'more_body': True} for _ in range(4)]
+    messages.append({'type': 'http.request', 'body': b'', 'more_body': False})
+    delivered = []
+
+    async def receive():
+        delivered.append(messages[len(delivered)])
+        return delivered[-1]
+
+    async def reader(scope, receive, send):
+        while (await receive()).get('more_body'):
+            pass
+
+    async def ignore(message):
+        pass
+
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(service.BodyLimit(reader)({'type': 'http'}, receive, ignore))
+    assert refused.value.status_code == 413 and refused.value.detail['code'] == 'request.too_large'
+    # Refused on the third piece (1.2 MiB), before the app reads any further.
+    assert len(delivered) == 3
+    # Two pieces (800 KiB) and the end of the body pass through whole.
+    delivered.clear()
+    messages[2:] = [{'type': 'http.request', 'body': b'', 'more_body': False}]
+    asyncio.run(service.BodyLimit(reader)({'type': 'http'}, receive, ignore))
+    assert len(delivered) == 3
 
 
 def test_a_body_that_cannot_be_decoded_is_refused_with_a_code(tmp_path):

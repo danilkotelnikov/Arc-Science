@@ -35,6 +35,7 @@ from .catalog import BUILTIN_CATALOG, proposal_schema
 from .effort import applied_effort
 from .models import Proposal, Reconciliation
 from .providers import PLAN_PROMPT, REVIEW_PROMPT, render_prompt
+from .spend import count
 
 CALL_TIMEOUT = 75.0            # below the engine's 90 s deadline
 MAX_STDOUT = 1024 * 1024       # one JSON envelope or event list, never a stream
@@ -123,10 +124,13 @@ def one_observed_model(models, requested, label):
     return str(observed)
 
 
-def answered(error, usage, cost=None):
+def answered(error, usage, cost=None, reported_only=False):
     """A refusal made after the provider answered: the usage and cost it reported travel with
-    the error, so the paid call is recorded as a rejected answer, not a failed call."""
-    if usage is not None or cost is not None:
+    the error, so the paid call is recorded as a rejected answer, not a failed call. An answer
+    that reported no usage is still answered (unmeasured, not unrecorded). An error envelope
+    (reported_only) counts as answered only when it reports usage or cost, as an HTTP error
+    status does not."""
+    if not reported_only or usage is not None or cost is not None:
         error.answered = {'usage': usage, 'cost_usd': cost}
     return error
 
@@ -185,11 +189,15 @@ class Claude:
             text = envelope.get('result', '') if isinstance(envelope, dict) else ''
             if not text:
                 text = stderr[-STDERR_TAIL:].decode('utf-8', errors='replace')
-            raise ProviderError(cls.label + ' exited with status ' + str(returncode) + ': ' + failure_category(str(text)))
+            error = ProviderError(cls.label + ' exited with status ' + str(returncode) + ': ' + failure_category(str(text)))
+            if isinstance(envelope, dict):
+                raise answered(error, envelope.get('usage'), envelope.get('total_cost_usd'), reported_only=True)
+            raise error
         if not isinstance(envelope, dict):
             raise ProviderError(cls.label + ' returned no JSON envelope')
         if envelope.get('type') != 'result' or envelope.get('is_error'):
-            raise ProviderError(cls.label + ' reported a failed call: ' + failure_category(str(envelope.get('result', ''))))
+            raise answered(ProviderError(cls.label + ' reported a failed call: ' + failure_category(str(envelope.get('result', '')))),
+                           envelope.get('usage'), envelope.get('total_cost_usd'), reported_only=True)
         try:
             observed = one_observed_model(envelope.get('modelUsage'), model, cls.label)
             if envelope.get('permission_denials'):
@@ -347,9 +355,10 @@ class Gemini:
         stats = data.get('stats') or {}
         models = stats.get('models') if isinstance(stats.get('models'), dict) else {}
         reported = [e['tokens'] for e in models.values() if isinstance(e, dict) and isinstance(e.get('tokens'), dict)]
-        # Summed per key over the models reported (usually one); an empty report stays unmeasured, not zero.
-        spent_tokens = ({k: sum(t[k] for t in reported if isinstance(t.get(k), (int, float))) for t in reported for k in t}
-                        if reported else None)
+        # Summed per key over the models reported (usually one). An empty report, or one holding
+        # anything but counts, stays unmeasured rather than becoming a smaller count.
+        spent_tokens = ({k: sum(t[k] for t in reported if k in t) for t in reported for k in t}
+                        if reported and all(count(v) for t in reported for v in t.values()) else None)
         try:
             if (stats.get('tools') or {}).get('totalCalls'):
                 raise ProviderError(cls.label + ' attempted a tool action; the call is refused')
