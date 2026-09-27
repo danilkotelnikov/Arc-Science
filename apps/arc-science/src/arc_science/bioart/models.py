@@ -26,6 +26,8 @@ class BioArtRepresentation:
     group_id: int
     caption: str
     files: dict[str, int]
+    # A carousel image (JPG) that NIH shows but does not offer as a download format.
+    preview_file_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -33,7 +35,7 @@ class BioArtEntry:
     entry_id: int
     title: str
     license: str
-    credit: str
+    credit: str | None
     creator: str
     collection: str
     citation: str
@@ -51,6 +53,7 @@ class BioArtEntry:
 class BioArtSearchHit:
     entry_id: int
     title: str
+    thumbnail_file_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -110,3 +113,8 @@ class BioArtSettings:
         if not path.is_relative_to(root) or path == root:
             raise ValueError('BioArt cache must be inside the project')
         return cls(path, limits)
+
+    @property
+    def thumbnail_dir(self):
+        # A sibling cache with its own writer lock, so thumbnails never block a fetch.
+        return self.cache_dir.with_name(self.cache_dir.name + '-thumbnails')

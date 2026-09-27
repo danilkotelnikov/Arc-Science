@@ -53,14 +53,15 @@ def test_untyped_prefixed_svg_preserves_bytes_and_missing_type_with_existing_eli
     assert len(calls)==2
 
 
-def test_observed_viewbox_style_and_metadata_shape_remains_download_only(tmp_path):
+def test_observed_viewbox_style_and_metadata_shape_previews_but_does_not_import(tmp_path):
     client,_=_client(tmp_path,SOURCE_SVG)
     receipt=client.fetch(18,64,'SVG')
     value=client.verify(receipt.receipt_path)
     assert value['source_content_type'] is None
     assert receipt.source_path.read_bytes()==SOURCE_SVG
     assert value['sha256']==hashlib.sha256(SOURCE_SVG).hexdigest()
-    assert value['preview_eligible'] is False and value['import_eligible'] is False
+    # Preview needs only the passive intake check; import stays with the allowlist importer.
+    assert value['preview_eligible'] is True and value['import_eligible'] is False
     assert 'dimensions' in value['limitation']
     with pytest.raises(ValueError,match='eligible'):
         client.import_asset(receipt.receipt_path,tmp_path/'project')
@@ -157,10 +158,11 @@ def test_isolated_file_request_transfers_observed_missing_type(tmp_path,monkeypa
     assert len(calls)==2
 
 
-@pytest.mark.parametrize('mimes',[{'image/png'},{'application/octet-stream'}])
-def test_untyped_non_svg_downloads_stay_rejected(tmp_path,mimes):
+@pytest.mark.parametrize('mimes,match',[({'image/png'},'magic'),({'application/octet-stream'},'MIME')])
+def test_untyped_svg_bytes_are_refused_for_other_or_unknown_formats(tmp_path,mimes,match):
+    # Missing Content-Type is accepted per requested format by magic bytes only.
     client,_=_client(tmp_path,SAFE_SVG)
-    with pytest.raises(ValueError,match='MIME'):
+    with pytest.raises(ValueError,match=match):
         client._request('/api/bioarts/18/files/626860',1024,mimes)
 
 
@@ -200,3 +202,21 @@ def test_owned_worker_environment_is_scrubbed_but_keeps_arc_science_importable(t
     assert payload['has_key'] is False
     assert payload['pythonpath'] != '/unsafe/import/path'
     assert payload['pythonpath'].endswith('src')
+
+
+def test_a_missing_rasterizer_fails_the_svg_import_instead_of_skipping_it(tmp_path, monkeypatch):
+    """No suite-wide hook may turn a failed SVG render into a skip."""
+    from _pytest.outcomes import Skipped
+    from arc_science import svg_raster
+    from arc_science.vector_assets import import_vector
+    monkeypatch.delenv('ARC_SVG2PNG', raising=False)
+    monkeypatch.setattr(svg_raster, 'cairo_available', lambda: False)
+    source = tmp_path / 'art.svg'
+    source.write_bytes(SAFE_SVG)
+    provenance = {'origin': 'nih_bioart', 'title': 'Test', 'source_url': 'https://bioart.niaid.nih.gov/bioart/18',
+                  'permission_note': 'Public Domain', 'external_rendering_authorized': True}
+    try:
+        with pytest.raises(ValueError):
+            import_vector(source, tmp_path / 'project', provenance)
+    except Skipped:
+        pytest.fail('a failed SVG render was turned into a skip')
