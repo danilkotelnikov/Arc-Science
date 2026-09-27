@@ -77,7 +77,7 @@ REFERENCE_RULE = '''Write every number in a finding as a reference to a recorded
 search as {{<observation id>}}; it stands for every work that search returned. Type no numeral yourself, in any script:
 a digit outside a reference keeps the claim below traced, and a number no observation records cannot be stated.
 Wrap every name that contains a digit (a gene, protein, strain, model or dataset) in a name token {{name:<name>}}, for example
-{{name:p53}}, {{name:IL-6}} or {{name:SARS-CoV-2}}: a letter first, then letters, digits and hyphens. A name token is your label,
+{{name:p53}}, {{name:16S}} or {{name:SARS-CoV-2}}: letters, digits and hyphens, at least one letter, no hyphen first. A name token is your label,
 not a traced value: never write a quantity as a name. No spaces inside the braces. The user message lists recorded observations
 of the whole mission with the fields you may reference, newest first; observations it leaves unlisted are still valid to reference.'''
 # The listing of referenceable observations in the review user message: whole entries only,

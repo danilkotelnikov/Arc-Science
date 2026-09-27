@@ -29,7 +29,7 @@ from arc_science.exploration.engine import explore
 from arc_science.exploration.evidence import evidence_graph
 from arc_science.exploration.models import MissionRequest, MissionState, VerificationReceipt
 from arc_science.exploration.public_reads import public_tools
-from arc_science.exploration.validation import RUNGS, claim_ladder, parse, request_identity, resolve
+from arc_science.exploration.validation import GUARANTEE, RUNGS, claim_ladder, parse, request_identity, resolve
 from test_settings import stub  # noqa: F401  (fixture reuse)
 
 FIXTURES = Path(__file__).parent / 'fixtures'
@@ -159,12 +159,15 @@ def test_the_reference_grammar_accepts_only_whole_tokens():
 
 
 def test_a_name_token_labels_an_identifier_with_digits():
-    """{{name:<text>}}: a letter, then letters, digits and hyphens. It is the author's label, not
-    a traced value: exempt from the numeral check, never a number and never resolved against evidence."""
-    for name in ('p53', 'BRCA1', 'IL-6', 'SARS-CoV-2', 'H3K27ac', 'GPT-5', 'x'):
+    """{{name:<text>}}: letters of any script, ASCII digits and hyphens, at least one letter, no
+    leading hyphen, so a name may start with a digit (16S, 5-HT2A) and a pure quantity (0-5) is not
+    a name. It is the author's label, not a traced value: exempt from the numeral check, never a
+    number and never resolved against evidence."""
+    for name in ('p53', 'BRCA1', 'IL-6', 'SARS-CoV-2', 'H3K27ac', 'GPT-5', 'x', '16S', '5-HT2A', 'TGF-β1', 'β2', '5p', 'Ω'):
         assert tokens('The {{name:' + name + '}} line.') == (True, [('{{name:' + name + '}}', 'name', name, None)]), name
-    for text in ('{{name:}}', '{{name:5p}}', '{{name:-p53}}', '{{name:GPT-5.5}}', '{{name:p 53}}', '{{name: p53}}', '{{name:p_53}}',
-                 '{{name:p53}', '{{name:p53.x}}', '{{name:IL-6/IL-8}}', '{{name:β2}}', '{{Name:p53}}', '{{name:p53:x}}',
+    for text in ('{{name:}}', '{{name:0-5}}', '{{name:500}}', '{{name:-}}', '{{name:x²}}', '{{name:½x}}', '{{name:٣x}}', '{{name:x_}}',
+                 '{{name:-p53}}', '{{name:GPT-5.5}}', '{{name:p 53}}', '{{name: p53}}', '{{name:p_53}}',
+                 '{{name:p53}', '{{name:p53.x}}', '{{name:IL-6/IL-8}}', '{{Name:p53}}', '{{name:p53:x}}',
                  # nested
                  '{{name:{{name:p53}}}}', '{{name:{{fit.degree}}}}', '{{{{name:p53}}}}', '{{name:p53}}}'):
         assert not parse(text)[1], text
@@ -178,6 +181,10 @@ def test_a_name_token_labels_an_identifier_with_digits():
     assert card['supported_scope_rendered'][0] == f"analyst: Error {fit['validation_mse']!r} [validation_mse, fit] for p53, SARS-CoV-2 and H3K27ac."
     assert [(r['kind'], r['value']) for r in card['references']] == [
         ('number', fit['validation_mse']), ('name', 'p53'), ('name', 'SARS-CoV-2'), ('name', 'H3K27ac')]
+    # A name that starts with a digit or has a non-ASCII letter keeps its claim traced.
+    for said in ('Abundance of {{name:16S}} rRNA tracks {{fit.validation_mse}}.', 'The {{name:TGF-β1}} and {{name:5-HT2A}} arms.'):
+        _, state = run(Scripted([FIT], say=lambda o, s=said: s))
+        assert ladder_of(state)['rung'] == 1, said
     # A name is never a number: a claim whose only digits sit in names is not numeric and is held to L1.
     request, named = run(Scripted([READ], falsifier_test=None, say=lambda o: 'The {{name:BRCA1}} review is {{read}}.'),
                          extra_tools=reads(SOUND), egress=True)
@@ -1073,6 +1080,10 @@ def test_a_legacy_mission_waives_only_the_reference_grammar():
         verified = decide(request, state, passing(state))
         assert rung_check(verified).state == 'satisfied' and verified.eligible_for_human_review, said
         assert ladder_of(state, verification=passing(state))['rung'] == 0  # the displayed ladder is unchanged
+        # The waived claim is not certified as traced: the reason names the waiver and the lower ladder.
+        reason = rung_check(verified).reason
+        assert GUARANTEE not in reason and 'reach their minimum rung' not in reason, reason
+        assert 'waive' in reason and '1 of them' in reason and 'displayed ladder' in reason, reason
         # The same claim under the reference policy is blocked.
         assert rung_check(decide(request.model_copy(update={'ladder_policy': 'references'}), state, passing(state))).state == 'failed'
         # Unverified, the numeric claim still lacks L2 (recomputed): not waived.

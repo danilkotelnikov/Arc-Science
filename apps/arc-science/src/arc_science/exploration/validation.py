@@ -78,10 +78,16 @@ ALPHA = .05
 CONTROL_DEGREE = 2
 # The reference grammar: {{id.field}} a recorded number, {{id}} a recorded retrieval,
 # {{name:text}} an identifier the author labels. No whitespace, no nesting; field is a
-# top-level key of Observation.data.
-TOKEN = re.compile(r'\{\{(?:name:([A-Za-z][A-Za-z0-9-]*)|([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_-]+))?)\}\}')
+# top-level key of Observation.data. A name's characters are checked by _name.
+TOKEN = re.compile(r'\{\{(?:name:([^\W_][\w-]*)|([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_-]+))?)\}\}')
 FIELD = re.compile('[A-Za-z0-9_-]+')
 LITERATURE = 'literature_search'
+
+
+def _name(text):
+    """A name: letters of any script, ASCII digits and hyphens, with at least one letter, so
+    16S, 5-HT2A and TGF-β1 are names and a bare quantity such as 0-5 is not."""
+    return any(ch.isalpha() for ch in text) and all(ch.isalpha() or ch in '0123456789-' for ch in text)
 
 
 def _pairs(text, pair):
@@ -95,7 +101,7 @@ def parse(text: str) -> tuple[list[dict], bool]:
     {kind: name, text, value}. The text is malformed when any '{{' does not open a token or any
     '}}' does not close one: unmatched, nested, empty, spaced or other characters."""
     out, at = [], 0
-    found = list(TOKEN.finditer(text))
+    found = [m for m in TOKEN.finditer(text) if m.group(1) is None or _name(m.group(1))]
     for m in found:
         if m.start() > at:
             out.append({'kind': 'text', 'text': text[at:m.start()]})

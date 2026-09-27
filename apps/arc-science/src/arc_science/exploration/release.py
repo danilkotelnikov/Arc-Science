@@ -166,22 +166,30 @@ def _claim_rungs(request, state, verification, subject, timeline_rows, receipts)
     held = [b for b in state.claim_scope.branches if b.status != 'unassessed']
     if not held:
         return 'not_applicable', 'No hypothesis was assessed, so no claim is held to a minimum rung.', ()
-    short, defect = [], False
+    short, defect, waived = [], False, 0
     for scoped in held:
         minimum = 2 if is_numeric(state, scoped) else 1
-        needs = [need for need in unmet(state, scoped, minimum, timeline_rows=timeline_rows, receipts=receipts,
-                                        verification=verification, subject=subject) if not (legacy and need in GRAMMAR)]
+        every = unmet(state, scoped, minimum, timeline_rows=timeline_rows, receipts=receipts,
+                      verification=verification, subject=subject)
+        needs = [need for need in every if not (legacy and need in GRAMMAR)]
+        waived += len(needs) < len(every)
         if needs:
             defect = defect or any(need in DEFECTS for need in needs)
             short.append(scoped.branch_id + ' needs L' + str(minimum) + ' (' + ', '.join(needs) + ')')
     if short:
         # A defect in the evidence fails; a step not yet taken (verification) is unknown.
         return ('failed' if defect else 'unknown'), 'Below the minimum rung: ' + '; '.join(short)[:600], ()
-    return 'satisfied', ('All ' + str(len(held)) + ' assessed claims reach their minimum rung (numeric L2, others L1): '
-                         + GUARANTEE + '. '
-                         + ('A legacy mission predates references, so the reference grammar is waived and every other '
-                            'condition holds. ' if legacy else '')
-                         + 'A rung records how far the evidence was checked, never that a claim is true.'), ()
+    if waived:
+        # A waived claim's numbers are not traced: never certify them with the guarantee.
+        met = ('All ' + str(len(held)) + ' assessed claims meet every other condition of their minimum rung (numeric L2, '
+               'others L1). A legacy mission predates references, so the reference grammar is waived for '
+               + str(waived) + ' of them: their numbers are not traced to recorded values and their displayed ladder '
+               'stays below that rung. ')
+    else:
+        met = ('All ' + str(len(held)) + ' assessed claims reach their minimum rung (numeric L2, others L1): ' + GUARANTEE
+               + '. ' + ('A legacy mission predates references; none of its claims needed the reference grammar waived. '
+                         if legacy else ''))
+    return 'satisfied', met + 'A rung records how far the evidence was checked, never that a claim is true.', ()
 
 
 def _replay(name, receipt: VerificationReceipt | None, current_subject, state):
