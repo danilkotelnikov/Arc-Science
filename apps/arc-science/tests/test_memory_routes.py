@@ -187,6 +187,17 @@ def test_memory_error_codes_are_registered_english_sentences():
         assert f"memory.{reason}" in MEMORY_ERROR_CODES
     for code, english in MEMORY_ERROR_CODES.items():
         assert code.startswith("memory.") and english and english[0].isupper()
+        assert len(english) <= 90, code  # R005: visible error text stays short
+
+
+def test_corrupt_copy_claims_no_check_the_worker_did_not_run():
+    # Most corrupt causes (undecodable blob, negative size, bad UTF-8) fail before any
+    # digest is computed, so the one shared sentence may only say the record is damaged.
+    from arc_science.memory.codes import MEMORY_ERROR_CODES
+    english = MEMORY_ERROR_CODES["memory.record_corrupt"].lower()
+    assert "damaged" in english
+    for claim in ("digest", "integrity", "no longer matches"):
+        assert claim not in english
 
 
 def test_unconfigured_worker_errors_carry_code_and_facts(tmp_path):

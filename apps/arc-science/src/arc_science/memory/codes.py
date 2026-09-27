@@ -13,7 +13,7 @@ MEMORY_ERROR_CODES = {
     "memory.worker_disconnected": "Native memory worker disconnected; retry to recover",
     "memory.record_not_found": "Unknown memory record",
     "memory.read_budget": "Memory result exceeds the read budget; narrow the scope or reduce the result limit",
-    "memory.record_corrupt": "A stored memory record failed its integrity check; its text no longer matches the recorded digest",
+    "memory.record_corrupt": "A stored memory record is damaged and cannot be read",
     "memory.operation_failed": "Memory operation failed; check the query, record or requested range",
     "memory.invalid_range": "The sequence range is reversed; from_seq must not exceed to_seq",
     "memory.declaration_refused": "The declared effects do not cover this change",
