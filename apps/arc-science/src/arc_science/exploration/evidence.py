@@ -8,7 +8,7 @@ from ..contracts import canonical, digest
 from .catalog import validate_arguments, validate_catalog
 from .changes import MISSION_CHANGES, required_checks
 from .claim_scope import DERIVATION_VERSION, derive_claim_scope
-from .models import Assessed, Branch, MissionState, Proposal, Reconciliation
+from .models import WITHHOLDS, Assessed, Branch, MissionState, Proposal, Reconciliation, operator_directives
 from .repair import POLICIES
 from .vision import current_artifacts, validate_report, visual_context
 
@@ -283,6 +283,36 @@ def validate_evidence(state: MissionState) -> None:
             raise ValueError("Change record does not bind to its declaration")
     if declared_events:
         raise ValueError("Declaration event without its change record")
+    # Operator decisions (contract C6) bind to the plan they answer, to the work they withheld
+    # and to what every later planner was told.
+    planners = {record.round: record for record in state.model_records if record.role == "planner"}
+    decisions = [(change, decision) for change in state.changes for decision in change.decisions]
+    for change, decision in decisions:
+        plan = planners.get(decision.round)
+        target = (decision.target_id == f"plan-{decision.round}" if decision.target == "proposal" else
+                  any(b.id == decision.target_id and b.created_round <= decision.round for b in state.branches))
+        if (change.kind != "decision" or decision.round != change.round or plan is None
+                or decision.plan_digest != digest(plan) or not target):
+            raise ValueError("Operator decision does not bind to its plan")
+    for record in planners.values():
+        told = operator_directives([d.model_dump(mode="json") for _, d in decisions if d.round < record.round])
+        if record.input_context.get("operator_directives", []) != told:
+            raise ValueError("Planner context does not bind to the recorded operator decisions")
+    withheld = set()
+    for event in state.events:
+        if event.kind != "action_withheld":
+            continue
+        action_id, _, rest = event.detail.partition(": branch ")
+        branch_id, _, rest = rest.partition("; ")
+        directive, _, change_id = rest.partition(" by decision ")
+        plan = planners.get(event.round)
+        action = next((a for a in Proposal.model_validate(plan.payload).actions if a.id == action_id), None) if plan else None
+        if (action is None or action.branch_id != branch_id or directive not in WITHHOLDS or not any(
+                change.id == change_id and d.directive == directive and d.round <= event.round
+                and (d.target_id == branch_id if d.target == "branch" else d.round == event.round)
+                for change, d in decisions)):
+            raise ValueError("Withheld action does not bind to an operator decision")
+        withheld.add((event.round, action_id))
     for index, event in enumerate(state.events[:-1]):
         # A cancellation after a stop, an interruption or a pause is a terminal operator
         # action, not a continuation; anything else must be a declared change.
@@ -333,9 +363,12 @@ def validate_evidence(state: MissionState) -> None:
                 try:
                     validate_arguments(action.tool, action.arguments, tools)
                 except ValueError:
-                    # A request the operator withheld never ran; one that ran was refused.
+                    # One that ran was refused; one that never ran was withheld by the operator,
+                    # or its plan (the latest, with nothing run yet) waits to run.
                     denied = observations.get(action.id)
-                    if denied and (denied.action != action or denied.status != "error"):
+                    pending = record.round == state.round and all(o.round != record.round for o in state.observations)
+                    if (denied.action != action or denied.status != "error") if denied else not (
+                            (record.round, action.id) in withheld or pending):
                         raise ValueError("Recorded proposal has an unbound tool request") from None
                 if action.id in planned_actions and planned_actions[action.id][0] != action:
                     raise ValueError("Recorded proposal reuses an action identity")

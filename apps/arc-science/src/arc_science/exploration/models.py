@@ -398,6 +398,18 @@ class OperatorDecision(Record):
     plan_digest: Digest
 
 
+# What each operator directive asks of the next planner, inside the operator-directive fence.
+ASKS = {'pursue': 'Keep testing this.', 'park': 'Parked: its actions are withheld until the operator pursues it again.',
+        'drop': 'Dropped: its actions are withheld.', 'request_test': 'Propose an action that tests this branch.'}
+WITHHOLDS = ('park', 'drop')
+
+
+def operator_directives(decisions):
+    """What the planner reads of each decision (JSON dicts): the engine sends it, evidence checks it."""
+    return [{**{k: d[k] for k in ('target', 'target_id', 'directive', 'note', 'round')}, 'ask': ASKS[d['directive']]}
+            for d in decisions]
+
+
 class Change(Versioned):
     LATER_FIELDS = ('decisions',)
     id: Id

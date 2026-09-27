@@ -8,7 +8,8 @@ from __future__ import annotations
 import asyncio
 import time
 from .models import (MissionRequest, MissionState, Branch, Proposal, Reconciliation,
-                     Observation, Assessed, Event, ModelRecord, VisionRecord, RepairCycle, VisualReport, UnboundCall)
+                     Observation, Assessed, Event, ModelRecord, VisionRecord, RepairCycle, VisualReport, UnboundCall,
+                     WITHHOLDS, operator_directives)
 from .tools import synthetic_data, execute_numeric, CATALOG, TOOL_VERSION
 from .artifacts import artifact_for_observation
 from .claim_scope import derive_claim_scope
@@ -33,11 +34,6 @@ VISUAL_CAUSES = {
 # Stops that over_budget itself makes; every other non-error stop checks the budgets first.
 BUDGET_STOPS = ('token_limit', 'cost_limit', 'time_limit', 'budget_unmeasurable')
 
-# What each operator directive asks of the next planner, inside the operator-directive fence.
-ASKS = {'pursue': 'Keep testing this.', 'park': 'Parked: its actions are withheld until the operator pursues it again.',
-        'drop': 'Dropped: its actions are withheld.', 'request_test': 'Propose an action that tests this branch.'}
-WITHHOLDS = ('park', 'drop')
-
 
 def plan_digest(record):
     """What an operator decision binds to: the committed planner record of its round."""
@@ -48,6 +44,19 @@ def operator_decisions(state):
     """Every recorded operator decision in order, with the change that carries it."""
     return [{'change_id': c.id, 'at': c.at, **d.model_dump(mode='json')}
             for c in state.changes if c.kind == 'decision' for d in c.decisions]
+
+def asks_for_more(decisions, round_number):
+    """Whether this round's decisions refuse a stopping plan. The latest decision on a target
+    stands. A proposal decision answers the plan itself: pursue accepts it, anything else asks
+    again. Without one, a request_test on a branch, or a pursue on a branch parked or dropped in
+    an earlier round, asks for work the plan does not propose."""
+    now=[d for d in decisions if d['round']==round_number]
+    proposal=next((d['directive'] for d in reversed(now) if d['target']=='proposal'),None)
+    if proposal:return proposal!='pursue'
+    before={d['target_id']:d['directive'] for d in decisions if d['target']=='branch' and d['round']<round_number}
+    latest={d['target_id']:d['directive'] for d in now if d['target']=='branch'}
+    return any(v=='request_test' or (v=='pursue' and before.get(k) in WITHHOLDS) for k,v in latest.items())
+
 
 class MissionCancelled(RuntimeError): pass
 
@@ -148,8 +157,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         items=[i.model_dump(mode='json') for i in request.context_items if planning or i.kind!='mission'] if reviewing is None else []
         earlier={'mission_context':items} if items else {}
         # Every operator directive so far goes to the planner as operator input, never to the reviewers.
-        directives=[{**{k:d[k] for k in ('target','target_id','directive','note','round')},'ask':ASKS[d['directive']]}
-                    for d in operator_decisions(state)] if planning else []
+        directives=operator_directives(operator_decisions(state)) if planning else []
         if directives:earlier['operator_directives']=directives
         return {**earlier,'goal':request.goal,'round':state.round,'data_origin':state.data_origin,
                 'dataset':{'digest':state.dataset_digest,'n':len(state.points)},
@@ -234,6 +242,11 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                 branches.append(Branch(**idea.model_dump(),created_round=state.round));ids.add(idea.id)
             if len({a.id for a in plan.actions})!=len(plan.actions): raise ProposalRejected('Duplicate actions')
             if any(a.branch_id not in ids for a in plan.actions): raise ProposalRejected('Unknown branch')
+            # An action ID names one request for the whole mission: a withheld action never ran,
+            # so only earlier plans, not observations, show its identity is taken.
+            earlier={a.id:a for r in state.model_records if r.role=='planner' and r.round<state.round
+                     for a in Proposal.model_validate(r.payload).actions}
+            reused=next((a.id for a in plan.actions if a.id in earlier and earlier[a.id]!=a),None)
         except Exception as why:
             if op:log('finished',op,outcome='error',detail='Planning failed validation or provider execution.')
             # Accounting never depends on the optional timeline logger.
@@ -243,6 +256,13 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             reason=' Rejected: '+str(why)+'.' if isinstance(why,ProposalRejected) else ''
             return stop('error','planning_failed','Planning failed validation or provider execution. No synthetic fallback was used.'+reason,
                         rejected=isinstance(why,ProposalRejected))
+        if reused:
+            # Refused before the plan is committed, so the record stays verifiable and a
+            # resume asks the planner again.
+            if op:log('finished',op,outcome='error',detail='An action ID was reused with different inputs.')
+            transport=unbound('planner') if called else None
+            if transport is not None:change(unbound_calls=state.unbound_calls+(unbound_call('planner',transport),))
+            return stop('error','action_reused','An action ID was reused with different inputs.',action_id=reused)
         records=state.model_records
         if committed_plan is None:
             transport=provenance('planner');log('finished',op,outcome='ok',transport=transport)
@@ -257,8 +277,7 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
             return stop('paused','awaiting_decision',f"The plan for round {state.round} waits for the operator's decision.",
                         round=state.round,plan_digest=plan_digest(committed))
         decisions=operator_decisions(state)
-        if (plan.stop or not plan.actions) and any(d['round']==state.round and (d['directive'] in WITHHOLDS if d['target']=='proposal'
-                                                   else d['directive'] in ('pursue','request_test')) for d in decisions):
+        if (plan.stop or not plan.actions) and asks_for_more(decisions,state.round):
             # The operator refused a plan that would end the mission, or asked for work it does not
             # propose: the round closes and the planner is asked again with the directives.
             event('round_closed','The operator asked for more work than this plan proposes; the planner is asked again.')
@@ -277,11 +296,8 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         proposal=next((d for d in reversed(decisions) if d['target']=='proposal' and d['round']==state.round),None)
         actions=[];withheld=[]
         for a in plan.actions:
-            prior=next((o for o in state.observations if o.id==a.id),None)
-            if prior:
-                if prior.request_digest!=digest([a.model_dump(mode='json'),state.dataset_digest]):
-                    return stop('error','action_reused','An action ID was reused with different inputs.',action_id=a.id)
-                continue
+            # Already ran (its identity was checked against the earlier plans before commit).
+            if any(o.id==a.id for o in state.observations):continue
             why=proposal if proposal and proposal['directive'] in WITHHOLDS else standing.get(a.branch_id)
             if why and why['directive'] in WITHHOLDS:withheld.append((a,why));continue
             actions.append(a)
