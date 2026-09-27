@@ -26,27 +26,18 @@ def _entry_page():
                    for chunk in (flight[:cut], flight[cut:]))
 
 
-def _seed(tmp_path, monkeypatch, query='antibody'):
+def _seed(tmp_path, monkeypatch, query='antibody', *, svg=SVG, mime='image/svg+xml'):
     from arc_science.bioart import BioArtClient
+    from test_bioart_search import nih
 
     monkeypatch.setenv('ARC_BIOART_CACHE_DIR', 'bioart-cache')
-    calls = []
-
-    def respond(request):
-        calls.append(str(request.url))
-        if request.url.path == '/discover':
-            return httpx.Response(200, text='<a href="/bioart/18"><img alt="Antibody"></a>',
-                                  headers={'content-type': 'text/html'})
-        if request.url.path == '/bioart/18':
-            return httpx.Response(200, text=_entry_page(), headers={'content-type': 'text/html'})
-        assert request.url.path == '/api/bioarts/18/files/626860'
-        return httpx.Response(200, content=SVG, headers={'content-type': 'image/svg+xml'})
-
+    transport, calls = nih(files={'/bioart/18': (_entry_page().encode(), 'text/html'),
+                                  '/api/bioarts/18/files/626860': (svg, mime)})
     client = BioArtClient(tmp_path / 'bioart-cache', allow_egress=True,
-                          client=httpx.Client(transport=httpx.MockTransport(respond)))
+                          client=httpx.Client(transport=transport))
     assert client.search(query)[0].entry_id == 18
     receipt = client.fetch(18)
-    assert len(calls) == 3
+    assert len(calls) == 5
     return receipt
 
 
@@ -72,13 +63,17 @@ def test_bioart_routes_require_the_operator_token(tmp_path):
     assert [response.status_code for response in requests] == [401, 401, 401, 401, 401, 401]
 
 
-def test_cached_search_inspect_fetch_preview_and_import_are_path_safe(tmp_path, monkeypatch):
+def test_cached_search_inspect_fetch_preview_and_import_are_path_safe(tmp_path, monkeypatch, svg_rasterizer):
     seeded = _seed(tmp_path, monkeypatch)
     with TestClient(_app(tmp_path)) as client:
         search = client.post('/api/bioart/search', headers=_auth(),
                              json={'query': 'antibody', 'allow_egress': False})
         assert search.status_code == 200, search.text
-        assert search.json() == {'hits': [{'entry_id': 18, 'title': 'Antibody'}]}
+        hits = search.json()['hits']
+        assert len(hits) == 7
+        assert hits[0] == {'entry_id': 18, 'title': 'Antibody', 'thumbnail_file_id': 650176,
+                           'thumbnail_url': '/api/bioart/thumbnails/18/650176'}
+        assert all(hit['thumbnail_url'].startswith('/api/bioart/thumbnails/') for hit in hits)
 
         inspected = client.post('/api/bioart/inspect', headers=_auth(),
                                 json={'entry_id': 18, 'allow_egress': False})
@@ -130,8 +125,10 @@ def test_cache_miss_does_not_make_hidden_network_request(tmp_path, monkeypatch):
         response = client.post('/api/bioart/search', headers=_auth(),
                                json={'query': 'antibody', 'allow_egress': False})
     assert response.status_code == 409
-    assert 'explicit' in response.json()['detail'].lower()
-    assert 'egress' in response.json()['detail'].lower()
+    problem = response.json()['detail']
+    assert problem['code'] == 'bioart.cache_miss' and problem['facts'] == {}
+    assert 'explicit' in problem['detail'].lower()
+    assert 'egress' in problem['detail'].lower()
 
 
 def test_explicit_egress_populates_through_the_owned_cli_boundary(tmp_path, monkeypatch):
@@ -152,9 +149,10 @@ def test_explicit_egress_populates_through_the_owned_cli_boundary(tmp_path, monk
                                json={'query': 'antibody', 'allow_egress': True})
 
     assert response.status_code == 200, response.text
-    assert response.json() == {'hits': [{'entry_id': 18, 'title': 'Antibody'}]}
+    assert response.json()['hits'][0]['entry_id'] == 18
+    # Search is three requests (page, chunk, action), each with its own deadline.
     assert calls == [(tmp_path.absolute(),
-                      ('search', '--allow-egress', '--', 'antibody'), 35)]
+                      ('search', '--allow-egress', '--', 'antibody'), 95)]
 
 
 def test_untyped_provider_error_never_triggers_the_network_helper(tmp_path, monkeypatch):
@@ -331,7 +329,8 @@ def test_unrelated_cache_miss_does_not_queue_behind_active_population(tmp_path, 
     assert first.status_code == 200
     assert second is not None, 'unrelated live population waited instead of failing closed'
     assert second.status_code == 409
-    assert 'active' in second.json()['detail'].lower()
+    assert second.json()['detail']['code'] == 'bioart.busy'
+    assert 'active' in second.json()['detail']['detail'].lower()
     assert calls == [('search', '--allow-egress', '--', 'antibody')]
 
 
@@ -507,7 +506,7 @@ def test_preview_reverifies_bytes_and_rejects_tampering(tmp_path, monkeypatch):
     with TestClient(_app(tmp_path)) as client:
         response = client.get(f'/api/bioart/receipts/{receipt_id}/preview', headers=_auth())
     assert response.status_code == 409
-    assert 'mismatch' in response.json()['detail'].lower()
+    assert 'mismatch' in response.json()['detail']['detail'].lower()
 
 
 def test_import_maps_invalid_provider_configuration_without_server_error(tmp_path, monkeypatch):
@@ -516,7 +515,106 @@ def test_import_maps_invalid_provider_configuration_without_server_error(tmp_pat
         response = client.post('/api/bioart/import', headers=_auth(),
                                json={'receipt_id': 'a' * 64})
     assert response.status_code == 409
-    assert 'cache path' in response.json()['detail'].lower()
+    assert 'cache path' in response.json()['detail']['detail'].lower()
+
+
+@pytest.mark.parametrize('message,status,code,facts', [
+    ('BioArt CLI failed: [bioart.unreachable {"proxy":"127.0.0.1:10809"}] Cannot reach bioart.niaid.nih.gov',
+     502, 'bioart.unreachable', {'proxy': '127.0.0.1:10809'}),
+    ('BioArt CLI failed: [bioart.drift] BioArt search action discoverSearch is missing', 502, 'bioart.drift', {}),
+    ('BioArt web helper total timeout', 504, 'bioart.timeout', {}),
+    ('BioArt CLI failed without a safe provider error', 409, 'bioart.failed', {}),
+])
+def test_errors_carry_a_code_detail_and_facts(tmp_path, monkeypatch, message, status, code, facts):
+    import arc_science.bioart.web as web
+    monkeypatch.setenv('ARC_BIOART_CACHE_DIR', 'bioart-cache')
+
+    async def populate(*_):
+        raise ValueError(message)
+
+    monkeypatch.setattr(web, '_run_bioart_cli', populate)
+    with TestClient(_app(tmp_path)) as client:
+        response = client.post('/api/bioart/search', headers=_auth(),
+                               json={'query': 'antibody', 'allow_egress': True})
+    assert response.status_code == status
+    problem = response.json()['detail']
+    assert (problem['code'], problem['facts']) == (code, facts)
+    assert problem['detail'] and '[' not in problem['detail']
+    from arc_science.bioart.errors import BIOART_ERROR_CODES
+    assert code in BIOART_ERROR_CODES
+
+
+def test_invalid_query_is_a_coded_refusal(tmp_path, monkeypatch):
+    monkeypatch.setenv('ARC_BIOART_CACHE_DIR', 'bioart-cache')
+    with TestClient(_app(tmp_path)) as client:
+        response = client.post('/api/bioart/search', headers=_auth(),
+                               json={'query': 'x AND license:*', 'allow_egress': True})
+    assert response.status_code == 409
+    assert response.json()['detail']['code'] == 'bioart.invalid_query'
+
+
+def _seed_thumbnail(tmp_path):
+    from arc_science.bioart import BioArtClient, BioArtSettings
+    from test_bioart_search import nih, recorded
+    settings = BioArtSettings.from_environment(tmp_path.absolute())
+    transport, _ = nih(files={'/api/bioarts/250/files/650431': (recorded('thumbnail-650431.jpg'), None)})
+    BioArtClient(settings.thumbnail_dir, allow_egress=True,
+                 client=httpx.Client(transport=transport)).thumbnail(250, 650431)
+    return recorded('thumbnail-650431.jpg')
+
+
+def test_thumbnail_route_serves_cached_bytes_locally_and_never_an_external_url(tmp_path, monkeypatch):
+    import arc_science.bioart.web as web
+    monkeypatch.setenv('ARC_BIOART_CACHE_DIR', 'bioart-cache')
+    thumbnail = _seed_thumbnail(tmp_path)
+    calls = []
+
+    async def populate(*arguments):
+        calls.append(arguments)
+
+    monkeypatch.setattr(web, '_run_bioart_cli', populate)
+    with TestClient(_app(tmp_path)) as client:
+        served = client.get('/api/bioart/thumbnails/250/650431', headers=_auth())
+        missing = client.get('/api/bioart/thumbnails/18/650176', headers=_auth())
+        unauthorised = client.get('/api/bioart/thumbnails/250/650431')
+    assert served.status_code == 200 and served.content == thumbnail
+    assert served.headers['content-type'] == 'image/jpeg'
+    assert served.headers['content-security-policy'] == "default-src 'none'; sandbox"
+    assert missing.status_code == 409 and missing.json()['detail']['code'] == 'bioart.cache_miss'
+    assert unauthorised.status_code == 401
+    assert calls == []
+
+
+def test_thumbnail_route_fetches_through_the_owned_cli_only_with_egress(tmp_path, monkeypatch):
+    import arc_science.bioart.web as web
+    monkeypatch.setenv('ARC_BIOART_CACHE_DIR', 'bioart-cache')
+    _seed_thumbnail(tmp_path / 'seed')
+    calls = []
+
+    async def populate(project, arguments, timeout):
+        calls.append(arguments)
+        shutil.copytree(tmp_path / 'seed' / 'bioart-cache-thumbnails', tmp_path / 'bioart-cache-thumbnails',
+                        dirs_exist_ok=True)
+
+    monkeypatch.setattr(web, '_run_bioart_cli', populate)
+    with TestClient(_app(tmp_path)) as client:
+        served = client.get('/api/bioart/thumbnails/250/650431?allow_egress=true', headers=_auth())
+    assert served.status_code == 200, served.text
+    assert calls == [('thumbnail', '--allow-egress', '250', '650431')]
+
+
+def test_observed_untyped_svg_previews_in_the_sandbox_but_does_not_import(tmp_path, monkeypatch):
+    from test_bioart_search import recorded
+    observed = recorded('file-626835.svg')
+    receipt = _seed(tmp_path, monkeypatch, svg=observed, mime=None)
+    receipt_id = receipt.receipt_path.name[:64]
+    with TestClient(_app(tmp_path)) as client:
+        preview = client.get(f'/api/bioart/receipts/{receipt_id}/preview', headers=_auth())
+        imported = client.post('/api/bioart/import', headers=_auth(), json={'receipt_id': receipt_id})
+    assert preview.status_code == 200 and preview.content == observed
+    assert preview.headers['content-type'].startswith('image/svg+xml')
+    assert preview.headers['content-security-policy'] == "default-src 'none'; sandbox"
+    assert imported.status_code == 409 and imported.json()['detail']['code'] == 'bioart.not_eligible'
 
 
 def test_native_supervisor_layout_keeps_the_cache_under_the_project_not_the_data_dir(tmp_path, monkeypatch):

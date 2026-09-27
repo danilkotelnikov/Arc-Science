@@ -230,7 +230,8 @@ def test_an_api_key_prose_seat_is_called_over_http_with_the_behaviour_as_instruc
         return httpx.Response(200, json={'model': body['model'], 'status': 'completed', 'usage': {'input_tokens': 5, 'output_tokens': 7},
                                          'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': json.dumps(answer)}]}]})
     real_client = httpx.AsyncClient
-    monkeypatch.setattr(service.httpx, 'AsyncClient', lambda **kw: real_client(transport=httpx.MockTransport(respond), **kw))
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: real_client(transport=httpx.MockTransport(respond), **kw))
+    monkeypatch.setattr('arc_science.net.system_proxy', lambda target=None: None)  # offline: no proxy mount over the mock
     with TestClient(service.create_app(data_dir=data, token=TOKEN)) as c:
         snap = settings.snapshot()
         doc = snap['settings']

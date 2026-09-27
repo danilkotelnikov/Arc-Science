@@ -1,0 +1,40 @@
+{
+ "captured": "2026-09-26, read-only GET/POST through the system proxy",
+ "files": {
+  "discover-page-reduced.html": {
+   "source": "https://bioart.niaid.nih.gov/discover",
+   "source_sha256": "340c1ac8573893f5e49adf54aa0f64a5937b39cf6eb1e882e7c2971f9c37e691",
+   "reduction": "script tags for main-app, the (standard) page decoy and the discover page chunk only"
+  },
+  "discover-chunk-reduced.js": {
+   "source": "https://bioart.niaid.nih.gov/_next/static/chunks/app/(standard)/discover/page-6080d85019a6f7dc.js",
+   "source_sha256": "6ea77950e7351bcdcf8b286ec2dfae6b52f880560c52148ff3188ba349a30df0",
+   "reduction": "the single statement holding the createServerReference calls"
+  },
+  "discover-action-antibody.rsc": {
+   "source": "POST https://bioart.niaid.nih.gov/discover, Next-Action 4026f1528e81a7884142b2affd16c95633da420e11, body [\"type:bioart AND antibody?start=0&size=24\"]",
+   "source_sha256": "b581445dc997ba2bc07a4378a23243cca32726230717fb31604f48927a00059a",
+   "reduction": "verbatim"
+  },
+  "discover-action-not-found.txt": {
+   "source": "POST https://bioart.niaid.nih.gov/discover with a stale Next-Action id; HTTP 404 text/plain",
+   "source_sha256": "dc559d64ef8cbee0f80063b9a7e03eb7064ae3b9cfb6f40fe08210b735998742",
+   "reduction": "verbatim"
+  },
+  "file-626835.svg": {
+   "source": "https://bioart.niaid.nih.gov/api/bioarts/18/files/626835 (no Content-Type)",
+   "source_sha256": "d4ef7d5f0d5a8b24c96891c52851774648753c7e942321e5e19b1363aeb58862",
+   "reduction": "verbatim, public domain"
+  },
+  "file-626832-head.eps": {
+   "source": "https://bioart.niaid.nih.gov/api/bioarts/18/files/626832 (no Content-Type)",
+   "source_sha256": "1cdbe90c5ecd7a35884e16159dd97f3117fc6f5d5d055192579cea365a93672b",
+   "reduction": "first 1024 bytes; the full file is 1264562 bytes"
+  },
+  "thumbnail-650431.jpg": {
+   "source": "https://bioart.niaid.nih.gov/api/bioarts/250/files/650431 (no Content-Type)",
+   "source_sha256": "b8c8869376c800da7f3eed6a2973308b93f520717ef5ea5aacdac8d9b7358a78",
+   "reduction": "verbatim, public domain"
+  }
+ }
+}

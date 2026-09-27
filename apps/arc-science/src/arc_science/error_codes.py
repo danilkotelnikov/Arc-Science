@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
+from .bioart.errors import BIOART_ERROR_CODES
+from .memory.codes import MEMORY_ERROR_CODES
+
 ERROR_CODES = {
     'auth.required': 'Authentication required',
     'request.invalid': 'The request does not match the expected fields',
@@ -83,6 +86,9 @@ ERROR_CODES = {
     'probe.no_seat': 'No seat uses this provider',
     'probe.busy': 'A probe is already running',
     'probe.cooldown': 'Probe cooldown: wait before spending again',
+    # The memory and BioArt routers raise their own coded errors; one registry names them all.
+    **MEMORY_ERROR_CODES,
+    **BIOART_ERROR_CODES,
 }
 
 STOP_CODES = {

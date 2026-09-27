@@ -46,6 +46,21 @@ def test_codes_are_area_dot_reason_with_an_english_fallback():
         assert re.fullmatch(r'[a-z_]+', code) and english and english[0].isupper(), code
 
 
+def test_the_registry_holds_the_memory_and_bioart_codes_without_collisions():
+    """The memory and BioArt routers raise their own coded errors; the one registry names
+    them with the same English, and no area redefines another's code."""
+    from arc_science.bioart.errors import BIOART_ERROR_CODES
+    from arc_science.memory.codes import MEMORY_ERROR_CODES
+    own = source_tree('error_codes.py')
+    literal = [k.value for n in ast.walk(own) if isinstance(n, ast.Dict) for k in n.keys if isinstance(k, ast.Constant)]
+    for area in (MEMORY_ERROR_CODES, BIOART_ERROR_CODES):
+        assert area and all(ERROR_CODES[code] == english for code, english in area.items())
+        assert not set(area) & set(literal)
+    assert not set(MEMORY_ERROR_CODES) & set(BIOART_ERROR_CODES)
+    assert error_codes.api_error(502, 'bioart.unreachable').detail['code'] == 'bioart.unreachable'
+    assert error_codes.api_error(503, 'memory.worker_unavailable').detail['detail'] == MEMORY_ERROR_CODES['memory.worker_unavailable']
+
+
 def test_every_http_error_in_the_service_passes_a_registered_code():
     tree = source_tree('service.py')
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]

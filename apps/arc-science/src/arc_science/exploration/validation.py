@@ -1,0 +1,526 @@
+"""The validation ladder (contract C5, decision D010): how far each claim's evidence has
+been checked, derived from persisted evidence only.
+
+    L0 asserted     model text only
+    L1 traced       evidence exists and is recorded, every number in the supported scope
+                    binds to the recorded field its quantity word names, the run passes a
+                    fidelity audit, and no work the claim cites is retracted (OpenAlex
+                    is_retracted, recorded by the public read under its own grant)
+    L2 recomputed   the replay verification receipt passed for the current subject
+    L3 prespecified the branch's measurable falsifier was committed before the first
+                    observation of any request the claim uses, on any branch
+    L4 severe       permutation controls reject the null at ALPHA for fits of their degree,
+                    no control on the branch is beaten, and no measurement of the falsifier
+                    on the branch refutes it
+    L5 replicated   an external result; attaching one is not built yet, so always a need
+
+A rung counts only when every rung below it holds. No condition reads a seat's position:
+agreement between the reviewer and the falsifier never raises a rung. Pure: no I/O, and
+the inputs are never mutated. None of this is scientific validation.
+"""
+from __future__ import annotations
+
+from decimal import Decimal, Underflow, localcontext
+import re
+
+from ..contracts import digest
+from .catalog import BIORENDER_CATALOG, BUILTIN_CATALOG, NUMERICAL_CATALOG
+from .models import Action, MissionState, ScopedBranch, VerificationReceipt
+
+NAMES = ('asserted', 'traced', 'recomputed', 'prespecified', 'severe', 'replicated')
+# The conditions of each rung; each is met or answered by exactly one need code.
+RUNGS = {1: ('evidence_present', 'observations_traced', 'numbers_bound', 'fidelity_audit', 'no_retracted_source'),
+         2: ('recomputed',),
+         3: ('falsifier_prespecified',),
+         4: ('null_rejected', 'falsifier_survived'),
+         5: ('external_replication',)}
+# Needs that record a defect in the evidence rather than a step not yet taken.
+DEFECTS = frozenset({'observation_unrecorded', 'timeline_not_ok', 'receipt_missing', 'unbound_number',
+                     'retracted_source', 'action_mismatch', 'oracle_substitution', 'unregistered_tool',
+                     'data_shrinkage', 'budget_shrinkage', 'recomputation_failed'})
+# The significance level a permutation control must reach. The control records only its
+# best shuffle, so the bound (b+1)/(N+1) is known only for b = 0: 1/(N+1).
+ALPHA = .05
+# permutation_control refits this degree on every shuffle (tools.py); only fits of the same
+# degree share its statistic.
+CONTROL_DEGREE = 2
+# Every digit run, with any unit or multiplier suffix (12nM, 40x, 4242ms) and a leading dot
+# (.03). A run glued to a letter or dot is part of a name (p53, v1.2). The 2 of R^2 or r^2 is
+# part of its name; any other exponent of a letter is the power of a variable (x^2, r^9), a
+# term only a fit of that degree or more has; an exponent of a digit is a number (2^9). One
+# after a hyphen after a letter of any script is part of a name (IL-6, ИЛ-6, β-2) unless that
+# letter ends the number before it: then it is the upper end of a range (2nd-9th,
+# 0.004x-0.9x), as after a digit (0.01-0.5); or ends a quantity word, recorded or not, which
+# the hyphen joins to its value (degree-3, MSE-0.9, RMSE-0.3, n-500). _tokens applies these rules.
+NUMBER = re.compile(r'(?<![\w.])(-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z%]*)(?!\d|\.\d)')
+LETTER_HYPHEN = re.compile(r'[^\W\d]-')
+POWER = 'power'
+SCALAR = re.compile(r'-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?')
+# Suffixes that make a digit run a name, not a quantity: 2D, 3D.
+NAME_SUFFIXES = frozenset({'d'})
+# A written number binds only within this relative distance of the recorded value, on top of
+# matching it at the precision written: '1' never binds 1.199 and '0' never binds 0.004.
+RELATIVE = Decimal('.05')
+# Grant-ledger receipts for external reads began with commit 5be3383, 2026-09-21 16:03:35 UTC.
+RECEIPTS_FROM = 1790006615
+# DOIs, links and PubMed ids are identifiers, not stated quantities.
+IDENTIFIER = re.compile(r'https?://\S+|\b10\.\d{4,9}/\S+|\bPMID:?\s*\d+|\bPMC\d+', re.I)
+DOI = re.compile(r'\b10\.\d{4,9}/\S+')
+# Closing delimiters a citation may wrap a DOI in, and the opener each one balances.
+CLOSERS = {')': '(', ']': '[', '}': '{', '>': '<'}
+TRAILING = '.,;:"\'\u201d\u2019\u00bb'
+PMID = re.compile(r'\bPMID:?\s*(\d+)', re.I)
+MSE = ('training_mse', 'validation_mse', 'minimum_shuffled_validation_mse', 'mean_shuffled_validation_mse')
+# The recorded fields a quantity word names. The name nearest a number, within its sentence and
+# between its neighbouring numbers, decides what it must bind to (the one before it on a tie,
+# the longest at the same place); a p-value is never recorded, so it never binds. A number no quantity
+# word names binds nothing: R-squared or accuracy must not borrow an unrelated recorded field.
+# A qualifier, an optional 'set' and an optional spelled-out 'mean squared' before the error.
+_ERROR = r'(?:[- ]set)?[- ](?:mean[- ]squared?[- ])?(?:error|mse|loss)'
+_SPLIT = r'(?:validation|held[- ]out|test|train(?:ing)?)'
+# A sample count: its split is resolved by _count from the split word nearest it.
+COUNT = ('n', 'n_train', 'n_validation')
+SPLIT_WORD = re.compile(r'\b(?:(validation|held[- ]out|test)|train(?:ing|ed)?)\b', re.I)
+# A lone letter names a statistic only right before its value: after a comparator, a colon,
+# 'of', or nothing but a hyphen (the window ends at the number).
+_BARE = r'(?=\s*(?:[=<>≤≥≈~:]|of\b|-?$))'
+QUANTITIES = ((re.compile(r'shuffled (?:validation )?(?:error|mse|loss)|null (?:error|mse)', re.I), MSE[2:]),
+              (re.compile(r'(?:validation|held[- ]out|test)' + _ERROR + r'|(?:error|mse|loss) on the (?:validation|held[- ]out|test)',
+                          re.I), ('validation_mse',)),
+              (re.compile(r'train(?:ing)?' + _ERROR + r'|(?:error|mse|loss) on the train(?:ing)?', re.I), ('training_mse',)),
+              (re.compile(r'\b(?:mse|error|loss)\b', re.I), MSE),
+              (re.compile(r'\bdegrees?\b', re.I), ('degree',)),
+              (re.compile(r'\b(?:permutations?|shuffles)\b', re.I), ('permutations',)),
+              (re.compile(r'\b(?:samples?|data[- ]points|observations|measurements)\b|\bn' + _BARE, re.I), COUNT),
+              # Quantities the tools never record: nearer than a recorded name, they keep it off. A
+              # spelled-out error of another kind ends where the generic 'error' (or 'validation
+              # error') does and starts earlier, so it wins the tie as the longer name.
+              (re.compile(r'\b(?:accuracy|r[- ]?squared|r2|auc|auroc|f1|precision|recall|sensitivity|specificity|'
+                          r'correlation|coefficient of determination|pearson|spearman|kendall|rho|ρ|tau|'
+                          r'standard deviation|variance|rmse|nrmse|rmsd|mae|mape|sd|sem|se|std|stdev|iqr|interquartile range|'
+                          r'odds ratio|hazard ratio|slope|intercept|effect size|cohen\'?s d|'
+                          r'[pqtz][- ]?values?|fdr|false discovery rate|padj|p[- ]?adj(?:usted)?|adjusted p(?:[- ]?values?)?|'
+                          r'[tz][- ]?stat(?:istic)?s?|[tz][- ]?scores?|'
+                          r'(?:root[- ]mean[- ]squared?|rms|mean[- ]absolute(?:[- ]percentage)?|standard|relative|absolute|'
+                          r'percentage|percent|normali[sz]ed|median|log|cross[- ]entropy)[- ](?:' + _SPLIT +
+                          r'(?:[- ]set)?[- ])?(?:error|loss))\b', re.I), ()),
+              # A statistic of an error is not the error: 'standard error of the validation error'.
+              (re.compile(r'\b(?:standard[- ](?:error|deviation)|std|stdev|sd|sem|se|variance|iqr|confidence interval|ci)'
+                          r'[- ](?:of|in|for|on)[- ](?:the[- ])?(?:\w+[- ]){0,3}?(?:error|mse|loss)\b', re.I), ()),
+              (re.compile(r'\br\^2|\b[pqrtz]' + _BARE, re.I), ()))
+# A statistic of an error, in the error's own clause, whatever stands between them: 'standard
+# error of the degree-2 validation error', "SD of the fit's validation error", 'SE (validation error)'.
+STATISTIC_OF = re.compile(r'\b(?:standard[- ](?:error|deviation)|std|stdev|s\.d\.|sd|sem|se|variance|iqr|interquartile range|'
+                          r'confidence interval|ci)\s*(?:\(|(?:of|in|for|on)\b)', re.I)
+ERROR_WORD = re.compile(r'\b(?:error|mse|loss)\b', re.I)
+# A split a preposition names right after a count word: '64 samples were in the validation set'.
+SPLIT_AFTER = re.compile(r'(?:\s+\w+){0,2}?\s+(?:in|of|from|for|on|within)\s+(?:the\s+|a\s+|its\s+)?'
+                         r'(?:(validation|held[- ]out|test)|train(?:ing|ed)?)\b', re.I)
+# Superscript exponents are read as caret ones: x⁹ is x^9, R² is R^2.
+SUPERSCRIPT = re.compile('[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+')
+SUPERSCRIPT_DIGITS = str.maketrans('⁻⁰¹²³⁴⁵⁶⁷⁸⁹', '-0123456789')
+
+
+# A sentence ends at ; ! or ?, or at a full stop before a capital letter, so the stop of an
+# abbreviation (approx. 0.03, ca., vs., e.g.) keeps the name before it. The ceiling: a
+# sentence that opens with a digit or a lower-case letter is read as part of the one before.
+SENTENCE = re.compile(r'[;!?](?:\s|$)|\.\s+(?=[A-ZА-ЯЁΑ-Ω])')
+# A name after a number stays within its clause: 'Validation error 0.004, training error 0.002'.
+CLAUSE = re.compile(r'[,;:]')
+RANGE = ('-', '–', '—')
+
+
+def _quantity(window, after=False):
+    """(distance to the number, fields, end in the window) of the quantity word nearest the
+    number: the last one in a window before it, the first one in a window after it; None
+    when there is none."""
+    best = None
+    for pattern, fields in QUANTITIES:
+        for m in pattern.finditer(window):
+            key = (m.start(), -m.end()) if after else (len(window) - m.end(), m.start())
+            if best is None or key < best[0]:
+                best = key, fields, m.end()
+    return (best[0][0], best[1], best[2]) if best else None
+
+
+def _joined(text, hyphen):
+    """A quantity word, recorded or not, ends right at the hyphen: it joins the word to its value."""
+    near = _quantity(text[max(0, hyphen - 48):hyphen])
+    return near is not None and near[0] == 0
+
+
+def _count(before, between='', trailing=''):
+    """The count fields a sample count names: those of the split word nearest it, the first
+    between the number and its count word, else one a preposition names right after the count
+    word (trailing), else the last before the number; with none, the whole data set."""
+    after = SPLIT_AFTER.match(trailing)
+    nearest = SPLIT_WORD.findall(between)[:1] or ([after.group(1) or ''] if after else SPLIT_WORD.findall(before)[-1:])
+    return (('n_validation',) if nearest[0] else ('n_train',)) if nearest else ('n',)
+
+
+def _of_error(sentence):
+    """The last error word before the number has a statistic of it earlier in its clause."""
+    errors = list(ERROR_WORD.finditer(sentence))
+    return bool(errors) and STATISTIC_OF.search(CLAUSE.split(sentence[:errors[-1].start()])[-1]) is not None
+
+
+def _tokens(text):
+    """(number, the recorded fields its nearest quantity word names, or None) per number; the
+    power of a variable comes last, named POWER."""
+    text = SUPERSCRIPT.sub(lambda m: '^' + m.group().translate(SUPERSCRIPT_DIGITS), IDENTIFIER.sub(' ', text))
+    raw, powers = [], []
+    for m in NUMBER.finditer(text):
+        variable = text[m.start() - 2:m.start()] if m.start() >= 2 else ''
+        if not (variable[1:] == '^' and variable[0].isalpha()):
+            raw.append(m)
+        elif not (variable[0] in 'rR' and m.group(0) == '2'):
+            powers.append(m)
+    found = [m for i, m in enumerate(raw) if m.group(2).lower() not in NAME_SUFFIXES and not (
+        LETTER_HYPHEN.fullmatch(text, m.start() - 2, m.start()) and not (i and raw[i - 1].end() == m.start() - 1)
+        and not _joined(text, m.start() - 1))]
+    # A range (0.01-0.5, 0.01 – 0.5) is one quantity: both ends take the name nearest the range.
+    groups = []
+    for i, m in enumerate(found):
+        if i and text[found[i - 1].end():m.start()].strip() in RANGE:
+            groups[-1].append(m)
+        else:
+            groups.append([m])
+    # A number takes the name before it; a name after it only when none precedes it, and that
+    # name is then taken: it does not also name the next number. A nearer unrecorded name after
+    # the number still keeps the recorded one before it off ('error fell with 0.004 accuracy'),
+    # unless it sits nearer the next number and names that one ('error 0.004 with R2 0.9').
+    taken = 0
+    for i, group in enumerate(groups):
+        start = max(groups[i - 1][-1].end() if i else 0, taken)
+        piece = SENTENCE.split(text[start:max(start, group[0].start())])[-1]
+        before = _quantity(piece)
+        end = groups[i + 1][0].start() if i + 1 < len(groups) else len(text)
+        window = CLAUSE.split(SENTENCE.split(text[group[-1].end():end])[0])[0]
+        after = _quantity(window, after=True)
+        # The distance from the name to the next number, when that number is in the same clause.
+        onward = len(window) - after[2] if after and i + 1 < len(groups) and group[-1].end() + len(window) == end else None
+        if before and after and after[0] < before[0] and not after[1] and (onward is None or after[0] <= onward):
+            named = ()
+        elif before:
+            named = before[1]
+            if named is COUNT:
+                cut = after[2] if after and after[1] is COUNT else 0
+                named = _count(piece, window[:cut], window[cut:])
+            elif set(named) <= set(MSE) and _of_error(SENTENCE.split(text[:group[0].start()])[-1]):
+                named = ()
+        elif after:
+            named, taken = after[1], group[-1].end() + after[2]
+            named = _count(piece, window[:after[2]], window[after[2]:]) if named is COUNT else named
+        else:
+            named = None
+        for m in group:
+            yield m.group(1), named
+    for m in powers:
+        yield m.group(1), POWER
+
+
+def numbers(texts) -> list[str]:
+    return [token for text in texts for token, _ in _tokens(text)]
+
+
+def _fields(evidence, names):
+    """The named top-level recorded scalars of the evidence; an unnamed number (None) binds
+    nothing. Arrays and nested records (coefficients, predictions, literature records) never bind."""
+    for o in evidence:
+        for key, value in o.data.items():
+            if key not in (names or ()) or isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                yield value
+            elif isinstance(value, str) and SCALAR.fullmatch(value.strip()):
+                yield float(value)
+
+
+def _bound(token, names, evidence) -> bool:
+    """The power of a variable binds when a recorded fit has that term (degree at least the
+    power); any other number binds the recorded field its name names (_binds)."""
+    if names == POWER:
+        return token.isdigit() and any(1 <= int(token) <= degree for degree in _fields(evidence, ('degree',)))
+    return _binds(token, list(_fields(evidence, names)))
+
+
+def _binds(token, values) -> bool:
+    """The token equals a recorded value at the precision it was written with, and within
+    RELATIVE of it. A token too large or too small for decimal arithmetic (1e1000000,
+    1e-1000027) never binds: claim text is model output and must not be able to raise here,
+    and a gap that underflows to zero must not match a recorded zero."""
+    try:
+        with localcontext() as context:
+            context.traps[Underflow] = True
+            written = Decimal(token)
+            tolerance = Decimal(5).scaleb(written.as_tuple().exponent - 1)
+            for v in values:
+                recorded = Decimal(repr(float(v)))
+                gap = abs(recorded - written)
+                if gap <= tolerance and gap <= RELATIVE * abs(recorded):
+                    return True
+    except ArithmeticError:
+        return False
+    return False
+
+
+def _row(timeline_rows, action_id):
+    row = None
+    for candidate in timeline_rows:
+        if candidate.get('operation') == 'tool' and candidate.get('action_id') == action_id \
+                and candidate.get('outcome_source') == 'recorded':
+            row = candidate
+    return row
+
+
+def _predates_receipts(state, timeline_rows, observation):
+    """The read ran before the grant ledger wrote receipts (public reads from 2026-09-08,
+    receipts from RECEIPTS_FROM), shown by the mission's own hash-chained record: a resume it
+    declared before RECEIPTS_FROM follows the read's observation event. The timeline cannot
+    show that age: a lost one comes back empty, then gains the round-less interrupt row of a
+    restart and a resume row at a later round (timeline.py, service.py). A timeline row with a
+    round at or before the read's still contradicts it: the timeline was recording then.
+    ponytail: a legacy mission never resumed before RECEIPTS_FROM keeps receipt_unchecked;
+    reading the grant ledger itself would settle those."""
+    events = list(state.events)
+    seen = next((i for i, e in enumerate(events) if e.kind == 'observation' and e.detail == observation.id + ': ok'), None)
+    early = {c.id for c in state.changes if c.at < RECEIPTS_FROM}
+    declared = seen is not None and any(e.kind == 'change_declared' and e.detail.split(':', 1)[0] in early
+                                        for e in events[seen + 1:])
+    return declared and not any(isinstance(r.get('round'), int) and r['round'] <= observation.round for r in timeline_rows)
+
+
+def _traced(state, evidence, timeline_rows):
+    """The hash-chained event log records each observation as ok. A timeline row, when one
+    exists, must agree, and an external read needs its grant-ledger receipt on that row.
+    Without the timeline (None) an external receipt cannot be checked; a read older than the
+    timeline has none to check and is reported as such."""
+    recorded = {e.detail for e in state.events if e.kind == 'observation'}
+    extra = []
+    for o in evidence:
+        if o.id + ': ok' not in recorded:
+            return 'observation_unrecorded', extra
+        external = o.tool not in NUMERICAL_CATALOG
+        row = _row(timeline_rows, o.id) if timeline_rows is not None else None
+        if row is not None and row.get('outcome') != 'ok':
+            return 'timeline_not_ok', extra
+        if external:
+            if row is None and timeline_rows is not None and _predates_receipts(state, timeline_rows, o):
+                extra.append('receipt_predates_timeline')
+                continue
+            if row is None:
+                return 'receipt_unchecked', extra
+            if not row.get('receipt_id'):
+                return 'receipt_missing', extra
+            extra.append('ledger_receipt')
+        if row is not None:
+            extra.append('timeline_ok')
+    return None, sorted(set(extra))
+
+
+def _fidelity(state, evidence):
+    """ABE-Ralph style audit: each observation ran the action the committed plan requested,
+    on the frozen dataset, through a tool the mission offered, at the requested size."""
+    plans = {}
+    for record in state.model_records:
+        if record.role == 'planner':
+            plans.setdefault(record.round, record)
+    n = len(state.points)
+    for o in evidence:
+        plan = plans.get(o.round)
+        requested = [a for a in (plan.payload.get('actions') or ()) if a.get('id') == o.id] if plan else []
+        try:
+            asked = Action.model_validate(requested[0]) if requested else None
+        except ValueError:
+            asked = None
+        if asked is None or asked != o.action or o.action.tool != o.tool or o.action.branch_id != o.branch_id:
+            return 'action_mismatch'
+        if o.dataset_digest != state.dataset_digest or \
+                o.request_digest != digest([o.action.model_dump(mode='json'), o.dataset_digest]):
+            return 'oracle_substitution'
+        offered = plan.input_context.get('tools')
+        if o.tool not in (offered if isinstance(offered, dict) else {**BUILTIN_CATALOG, **BIORENDER_CATALOG}):
+            return 'unregistered_tool'
+        data = o.data
+        if o.tool == 'polynomial_fit' and data.get('n_train', 0) + data.get('n_validation', 0) != n:
+            return 'data_shrinkage'
+        if o.tool == 'describe_data' and data.get('n') != n:
+            return 'data_shrinkage'
+        if o.tool == 'permutation_control' and data.get('permutations') != o.action.arguments.get('permutations'):
+            return 'budget_shrinkage'
+    return None
+
+
+def _doi(text):
+    """A cited DOI without the punctuation, quotes or unbalanced brackets around it."""
+    doi = text.lower()
+    while doi and (doi[-1] in TRAILING or doi[-1] in CLOSERS and doi.count(doi[-1]) > doi.count(CLOSERS[doi[-1]])):
+        doi = doi[:-1]
+    return doi
+
+
+def _retraction(scoped, evidence):
+    """TRACES style: every work the claim cites (a DOI or PMID in its supported scope) was
+    checked by a completed OpenAlex lookup of a literature read the claim uses, and none is
+    retracted. A search hit the claim does not cite is not a citation."""
+    cited = {_doi(m.group()) for text in scoped.supported_scope for m in DOI.finditer(text)}
+    pmids = {m.group(1) for text in scoped.supported_scope for m in PMID.finditer(text)}
+    if not cited and not pmids:
+        return None
+    checked, retracted, resolved = set(), set(), set()
+    for o in evidence:
+        if o.tool != 'literature_search':
+            continue
+        for record in o.data.get('records') or ():
+            pmid = str(record.get('pmid') or '') if isinstance(record, dict) else ''
+            if pmid in pmids and isinstance(record.get('doi'), str) and record['doi'].strip():
+                cited.add(record['doi'].strip().lower())
+                resolved.add(pmid)
+        check = o.data.get('retraction_check')
+        if isinstance(check, dict) and check.get('status') == 'ok':
+            checked.update(check.get('checked') or ())
+            retracted.update(check.get('retracted') or ())
+    if cited & retracted:
+        return 'retracted_source'
+    return 'retraction_unchecked' if pmids - resolved or not cited <= checked else None
+
+
+def _recomputed(verification, subject):
+    if verification is None or subject is None:
+        return 'recomputation_missing'
+    if verification.subject_digest != subject:
+        return 'recomputation_stale'
+    if not (verification.integrity and verification.reproduction_passed and verification.evidence_graph_valid):
+        return 'recomputation_failed'
+    return None
+
+
+def _pool(state, branch, evidence, tool):
+    """Every observation of `tool` in the claim's evidence or ok on its branch: leaving one
+    out of the evidence does not hide it from the rungs that read it."""
+    pool = {o.id: o for o in evidence if o.tool == tool}
+    pool.update({o.id: o for o in state.observations if o.tool == tool and o.branch_id == branch.id
+                 and o.status == 'ok' and o.claim_eligible})
+    return list(pool.values())
+
+
+def _prespecified(state, branch, evidence):
+    """The planner record that introduced the branch carries the same falsifier_test, and
+    its commit event precedes the first observation of any request the claim uses, or that
+    the falsifier and null checks read from the branch: the same tool and arguments on the
+    same dataset, on any branch. The tools are deterministic, so a rerun under a new id or
+    branch shows nothing the planner had not already seen. permutation_control draws every
+    shuffle in sequence from one fixed seed, so a control of any size is the start or the
+    extension of any other: all of them on a dataset are one request, whatever the count."""
+    if branch.falsifier_test is None:
+        return 'falsifier_test_missing'
+    introduced = next((r for r in sorted((r for r in state.model_records if r.role == 'planner'), key=lambda r: r.round)
+                       if any(b.get('id') == branch.id for b in r.payload.get('branches') or ())), None)
+    idea = next((b for b in introduced.payload['branches'] if b.get('id') == branch.id), {}) if introduced else {}
+    if idea.get('falsifier_test') != branch.falsifier_test.model_dump(mode='json'):
+        return 'falsifier_after_observation'
+    events = list(state.events)
+    committed = next((i for i, e in enumerate(events) if e.kind == 'plan_committed' and e.round == introduced.round), None)
+    request = lambda o: (o.tool, None if o.tool == 'permutation_control' else digest(o.action.arguments), o.dataset_digest)
+    requests = {request(o) for o in (*evidence, *_pool(state, branch, evidence, branch.falsifier_test.tool),
+                                     *_pool(state, branch, evidence, 'permutation_control'))}
+    used = {o.id + ': ok' for o in state.observations if request(o) in requests}
+    first = next((i for i, e in enumerate(events) if e.kind == 'observation' and e.detail in used), None)
+    if committed is None or first is None or committed > first:
+        return 'falsifier_after_observation'
+    return None
+
+
+def _falsifier(state, branch, evidence):
+    """Every measurement of the falsifier's metric on the branch or in the claim's evidence
+    counts: a refutation stands however many later observations survive it, and leaving it
+    out of the claim's evidence does not hide it. The fact reports the most adverse value."""
+    test = branch.falsifier_test
+    if test is None:
+        return 'falsifier_not_evaluated', None
+    values = [o.data[test.metric] for o in _pool(state, branch, evidence, test.tool)
+              if isinstance(o.data.get(test.metric), (int, float)) and not isinstance(o.data.get(test.metric), bool)]
+    if not values:
+        return 'falsifier_not_evaluated', None
+    value = max(values) if test.direction == 'above' else min(values)
+    refuted = value > test.threshold if test.direction == 'above' else value < test.threshold
+    fact = {**test.model_dump(mode='json'), 'value': value, 'refuted': refuted, 'measurements': len(values)}
+    return ('falsifier_refuted' if refuted else None), fact
+
+
+def _null(state, branch, evidence):
+    """NxN style null model: every fit of the control's degree in the claim's evidence beats
+    every shuffled-response fit of every control on the branch or in the evidence, and the
+    largest control ran enough shuffles for that to reach ALPHA. As with the falsifier, an
+    adverse control stands however many later ones pass, and leaving it out of the evidence
+    does not hide it; a control too small to reach ALPHA is uninformative, not adverse. A fit
+    of another degree has no null here: its statistic was never computed on shuffled data."""
+    pool = _pool(state, branch, evidence, 'permutation_control')
+    fits = [o for o in evidence if o.tool == 'polynomial_fit']
+    if not pool or not fits:
+        return 'null_model_missing', None
+    matched = [o.data['validation_mse'] for o in fits if o.data.get('degree') == CONTROL_DEGREE]
+    if not matched:
+        return 'null_model_mismatch', None
+    controls = [o.data for o in pool if (o.data.get('permutations') or 0) > 0
+                and isinstance(o.data.get('minimum_shuffled_validation_mse'), (int, float))]
+    if not controls:
+        return 'null_model_missing', None
+    shuffled = min(c['minimum_shuffled_validation_mse'] for c in controls)
+    permutations = max(c['permutations'] for c in controls)
+    bound = 1 / (permutations + 1) if max(matched) < shuffled else None
+    fact = {'permutations': permutations, 'alpha': ALPHA, 'degree': CONTROL_DEGREE, 'statistic': 'validation_mse',
+            'permutation_bound': bound, 'worst_fit_validation_mse': max(matched), 'minimum_shuffled_validation_mse': shuffled,
+            'controls': len(controls)}
+    return (None if bound is not None and bound <= ALPHA else 'null_not_rejected'), fact
+
+
+def is_numeric(state: MissionState, scoped: ScopedBranch) -> bool:
+    used = set(scoped.evidence_ids)
+    return bool(numbers(scoped.supported_scope)) or any(o.id in used and o.tool in NUMERICAL_CATALOG for o in state.observations)
+
+
+def claim_ladder(state: MissionState, scoped: ScopedBranch, *, timeline_rows=None,
+                 verification: VerificationReceipt | dict | None = None, subject: str | None = None) -> dict:
+    """The ladder of one scoped claim. `timeline_rows` None means the timeline was not
+    consulted; `subject` is the current release subject digest the receipt must match."""
+    if isinstance(verification, dict):
+        verification = VerificationReceipt.model_validate(verification)
+    branch = next(b for b in state.branches if b.id == scoped.branch_id)
+    used = set(scoped.evidence_ids)
+    evidence = [o for o in state.observations if o.id in used and o.status == 'ok' and o.claim_eligible]
+    traced, extra = _traced(state, evidence, timeline_rows)
+    unbound = any(not _bound(token, names, evidence)
+                  for text in scoped.supported_scope for token, names in _tokens(text))
+    survived, falsifier = _falsifier(state, branch, evidence)
+    rejected, null = _null(state, branch, evidence)
+    outcomes = {'evidence_present': None if evidence else 'no_evidence',
+                'observations_traced': traced,
+                'numbers_bound': 'unbound_number' if unbound else None,
+                'fidelity_audit': _fidelity(state, evidence),
+                'no_retracted_source': _retraction(scoped, evidence),
+                'recomputed': _recomputed(verification, subject),
+                'falsifier_prespecified': _prespecified(state, branch, evidence),
+                'null_rejected': rejected,
+                'falsifier_survived': survived,
+                'external_replication': 'external_replication'}
+    rung = 0
+    while rung < 5 and all(outcomes[code] is None for code in RUNGS[rung + 1]):
+        rung += 1
+    needs = [outcomes[code] for code in RUNGS[rung + 1] if outcomes[code]] if rung < 5 else []
+    met = [code for code, need in outcomes.items() if need is None] + extra
+    L1 = [outcomes[code] for code in RUNGS[1] if outcomes[code]]
+    if any(need in DEFECTS for need in L1):
+        verdict = 'blocked'
+    elif scoped.status == 'unassessed':
+        verdict = 'deferred'
+    elif scoped.status == 'contradicted' or survived == 'falsifier_refuted':
+        verdict = 'rejected'
+    elif scoped.status == 'provisionally_supported':
+        verdict = 'accepted' if rung >= 4 else 'qualified'
+    else:
+        verdict = 'revised'
+    return {'rung': rung, 'name': NAMES[rung], 'met': met,
+            'next': {'rung': rung + 1, 'needs': needs} if rung < 5 else None,
+            'verdict': verdict, 'density': max(1, min(5, rung + 1)),
+            'facts': {'falsifier': falsifier, 'null_model': null}}

@@ -12,6 +12,7 @@ from copy import deepcopy
 from .catalog import BIORENDER_CATALOG, NUMERICAL_CATALOG, PUBLIC_CATALOG
 from .claim_scope import DERIVATION_VERSION, latest_assessments
 from .models import MissionState
+from .validation import claim_ladder
 
 # Fields of Observation.data per trusted tool (tools.py).
 NUMERIC_FIELDS = {'polynomial_fit': ('degree', 'training_mse', 'validation_mse', 'n_train', 'n_validation', 'split'),
@@ -162,6 +163,9 @@ def build_claims(state: MissionState, timeline_rows: list[dict], graph: dict | N
     stale_reason = check.get('reason', '') if stale else ''
     latest = latest_assessments(state)
     branches = {branch.id: branch for branch in state.branches}
+    # The ladder reads the replay receipt only against the current subject of the release.
+    verification = (release or {}).get('verification')
+    subject = (release or {}).get('subject_digest')
     claims = []
     for scoped in (scope.branches if scope else ()):
         branch = branches[scoped.branch_id]
@@ -180,7 +184,8 @@ def build_claims(state: MissionState, timeline_rows: list[dict], graph: dict | N
             'alternatives': _alternatives(state, branch, graph),
             'next_tests': [t.model_dump(mode='json') for t in scoped.next_tests],
             'units': None, 'units_note': UNITS_NOTE,
-            'stale_derivation': stale, 'stale_reason': stale_reason, 'claim_scope_check': check_state})
+            'stale_derivation': stale, 'stale_reason': stale_reason, 'claim_scope_check': check_state,
+            'ladder': claim_ladder(state, scoped, timeline_rows=timeline_rows, verification=verification, subject=subject)})
     return {'source': 'derived',
             'derivation_version': scope.derivation_version if scope else None,
             'current_derivation_version': DERIVATION_VERSION,

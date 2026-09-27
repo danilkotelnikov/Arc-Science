@@ -32,6 +32,8 @@ from pathlib import Path
 
 import httpx
 
+from .net import ProxyUnsupported, outbound_client
+
 RULES_VERSION = 'arc-prose-rules-1'
 PROTECTION_VERSION = 'arc-prose-protect-2'
 DETECTION_ENDPOINT = 'https://api.edgeshop.ai/rewrite/text-detection'
@@ -290,7 +292,8 @@ class Detector:
                    'requested_types': list(DETECTION_TYPES), 'text_sha256': digest, 'at': at,
                    'note': DETECTION_NOTE, **AUTHORSHIP}
         try:
-            async with httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=TIMEOUT, transport=self.transport) as client:
+            async with outbound_client(DETECTION_ENDPOINT, asynchronous=True, timeout=TIMEOUT,
+                                       transport=self.transport) as client:
                 async with client.stream('POST', DETECTION_ENDPOINT, json=body, headers=headers) as response:
                     status = response.status_code
                     raw = bytearray()
@@ -304,6 +307,9 @@ class Detector:
         except httpx.TimeoutException:
             self._audit({'at': int(time.time()), 'text_hmac': keyed, 'status': 'timeout'})
             raise ProseRefused('timeout', 'The detection service did not answer within the deadline') from None
+        except ProxyUnsupported as error:
+            self._audit({'at': int(time.time()), 'text_hmac': keyed, 'status': 'network'})
+            raise ProseRefused('network', str(error)) from None
         except httpx.HTTPError:
             self._audit({'at': int(time.time()), 'text_hmac': keyed, 'status': 'network'})
             raise ProseRefused('network', 'The detection service could not be reached') from None

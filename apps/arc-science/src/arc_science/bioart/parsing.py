@@ -3,11 +3,12 @@ from html.parser import HTMLParser
 import json
 import re
 
+from .errors import BioArtError
 from .models import BioArtEntry, BioArtRepresentation, BioArtSearchHit, positive_id
 
 
-def _drift():
-    return ValueError('BioArt schema drift: required metadata missing or inconsistent; use inspect with an entry ID or search --search-html with an operator-supplied browser DOM snapshot')
+def _drift(detail='BioArt schema drift: required metadata missing or inconsistent; use inspect with an entry ID or search --search-html with an operator-supplied browser DOM snapshot'):
+    return BioArtError('bioart.drift', detail)
 
 
 def _pairs(pairs):
@@ -105,12 +106,13 @@ def parse_entry(html: str, entry_id: int) -> BioArtEntry:
         if not values or any(v!=values[0] for v in values): raise _drift()
         return values[0]
     title = unique(o['children'] for o in objects if o.get('variant')=='h4' and isinstance(o.get('children'),str))
-    def labelled(label):
+    def labelled(label, optional=False):
         found = []
         for obj in objects:
             children = obj.get('children')
             if isinstance(children,list) and len(children)==2 and _text(children[0]).strip()==label:
                 found.append(_text(children[1]))
+        if optional and not found: return None
         return _required(unique(found))
     license_text = labelled('Licensing:')
     mapping = unique(o['filemapping'] for o in objects if 'filemapping' in o)
@@ -128,11 +130,19 @@ def parse_entry(html: str, entry_id: int) -> BioArtEntry:
                 positive_id(fid)
                 if fid in used_files: raise _drift()
                 used_files.add(fid)
-            if files.get(item['fileFormat']) != file_id or item['srcImg'] != f'/api/bioarts/{entry_id}/files/{file_id}': raise _drift()
-            representations.append(BioArtRepresentation(group,_required(item['caption']),dict(files)))
+            if item['srcImg'] != f'/api/bioarts/{entry_id}/files/{file_id}': raise _drift()
+            preview = None
+            if item['fileFormat'] in files:
+                if files[item['fileFormat']] != file_id: raise _drift()
+            elif item['fileFormat'] == 'JPG' and file_id not in used_files:
+                # NIH shows a JPG it does not offer for download (entry 300): preview only.
+                preview = file_id; used_files.add(file_id)
+            else: raise _drift()
+            representations.append(BioArtRepresentation(group,_required(item['caption']),dict(files),preview))
         if set(mapping) != {str(g) for g in used_groups}: raise _drift()
     except (KeyError,TypeError,ValueError): raise _drift() from None
-    return BioArtEntry(entry_id,_required(title),license_text,labelled('Credit'),labelled('Creator'),
+    # Newer entries (700, June 2026) carry no Credit line.
+    return BioArtEntry(entry_id,_required(title),license_text,labelled('Credit',optional=True),labelled('Creator'),
         labelled('Collection'),labelled('Cite This Entry'),tuple(representations))
 
 
@@ -150,3 +160,63 @@ def parse_search(html: str) -> tuple[BioArtSearchHit, ...]:
             found[entry_id]=BioArtSearchHit(entry_id,title)
     if not found: raise _drift()
     return tuple(found.values())
+
+
+# NIH's /discover renders results client-side through a Next.js Server Action named
+# discoverSearch. Its id changes with every NIH deploy, so it is read from the page chunk.
+_CHUNK = re.compile(r'/_next/static/chunks/app/(?:\([a-z0-9-]{1,40}\)/)?discover/page-[0-9a-f]{8,32}\.js')
+_ACTION = re.compile(r'createServerReference\)\("([0-9a-f]{40,64})"(?:(?!createServerReference)[^;]){0,200}?"discoverSearch"\)')
+
+
+def discover_chunk(html: str) -> str:
+    found = set(_CHUNK.findall(html))
+    if len(found) != 1: raise _drift('BioArt schema drift: the discover page no longer names one discover page chunk')
+    return found.pop()
+
+
+def action_id(javascript: str) -> str:
+    found = set(_ACTION.findall(javascript))
+    if len(found) != 1: raise _drift('BioArt schema drift: the discoverSearch server action is missing from the page chunk')
+    return found.pop()
+
+
+def _rsc_rows(body: bytes):
+    """Split a React Server Components payload: 'id:json\\n' rows and 'id:T<hex length>,text' rows."""
+    rows = {}; at = 0
+    while at < len(body):
+        colon = body.find(b':', at, at + 17)
+        key = body[at:colon].decode('ascii') if colon > at else ''
+        if not re.fullmatch(r'[0-9a-f]{1,16}', key) or key in rows or len(rows) >= 10000: raise _drift()
+        at = colon + 1
+        if body[at:at+1] == b'T':
+            comma = body.find(b',', at, at + 18)
+            if comma < 0: raise _drift()
+            end = comma + 1 + int(body[at+1:comma], 16)
+            if end > len(body): raise _drift()
+            rows[key] = body[comma+1:end]; at = end
+        else:
+            end = body.find(b'\n', at); end = len(body) if end < 0 else end
+            rows[key] = body[at:end]; at = end + 1
+    return rows
+
+
+def parse_search_action(body: bytes) -> tuple[BioArtSearchHit, ...]:
+    decoder = json.JSONDecoder(object_pairs_hook=_pairs)
+    one = lambda value: value[0] if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str) else None
+    try:
+        rows = _rsc_rows(body)
+        reference = re.fullmatch(r'\$@([0-9a-f]{1,16})', decoder.decode(rows['0'].decode('utf-8'))['a'])
+        hits = decoder.decode(rows[reference[1]].decode('utf-8'))['hits']['hit']
+        if not isinstance(hits, list) or len(hits) > 1000: raise _drift()
+        found = {}
+        for hit in hits:
+            fields = hit['fields']
+            if one(fields.get('type')) != 'bioart': continue
+            identity = re.fullmatch(r'[1-9][0-9]{0,15}', one(fields['id']) or '')
+            entry_id = positive_id(int(identity[0])); title = _required(one(fields['title']))
+            thumbnail = re.fullmatch(rf'/bioarts/{entry_id}/files/([1-9][0-9]{{0,15}})', one(fields.get('thumbnail')) or '')
+            hit = BioArtSearchHit(entry_id, title, positive_id(int(thumbnail[1])) if thumbnail else None)
+            if found.setdefault(entry_id, hit) != hit: raise _drift()
+        return tuple(found.values())
+    except (KeyError, TypeError, ValueError, IndexError, UnicodeError, RecursionError):
+        raise _drift('BioArt schema drift: the discoverSearch result no longer has the expected shape') from None

@@ -59,6 +59,70 @@ fn health_reports_protocol_version() {
     );
 }
 
+/// The digest the test locator (apps/arc-science/tests/test_memory_client.py) recomputes:
+/// per file of Cargo.toml, Cargo.lock and src/**/*.rs, sorted by '/'-separated relative path,
+/// "path\n" + hex sha256 of its bytes + "\n", all hashed with sha256.
+fn crate_sources_digest() -> String {
+    use sha2::{Digest, Sha256};
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = vec![root.join("Cargo.toml"), root.join("Cargo.lock")];
+    walk(&root.join("src"), &mut files);
+    let mut named: Vec<(String, std::path::PathBuf)> = files
+        .into_iter()
+        .map(|f| {
+            let rel = f
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            (rel, f)
+        })
+        .collect();
+    named.sort();
+    let mut all = Sha256::new();
+    for (rel, file) in named {
+        let one = hex::encode(Sha256::digest(std::fs::read(file).unwrap()));
+        all.update(format!("{rel}\n{one}\n").as_bytes());
+    }
+    hex::encode(all.finalize())
+}
+
+#[test]
+fn health_names_the_sources_the_worker_was_built_from() {
+    let health = call(&worker(), r#"{"op":"health"}"#);
+    assert_eq!(health["data"]["source_digest"], crate_sources_digest());
+}
+
+#[test]
+fn stats_over_json_report_storage_and_retrieval_modes() {
+    let worker = worker();
+    call(&worker, RECORD);
+    let stats = call(&worker, r#"{"op":"stats"}"#);
+    assert_eq!(stats["status"], "ok");
+    assert_eq!(stats["data"]["counts"]["records"], 1);
+    assert_eq!(
+        stats["data"]["bytes"]["blobs_raw"],
+        "hydrogen bond note".len()
+    );
+    assert_eq!(
+        stats["data"]["retrieval_modes"],
+        serde_json::json!(["lexical"])
+    );
+    assert_eq!(stats["data"]["last_capture_ms"], 1);
+    let sessions = call(&worker, r#"{"op":"session_list","project":"p"}"#);
+    assert_eq!(sessions["data"][0]["last_capture_ms"], 1);
+}
+
 #[test]
 fn rejects_unbounded_search_and_reversed_session_ranges() {
     let worker = worker();
@@ -177,4 +241,81 @@ fn worker_binary_serves_over_stdio() {
     let frame = arc_memory::read_frame(&mut cursor).unwrap().unwrap();
     let value: serde_json::Value = serde_json::from_slice(&frame).unwrap();
     assert_eq!(value["data"]["protocol"], "arc-memory/1");
+}
+
+/// Every error names its cause as a machine `kind`, so a caller never has to guess
+/// a corrupt record from a read-budget refusal or a storage failure.
+#[test]
+fn errors_carry_a_machine_kind_for_their_cause() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("memory.db");
+    let worker = Worker::new(Engine::open(&path).unwrap(), None);
+    call(&worker, RECORD);
+    let fetch = r#"{"op":"session_fetch","project":"p","session":"s"}"#;
+    let kind = |response: serde_json::Value| {
+        assert_eq!(response["status"], "error");
+        response["kind"].as_str().unwrap_or("<missing>").to_owned()
+    };
+
+    assert_eq!(
+        kind(call(&worker, r#"{"op":"inspect","record_id":"nope"}"#)),
+        "not_found"
+    );
+    assert_eq!(kind(call(&worker, r#"{"op":"nope"}"#)), "bad_request");
+    assert_eq!(
+        kind(call(
+            &worker,
+            r#"{"op":"semantic","scope":{"project":"p","session":null,"agent":null},"query":"q","limit":1}"#
+        )),
+        "unsupported"
+    );
+
+    let tamper = |sql: &str| {
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute(sql, [])
+            .unwrap()
+    };
+    tamper("UPDATE blobs SET original_size = original_size - 1");
+    assert_eq!(kind(call(&worker, fetch)), "corrupt");
+    // A negative stored size can only come from tampering, never from a budget.
+    tamper("UPDATE blobs SET original_size = -1");
+    assert_eq!(kind(call(&worker, fetch)), "corrupt");
+    tamper("UPDATE blobs SET original_size = 9000000");
+    assert_eq!(kind(call(&worker, fetch)), "read_budget");
+}
+
+/// Tampered blob bytes fail zstd decoding before the digest check; that is a
+/// corrupt record, not a storage failure, on every path that decodes a blob.
+#[test]
+fn tampered_blob_bytes_are_corrupt_not_storage() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("memory.db");
+    let worker = Worker::new(Engine::open(&path).unwrap(), None);
+    let record_id = call(&worker, RECORD)["data"]["record_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let fetch = r#"{"op":"session_fetch","project":"p","session":"s"}"#;
+    let inspect = format!(r#"{{"op":"inspect","record_id":"{record_id}"}}"#);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let original: Vec<u8> = db
+        .query_row("SELECT data FROM blobs", [], |row| row.get(0))
+        .unwrap();
+    let mut flipped_header = original.clone();
+    flipped_header[0] ^= 0xFF;
+    let truncated = original[..original.len() - 1].to_vec();
+    let garbage = vec![0u8, 1, 2, 3];
+    for (label, data) in [
+        ("header", flipped_header),
+        ("truncated", truncated),
+        ("garbage", garbage),
+    ] {
+        db.execute("UPDATE blobs SET data = ?1", [&data]).unwrap();
+        for request in [fetch, inspect.as_str()] {
+            let response = call(&worker, request);
+            assert_eq!(response["status"], "error", "{label} {request}");
+            assert_eq!(response["kind"], "corrupt", "{label} {request}: {response}");
+        }
+    }
 }

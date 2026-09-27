@@ -9,7 +9,7 @@ use std::io::Read;
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, Row, ToSql, params};
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::embedding::Embedder;
@@ -310,7 +310,7 @@ impl Engine {
     pub fn session_list(&self, project: &str) -> Result<Vec<SessionSummary>> {
         let mut stmt = self.conn.prepare(
             "SELECT session, COUNT(*), MIN(seq), MAX(seq), MIN(compaction_epoch), \
-             MAX(compaction_epoch) FROM records \
+             MAX(compaction_epoch), MAX(wall_time_ms) FROM records \
              WHERE project = ?1 AND visibility = 'visible' \
              GROUP BY session ORDER BY MIN(rowid)",
         )?;
@@ -323,10 +323,69 @@ impl Engine {
                     last_seq: row.get(3)?,
                     min_epoch: row.get(4)?,
                     max_epoch: row.get(5)?,
+                    last_capture_ms: row.get(6)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// Storage facts read from the database itself: byte totals (the memory.db and
+    /// -wal file lengths, unique text raw and compressed, and every record's text as
+    /// captured), row counts, and whether the lexical index is in step with the
+    /// visible records (same row count, current layout version).
+    pub fn stats(&self) -> Result<Value> {
+        let (blobs, blobs_raw, blobs_stored): (i64, i64, i64) = self.conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(original_size), 0), COALESCE(SUM(length(data)), 0) \
+             FROM blobs",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        let (records, visible, logical, last_capture): (i64, i64, i64, Option<i64>) =
+            self.conn.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(r.visibility = 'visible'), 0), \
+                 COALESCE(SUM(b.original_size), 0), MAX(r.wall_time_ms) \
+                 FROM records r JOIN blobs b ON b.content_digest = r.content_digest",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+        let count =
+            |sql: &str| -> Result<i64> { Ok(self.conn.query_row(sql, [], |row| row.get(0))?) };
+        let sessions =
+            count("SELECT COUNT(*) FROM (SELECT DISTINCT project, session FROM records)")?;
+        let embeddings = count("SELECT COUNT(*) FROM embeddings")?;
+        let index_rows = count("SELECT COUNT(*) FROM records_fts")?;
+        let version = count("PRAGMA user_version")?;
+        let journal: String = self
+            .conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+        // File lengths as seen on disk: pages still only in the WAL count once, there.
+        let file_len = |suffix: &str| match self.conn.path() {
+            Some(path) if !path.is_empty() => std::fs::metadata(format!("{path}{suffix}"))
+                .map(|meta| meta.len())
+                .unwrap_or(0),
+            _ => 0,
+        };
+        let (db, wal) = (file_len(""), file_len("-wal"));
+        Ok(json!({
+            "engine": format!("sqlite-{}", journal.to_lowercase()),
+            "sqlite_version": crate::sqlite_version(),
+            "codec": {"name": "zstd", "level": ZSTD_LEVEL, "dictionary": false},
+            "bytes": {
+                "db": db, "wal": wal, "blobs_raw": blobs_raw,
+                "blobs_stored": blobs_stored, "logical": logical,
+            },
+            "counts": {
+                "sessions": sessions, "records": records, "visible": visible,
+                "hidden": records - visible, "blobs": blobs, "embeddings": embeddings,
+            },
+            // FTS_SCHEMA names no tokenizer, so FTS5 uses its default, unicode61.
+            "index": {
+                "kind": "fts5-bm25", "tokenizer": "unicode61", "rows": index_rows,
+                "in_step": index_rows == visible && version == FTS_VERSION,
+            },
+            "last_capture_ms": last_capture,
+        }))
     }
 
     /// Fetch a session's visible records in sequence order, optionally bounded by
@@ -578,16 +637,22 @@ fn read_raw(row: &Row) -> rusqlite::Result<Raw> {
     })
 }
 
+/// Stored bytes that zstd cannot decode were damaged or tampered with in the database;
+/// the file itself was read fine, so this is corruption, not a storage failure.
+fn undecodable() -> Error {
+    Error::Corrupt("record blob failed to decompress")
+}
+
 fn read_budget_error() -> Error {
-    std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        "retrieval exceeds the bounded read budget; narrow the session range or search limit",
-    )
-    .into()
+    Error::ReadBudget
 }
 
 fn hydrate_bounded(raw: Raw, remaining: &mut usize) -> Result<StoredRecord> {
-    if raw.original_size < 0 || raw.original_size as u64 > *remaining as u64 {
+    // A negative size can only be tampered metadata, so it is corrupt, not a budget.
+    if raw.original_size < 0 {
+        return Err(Error::Corrupt("record size is negative"));
+    }
+    if raw.original_size as u64 > *remaining as u64 {
         return Err(read_budget_error());
     }
     *remaining -= raw.original_size as usize;
@@ -597,9 +662,13 @@ fn hydrate_bounded(raw: Raw, remaining: &mut usize) -> Result<StoredRecord> {
 fn hydrate(raw: Raw) -> Result<StoredRecord> {
     // Even corrupt metadata or a compressed bomb cannot allocate without a cap.
     let mut text_bytes = Vec::new();
-    zstd::Decoder::new(raw.data.as_slice())?
-        .take(MAX_FETCH_TEXT_BYTES as u64 + 1)
-        .read_to_end(&mut text_bytes)?;
+    zstd::Decoder::new(raw.data.as_slice())
+        .and_then(|decoder| {
+            decoder
+                .take(MAX_FETCH_TEXT_BYTES as u64 + 1)
+                .read_to_end(&mut text_bytes)
+        })
+        .map_err(|_| undecodable())?;
     if text_bytes.len() > MAX_FETCH_TEXT_BYTES {
         return Err(Error::Corrupt("record exceeds decoded text limit"));
     }
@@ -689,7 +758,7 @@ fn fts_match_expression(scope: &Scope, query: &str) -> Option<String> {
 
 /// Decompress a stored blob and check it against its recorded size and digest.
 fn decode_verified(data: &[u8], size: i64, digest: &str) -> Result<String> {
-    let text = zstd::decode_all(data)?;
+    let text = zstd::decode_all(data).map_err(|_| undecodable())?;
     if text.len() as i64 != size || sha256_hex(&text) != digest {
         return Err(Error::Corrupt("record text failed integrity check"));
     }

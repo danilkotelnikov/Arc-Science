@@ -8,9 +8,12 @@ worker's stdio.
 """
 from __future__ import annotations
 
+import json
+import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Callable, Optional, Literal
 
@@ -20,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from .capture import SessionCapture
 from .client import MemoryClient, MemoryError, MemoryUnavailable
+from .codes import MEMORY_ERROR_CODES, memory_error
 
 
 class DisableDeclaration(BaseModel):
@@ -93,13 +97,15 @@ class MemoryRoutes:
         with self._state_lock:
             degraded = bool(self._failed or self._reconcile_error or self._overflow
                             or self._reconciling or self._reconcile_requested)
+            code = ("memory.worker_unconfigured" if not configured else
+                    "memory.capture_incomplete" if self._failed or self._reconcile_error or self._overflow
+                    else None)
             return {
                 "status": "unconfigured" if not configured else ("degraded" if degraded else "ready"),
                 "pending": len(self._pending) + int(self._inflight is not None)
                            + int(self._reconciling or self._reconcile_requested),
-                "last_error": ("Native memory worker is not configured" if not configured else
-                               "Memory capture is incomplete; retained mission snapshots will be retried."
-                               if self._failed or self._reconcile_error or self._overflow else None),
+                "last_error": MEMORY_ERROR_CODES[code] if code else None,
+                "code": code,
             }
 
     def set_snapshot_source(self, source: Callable) -> None:
@@ -179,7 +185,7 @@ class MemoryRoutes:
 
     def _client_or_503(self) -> MemoryClient:
         if self._worker_path is None or not self._worker_path.exists():
-            raise HTTPException(503, "Native memory worker is not configured")
+            raise memory_error(503, "memory.worker_unconfigured", variable="ARC_MEMORY_WORKER")
         with self._client_lock:  # exactly one live worker per DB, including recovery
             if self._client is None or not self._client.is_alive():
                 replacing = self._client is not None
@@ -189,7 +195,7 @@ class MemoryRoutes:
                 try:
                     self._client = MemoryClient(self._worker_path, self._data_dir / "memory.db")
                 except (OSError, MemoryError):
-                    raise HTTPException(503, "Native memory worker is unavailable; check its installation") from None
+                    raise memory_error(503, "memory.worker_unavailable") from None
                 if replacing:
                     with self._state_lock:
                         replaying = self._reconciling
@@ -203,15 +209,30 @@ class MemoryRoutes:
         try:
             return getattr(self._client_or_503(), method)(*args)
         except MemoryUnavailable:
-            raise HTTPException(503, "Native memory worker disconnected; retry to recover") from None
+            raise memory_error(503, "memory.worker_disconnected") from None
         except MemoryError as exc:
-            if method in {"inspect", "disable"} and str(exc) == "record not found":
-                raise HTTPException(404, "Unknown memory record") from None
-            if method == "session_fetch":
-                raise HTTPException(409, "Session exceeds the read budget or is unreadable; retry with a narrower sequence range") from None
-            if "read budget" in str(exc) or "frame limit" in str(exc):
-                raise HTTPException(409, "Memory result exceeds the read budget; narrow the scope or reduce the result limit") from None
-            raise HTTPException(409, "Memory operation failed; check the query, record or requested range") from None
+            # The worker's kind names the cause; message matching covers a worker that predates it.
+            message = str(exc)
+            if method in {"inspect", "disable"} and (exc.kind == "not_found" or message == "record not found"):
+                raise memory_error(404, "memory.record_not_found", record_id=args[0]) from None
+            if exc.kind == "corrupt":
+                raise memory_error(500, "memory.record_corrupt", operation=method) from None
+            if exc.kind == "read_budget" or "read budget" in message or "frame limit" in message:
+                raise memory_error(409, "memory.read_budget", operation=method) from None
+            raise memory_error(409, "memory.operation_failed", operation=method) from None
+
+    def _titles(self, sessions: list[str]) -> dict[str, str]:
+        """Mission goals for session ids (a mission is one session), one line, 80 characters."""
+        db = self._data_dir / "missions.db"
+        if not sessions or not db.is_file():
+            return {}
+        try:
+            with closing(sqlite3.connect(db, timeout=5)) as conn:
+                rows = conn.execute("SELECT id, json_extract(request, '$.goal') FROM missions "
+                                    "WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(sessions),)).fetchall()
+        except sqlite3.Error:
+            return {}  # titles are a convenience; the session list stands without them
+        return {mid: " ".join(goal.split())[:80] for mid, goal in rows if isinstance(goal, str)}
 
     def _wire(self) -> None:
         router = self.router
@@ -223,7 +244,8 @@ class MemoryRoutes:
             except HTTPException as exc:
                 capture = self.capture_status()
                 if capture["status"] != "unconfigured":
-                    capture = {**capture, "status": "degraded", "last_error": exc.detail}
+                    capture = {**capture, "status": "degraded", "last_error": exc.detail["detail"],
+                               "code": exc.detail["code"]}
                 return JSONResponse(status_code=503, content={
                     "protocol": None, "sqlite": None, "retrieval_modes": [],
                     "capture": capture, "detail": exc.detail,
@@ -257,15 +279,22 @@ class MemoryRoutes:
             try:
                 check_declaration(declared, MEMORY_DISABLE["derived"])
             except ChangeRefused as refused:
-                raise HTTPException(409, str(refused)) from None
+                raise memory_error(409, "memory.declaration_refused", reason=str(refused)) from None
             self._operation("disable", record_id)
             return {"disabled": True, "change": {"kind": MEMORY_DISABLE["kind"], "declared_effects": declared,
                                                  "derived_effects": [], "required_checks": [],
                                                  "reason": MEMORY_DISABLE["reason"]}}
 
+        @router.get("/stats")
+        def stats() -> Any:
+            return {"path": str(self._data_dir / "memory.db"), **self._operation("stats")}
+
         @router.get("/sessions")
         def sessions(project: str) -> Any:
-            return self._operation("session_list", project)
+            rows = self._operation("session_list", project)
+            titles = self._titles([row["session_id"] for row in rows])
+            return [{**row, "title": titles.get(row["session_id"]),
+                     "last_capture_ms": row.get("last_capture_ms")} for row in rows]
 
         @router.get("/sessions/{session}")
         def session(
@@ -275,7 +304,7 @@ class MemoryRoutes:
             to_seq: Optional[int] = Query(default=None, ge=0, le=2**63-1),
         ) -> Any:
             if from_seq is not None and to_seq is not None and from_seq > to_seq:
-                raise HTTPException(422, "from_seq must not exceed to_seq")
+                raise memory_error(422, "memory.invalid_range", from_seq=from_seq, to_seq=to_seq)
             return self._operation("session_fetch", project, session, from_seq, to_seq)
 
     def close(self) -> None:

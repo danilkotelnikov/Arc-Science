@@ -3,20 +3,22 @@ from dataclasses import asdict
 from pathlib import Path
 
 from . import BioArtClient, BioArtLimits, BioArtSettings
+from .cache import digest
 
 
 def register(commands):
     group=commands.add_parser('bioart',help='NIH metadata and immutable assets (observed website interface)')
     sub=group.add_subparsers(dest='bioart_command',required=True)
-    for name in ('search','inspect','fetch','verify','import'):
+    for name in ('search','inspect','fetch','thumbnail','verify','import'):
         command=sub.add_parser(name)
         if name=='search':
             command.add_argument('query')
             command.add_argument('--search-html',type=Path,help='Explicit operator-supplied browser DOM snapshot; no egress')
-        elif name in ('inspect','fetch'): command.add_argument('entry_id',type=int)
+        elif name in ('inspect','fetch','thumbnail'): command.add_argument('entry_id',type=int)
         else: command.add_argument('receipt',type=Path)
+        if name=='thumbnail': command.add_argument('file_id',type=int)
         command.add_argument('--project',type=Path,default=Path('.'))
-        if name in ('search','inspect','fetch'): command.add_argument('--allow-egress',action='store_true')
+        if name in ('search','inspect','fetch','thumbnail'): command.add_argument('--allow-egress',action='store_true')
         if name=='fetch':
             command.add_argument('--representation',type=int)
             command.add_argument('--format',choices=['svg','png','ai','eps','SVG','PNG','AI','EPS'],default='SVG')
@@ -29,6 +31,10 @@ def run(args):
         client=BioArtClient(args.receipt.absolute().parent,limits=BioArtLimits.from_environment())
         return client.verify(args.receipt.absolute())
     settings=BioArtSettings.from_environment(project)
+    if args.bioart_command=='thumbnail':
+        thumbnails=BioArtClient(settings.thumbnail_dir,allow_egress=args.allow_egress,limits=settings.limits)
+        data,media_type=thumbnails.thumbnail(args.entry_id,args.file_id)
+        return {'media_type':media_type,'size':len(data),'sha256':digest(data)}
     client=BioArtClient(settings.cache_dir,allow_egress=getattr(args,'allow_egress',False),limits=settings.limits)
     if args.bioart_command=='inspect':
         entry=client.inspect(args.entry_id)

@@ -13,14 +13,18 @@ import sys
 import tempfile
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Path as PathParameter, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
 
+from ..error_codes import api_error
+from ..net import proxy_environment
 from .client import BioArtCacheMiss, BioArtClient
+from .errors import BIOART_ERROR_STATUS, BioArtError, describe, from_text
 from .models import BioArtSettings, ORIGIN
 
 
 BioArtId = Annotated[StrictInt, Field(gt=0, lt=2**53)]
+PathId = Annotated[int, PathParameter(gt=0, lt=2**53)]
 ReceiptId = Annotated[str, Field(pattern=r'^[0-9a-f]{64}$')]
 
 
@@ -28,9 +32,16 @@ class _Request(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
-class SearchRequest(_Request):
-    query: str = Field(min_length=1, max_length=200)
+class _Consent(_Request):
+    """allow_egress consents to this one live read; with remember_days: 30 it is also
+    remembered for this destination and data category, and later reads without the flag
+    reuse it until it expires or is revoked."""
     allow_egress: StrictBool = False
+    remember_days: Literal[30] | None = None
+
+
+class SearchRequest(_Consent):
+    query: str = Field(min_length=1, max_length=200)
 
     @field_validator('query')
     @classmethod
@@ -40,9 +51,8 @@ class SearchRequest(_Request):
         return value.strip()
 
 
-class InspectRequest(_Request):
+class InspectRequest(_Consent):
     entry_id: BioArtId
-    allow_egress: StrictBool = False
 
 
 class FetchRequest(InspectRequest):
@@ -55,10 +65,9 @@ class ImportRequest(_Request):
 
 
 def _problem(error: ValueError):
-    detail = str(error)
-    lowered = detail.lower()
-    status = 504 if 'timeout' in lowered else 409
-    return HTTPException(status, detail)
+    """Contract C1: detail is {code, detail, facts}; detail stays the English fallback."""
+    problem = describe(error)
+    return HTTPException(BIOART_ERROR_STATUS.get(problem['code'], 409), problem)
 
 
 def _receipt_path(client: BioArtClient, receipt_id: str):
@@ -75,8 +84,9 @@ def _cli_environment():
     # of these are secrets. Match them case-insensitively.
     windows = ({'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'PATH', 'PATHEXT',
                 'NUMBER_OF_PROCESSORS', 'TEMP', 'TMP'} if os.name == 'nt' else set())
-    return {key: value for key, value in os.environ.items()
-            if key in permitted or key.upper() in windows or key.startswith('ARC_BIOART_')}
+    return {**{key: value for key, value in os.environ.items()
+               if key in permitted or key.upper() in windows or key.startswith('ARC_BIOART_')},
+            **proxy_environment(ORIGIN)}
 
 
 async def _taskkill_tree(pid):
@@ -172,17 +182,20 @@ async def _run_bioart_cli(project: Path, arguments: tuple[str, ...], timeout: in
                 errors.seek(max(0, size - 4096))
                 lines = errors.read(4096).decode('utf-8', errors='replace').splitlines()
                 last = lines[-1].strip() if lines else ''
-                if (last.startswith('ValueError: ') and len(last) <= 2000 and
-                        str(project) not in last):
-                    raise ValueError('BioArt CLI failed: ' + last.removeprefix('ValueError: '))
+                kind, _, message = last.partition(': ')
+                if (kind in {'ValueError', 'BioArtError', 'BioArtCacheMiss', 'ProxyUnsupported'} and
+                        len(last) <= 2000 and str(project) not in last):
+                    # A coded error keeps its code and facts across the CLI boundary.
+                    raise from_text('BioArt CLI failed: ' + message)
                 raise ValueError('BioArt CLI failed without a safe provider error')
     except OSError:
         raise ValueError('BioArt CLI could not start or complete') from None
 
 
 def create_router(project: Path, authorized, egress=None):
-    # egress(destination, kind, category, purpose, digest) -> finish(outcome, reason): the
-    # service's grant ledger for each consented live read; consent itself stays per request.
+    # egress(destination, kind, category, purpose, digest, *, given, remember_days) ->
+    # finish(outcome, reason), or None when neither this request's flag nor a remembered
+    # grant covers the read: the service's grant ledger for each live read.
     root = Path(project).absolute()
     router = APIRouter(prefix='/api/bioart', dependencies=[Depends(authorized)])
     population = None
@@ -206,7 +219,8 @@ def create_router(project: Path, authorized, egress=None):
         except BioArtCacheMiss:
             pass
         settings = BioArtSettings.from_environment(root)
-        multiplier = 2 if arguments[0] == 'fetch' else 1
+        # Requests per command, each with its own deadline: search is page, chunk, action.
+        multiplier = {'fetch': 2, 'search': 3}.get(arguments[0], 1)
         timeout = settings.limits.timeout_seconds * multiplier + 5
         await _run_bioart_cli(root, arguments, timeout)
         return await asyncio.to_thread(lambda: operation(client(False)))
@@ -233,10 +247,10 @@ def create_router(project: Path, authorized, egress=None):
 
             task.add_done_callback(finished)
         elif record['task'].cancelling():
-            raise ValueError('BioArt live cache population is stopping; retry')
+            raise BioArtError('bioart.busy', 'BioArt live cache population is stopping; retry')
         elif record['key'] != arguments:
-            raise ValueError(
-                'BioArt live cache population is active for another request; retry')
+            raise BioArtError('bioart.busy',
+                              'BioArt live cache population is active for another request; retry')
 
         task = record['task']
         record['waiters'] += 1
@@ -261,40 +275,92 @@ def create_router(project: Path, authorized, egress=None):
                 if cancellation is not None:
                     raise cancellation
 
-    async def cache_first(allow_egress, arguments, operation):
+    def consent(allow_egress, remember_days, category, purpose, arguments):
+        """finish(outcome, reason) for one live read, or None when nothing covers it."""
+        if egress is None:  # a router without the service's ledger: the flag alone
+            return (lambda outcome, reason='': None) if allow_egress else None
+        return egress(ORIGIN, 'bioart', category, purpose, hashlib.sha256(' '.join(arguments).encode('utf-8')).hexdigest(),
+                      given=allow_egress, remember_days=remember_days)
+
+    async def cache_first(request, arguments, operation):
+        if request.remember_days and not request.allow_egress:
+            raise api_error(422, 'consent.remember_needs_consent')
         try:
             return await asyncio.to_thread(lambda: operation(client(False)))
         except BioArtCacheMiss as error:
-            if not allow_egress:
-                raise _problem(error) from None
+            miss = error
         except ValueError as error:
             raise _problem(error) from None
-        finish = egress(ORIGIN, 'bioart', 'the search query' if arguments[0] == 'search' else 'a BioArt entry id',
-                        'public-domain artwork retrieval', hashlib.sha256(' '.join(arguments).encode('utf-8')).hexdigest()) if egress else None
+        finish = consent(request.allow_egress, request.remember_days,
+                         'the search query' if arguments[0] == 'search' else 'a BioArt entry id',
+                         'public-domain artwork retrieval', arguments)
+        if finish is None:
+            raise _problem(miss) from None
         try:
             result = await populate_once(arguments, operation)
         except Exception as error:
-            if finish:
-                finish('failed', str(error)[:200])
+            finish('failed', str(error)[:200])
             if isinstance(error, ValueError):
                 raise _problem(error) from None
             raise
-        if finish:
-            finish('ok')
+        finish('ok')
         return result
 
     @router.post('/search')
     async def search(request: SearchRequest):
         hits = await cache_first(
-            request.allow_egress,
+            request,
             ('search', '--allow-egress', '--', request.query),
             lambda provider: provider.search(request.query))
-        return {'hits': [asdict(hit) for hit in hits]}
+        return {'hits': [{**asdict(hit), 'thumbnail_url': (
+            f'/api/bioart/thumbnails/{hit.entry_id}/{hit.thumbnail_file_id}'
+            if hit.thumbnail_file_id else None)} for hit in hits]}
+
+    thumbnail_lock = asyncio.Lock()
+
+    def read_thumbnail(entry_id, file_id):
+        settings = BioArtSettings.from_environment(root)
+        return BioArtClient(settings.thumbnail_dir, limits=settings.limits).thumbnail(entry_id, file_id)
+
+    @router.get('/thumbnails/{entry_id}/{file_id}')
+    async def thumbnail(entry_id: PathId, file_id: PathId, allow_egress: bool = False):
+        """Search-hit images, fetched through the owned (proxied) helper and served from
+        this origin, so the page never loads an external image URL."""
+        arguments = ('thumbnail', '--allow-egress', str(entry_id), str(file_id))
+        try:
+            try:
+                data, media_type = await asyncio.to_thread(read_thumbnail, entry_id, file_id)
+            except BioArtCacheMiss:
+                # One helper at a time; thumbnails have their own cache and writer lock.
+                async with thumbnail_lock:
+                    try:
+                        data, media_type = await asyncio.to_thread(read_thumbnail, entry_id, file_id)
+                    except BioArtCacheMiss:
+                        # The query flag, or a remembered grant for entry-id reads.
+                        finish = consent(allow_egress, None, 'a BioArt entry id', 'public-domain artwork thumbnail', arguments)
+                        if finish is None:
+                            raise
+                        try:
+                            settings = BioArtSettings.from_environment(root)
+                            await _run_bioart_cli(root, arguments, settings.limits.timeout_seconds + 5)
+                            data, media_type = await asyncio.to_thread(read_thumbnail, entry_id, file_id)
+                        except Exception as error:
+                            finish('failed', str(error)[:200])
+                            raise
+                        finish('ok')
+        except ValueError as error:
+            raise _problem(error) from None
+        return Response(data, media_type=media_type, headers={
+            'ETag': f'"{hashlib.sha256(data).hexdigest()}"',
+            'Cache-Control': 'private, max-age=86400',
+            'Content-Security-Policy': "default-src 'none'; sandbox",
+            'Cross-Origin-Resource-Policy': 'same-origin',
+        })
 
     @router.post('/inspect')
     async def inspect(request: InspectRequest):
         entry = await cache_first(
-            request.allow_egress,
+            request,
             ('inspect', '--allow-egress', str(request.entry_id)),
             lambda provider: provider.inspect(request.entry_id))
         return {**asdict(entry),
@@ -317,7 +383,7 @@ def create_router(project: Path, authorized, egress=None):
         if request.representation_id is not None:
             arguments.extend(('--representation', str(request.representation_id)))
         arguments.append(str(request.entry_id))
-        return await cache_first(request.allow_egress, tuple(arguments), operation)
+        return await cache_first(request, tuple(arguments), operation)
 
     def verified_source(receipt_id):
         provider = client(False)

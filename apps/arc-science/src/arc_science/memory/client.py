@@ -21,7 +21,15 @@ MAX_FRAME = 16 * 1024 * 1024  # arc-memory/1, symmetric in both directions
 
 
 class MemoryError(RuntimeError):
-    """Raised when the worker reports an error or the connection is lost."""
+    """Raised when the worker reports an error or the connection is lost.
+
+    `kind` is the worker's machine cause (not_found, corrupt, read_budget, storage,
+    ...), or None when the worker did not name one.
+    """
+
+    def __init__(self, message: str, kind: Optional[str] = None):
+        super().__init__(message)
+        self.kind = kind
 
 
 class MemoryUnavailable(MemoryError):
@@ -93,7 +101,9 @@ class MemoryClient:
             finally:
                 watchdog.cancel()
         if response.get("status") != "ok":
-            raise MemoryError(response.get("error", "unknown memory error"))
+            kind = response.get("kind")
+            raise MemoryError(response.get("error", "unknown memory error"),
+                              kind if isinstance(kind, str) else None)
         return response["data"]
 
     # --- operations -------------------------------------------------------
@@ -140,6 +150,9 @@ class MemoryClient:
 
     def embed(self) -> int:
         return self._call({"op": "embed"})["embedded"]
+
+    def stats(self) -> dict[str, Any]:
+        return self._call({"op": "stats"})
 
     # --- lifecycle --------------------------------------------------------
     def is_alive(self) -> bool:

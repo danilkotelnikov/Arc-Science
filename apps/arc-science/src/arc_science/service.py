@@ -12,7 +12,6 @@ import subprocess
 import time
 import uuid
 import hmac
-import httpx
 import json
 import contextvars
 import hashlib
@@ -26,6 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .contracts import digest
+from .net import outbound_client
 from .transport import AccessGrant, ProviderError
 from .grants import GrantLedger
 from .exploration.models import (CONTEXT_CHAR_LIMIT, CONTEXT_MEMORY_LIMIT, CONTEXT_MISSION_LIMIT, CREW_ROLES, ContextItem,
@@ -398,6 +398,8 @@ CONNECTOR_CATEGORY='tool arguments the planner chooses';PUBLIC_READ_CATEGORY='qu
 BIORENDER_CATEGORY='template search terms the planner chooses'
 # The origin each shipped public-read tool reaches (public_reads.py fixes the URLs).
 PUBLIC_READ_ORIGINS={'literature_search':'https://www.ebi.ac.uk','pdb_metadata':'https://data.rcsb.org'}
+# The retraction check of a literature search is its own destination under its own grant.
+OPENALEX_ORIGIN='https://api.openalex.org';RETRACTION_CATEGORY='DOIs of the works a literature search returned'
 
 
 def seat_destination(cfg):
@@ -432,6 +434,7 @@ def route_preview(route,settings_revision=None,context=False,directives=False):
                   'data_category':CONNECTOR_CATEGORY,'purpose':'consultation'} for a in route['acp_agents']]
     public_reads=[{'destination':o,'destination_kind':'public_read','data_category':PUBLIC_READ_CATEGORY,'purpose':'public metadata read'}
                   for o in dict.fromkeys(PUBLIC_READ_ORIGINS.values())] if os.environ.get('ARC_PUBLIC_READS')=='1' else []
+    if public_reads:public_reads.append({'destination':OPENALEX_ORIGIN,'destination_kind':'public_read','data_category':RETRACTION_CATEGORY,'purpose':'retraction check'})
     biorender=None
     if os.environ.get('ARC_BIORENDER_READS')=='1':
         from .biorender import BIORENDER_ENDPOINT
@@ -676,7 +679,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     # project is the workspace (ARC_PROJECT) and the cache path it passes is absolute
     # under that workspace, not under the data directory.
     bioart_project=Path(os.environ.get('ARC_PROJECT') or root)
-    app.include_router(create_bioart_router(bioart_project if bioart_project.is_dir() else root,authorized,egress=consented))
+    # A live NIH read is covered by the request's flag or a remembered grant (D009).
+    app.include_router(create_bioart_router(bioart_project if bioart_project.is_dir() else root,authorized,egress=functools.partial(consent_grant,ledger)))
 
     from .molecular_jobs import MolecularJobs
     def default_preset():
@@ -777,7 +781,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             line({'status':'attempted','provider':cfg.provider,'transport':cfg.transport,'model':cfg.model,'chars':len(body.text)})
             seat=None
             try:
-                async with httpx.AsyncClient(trust_env=False) as client:
+                async with outbound_client(asynchronous=True) as client:
                     if cfg.transport=='cli':
                         command=claude_code_command() if cfg.provider=='anthropic' else [cfg.endpoint]
                         seat=CliAgent(command,cfg.model,cfg.model,provider=cfg.provider,efforts={'prose':cfg.effort} if cfg.effort else None)
@@ -1158,7 +1162,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                               else probe_subject(provider,'api',e.model,e.effort,endpoint=origin(e.endpoint),credential_ref=e.credential_ref))
                     distinct.setdefault(subject_digest(verified),(verified,e,[]))[2].append(role)
                 results=[];calls={d:[] for d in destinations};withdrawn=set()
-                async with httpx.AsyncClient(trust_env=False) as client:
+                async with outbound_client(asynchronous=True) as client:
                     for digest_value,(verified,e,roles) in distinct.items():
                         record={'model':e.model,'effort':e.effort,'roles':roles,'transport':e.transport,'subject':verified,'subject_digest':digest_value}
                         started=time.monotonic();seat=None
@@ -1313,7 +1317,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         # never a claim of validity, only of eligibility for human review. The validated
         # state is returned beside the row so one request validates it once.
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
-        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(row['id']))
+        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(row['id']),timeline_rows=timeline.rows(row['id']))
         obligations={change.id:list(obligation_states(change,decision)) for change in state.changes}
         return {**row,'release':decision.model_dump(mode='json'),'change_obligations':obligations},state
 
@@ -1389,7 +1393,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             return spec,guard(kind,destination,category,function,request_digest=lambda arguments:digest(arguments))
         agent=None;consultations=None;mcp=None
         try:
-            async with httpx.AsyncClient(trust_env=False) as client:
+            async with outbound_client(asynchronous=True) as client:
                 tools=TrustedPublicTools()
                 if request.mode=='demo':agent=DemoVisionAgent() if request.vision_review else DemoAgent()
                 else:
@@ -1426,7 +1430,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                     agent=GuardedSeatAgent(agent,guard_seat)
                     if os.environ.get('ARC_PUBLIC_READS')=='1':
                         from .exploration.public_reads import public_tools
-                        tools=combine_trusted_tools(tools,public_tools(client))
+                        retraction=lambda call:guard('public_read',OPENALEX_ORIGIN,RETRACTION_CATEGORY,call,request_digest=lambda dois:digest(dois))
+                        tools=combine_trusted_tools(tools,public_tools(client,openalex=retraction))
                         for name,origin_ in PUBLIC_READ_ORIGINS.items():
                             if name in tools:tools[name]=guard_tool(tools[name],origin_,'public_read',PUBLIC_READ_CATEGORY)
                     if os.environ.get('ARC_BIORENDER_READS')=='1':
@@ -1665,7 +1670,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         chain=repository.verify(mid)
         if not chain:raise api_error(409,'mission.integrity_failed')
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
-        try:release_ledger.assert_exportable(request,state,event_chain_ok=chain)
+        try:release_ledger.assert_exportable(request,state,event_chain_ok=chain,timeline_rows=timeline.rows(mid))
         except release_ledger.ReleaseBlocked as blocked:
             raise api_error(409,'release.blocked','Release blocked; verify the mission and resolve: '+', '.join(blocked.reasons),
                             facts={'reasons':list(blocked.reasons)}) from None
@@ -1679,7 +1684,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if not chain:raise api_error(409,'mission.integrity_failed')
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
         # Every release export consults the ledger: a blocked mission is not exported.
-        try:decision=release_ledger.assert_exportable(request,state,event_chain_ok=chain)
+        rows=timeline.rows(mid)
+        try:decision=release_ledger.assert_exportable(request,state,event_chain_ok=chain,timeline_rows=rows)
         except release_ledger.ReleaseBlocked as blocked:
             raise api_error(409,'release.blocked','Release blocked; verify the mission and resolve: '+', '.join(blocked.reasons),
                             facts={'reasons':list(blocked.reasons)}) from None
@@ -1689,7 +1695,6 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         release=decision.model_dump(mode='json')
         try:graph=evidence_graph(state)
         except ValueError:raise api_error(409,'mission.evidence_invalid') from None
-        rows=timeline.rows(mid)
         receipts=ledger.receipts(mission_id=mid,limit=1000)
         grants={'grants':ledger.list('mission',mid),'receipts':receipts,'receipts_truncated':len(receipts)>=1000}
         data=export_capsule(request,state,release=release,claims=build_claims(state,rows,graph,release),timeline=rows,grants=grants)
@@ -1714,7 +1719,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         report=await asyncio.to_thread(verify_capsule,export_capsule(request,state))
         # Persist what was observed and the decision it yields; a later change stales it.
         receipt=release_ledger.receipt_from_report(report,state)
-        decision=release_ledger.evaluate_release(request,state,receipt,event_chain_ok=chain)
+        decision=release_ledger.evaluate_release(request,state,receipt,event_chain_ok=chain,timeline_rows=timeline.rows(mid))
         try:repository.save(mid,state.model_copy(update={'release':decision}),expected_revision=row['revision'])
         except RevisionConflict:raise api_error(409,'mission.revision_conflict','Mission changed during verification; retry',facts={'operation':'verify'}) from None
         return {**report,'event_chain':True,'release':decision.model_dump(mode='json')}

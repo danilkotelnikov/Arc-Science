@@ -14,7 +14,10 @@ import time
 
 from .. import anchored
 from ..exploration.cli_seats import scrubbed_environment
+from ..net import proxy_environment
 from .cache import encoded
+from .errors import from_text
+from .models import ORIGIN
 from ..vector_assets import _open_directory, _read_regular, _write_regular_at
 
 
@@ -25,6 +28,8 @@ _SOURCE_ROOT = Path(__file__).resolve().parents[2]
 def _worker_environment():
     environment = scrubbed_environment()
     environment['PYTHONPATH'] = str(_SOURCE_ROOT)
+    # The worker reaches NIH through the same system proxy as this process.
+    environment.update(proxy_environment(ORIGIN))
     return environment
 
 
@@ -121,7 +126,7 @@ def _run_worker(command,request,*,timeout,limit,metadata=None):
             if not result['ok']:
                 if not isinstance(result['error'],str) or len(result['error'])>2000:
                     raise ValueError('Invalid BioArt worker error')
-                raise ValueError(result['error'])
+                raise from_text(result['error'])
             if process.returncode!=0:raise ValueError('BioArt transport process failed')
             if metadata is not None:
                 if ('content_type' not in result or
@@ -144,7 +149,8 @@ def _run_worker(command,request,*,timeout,limit,metadata=None):
                 _restore_signal_mask(previous_mask)
 
 
-def request_in_child(path,limit,mimes,limits,*,metadata=None):
+def request_in_child(path,limit,mimes,limits,*,metadata=None,action=None,body=None):
+    post={'action':action,'body':body} if action is not None else {}
     return run_worker([sys.executable,'-m','arc_science.bioart.worker'],
-        {'path':path,'limit':limit,'mimes':sorted(mimes),'limits':asdict(limits)},
+        {'path':path,'limit':limit,'mimes':sorted(mimes),'limits':asdict(limits),**post},
         timeout=limits.timeout_seconds,limit=limit,metadata=metadata)
