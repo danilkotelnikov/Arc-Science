@@ -42,8 +42,13 @@ and texts of the context items the operator chose, the operator's decision notes
 except a string that repeats the action's own arguments (the model wrote those, such as a search
 query). A word is a maximal run of name characters, kept when it holds a letter and an ASCII digit;
 a name resolves when it is such a word exactly, case included. Model-written text (hypotheses,
-plans, findings, rationales, next tests) never adds a word. A hyphenated compound is one word, so
-p53 inside p53-dependent is not a word of its own.
+plans, findings, rationales, next tests) never adds a word, and neither does a context item only
+the planner sees: a prior mission's summary or a memory record a model wrote. A hyphenated
+compound is one word, so p53 inside p53-dependent is not a word of its own. Recorded free text,
+such as an abstract, can hold words with a unit in them, such as 24h or 10mg; they then count as
+names, and each is shown with where the study recorded it. A name's origin is its earliest recorded
+occurrence, in event-log order, and the observation it comes from gets the tracing, fidelity and
+retraction checks a {{source}} reference to it would get, without joining the claim's evidence.
 
 A rung counts only when every rung below it holds. No condition reads a seat's position:
 agreement between the reviewer and the falsifier never raises a rung. Pure: no I/O, and
@@ -81,8 +86,10 @@ GUARANTEE = ('every number token in the supported scope is traced to a recorded 
 NOTE = ('L1 traced means reference traceability: ' + GUARANTEE + '. Each number is shown with its field name and '
         'observation id, and every cited source is a retrieval the mission recorded. The words around a reference, such '
         'as a unit or an adjective, are the author\'s and are not checked; a name token is not a traced value, and '
-        'model-written text adds no names to the vocabulary; numbers written as words are outside the check; a work '
-        'named only in prose is not a source.')
+        'model-written text, prior-mission summaries and model-written memory add no names to the vocabulary; recorded '
+        'free text such as an abstract can hold words with a unit in them, such as 24h or 10mg, which then count as '
+        'names and are shown with where the study recorded them; numbers written as words are outside the check; a '
+        'work named only in prose is not a source.')
 # The significance level a permutation control must reach. The control records only its
 # best shuffle, so the bound (b+1)/(N+1) is known only for b = 0: 1/(N+1).
 ALPHA = .05
@@ -261,8 +268,8 @@ def named(state: MissionState, scoped: ScopedBranch) -> dict:
 
 
 def name_origins(state: MissionState, texts, names: dict) -> dict:
-    """The observations the texts' resolved name tokens came from; tracing checks them as it
-    checks a referenced observation."""
+    """The observations the texts' resolved name tokens came from; tracing, fidelity and
+    retraction check them as they check a referenced observation."""
     ids = {names[s['value']].get('observation_id') for text in texts for s in parse(text)[0]
            if s['kind'] == 'name' and s['value'] in names}
     return {o.id: o for o in state.observations if o.id in ids}
@@ -632,15 +639,17 @@ def _evaluate(state, scoped, timeline_rows, receipts, verification, subject, req
     evidence = list(effective(state, scoped).values())
     names = study_vocabulary(state, request)
     origins = name_origins(state, scoped.supported_scope, names)
-    traced, extra = _traced(state, list({**effective(state, scoped), **origins}.values()), set(cited) | set(origins),
-                            timeline_rows, receipts)
+    # A name's origin is checked as a {{source}} reference to it would be, but it is not evidence
+    # for the falsifier, the null or the card.
+    checked = list({**effective(state, scoped), **origins}.values())
+    traced, extra = _traced(state, checked, set(cited) | set(origins), timeline_rows, receipts)
     survived, falsifier = _falsifier(state, branch, evidence)
     rejected, null = _null(state, branch, evidence)
     outcomes = {'evidence_present': None if evidence else 'no_evidence',
                 'observations_traced': traced,
                 'numbers_bound': _bound(scoped.supported_scope, found, names),
-                'fidelity_audit': _fidelity(state, evidence),
-                'no_retracted_source': _retraction(evidence),
+                'fidelity_audit': _fidelity(state, checked),
+                'no_retracted_source': _retraction(checked),
                 'recomputed': _recomputed(verification, subject),
                 'references_replayable': _replayable(scoped.supported_scope, cited),
                 'falsifier_prespecified': _prespecified(state, branch, evidence),

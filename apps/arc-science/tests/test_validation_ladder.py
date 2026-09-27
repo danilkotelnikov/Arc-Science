@@ -325,6 +325,86 @@ def test_the_observation_a_name_comes_from_is_traced_like_a_referenced_one():
     assert ladder_of(quiet, request=request, receipts=())['rung'] == 1
 
 
+def test_the_observation_a_name_comes_from_gets_the_retraction_and_fidelity_checks():
+    """LADDER-REF-4: a name taken from a retrieval is checked as a {{source}} reference to that
+    retrieval is: a retracted work blocks, an unchecked work leaves L1 unmet, and a fidelity
+    defect of the origin is the claim's. The origin still is not on the card's evidence list."""
+    finding = 'Error {{fit.validation_mse}} with {{name:ResNet50}}.'
+    named = lambda records: run(OtherBranch(peek=(READ,), curve=(FIT,), finding=finding), extra_tools=reads(records), egress=True)
+    # Wakefield-style: the name occurs in the retracted record itself.
+    request, state = named([{**r, 'title': r['title'] + ' ResNet50'} if r.get('doi') == WAKEFIELD else r for r in RECORDS])
+    ladder = ladder_of(state, request=request)
+    assert ladder['next']['needs'] == ['retracted_source'] and ladder['verdict'] == 'blocked'
+    [card] = [c for c in build_claims(state, traced(state), None, None, receipts=[RECEIPT], request=request)['claims']
+              if c['branch_id'] == 'curve']
+    assert card['references'][1]['origin'] == {'origin': 'observation', 'observation_id': 'read'}
+    assert [e['id'] for e in card['evidence']] == ['fit']
+    # One work of the origin without a DOI leaves it unchecked.
+    request, state = named([{**SOUND[0], 'title': 'Deep learning with ResNet50 backbones.'}, RECORDS[2]])
+    assert ladder_of(state, request=request)['next']['needs'] == ['retraction_unchecked']
+    # A sound origin keeps L1; the same origin failing the fidelity audit gives its defect.
+    request, state = named([{**SOUND[0], 'title': 'Deep learning with ResNet50 backbones.'}])
+    assert ladder_of(state, request=request)['rung'] == 1
+    # The note states the accepted scope limits of names in plain words.
+    note = ladder_of(state, request=request)['note']
+    assert 'prior-mission summaries and model-written memory add no names' in note and '24h or 10mg' in note
+    swapped =state.model_copy(update={'observations': tuple(o.model_copy(update={'dataset_digest': 'f' * 64}) if o.id == 'read' else o
+                                                            for o in state.observations)})
+    assert ladder_of(swapped, request=request)['next']['needs'] == ['oracle_substitution']
+
+
+READ2 = {'id': 'read2', 'tool': 'literature_search', 'arguments': {'query': 'second fixture'}}
+RECEIPT2 = {**RECEIPT, 'id': 'receipt-2', 'request_digest': digest(READ2['arguments'])}
+
+
+def test_the_earliest_of_two_observations_is_a_names_origin_and_the_one_traced():
+    """The same name in two retrievals of another branch: the one the event log records first is
+    the origin, whichever its id, and only its receipt is needed."""
+    from arc_science.exploration.validation import study_vocabulary
+    found = [{**SOUND[0], 'title': 'Deep learning with ResNet50 backbones.'}]
+    for peek, first, later in (((READ, READ2), RECEIPT, RECEIPT2), ((READ2, READ), RECEIPT2, RECEIPT)):
+        request, state = run(OtherBranch(peek=peek, curve=(FIT,), finding='Error {{fit.validation_mse}} with {{name:ResNet50}}.'),
+                             extra_tools=reads(found), egress=True)
+        order = [e.detail for e in state.events if e.kind == 'observation']
+        assert order[:2] == [peek[0]['id'] + ': ok', peek[1]['id'] + ': ok'], order
+        assert study_vocabulary(state, request)['ResNet50'] == {'origin': 'observation', 'observation_id': peek[0]['id']}
+        rows = [{**r, 'receipt_id': 'receipt-2' if r['action_id'] == 'read2' else r['receipt_id']} for r in traced(state)]
+        assert ladder_of(state, rows=rows, request=request, receipts=(first, later))['rung'] == 1
+        assert ladder_of(state, rows=rows, request=request, receipts=(first,))['rung'] == 1, peek
+        assert ladder_of(state, rows=rows, request=request, receipts=(later,))['next']['needs'] == ['receipt_missing'], peek
+
+
+def test_a_names_origin_is_an_observation_or_an_operator_note_whichever_the_log_records_first():
+    from arc_science.exploration.changes import declare
+    from arc_science.exploration.engine import plan_digest
+    from arc_science.exploration.models import OperatorDecision
+    from arc_science.exploration.validation import study_vocabulary
+    found = [{**SOUND[0], 'title': 'Deep learning with ResNet50 backbones.'}]
+    agent = lambda: Scripted([READ], falsifier_test=None, say=lambda o: 'The {{name:ResNet50}} review is {{read}}.')
+
+    def noted(state, note):
+        plan = next(r for r in state.model_records if r.role == 'planner' and r.round == state.round)
+        decision = OperatorDecision(target='proposal', target_id=f'plan-{state.round}', directive='pursue', note=note,
+                                    round=state.round, plan_digest=plan_digest(plan))
+        return declare(state, 'decision', ('analysis', 'claim'), 'Operator decisions', decisions=(decision,))[0]
+
+    # The observation first, the note after it: the observation is the origin.
+    request, state = run(agent(), extra_tools=reads(found), egress=True)
+    after = noted(state, 'Check ResNet50 again.')
+    assert study_vocabulary(after, request)['ResNet50'] == {'origin': 'observation', 'observation_id': 'read'}
+    # The note first (the gate pauses before round 0 runs), the observation after it: the note is the origin.
+    gated = MissionRequest(goal='Ladder fixture', max_rounds=3, allow_egress=True, ladder_policy='references', gate='each_round')
+    state = asyncio.run(explore(gated, agent(), extra_tools=reads(found)))
+    assert state.stop_code == 'awaiting_decision' and state.observations == ()
+    state = asyncio.run(explore(gated, agent(), initial=noted(state, 'Check ResNet50 first.'), extra_tools=reads(found)))
+    while state.status == 'paused':
+        state = asyncio.run(explore(gated, agent(), initial=noted(state, ''), extra_tools=reads(found)))
+    assert state.status == 'completed' and [o.id for o in state.observations] == ['read']
+    kinds = [e.kind for e in state.events]
+    assert kinds.index('change_declared') < kinds.index('observation')
+    assert study_vocabulary(state, gated)['ResNet50'] == {'origin': 'note'}
+
+
 def test_the_vocabulary_is_tokenised_for_exact_lookup_only():
     from arc_science.exploration.validation import words
     assert list(words('p53, BRCA1 and SARS-CoV-2 (IL-6/IL-8); H3K27ac_x 16S rRNA, 三百p53 TGF-β1; 0-5 x² 100 BRCA')) == [
