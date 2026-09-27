@@ -63,7 +63,7 @@ def test_bioart_routes_require_the_operator_token(tmp_path):
     assert [response.status_code for response in requests] == [401, 401, 401, 401, 401, 401]
 
 
-def test_cached_search_inspect_fetch_preview_and_import_are_path_safe(tmp_path, monkeypatch):
+def test_cached_search_inspect_fetch_preview_and_import_are_path_safe(tmp_path, monkeypatch, svg_rasterizer):
     seeded = _seed(tmp_path, monkeypatch)
     with TestClient(_app(tmp_path)) as client:
         search = client.post('/api/bioart/search', headers=_auth(),
@@ -109,9 +109,6 @@ def test_cached_search_inspect_fetch_preview_and_import_are_path_safe(tmp_path, 
         assert source.headers['content-disposition'] == 'attachment; filename="bioart-18.svg"'
         assert source.content == SVG
 
-        from arc_science.svg_raster import cairo_available
-        if not os.environ.get('ARC_SVG2PNG') and not cairo_available():
-            pytest.skip('No SVG rasterizer for the import step: build native/arc-svg or install Cairo')
         imported = client.post('/api/bioart/import', headers=_auth(),
                                json={'receipt_id': result['receipt_id']})
         assert imported.status_code == 200, imported.text

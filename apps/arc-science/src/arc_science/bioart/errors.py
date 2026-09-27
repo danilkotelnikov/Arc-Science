@@ -21,6 +21,8 @@ BIOART_ERROR_CODES = {
     'bioart.invalid_query': 'A BioArt search can contain letters, digits, spaces, hyphens and apostrophes only',
     'bioart.file_rejected': 'The NIH file does not match the requested format or limits',
     'bioart.not_eligible': 'This BioArt source cannot be previewed or imported',
+    'bioart.runtime_missing': 'AI files need the PDF runtime (pypdfium2, the vector extra) to be checked; '
+                              'install it and fetch again',
     'bioart.failed': 'The BioArt request failed',
 }
 # Upstream problems are gateway errors; everything else is a conflict with the request.

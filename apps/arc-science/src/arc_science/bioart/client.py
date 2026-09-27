@@ -52,13 +52,19 @@ def _format_of(mimes):
 
 def _eps_signature(data):
     """Only '%' comment lines may precede %!PS-Adobe- within 4 KiB. NIH also leaves the
-    binary remainder (23 bytes, with NULs) of a DOS EPS header just before it; allow <= 32."""
+    binary remainder (23 bytes, with NULs) of a DOS EPS header just before it; allow <= 32.
+    Its offset/length/checksum bytes may include 0x0A, so try every line start in that window."""
     head = data[:4096]
     at = head.find(b'%!PS-Adobe-')
     if at < 0: return False
-    *comments, tail = head[:at].split(b'\n')
-    return (all(line.startswith(b'%') for line in comments) and
-            (tail == b'' or len(tail) <= 32 and b'\x00' in tail))
+    prefix = head[:at]
+    for start in range(max(0, at - 32), at + 1):
+        if start and prefix[start - 1] != 0x0A: continue
+        tail = prefix[start:]
+        comments = prefix[:start - 1].split(b'\n') if start else []
+        if all(line.startswith(b'%') for line in comments) and (tail == b'' or b'\x00' in tail):
+            return True
+    return False
 
 
 def _sniff(data, format):
@@ -162,6 +168,9 @@ def _eligibility(data, format):
     if format=='AI':
         # The receipt claims only what import_vector(kind='pdf') will accept.
         if len(data)>_SOURCE_LIMIT: return False,False,'AI exceeds existing vector import size limit'
+        # Without the PDF runtime the answer depends on this install, not on the bytes: record nothing.
+        try: import pypdfium2  # noqa: F401
+        except ImportError: raise BioArtError('bioart.runtime_missing') from None
         try: _render_pdf(data,inspect_only=True)
         except ValueError as exc: return False,False,str(exc)
         return False,True,'AI is imported through its PDF-compatible representation'
@@ -320,10 +329,11 @@ class BioArtClient:
         finally:
             if owned: client.close()
 
-    def _metadata(self,path,parser,*,fetch=None,suffix='.html',limit=None):
-        """Cache-first bytes for path; parser takes bytes; fetch overrides the plain HTML GET."""
+    def _metadata(self,path,parser,*,fetch=None,suffix='.html',limit=None,source=None):
+        """Cache-first bytes for path; parser takes bytes; fetch overrides the plain HTML GET.
+        source names a non-HTML body in the index key, so older caches of path are never parsed as it."""
         limit=limit or self.limits.max_metadata_bytes
-        index='metadata-'+digest(path.encode())+'.json'
+        index='metadata-'+digest((path if source is None else f'{path}#{source}').encode())+'.json'
         raw=self.cache.read(index,4096)
         if raw is not None:
             value=_load(raw)
@@ -332,8 +342,8 @@ class BioArtClient:
             timestamp=_timestamp(value['retrieved_at'])
             html=self.cache.read(value['sha256']+suffix,limit)
             if html is None or digest(html)!=value['sha256']: raise ValueError('Metadata cache hash mismatch')
-            result=parser(html)
-            if time.time()-timestamp<=self.limits.metadata_ttl_seconds: return result,html,value['sha256']
+            # A stale body is refetched unparsed: an older parser's cache must not read as drift.
+            if time.time()-timestamp<=self.limits.metadata_ttl_seconds: return parser(html),html,value['sha256']
         data=fetch() if fetch else self._request(path,limit,{'text/html'})
         result=parser(data)
         sha=digest(data)
@@ -366,7 +376,7 @@ class BioArtClient:
     def search(self,query):
         query=clean_query(query)
         return self._metadata('/discover?'+urlencode({'q':query,'sort':'relevance'}),parse_search_action,
-                              fetch=lambda:self._search_action(query))[0]
+                              fetch=lambda:self._search_action(query),suffix='.rsc',source='discoverSearch')[0]
 
     def search_snapshot(self,query,source: Path):
         """Operator-supplied rendered DOM, never represented as an authenticated fetch."""

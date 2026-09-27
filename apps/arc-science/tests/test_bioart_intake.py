@@ -242,3 +242,38 @@ def test_ai_receipt_claims_import_only_when_the_pdf_importer_accepts_it(tmp_path
     with pytest.raises(BioArtError) as refused:
         client.import_asset(receipt.receipt_path, tmp_path / 'project')
     assert refused.value.code == 'bioart.not_eligible'
+
+
+def test_eps_dos_header_bytes_may_contain_a_newline(tmp_path):
+    """The binary DOS EPS remainder holds offsets and a checksum: any of its bytes can be 0x0A."""
+    from arc_science.bioart.client import _eps_signature
+    data = bytearray(recorded('file-626832-head.eps'))
+    data[data.find(b'%!PS-Adobe-') - 10] = 0x0A
+    assert _eps_signature(bytes(data))
+    client, _ = provider(tmp_path, 'EPS', bytes(data))
+    assert client.verify(client.fetch(18, 64, 'EPS').receipt_path)['format'] == 'EPS'
+
+
+@pytest.mark.parametrize('prefix', [
+    # a non-comment line before the binary run, reaching past its 32-byte window
+    b'% ok\r\nplain text line, longer than the binary window\n \x00\x00\x01',
+    b'% ok\r\n' + b'\x00' * 33,                  # a binary run longer than 32 bytes
+    b'% ok\r\n \x01\x02\n\x03',                   # a short run with no NUL is not a DOS header
+], ids=['text-line', 'long-run', 'no-nul'])
+def test_eps_signature_still_refuses_other_prefixes(prefix):
+    from arc_science.bioart.client import _eps_signature
+    assert not _eps_signature(prefix + b'%!PS-Adobe-3.1 EPSF-3.0\r\n')
+
+
+def test_ai_fetch_without_the_pdf_runtime_writes_no_receipt(tmp_path, monkeypatch):
+    """Import eligibility of AI needs pypdfium2; without it nothing immutable is recorded."""
+    import sys
+    from arc_science.bioart.errors import BioArtError
+    client, _ = provider(tmp_path, 'AI', ai())
+    monkeypatch.setitem(sys.modules, 'pypdfium2', None)  # import pypdfium2 -> ImportError
+    with pytest.raises(BioArtError) as missing:
+        client.fetch(18, 64, 'AI')
+    assert missing.value.code == 'bioart.runtime_missing'
+    assert not list((tmp_path / 'cache').glob('*.receipt.json'))
+    monkeypatch.delitem(sys.modules, 'pypdfium2')
+    assert client.verify(client.fetch(18, 64, 'AI').receipt_path)['import_eligible'] is True

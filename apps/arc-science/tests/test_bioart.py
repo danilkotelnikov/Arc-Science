@@ -184,7 +184,7 @@ def test_limits_and_native_environment_bridge(tmp_path,monkeypatch):
         with pytest.raises(ValueError): api().BioArtSettings.from_environment(tmp_path)
 
 
-def test_cli_cache_commands_and_import_match_both_validators(tmp_path,capsys,monkeypatch):
+def test_cli_cache_commands_and_import_match_both_validators(tmp_path,capsys,monkeypatch,svg_rasterizer):
     client,_=transport_client(tmp_path)
     receipt=client.fetch(18,64,'svg')
     monkeypatch.setenv('ARC_BIOART_CACHE_DIR',str(tmp_path/'cache'))

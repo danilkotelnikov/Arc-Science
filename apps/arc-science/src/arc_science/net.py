@@ -55,10 +55,12 @@ def system_proxy(target: str | None = None) -> str | None:
     proxies = urllib.request.getproxies()
     parts = urlsplit(target or 'https://')
     host = parts.hostname or ''
-    if host and (_loopback(host) or urllib.request.proxy_bypass_environment(host, proxies)
+    # host:port lets a port-specific NO_PROXY entry match; urllib also tries the bare host.
+    netloc = f'{host}:{parts.port}' if parts.port is not None and ':' not in host else host
+    if host and (_loopback(host) or urllib.request.proxy_bypass_environment(netloc, proxies)
                  or _registry_bypass(host)):
         return None
-    proxy = proxies.get(parts.scheme or 'https')
+    proxy = proxies.get(parts.scheme or 'https') or proxies.get('all')
     if not proxy:
         return None
     scheme = urlsplit(proxy).scheme.lower()
@@ -82,14 +84,11 @@ def outbound_client(target: str | None = None, *, asynchronous: bool = False, **
     return (httpx.AsyncClient if asynchronous else httpx.Client)(trust_env=False, **kwargs)
 
 
-def proxy_environment(target: str | None = None) -> dict[str, str]:
-    """Environment entries that give a child process the same proxy as this one."""
+def proxy_environment(target: str) -> dict[str, str]:
+    """Environment that pins a child calling only target to this process's decision for it.
+
+    No bypass list is passed on: NO_PROXY and ProxyOverride match hosts differently, so a
+    translated list could flip the target. A direct decision is pinned with NO_PROXY=* so
+    the child does not fall back to a registry proxy the parent bypassed."""
     proxy = system_proxy(target)
-    if not proxy:
-        return {}
-    # ponytail: NO_PROXY cannot express <local> or 192.168.* wildcards; those entries are dropped.
-    # The children call only the target decided above, so the full list is not needed there.
-    bypass = urllib.request.getproxies().get('no') or ','.join(
-        entry[1:] if entry.startswith('*.') else entry for entry in _override_entries(_registry_override())
-        if entry != '<local>' and '*' not in entry.removeprefix('*.'))
-    return {'HTTPS_PROXY': proxy, 'HTTP_PROXY': proxy, **({'NO_PROXY': bypass} if bypass else {})}
+    return {'HTTPS_PROXY': proxy, 'HTTP_PROXY': proxy} if proxy else {'NO_PROXY': '*'}

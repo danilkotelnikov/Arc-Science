@@ -202,3 +202,21 @@ def test_owned_worker_environment_is_scrubbed_but_keeps_arc_science_importable(t
     assert payload['has_key'] is False
     assert payload['pythonpath'] != '/unsafe/import/path'
     assert payload['pythonpath'].endswith('src')
+
+
+def test_a_missing_rasterizer_fails_the_svg_import_instead_of_skipping_it(tmp_path, monkeypatch):
+    """No suite-wide hook may turn a failed SVG render into a skip."""
+    from _pytest.outcomes import Skipped
+    from arc_science import svg_raster
+    from arc_science.vector_assets import import_vector
+    monkeypatch.delenv('ARC_SVG2PNG', raising=False)
+    monkeypatch.setattr(svg_raster, 'cairo_available', lambda: False)
+    source = tmp_path / 'art.svg'
+    source.write_bytes(SAFE_SVG)
+    provenance = {'origin': 'nih_bioart', 'title': 'Test', 'source_url': 'https://bioart.niaid.nih.gov/bioart/18',
+                  'permission_note': 'Public Domain', 'external_rendering_authorized': True}
+    try:
+        with pytest.raises(ValueError):
+            import_vector(source, tmp_path / 'project', provenance)
+    except Skipped:
+        pytest.fail('a failed SVG render was turned into a skip')

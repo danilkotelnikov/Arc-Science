@@ -69,7 +69,7 @@ def test_no_system_proxy_means_a_direct_client(system_proxy, captured):
     system_proxy({})
     outbound_client('https://bioart.niaid.nih.gov')
     assert 'proxy' not in captured[0]
-    assert proxy_environment('https://bioart.niaid.nih.gov') == {}
+    assert proxy_environment('https://bioart.niaid.nih.gov') == {'NO_PROXY': '*'}
 
 
 @pytest.mark.parametrize('value', ['socks5://127.0.0.1:10808', 'socks://127.0.0.1:1080', 'ftp://proxy:21'])
@@ -82,8 +82,7 @@ def test_socks_or_other_proxy_schemes_are_refused_with_a_clear_error(system_prox
 
 def test_child_processes_receive_the_same_proxy(system_proxy):
     from arc_science.net import proxy_environment
-    assert proxy_environment('https://bioart.niaid.nih.gov') == {
-        'HTTPS_PROXY': PROXY, 'HTTP_PROXY': PROXY, 'NO_PROXY': 'localhost,.internal.example'}
+    assert proxy_environment('https://bioart.niaid.nih.gov') == {'HTTPS_PROXY': PROXY, 'HTTP_PROXY': PROXY}
 
 
 def test_bioart_worker_and_cli_children_inherit_the_system_proxy(system_proxy, monkeypatch):
@@ -124,12 +123,6 @@ def test_windows_proxy_override_list_is_honoured_like_the_os(system_proxy, captu
     outbound_client('https://mcp.corp.example/mcp', asynchronous=True)
     assert 'proxy' not in captured[0]
 
-
-def test_children_receive_the_expressible_part_of_the_registry_override(system_proxy):
-    from arc_science.net import proxy_environment
-    system_proxy({'https': PROXY, 'http': PROXY}, override='192.168.*; *.corp.example;<local>;intranet.example')
-    assert proxy_environment('https://bioart.niaid.nih.gov') == {
-        'HTTPS_PROXY': PROXY, 'HTTP_PROXY': PROXY, 'NO_PROXY': '.corp.example,intranet.example'}
 
 
 def test_registry_override_is_read_only_for_a_registry_proxy(monkeypatch):
@@ -172,3 +165,53 @@ def test_owned_modules_build_no_direct_proxyless_httpx_client(module):
               and node.func.attr in {'Client', 'AsyncClient'}
               and isinstance(node.func.value, ast.Name) and node.func.value.id == 'httpx']
     assert direct == [], f'{module} constructs httpx clients directly at lines {direct}; use net.outbound_client'
+
+
+ORIGIN = 'https://bioart.niaid.nih.gov'
+
+
+def resolve_in_child(monkeypatch, environment, registry=None):
+    """What a child process given exactly this environment resolves for ORIGIN."""
+    import os
+    from arc_science import net
+    for name in list(os.environ):
+        if name.lower().endswith('_proxy'):
+            monkeypatch.delenv(name)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(urllib.request, 'getproxies',
+                        lambda: urllib.request.getproxies_environment() or dict(registry or {}))
+    monkeypatch.setattr(net, '_registry_override', lambda: None)
+    return net.system_proxy(ORIGIN)
+
+
+def test_a_registry_override_never_makes_the_child_bypass_a_proxied_origin(system_proxy, monkeypatch):
+    from arc_science.net import proxy_environment, system_proxy as resolve
+    # *.bioart.niaid.nih.gov does not match bioart.niaid.nih.gov itself, so the parent proxies it.
+    system_proxy({'https': PROXY, 'http': PROXY}, override='*.bioart.niaid.nih.gov')
+    assert resolve(ORIGIN) == PROXY
+    assert resolve_in_child(monkeypatch, proxy_environment(ORIGIN)) == PROXY
+
+
+def test_a_bypassed_origin_stays_direct_in_the_child_despite_a_registry_proxy(system_proxy, monkeypatch):
+    from arc_science.net import proxy_environment
+    system_proxy({'https': PROXY, 'http': PROXY, 'no': '.nih.gov'})
+    assert resolve_in_child(monkeypatch, proxy_environment(ORIGIN), registry={'https': PROXY}) is None
+
+
+def test_a_port_specific_no_proxy_entry_bypasses_that_port_only(system_proxy):
+    from arc_science.net import system_proxy as resolve
+    system_proxy({'https': PROXY, 'no': 'mcp.corp.example:8443'})
+    assert resolve('https://mcp.corp.example:8443/mcp') is None
+    assert resolve('https://mcp.corp.example/mcp') == PROXY
+
+
+def test_all_proxy_applies_when_no_scheme_specific_proxy_is_set(system_proxy):
+    from arc_science.net import ProxyUnsupported, system_proxy as resolve
+    system_proxy({'all': PROXY})
+    assert resolve(ORIGIN) == PROXY
+    system_proxy({'all': 'socks5://127.0.0.1:10808', 'https': PROXY})
+    assert resolve(ORIGIN) == PROXY  # the scheme-specific proxy wins
+    system_proxy({'all': 'socks5://127.0.0.1:10808'})
+    with pytest.raises(ProxyUnsupported):
+        resolve(ORIGIN)

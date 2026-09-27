@@ -132,3 +132,33 @@ def test_codes_survive_the_worker_process_boundary_as_text():
     assert (rebuilt.code, rebuilt.facts) == ('bioart.http_status', {'status': 404})
     assert describe(ValueError('Missing or stale cache; explicit --allow-egress required'))['code'] == 'bioart.failed'
     assert describe(ValueError('BioArt request total timeout'))['code'] == 'bioart.timeout'
+
+
+def _html_era_search_cache(client, query, age):
+    """A search index as the HTML-era client cached it: the same key, an HTML body."""
+    import time
+    from urllib.parse import urlencode
+    from arc_science.bioart.cache import digest, encoded
+    from arc_science.bioart.models import ORIGIN
+    path = '/discover?' + urlencode({'q': query, 'sort': 'relevance'})
+    body = b'<html>v1 search page</html>'
+    client.cache.write({digest(body) + '.html': body, 'metadata-' + digest(path.encode()) + '.json':
+                        encoded({'url': ORIGIN + path, 'retrieved_at': time.time() - age, 'sha256': digest(body)})})
+
+
+def test_an_html_era_search_cache_is_refetched_not_reported_as_drift(tmp_path):
+    transport, calls = nih()
+    client = provider(tmp_path, transport)
+    _html_era_search_cache(client, 'antibody', age=10**7)
+    assert client.search('antibody')[0].entry_id == 18
+    assert sum(method == 'POST' for method, _, _ in calls) == 1
+
+
+def test_a_fresh_html_era_search_cache_is_a_miss_without_egress(tmp_path):
+    from arc_science.bioart.client import BioArtCacheMiss
+    transport, calls = nih()
+    client = provider(tmp_path, transport, egress=False)
+    _html_era_search_cache(client, 'antibody', age=0)
+    with pytest.raises(BioArtCacheMiss):
+        client.search('antibody')
+    assert calls == []

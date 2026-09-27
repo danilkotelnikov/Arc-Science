@@ -10,21 +10,12 @@ if not os.environ.get('ARC_SVG2PNG') and _SVG2PNG.is_file():
     os.environ['ARC_SVG2PNG'] = str(_SVG2PNG)
 
 
-@pytest.fixture(autouse=True)
-def _skip_svg_rendering_without_a_rasterizer(monkeypatch):
-    """An SVG import cannot pass without a rasterizer: skip it with the reason instead.
-
-    The check runs at call time, so a test that sets ARC_SVG2PNG itself still runs.
-    pytest's Skipped is a BaseException: the importer's `except Exception` lets it through."""
+@pytest.fixture
+def svg_rasterizer():
+    """For tests whose point is an SVG import: a missing rasterizer fails them, never skips."""
     from arc_science import svg_raster
-    render = svg_raster.render_png_bytes
-
-    def guarded(*args, **kwargs):
-        if not os.environ.get('ARC_SVG2PNG') and not svg_raster.cairo_available():
-            pytest.skip('No SVG rasterizer: build native/arc-svg (arc-svg2png) or install Cairo')
-        return render(*args, **kwargs)
-
-    monkeypatch.setattr(svg_raster, 'render_png_bytes', guarded)
+    if not os.environ.get('ARC_SVG2PNG') and not svg_raster.cairo_available():
+        pytest.fail('No SVG rasterizer: set ARC_SVG2PNG to arc-svg2png (native/arc-svg) or install Cairo')
 
 
 def module(name):
