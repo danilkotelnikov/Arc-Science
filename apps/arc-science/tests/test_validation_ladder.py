@@ -218,14 +218,15 @@ def test_a_reference_resolves_only_to_a_finite_top_level_number_of_a_member_obse
     assert resolved('{{fit}}') == {'token': '{{fit}}', 'kind': 'source', 'observation_id': 'fit', 'field': None,
                                    'value': None, 'resolved': False}
     # Lookup is mission-wide: an observation the claim leaves out of its evidence resolves when it
-    # has an ok timeline row, and then counts as the claim's evidence; without the row it does not.
+    # has an ok timeline row, and it counts as the claim's evidence; without the row it does not
+    # resolve, and tracing names the missing row.
     _, state = run(Scripted([FIT, NULL], say=lambda o: BOUND[:-1] + ' against {{null.minimum_shuffled_validation_mse}}.'))
     assert ladder_of(state)['rung'] == 1
     [scoped] = state.claim_scope.branches
     narrowed = scoped.model_copy(update={'evidence_ids': ('fit',)})
     assert ladder_of(state, scoped=narrowed)['rung'] == 1
     ladder = ladder_of(state, scoped=narrowed, rows=[r for r in traced(state) if r['action_id'] != 'null'])
-    assert ladder['rung'] == 0 and ladder['next']['needs'] == ['unresolved_reference'] and ladder['verdict'] == 'blocked'
+    assert ladder['rung'] == 0 and ladder['next']['needs'] == ['timeline_missing', 'unresolved_reference'] and ladder['verdict'] == 'blocked'
 
 
 class OtherBranch(DemoAgent):
@@ -259,10 +260,12 @@ def test_a_reference_to_another_branch_resolves_with_its_provenance_and_joins_th
     assert card['references'][0]['resolved'] and card['references'][0]['observation_id'] == 'fit'
     # The referenced observation is on the card's evidence list and counts for the claim.
     assert {e['id']: e['counts_for_scope'] for e in card['evidence']} == {'describe': True, 'fit': True}
-    # Without an ok timeline row the other branch's observation is not in the lookup.
-    for rows in ([r for r in traced(state) if r['action_id'] != 'fit'], [{**r, 'outcome': 'error'} if r['action_id'] == 'fit' else r
-                                                                          for r in traced(state)]):
-        assert ladder_of(state, rows=rows)['next']['needs'] == ['unresolved_reference']
+    # Without an ok timeline row the other branch's observation does not resolve, and the tracing
+    # of the evidence it still joins says why.
+    missing = [r for r in traced(state) if r['action_id'] != 'fit']
+    failed = [{**r, 'outcome': 'error'} if r['action_id'] == 'fit' else r for r in traced(state)]
+    assert ladder_of(state, rows=missing)['next']['needs'] == ['timeline_missing', 'unresolved_reference']
+    assert ladder_of(state, rows=failed)['next']['needs'] == ['timeline_not_ok', 'unresolved_reference']
     # A connector (not claim-eligible) observation never resolves, on any branch.
     hidden = state.model_copy(update={'observations': tuple(o.model_copy(update={'claim_eligible': False}) if o.id == 'fit' else o
                                                            for o in state.observations)})
@@ -276,11 +279,13 @@ def test_a_cross_branch_source_is_checked_for_retraction_and_needs_its_receipt()
     # Not referenced, the other branch's retrieval is not the claim's evidence.
     _, quiet = run(OtherBranch(peek=(READ,), curve=(FIT,), finding='Consistent.'), extra_tools=reads(RECORDS), egress=True)
     assert ladder_of(quiet)['rung'] == 1
-    # A cross-branch read resolves only with its receipt in the grant ledger.
+    # A cross-branch read resolves only with its receipt in the grant ledger; without it the read
+    # still joins the evidence, so the missing or unchecked receipt is named and a retraction seen.
     _, sound = run(OtherBranch(peek=(READ,), curve=(FIT,), finding='Consistent with {{read}}.'), extra_tools=reads(SOUND), egress=True)
     assert ladder_of(sound)['rung'] == 1 and 'ledger_receipt' in ladder_of(sound)['met']
-    for receipts in ((), ({**RECEIPT, 'outcome': 'failed'},), None):
-        assert ladder_of(sound, receipts=receipts)['next']['needs'] == ['unresolved_reference'], receipts
+    for receipts, need in (((), 'receipt_missing'), (({**RECEIPT, 'outcome': 'failed'},), 'receipt_missing'), (None, 'receipt_unchecked')):
+        assert ladder_of(sound, receipts=receipts)['next']['needs'] == [need, 'unresolved_reference'], receipts
+        assert ladder_of(state, receipts=receipts)['next']['needs'] == [need, 'unresolved_reference', 'retracted_source'], receipts
 
 
 def test_references_to_recorded_values_reach_l1_within_the_stated_scope_limits():
@@ -694,6 +699,48 @@ def test_the_null_is_rejected_only_when_no_control_on_the_branch_beats_the_fit()
     assert 'null_not_rejected' in ladder['next']['needs']
 
 
+class Beside(Scripted):
+    """Scripted, with a second branch 'peek' that runs `peek` in the same plan; the seats assess
+    'curve' on its own observations, so anything from 'peek' reaches the claim only by reference."""
+
+    def __init__(self, actions, peek, **kwargs):
+        super().__init__(actions, **kwargs)
+        self.peek = peek
+
+    async def propose(self, context):
+        plan = await super().propose(context)
+        if context['round'] == 0:
+            plan['branches'].append({'id': 'peek', 'title': 'Peek', 'hypothesis': 'Look.', 'falsifier': 'None.', 'parents': []})
+            plan['actions'] += [{'branch_id': 'peek', **a} for a in self.peek]
+        return plan
+
+    async def assess(self, role, context):
+        return await super().assess(role, {**context, 'observations': [o for o in context['observations'] if o['branch_id'] == 'curve']})
+
+
+def test_a_cited_measurement_from_another_branch_counts_against_the_falsifier_and_the_null():
+    line = {'id': 'line', 'tool': 'polynomial_fit', 'arguments': {'degree': 1}}
+    _, quiet = run(Beside([FIT, NULL], [line], say=lambda o: BOUND))
+    ladder = ladder_of(quiet, verification=passing(quiet))
+    assert ladder['rung'] == 4 and ladder['verdict'] == 'accepted'  # uncited, the other branch's fit is not the claim's
+    _, cited = run(Beside([FIT, NULL], [line], say=lambda o: 'Error {{fit.validation_mse}}; linear {{line.validation_mse}}.'))
+    linear = next(o.data['validation_mse'] for o in cited.observations if o.id == 'line')
+    assert linear > FIT_ERROR['threshold']
+    ladder = ladder_of(cited, verification=passing(cited))
+    assert ladder['verdict'] == 'rejected' and 'falsifier_refuted' in ladder['next']['needs']
+    assert ladder['facts']['falsifier']['value'] == linear and ladder['facts']['falsifier']['measurements'] == 2
+    # A cited control from another branch that beats the fit keeps the null unrejected.
+    ctrl = {**NULL, 'id': 'ctrl'}
+    _, pair = run(Beside([FIT, NULL], [ctrl], say=lambda o: 'Error {{fit.validation_mse}} against {{ctrl.minimum_shuffled_validation_mse}}.'))
+    fit = next(o.data['validation_mse'] for o in pair.observations if o.id == 'fit')
+    adverse = pair.model_copy(update={'observations': tuple(
+        o.model_copy(update={'data': {**o.data, 'minimum_shuffled_validation_mse': fit / 2}}) if o.id == 'ctrl' else o
+        for o in pair.observations)})
+    ladder = ladder_of(adverse, verification=passing(adverse))
+    assert 'null_not_rejected' in ladder['next']['needs'] and ladder['verdict'] != 'accepted'
+    assert ladder['facts']['null_model']['minimum_shuffled_validation_mse'] == fit / 2
+
+
 class Replay(DemoAgent):
     """Round 0 fits on branch 'peek'; round 1 opens 'curve' with a falsifier threshold tuned
     just above the value it saw, and reruns the identical fit under a new id; round 2 stops."""
@@ -1039,6 +1086,19 @@ def test_a_legacy_mission_waives_only_the_reference_grammar():
         with pytest.raises(release.ReleaseBlocked, match='claim_rungs:failed'):
             release.assert_exportable(request, cited.model_copy(update={'release': blocked}), event_chain_ok=True,
                                       timeline_rows=traced(cited), receipts=[RECEIPT])
+    # A retracted source cited from another branch blocks whether or not its receipt is in the
+    # ledger: waiving the unresolved token must not hide the read it names.
+    request, cross = run(OtherBranch(peek=(READ,), curve=(FIT,), finding='Consistent with {{read}}.'),
+                         extra_tools=reads(RECORDS), egress=True, policy='legacy')
+    for receipts in ((RECEIPT,), (), ({**RECEIPT, 'outcome': 'failed'},), None):
+        check = rung_check(decide(request, cross, passing(cross), receipts=receipts))
+        assert check.state == 'failed' and 'retracted_source' in check.reason, receipts
+    # So does a non-replayable snapshot cited from another branch, with or without its receipt.
+    request, count = run(OtherBranch(peek=(READ,), curve=(FIT,), finding='Error {{fit.validation_mse}} among {{read.hit_count}} works.'),
+                         extra_tools=reads(SOUND), egress=True, policy='legacy')
+    for receipts, state in (((RECEIPT,), 'unknown'), ((), 'failed'), (({**RECEIPT, 'outcome': 'failed'},), 'failed'), (None, 'unknown')):
+        check = rung_check(decide(request, count, passing(count), receipts=receipts))
+        assert check.state == state and 'reference_not_replayable' in check.reason, receipts
     # A condition outside DEFECTS still blocks: an external read whose receipt cannot be checked.
     request, read = run(Scripted([READ], falsifier_test=None, say=lambda o: typed), extra_tools=reads(SOUND), egress=True, policy='legacy')
     assert rung_check(decide(request, read, passing(read))).state == 'satisfied'

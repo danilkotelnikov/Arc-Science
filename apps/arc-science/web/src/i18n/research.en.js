@@ -146,6 +146,7 @@ export default {
   'research.claim.next_test': 'Next discriminating test',
   'research.claim.units': 'Units',
   'research.claim.derivation': 'Derivation',
+  'research.claim.outside_ladder': 'Outside the ladder',
   'research.claim.no_scope': 'No supported scope; the requested claim stands only as a hypothesis.',
   'research.claim.qualifier': 'Scope: {qualifier}.',
   'research.claim.no_uncertainty': 'None recorded by either role; provisional support still needs independent data.',

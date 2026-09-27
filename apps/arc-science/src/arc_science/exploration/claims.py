@@ -179,7 +179,7 @@ def build_claims(state: MissionState, timeline_rows: list[dict], graph: dict | N
         branch = branches[scoped.branch_id]
         # References resolve mission-wide; the card's evidence is the claim's effective evidence.
         found = lookup(state, scoped, timeline_rows, receipts)
-        counted = effective(state, scoped, found)
+        counted = effective(state, scoped)
 
         def shown(item, key):
             """The item with its text `key` rendered beside the raw field, and its typed segments."""

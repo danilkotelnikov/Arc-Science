@@ -17,8 +17,8 @@ evidence has been checked, derived from persisted evidence only.
                     before any observation of a request the claim uses; no earlier work or
                     operator note was in any planner input up to that record
     L4 severe       permutation controls reject the null at ALPHA for fits of their degree,
-                    no control on the branch is beaten, and no measurement of the falsifier
-                    on the branch refutes it
+                    no control on the branch or in the evidence is beaten, and no measurement
+                    of the falsifier on the branch or in the evidence refutes it
     L5 replicated   an external result; attaching one is not built yet, so always a need
 
 Nothing in the prose is parsed for meaning (D019). L1 does not validate the words around a
@@ -30,8 +30,10 @@ seen the data elsewhere.
 A reference resolves against the whole mission: the claim's branch evidence and every other
 successful, claim-eligible observation with an ok timeline row (and, for an external read, its
 receipt in the grant ledger). The claim's effective evidence is its branch evidence plus every
-observation its supported scope references; tracing, fidelity, retraction, prespecification and
-replayability read that one set. Only the supported scope bears the rungs.
+successful, claim-eligible observation its supported scope names, resolved or not, so a missing
+row or receipt is reported as such and a retraction is still seen; tracing, fidelity, retraction,
+prespecification, replayability and the falsifier and null checks read that one set. Only the
+supported scope bears the rungs.
 
 A rung counts only when every rung below it holds. No condition reads a seat's position:
 agreement between the reviewer and the falsifier never raises a rung. Pure: no I/O, and
@@ -158,10 +160,17 @@ def referenced(texts, found: dict) -> dict:
             if s['kind'] in ('number', 'source') and s['observation_id'] in found}
 
 
-def effective(state: MissionState, scoped: ScopedBranch, found: dict) -> dict:
+def named(state: MissionState, scoped: ScopedBranch) -> dict:
+    """Every successful, claim-eligible observation of the mission the supported scope's number
+    and source tokens name, whether or not the reference resolves: a missing timeline row or
+    ledger receipt is then reported by tracing, and a retraction or a snapshot is still seen."""
+    return referenced(scoped.supported_scope, {o.id: o for o in state.observations if o.status == 'ok' and o.claim_eligible})
+
+
+def effective(state: MissionState, scoped: ScopedBranch) -> dict:
     """The claim's effective evidence: its branch evidence plus every observation its supported
-    scope references."""
-    return {**members(state, scoped), **referenced(scoped.supported_scope, found)}
+    scope names."""
+    return {**members(state, scoped), **named(state, scoped)}
 
 
 def _works(observation):
@@ -513,19 +522,18 @@ def _evaluate(state, scoped, timeline_rows, receipts, verification, subject):
         verification = VerificationReceipt.model_validate(verification)
     branch = next(b for b in state.branches if b.id == scoped.branch_id)
     found = lookup(state, scoped, timeline_rows, receipts)
-    own = list(members(state, scoped).values())
-    evidence = list(effective(state, scoped, found).values())
-    cited = set(referenced(scoped.supported_scope, found))
-    traced, extra = _traced(state, evidence, cited, timeline_rows, receipts)
-    survived, falsifier = _falsifier(state, branch, own)
-    rejected, null = _null(state, branch, own)
+    cited = named(state, scoped)
+    evidence = list(effective(state, scoped).values())
+    traced, extra = _traced(state, evidence, set(cited), timeline_rows, receipts)
+    survived, falsifier = _falsifier(state, branch, evidence)
+    rejected, null = _null(state, branch, evidence)
     outcomes = {'evidence_present': None if evidence else 'no_evidence',
                 'observations_traced': traced,
                 'numbers_bound': _bound(scoped.supported_scope, found),
                 'fidelity_audit': _fidelity(state, evidence),
                 'no_retracted_source': _retraction(evidence),
                 'recomputed': _recomputed(verification, subject),
-                'references_replayable': _replayable(scoped.supported_scope, found),
+                'references_replayable': _replayable(scoped.supported_scope, cited),
                 'falsifier_prespecified': _prespecified(state, branch, evidence),
                 'null_rejected': rejected,
                 'falsifier_survived': survived,

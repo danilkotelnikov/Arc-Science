@@ -1,7 +1,7 @@
 import React from 'react';
 import {useI18n} from '../i18n/index.jsx';
 import {releaseWord} from '../readiness';
-import {CLAIM_TONE, Heading, MetaRow, Problem, STAMP, Tag, roleName, term} from './common.jsx';
+import {CLAIM_TONE, Heading, Hint, MetaRow, Problem, STAMP, Tag, roleName, term} from './common.jsx';
 
 // Requested claim -> evidence-supported scope -> remaining uncertainty -> next discriminating
 // test, derived from the reconciliation at the stop. A narrower conclusion is a valid research
@@ -15,12 +15,16 @@ const Row = ({label, children}) => <div><dt>{label}</dt><dd>{children}</dd></div
 
 // A text the service rendered from references (claims.py): its typed segments as React text
 // nodes, names and recorded values styled, never HTML; the rendered string, then the raw field,
-// when the service sent no segments (the persisted scope view has neither).
+// when the service sent no segments (the persisted scope view has neither). A segment with a
+// diagnostic (a typed numeral, an unresolved or malformed reference) is marked and names it.
 function Rendered({segments, rendered, raw}) {
+  const {t} = useI18n();
   if (!Array.isArray(segments)) return rendered ?? raw;
-  return segments.map((s, i) => s.kind === 'text'
-    ? <React.Fragment key={i}>{s.rendered}</React.Fragment>
-    : <span key={i} className={'research-ref research-ref--' + s.kind} data-kind={s.kind} data-resolved={String(!!s.resolved)}>{s.rendered}</span>);
+  return segments.map((s, i) => {
+    const flag = s.diagnostic ? {'data-diagnostic': s.diagnostic, title: term(t, 'reason', s.diagnostic)} : {};
+    if (s.kind === 'text') return s.diagnostic ? <span key={i} className="research-flag" {...flag}>{s.rendered}</span> : <React.Fragment key={i}>{s.rendered}</React.Fragment>;
+    return <span key={i} className={'research-ref research-ref--' + s.kind} data-kind={s.kind} data-resolved={String(!!s.resolved)} {...flag}>{s.rendered}</span>;
+  });
 }
 
 const identityWord = (t, value) => t(value === true ? 'research.identity.verified' : value === false ? 'research.identity.unverified' : 'research.identity.unrecorded');
@@ -58,6 +62,10 @@ function ClaimCard({claim, derivationVersion}) {
   const i18n = useI18n(), {t, d} = i18n;
   const {independence: ind, alternatives: alt} = claim;
   const ids = list => list.length ? list.join(', ') : t('common.none');
+  // Uncertainty details, findings and next tests are rendered but lie outside the ladder's guarantee (claims.py OUTSIDE_NOTE).
+  const outside = label => claim.outside_ladder_note
+    ? <span className="ar-row ar-row--tight">{label}<Hint label={t('research.claim.outside_ladder')}>{claim.outside_ladder_note}</Hint></span>
+    : label;
   const numeric = summary => NUMERIC_LINES.filter(([key]) => summary?.[key] !== undefined).map(([key, label]) => t(label) + ' ' + summary[key]);
   return (
     <article className="bp-panel ar-stack" data-status={claim.status} data-stale={String(!!claim.stale_derivation)}>
@@ -65,7 +73,7 @@ function ClaimCard({claim, derivationVersion}) {
       <dl className="research-dl">
         <Row label={t('research.claim.requested')}>{claim.requested}</Row>
         <Row label={t('research.claim.scope')}><Scope {...claim} /></Row>
-        <Row label={t('research.claim.uncertainty')}><Uncertainty {...claim} /></Row>
+        <Row label={outside(t('research.claim.uncertainty'))}><Uncertainty {...claim} /></Row>
         <Row label={t('research.claim.evidence')}>
           {claim.evidence.length ? (
             <ul className="ar-stack ar-stack--tight">
@@ -93,7 +101,7 @@ function ClaimCard({claim, derivationVersion}) {
           ))}
           {ind.reasons.length ? <p className="ar-note">{ind.reasons.map(reason => term(t, 'reason', reason)).join(', ')}</p> : null}
         </Row>
-        <Row label={t('research.claim.findings')}>
+        <Row label={outside(t('research.claim.findings'))}>
           {claim.findings.length
             ? <ul>{claim.findings.map((f, i) => <li key={i}>{roleName(t, f.role)}, {term(t, 'position', f.position)}: <Rendered segments={f.finding_segments} rendered={f.finding_rendered} raw={f.finding} /></li>)}</ul>
             : <span className="ar-note">{t('research.claim.no_finding')}</span>}
@@ -104,7 +112,7 @@ function ClaimCard({claim, derivationVersion}) {
             ? <p className="ar-note">{t('research.claim.conflicts_unavailable')}</p>
             : alt.conflicts.map((c, i) => <p key={i}>{t('research.claim.conflict', {ids: ids(c.assessment_ids || [])})}</p>)}
         </Row>
-        <Row label={t('research.claim.next_test')}><NextTests {...claim} /></Row>
+        <Row label={outside(t('research.claim.next_test'))}><NextTests {...claim} /></Row>
         <Row label={t('research.claim.units')}>{claim.units_note}</Row>
         <Row label={t('research.claim.derivation')}>
           <p>{derivationVersion || t('research.claim.no_derivation')}, {t('research.claim.check', {state: releaseWord(claim.claim_scope_check, i18n)})}</p>

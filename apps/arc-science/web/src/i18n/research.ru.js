@@ -146,6 +146,7 @@ export default {
   'research.claim.next_test': 'Следующая различающая проверка',
   'research.claim.units': 'Единицы',
   'research.claim.derivation': 'Вывод рамок',
+  'research.claim.outside_ladder': 'Вне лестницы проверки',
   'research.claim.no_scope': 'Подтверждённых рамок нет; заявленное утверждение остаётся лишь гипотезой.',
   'research.claim.qualifier': 'Рамки: {qualifier}.',
   'research.claim.no_uncertainty': 'Ни\u00A0одна роль не\u00A0записала неопределённость; предварительной поддержке всё равно нужны независимые данные.',

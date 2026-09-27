@@ -970,6 +970,31 @@ test('claim texts show the service rendering of their references as text, fallin
   expect(card).toHaveTextContent('Reviewer (QA), support: Shown p53 finding.');
 });
 
+test('texts outside the ladder carry its note, and a typed numeral or an unresolved reference is marked', async () => {
+  const text = (value, diagnostic = null) => ({kind: 'text', text: value, observation_id: null, field: null, value: null, resolved: null, diagnostic, rendered: value});
+  const number = {kind: 'number', text: '{{fit-quadratic.validation_mse}}', observation_id: 'fit-quadratic', field: 'validation_mse', value: 0.0014, resolved: true, diagnostic: null, rendered: '0.0014 [validation_mse, fit-quadratic]'};
+  const unresolved = {kind: 'number', text: '{{ghost.n}}', observation_id: 'ghost', field: 'n', value: null, resolved: false, diagnostic: 'unresolved_reference', rendered: '{{ghost.n}}'};
+  const note = 'Uncertainty details, next tests and each role\'s findings lie outside the ladder\'s guarantee.';
+  const claim = {...exampleClaim, outside_ladder_note: note,
+    findings: [{...exampleClaim.findings[0], finding: 'MSE 0.5 versus {{fit-quadratic.validation_mse}} over {{ghost.n}}.',
+      finding_segments: [text('MSE 0.5 versus ', 'literal_numeral'), number, text(' over '), unresolved, text('.')]}]};
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path.endsWith('/claims') ? json({...exampleClaims, claims: [claim]}) : original(path, options));
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  await openTab(user, 'Claims');
+  const card = await within(screen.getByRole('region', {name: 'Claim scope'})).findByRole('article');
+  // The uncertainty, findings and next-test rows each open the service's note; the scope row does not.
+  const hints = within(card).getAllByRole('button', {name: 'Outside the ladder'});
+  expect(hints).toHaveLength(3);
+  await user.click(hints[1]);
+  expect(await screen.findByText(note)).toBeInTheDocument();
+  // Each diagnosed segment says what is wrong with it; a traced value carries no diagnostic.
+  expect([...card.querySelectorAll('[data-diagnostic]')].map(el => [el.dataset.diagnostic, el.textContent])).toEqual([
+    ['literal_numeral', 'MSE 0.5 versus '], ['unresolved_reference', '{{ghost.n}}']]);
+  expect(card).toHaveTextContent('MSE 0.5 versus 0.0014 [validation_mse, fit-quadratic] over {{ghost.n}}.');
+});
+
 test('the poll that sees the mission stop also lands its claim cards and timeline, without reselecting', async () => {
   // The claim scope exists only once the mission has stopped: the final poll's side reads must not be lost
   // when the status change ends the polling (the poll's abort signal is shared by those reads).
