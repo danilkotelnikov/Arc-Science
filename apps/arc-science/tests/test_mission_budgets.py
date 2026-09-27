@@ -666,3 +666,12 @@ def test_gemini_usage_that_is_not_a_count_is_not_made_into_one(prompt):
     payload = {'response': '{}', 'stats': {'tools': {'totalCalls': 1},
                                            'models': {'gemini-3-pro': {'tokens': {'prompt': prompt, 'candidates': 5}}}}}
     assert refusal(Gemini.parse, payload, model='gemini-3-pro') == {'usage': None, 'cost_usd': None}
+
+
+@pytest.mark.parametrize('sibling', [{'tokens': 'garbage'}, {'tokens': None}, {}, 'n/a'])
+def test_one_malformed_model_entry_keeps_the_whole_gemini_usage_unmeasured(sibling):
+    from arc_science.exploration.cli_seats import Gemini
+    payload = {'response': '{}', 'stats': {'tools': {'totalCalls': 1},
+                                           'models': {'gemini-3-pro': {'tokens': {'prompt': 100, 'candidates': 5}},
+                                                      'gemini-flash': sibling}}}
+    assert refusal(Gemini.parse, payload, model='gemini-3-pro') == {'usage': None, 'cost_usd': None}

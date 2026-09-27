@@ -20,7 +20,7 @@ from arc_science.exploration.agents import DemoAgent
 from arc_science.exploration.claims import build_claims
 from arc_science.exploration.engine import explore, operator_decisions, plan_digest
 from arc_science.exploration.evidence import evidence_graph, validate_evidence
-from arc_science.exploration.models import Change, MissionRequest, MissionState, OperatorDecision
+from arc_science.exploration.models import Change, MissionRequest, MissionState, OperatorDecision, Proposal
 from arc_science.exploration.providers import DIRECTIVE_FENCE_LABEL, PLAN_PROMPT, ModelEndpoint, render_prompt
 from test_claude_code_service import configured  # noqa: F401  (a fixture)
 from test_mission_context import fake_memory
@@ -465,6 +465,60 @@ def test_a_round_stripped_after_a_budget_stop_that_followed_its_dispatch_does_no
     with pytest.raises(ValueError, match='unbound tool request'):
         validate_evidence(strip_round(state, 1))
 
+
+
+class Priced(DemoAgent):
+    """The fixture at 0.003 USD per call; every tool it proposes is offered."""
+    def take_provenance(self, role):
+        return {**super().take_provenance(role), 'cost_usd': 0.003}
+
+
+def without_dispatch(state, round, actions_used=None):
+    data = state.model_dump(mode='json')
+    data['events'] = [e for e in data['events'] if not (e['round'] == round and e['kind'] == 'actions_dispatched')]
+    if actions_used is not None:
+        data['actions_used'] = actions_used
+    return MissionState.model_validate(data)
+
+
+def test_a_round_of_valid_tools_stripped_after_a_budget_stop_does_not_verify():
+    state = run(MissionRequest(goal='Probe', max_rounds=3, max_cost_usd=0.01), agent=Priced())
+    assert (state.status, state.stop_code, state.round) == ('budget_exhausted', 'cost_limit', 1)
+    assert {o.id for o in state.observations if o.round == 1} == {'fit-quadratic', 'shuffle-control'}
+    validate_evidence(state)
+    with pytest.raises(ValueError, match='unbound tool request'):
+        validate_evidence(strip_round(state, 1))
+
+
+@pytest.mark.parametrize('agent', [Priced, PricedGhost])
+@pytest.mark.parametrize('lowered', [False, True])
+def test_a_round_stripped_with_its_dispatch_fact_after_a_budget_stop_does_not_verify(agent, lowered):
+    state = run(MissionRequest(goal='Probe', max_rounds=3, max_cost_usd=0.01), agent=agent())
+    stripped = strip_round(state, 1)
+    # The reservation stays behind, or is lowered to match what is left: neither reads as a pending plan.
+    stripped = without_dispatch(stripped, 1, len(stripped.observations) if lowered else None)
+    with pytest.raises(ValueError, match='unbound tool request'):
+        validate_evidence(stripped)
+
+
+def test_a_plan_left_pending_by_a_budget_stop_on_resume_verifies():
+    class Dear(Priced):
+        def take_provenance(self, role):
+            return {**super().take_provenance(role), 'cost_usd': 0.01}
+    request = gated(max_cost_usd=0.01)
+    state = decide(run(request, agent=Dear()), ('proposal', 'plan-0', 'pursue', ''))
+    stopped = run(request, agent=Dear(), initial=state)
+    # The spend check on resume stops the mission before the decided plan dispatches anything.
+    assert (stopped.status, stopped.stop_code, stopped.round, stopped.observations) == ('budget_exhausted', 'cost_limit', 0, ())
+    validate_evidence(stopped)
+
+
+def test_actions_cut_by_the_action_limit_verify_without_observations():
+    state = run(MissionRequest(goal='Probe', max_actions=2))
+    assert (state.stop_code, state.actions_used, len(state.observations)) == ('action_limit', 2, 2)
+    planned = Proposal.model_validate(next(r for r in state.model_records if r.role == 'planner' and r.round == 1).payload)
+    assert len(planned.actions) == 2 and sum(o.round == 1 for o in state.observations) == 1
+    validate_evidence(state)
 
 def test_a_dispatch_cut_by_a_restart_verifies_and_completes_before_a_budget_stop():
     from arc_science.exploration.engine import MissionCancelled

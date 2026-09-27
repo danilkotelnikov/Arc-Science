@@ -354,11 +354,12 @@ class Gemini:
             raise ProviderError(cls.label + ' returned no JSON envelope')
         stats = data.get('stats') or {}
         models = stats.get('models') if isinstance(stats.get('models'), dict) else {}
-        reported = [e['tokens'] for e in models.values() if isinstance(e, dict) and isinstance(e.get('tokens'), dict)]
-        # Summed per key over the models reported (usually one). An empty report, or one holding
-        # anything but counts, stays unmeasured rather than becoming a smaller count.
+        reported = [e.get('tokens') if isinstance(e, dict) else None for e in models.values()]
+        # Summed per key over the models reported (usually one). An empty report, or one where any
+        # model holds anything but counts, stays unmeasured rather than becoming a smaller count.
         spent_tokens = ({k: sum(t[k] for t in reported if k in t) for t in reported for k in t}
-                        if reported and all(count(v) for t in reported for v in t.values()) else None)
+                        if reported and all(isinstance(t, dict) and all(count(v) for v in t.values()) for t in reported)
+                        else None)
         try:
             if (stats.get('tools') or {}).get('totalCalls'):
                 raise ProviderError(cls.label + ' attempted a tool action; the call is refused')

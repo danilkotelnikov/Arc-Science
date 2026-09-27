@@ -138,6 +138,22 @@ UNDISPATCHED = ("", "awaiting_decision", "interrupted", "paused_by_operator", "c
 # Of those, the stops that can cut a started dispatch short before any observation is recorded.
 # A budget stop is checked only before a dispatch starts or after its observations are recorded.
 CUT_OFF = ("", "interrupted", "paused_by_operator", "cancelled", "service_failed")
+
+
+def _undispatched(state, round_number):
+    """A stop that is not an interruption left the round's plan undispatched only when the record
+    holds no trace of a dispatch: no dispatch event and no reservation. A spend check stops before
+    a committed plan dispatches only on a resume, so a budget stop also needs a declaration after
+    the plan was committed."""
+    kinds = [(e.kind, e.round) for e in state.events]
+    if ("actions_dispatched", round_number) in kinds or state.actions_used != len(state.observations):
+        return False
+    if state.stop_code == "awaiting_decision":
+        return True
+    committed = kinds.index(("plan_committed", round_number)) if ("plan_committed", round_number) in kinds else len(kinds)
+    return any(kind == "change_declared" for kind, _ in kinds[committed:])
+
+
 # Stops a stopping or empty plan makes when the operator accepts it (or no operator decides).
 PLAN_STOPS = ("plan_stop", "no_observations", "vision_required", "no_actions")
 
@@ -405,24 +421,26 @@ def validate_evidence(state: MissionState) -> None:
                 available.add(idea.id)
             action_ids = [action.id for action in packet.actions]
             _unique(action_ids, "Recorded proposal has duplicate action identity")
+            ran = sum(o.round == record.round for o in state.observations)
+            # The action limit cut this plan's dispatch: its round ran every action it had left.
+            capped = ran > 0 and ran == record.input_context.get("remaining", {}).get("actions")
+            pending = (record.round == state.round and state.stop_code in UNDISPATCHED and not ran
+                       and (state.stop_code in CUT_OFF or _undispatched(state, record.round)))
             for action in packet.actions:
                 if action.branch_id not in available:
                     raise ValueError("Recorded proposal has an invalid action branch")
                 try:
                     validate_arguments(action.tool, action.arguments, tools)
+                    valid = True
                 except ValueError:
-                    # One that ran was refused; one that never ran was withheld by the operator,
-                    # or its plan (the latest, with nothing run yet) waits to run.
-                    # A stop plan dispatches nothing, and neither does the latest plan while no
-                    # tool of its round has run and the mission stopped short of dispatch.
-                    denied = observations.get(action.id)
-                    pending = (record.round == state.round and state.stop_code in UNDISPATCHED
-                               and all(o.round != record.round for o in state.observations)
-                               and (state.stop_code in CUT_OFF or not any(
-                                   e.kind == "actions_dispatched" and e.round == record.round for e in state.events)))
-                    if (canonical(denied.action) != canonical(action) or denied.status != "error") if denied else not (
-                            packet.stop or (record.round, action.id) in withheld or pending):
-                        raise ValueError("Recorded proposal has an unbound tool request") from None
+                    valid = False
+                # Every proposed action ran (one on an unknown tool was refused), or never ran: the
+                # plan stopped, the operator withheld it, the action limit cut it, or its plan (the
+                # latest, with nothing run yet) waits to run because the mission stopped short of dispatch.
+                observed = observations.get(action.id)
+                if (not valid and (canonical(observed.action) != canonical(action) or observed.status != "error")
+                        if observed else not (packet.stop or (record.round, action.id) in withheld or capped or pending)):
+                    raise ValueError("Recorded proposal has an unbound tool request")
                 if action.id in planned_actions and canonical(planned_actions[action.id][0]) != canonical(action):
                     raise ValueError("Recorded proposal reuses an action identity")
                 # An identical action may be proposed again after it was withheld; it runs in
