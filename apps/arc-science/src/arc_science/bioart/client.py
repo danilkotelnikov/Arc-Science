@@ -61,7 +61,8 @@ def _comment_lines(block):
 def _eps_signature(data):
     """Only '%' comment lines may precede %!PS-Adobe- within 4 KiB. NIH also leaves the
     binary remainder (exactly 23 bytes, with NULs) of a DOS EPS header just before it.
-    Its offset/length/checksum bytes may include 0x0A, but no piece between them may be plain text."""
+    Any of its bytes may be 0x0A, but it never holds two printable bytes in a row (the recorded
+    one has isolated ' ', 'D', 'd', 'N'), so no text, markup or script fits inside it."""
     head = data[:4096]
     at = head.find(b'%!PS-Adobe-')
     if at < 0: return False
@@ -69,7 +70,7 @@ def _eps_signature(data):
     if _comment_lines(prefix): return True
     lines, tail = prefix[:-_DOS_REMAINDER], prefix[-_DOS_REMAINDER:]
     return (len(tail) == _DOS_REMAINDER and b'\x00' in tail and _comment_lines(lines)
-            and all(piece == b'' or not _TEXT.issuperset(piece) for piece in tail.split(b'\n')))
+            and not any(a in _TEXT and b in _TEXT for a, b in zip(tail, tail[1:])))
 
 
 def _sniff(data, format):

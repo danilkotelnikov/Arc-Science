@@ -244,11 +244,12 @@ def test_ai_receipt_claims_import_only_when_the_pdf_importer_accepts_it(tmp_path
     assert refused.value.code == 'bioart.not_eligible'
 
 
-def test_eps_dos_header_bytes_may_contain_a_newline(tmp_path):
+@pytest.mark.parametrize('offset', range(1, 24))
+def test_eps_dos_header_bytes_may_contain_a_newline(tmp_path, offset):
     """The binary DOS EPS remainder holds offsets and a checksum: any of its bytes can be 0x0A."""
     from arc_science.bioart.client import _eps_signature
     data = bytearray(recorded('file-626832-head.eps'))
-    data[data.find(b'%!PS-Adobe-') - 10] = 0x0A
+    data[data.find(b'%!PS-Adobe-') - offset] = 0x0A
     assert _eps_signature(bytes(data))
     client, _ = provider(tmp_path, 'EPS', bytes(data))
     assert client.verify(client.fetch(18, 64, 'EPS').receipt_path)['format'] == 'EPS'
@@ -270,8 +271,21 @@ def test_eps_dos_header_bytes_may_contain_a_newline(tmp_path):
     # a 23-byte remainder whose newline-split pieces include a line of plain text
     b'% ok\r\n' + b'\x00' * 11 + b'\n<script>xy;',
     b'% ok\r\n' + b'<script>xy;\n' + b'\x00' * 11,
+    # exactly 23 bytes where the text line itself holds the NUL
+    b'<html><b>\x00</b></html> \n',
+    b'<script>x</script>\x00\x00\x00\x00\n',
+    b'% ok\r\n<script>x</script>\x00\x00\x00\x00\n',
+    b'<script>alert(1)' + b'\x00' * 7,
+    b'<html><body>x</body>\x00\x00\x00',
+    b'rm -rf / ; echo pwned\x00\x00',
+    b'rm -rf / ; curl x|sh #\x00',
+    b'% ok\r\n<html>\x00</html></html>x\n',
+    b'<html>\x00</html>' + b' ' * 9,
+    b'ab\x00cd' + b'\x00' * 18,
 ], ids=['text-line', 'long-run', 'no-nul', 'html-lines', 'script-after-comment', 'shell-line', 'shebang-nul',
-        'plain-text-nul', 'comment-then-text', 'html-nul-line', 'text-after-binary', 'text-before-binary'])
+        'plain-text-nul', 'comment-then-text', 'html-nul-line', 'text-after-binary', 'text-before-binary',
+        'html-23', 'script-23', 'comment-script-23', 'alert-23', 'html-body-23', 'shell-23', 'curl-23',
+        'comment-html-23', 'html-spaces-23', 'two-byte-runs-23'])
 def test_eps_signature_still_refuses_other_prefixes(prefix):
     from arc_science.bioart.client import _eps_signature
     assert not _eps_signature(prefix + b'%!PS-Adobe-3.1 EPSF-3.0\r\n')
