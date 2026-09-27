@@ -40,7 +40,7 @@ class ContextItem(Record):
 
 
 class MissionRequest(Versioned):
-    LATER_FIELDS = ('max_tokens', 'max_cost_usd', 'max_minutes', 'crew', 'context_items')
+    LATER_FIELDS = ('max_tokens', 'max_cost_usd', 'max_minutes', 'crew', 'context_items', 'gate', 'continues')
     goal: str = Field(min_length=3, max_length=10000)
     mode: Literal['demo', 'live'] = 'demo'
     seed: int = Field(default=17, ge=0, le=2147483647)
@@ -59,6 +59,10 @@ class MissionRequest(Versioned):
     # Per-role model and effort overrides for the live seats (contract C2); None is Settings as is.
     crew: dict[CrewRole, CrewSeat] | None = None
     context_items: tuple[ContextItem, ...] = Field(default=(), max_length=CONTEXT_MEMORY_LIMIT + CONTEXT_MISSION_LIMIT)
+    # each_round pauses after every committed plan with actions until the operator decides (C6).
+    gate: Literal['auto', 'each_round'] = 'auto'
+    # The finished mission this one continues (a fork); its supported scope is attached as context.
+    continues: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{1,80}$')
 
     @model_validator(mode='after')
     def egress_consent(self):
@@ -383,9 +387,21 @@ class ClaimScope(Record):
 ChangeEffect = Literal['presentation', 'scientific_depiction', 'analysis', 'claim', 'permission']
 
 
+class OperatorDecision(Record):
+    """The operator's choice of which work to do next on one plan (contract C6): an execution
+    decision, never a verdict on the evidence. A proposal target is the plan node 'plan-<round>'."""
+    target: Literal['branch', 'proposal']
+    target_id: Id
+    directive: Literal['pursue', 'park', 'drop', 'request_test']
+    note: str = Field(default='', max_length=400)
+    round: int = Field(ge=0)
+    plan_digest: Digest
+
+
 class Change(Versioned):
+    LATER_FIELDS = ('decisions',)
     id: Id
-    kind: Literal['resume']
+    kind: Literal['resume', 'decision']
     declared_effects: tuple[ChangeEffect, ...] = Field(min_length=1, max_length=5)
     derived_effects: tuple[ChangeEffect, ...] = Field(min_length=1, max_length=5)
     required_checks: tuple[str, ...] = Field(min_length=1, max_length=12)
@@ -393,11 +409,15 @@ class Change(Versioned):
     note: str = Field(default='', max_length=400)
     round: int = Field(ge=0)
     at: int = Field(ge=0)
+    # The operator decisions a 'decision' change records; none continues the plan as proposed.
+    decisions: tuple[OperatorDecision, ...] = Field(default=(), max_length=24)
 
     @model_validator(mode='after')
     def declaration_covers_derivation(self):
         if any(effect not in self.declared_effects for effect in self.derived_effects):
             raise ValueError('A change declaration cannot be narrower than its derived effects')
+        if self.decisions and self.kind != 'decision':
+            raise ValueError('Only a decision change carries operator decisions')
         return self
 
 

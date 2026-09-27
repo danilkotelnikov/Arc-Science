@@ -33,6 +33,22 @@ VISUAL_CAUSES = {
 # Stops that over_budget itself makes; every other non-error stop checks the budgets first.
 BUDGET_STOPS = ('token_limit', 'cost_limit', 'time_limit', 'budget_unmeasurable')
 
+# What each operator directive asks of the next planner, inside the operator-directive fence.
+ASKS = {'pursue': 'Keep testing this.', 'park': 'Parked: its actions are withheld until the operator pursues it again.',
+        'drop': 'Dropped: its actions are withheld.', 'request_test': 'Propose an action that tests this branch.'}
+WITHHOLDS = ('park', 'drop')
+
+
+def plan_digest(record):
+    """What an operator decision binds to: the committed planner record of its round."""
+    return digest(record)
+
+
+def operator_decisions(state):
+    """Every recorded operator decision in order, with the change that carries it."""
+    return [{'change_id': c.id, 'at': c.at, **d.model_dump(mode='json')}
+            for c in state.changes if c.kind == 'decision' for d in c.decisions]
+
 class MissionCancelled(RuntimeError): pass
 
 class ProposalRejected(ValueError):
@@ -131,6 +147,10 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
         # reviewers do not, so their support stays independent of that verdict.
         items=[i.model_dump(mode='json') for i in request.context_items if planning or i.kind!='mission'] if reviewing is None else []
         earlier={'mission_context':items} if items else {}
+        # Every operator directive so far goes to the planner as operator input, never to the reviewers.
+        directives=[{**{k:d[k] for k in ('target','target_id','directive','note','round')},'ask':ASKS[d['directive']]}
+                    for d in operator_decisions(state)] if planning else []
+        if directives:earlier['operator_directives']=directives
         return {**earlier,'goal':request.goal,'round':state.round,'data_origin':state.data_origin,
                 'dataset':{'digest':state.dataset_digest,'n':len(state.points)},
                 'branches':[b.model_dump(mode='json') for b in state.branches],
@@ -238,14 +258,34 @@ async def explore(request: MissionRequest, agent, *, initial=None, emit=None, ca
                 if reason:return stop('needs_input','vision_required',reason,cause=VISUAL_CAUSES.get(reason,'incomplete'))
             return stop('completed','plan_stop',plan.reason or 'Exploratory planning stopped; human review is still required.')
         if not plan.actions: return stop('needs_input','no_actions','No executable actions proposed; additional data or tools are required.')
-        actions=[]
+        # Gate each_round: nothing runs until the operator has decided on this round's plan.
+        if request.gate=='each_round' and not any(c.kind=='decision' and c.round==state.round for c in state.changes):
+            committed=next(r for r in state.model_records if r.role=='planner' and r.round==state.round)
+            return stop('paused','awaiting_decision',f"The plan for round {state.round} waits for the operator's decision.",
+                        round=state.round,plan_digest=plan_digest(committed))
+        # Operator decisions withhold work, never evidence: the latest directive on a branch
+        # stands across rounds, and a proposal directive covers its own round's plan.
+        decisions=operator_decisions(state)
+        standing={d['target_id']:d for d in decisions if d['target']=='branch'}
+        proposal=next((d for d in reversed(decisions) if d['target']=='proposal' and d['round']==state.round),None)
+        actions=[];withheld=[]
         for a in plan.actions:
             prior=next((o for o in state.observations if o.id==a.id),None)
             if prior:
                 if prior.request_digest!=digest([a.model_dump(mode='json'),state.dataset_digest]):
                     return stop('error','action_reused','An action ID was reused with different inputs.',action_id=a.id)
                 continue
+            why=proposal if proposal and proposal['directive'] in WITHHOLDS else standing.get(a.branch_id)
+            if why and why['directive'] in WITHHOLDS:withheld.append((a,why));continue
             actions.append(a)
+        for a,why in withheld:
+            if not any(e.kind=='action_withheld' and e.round==state.round and e.detail.startswith(a.id+':') for e in state.events):
+                event('action_withheld',f"{a.id}: branch {a.branch_id}; {why['directive']} by decision {why['change_id']}")
+        if withheld and not actions and not any(o.round==state.round for o in state.observations):
+            # Nothing of this plan runs: the round closes with no tool run and no review call.
+            event('round_closed','Every action of this plan was withheld by the operator; no tool ran and no review was requested.')
+            change(round=state.round+1);commit()
+            continue
         reserved=max(0,state.actions_used-len(state.observations))
         actions=actions[:request.max_actions-state.actions_used+reserved]
         # Reserve before dispatch; an interrupted attempt is conservatively charged.

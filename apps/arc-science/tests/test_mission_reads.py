@@ -118,7 +118,7 @@ def test_repository_list_status_and_head_equal_the_full_parse(tmp_path, demo):
         full = repo.get(mid)
         expected.append({'id': mid, 'goal': full['request']['goal'], 'mode': full['request'].get('mode', 'demo'),
                          'status': full['state']['status'], 'revision': full['revision'],
-                         'round': full['state']['round'], 'max_rounds': full['request']['max_rounds']})
+                         'round': full['state']['round'], 'max_rounds': full['request']['max_rounds'], 'continues': None})
         assert repo.head(mid) == {'revision': full['revision'], 'status': full['state']['status'], 'round': full['state']['round']}
         assert repo.status(mid) == full['state']['status']
     listed = repo.list()

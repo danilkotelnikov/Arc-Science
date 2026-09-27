@@ -73,10 +73,11 @@ class MissionRepository:
         # json_extract reads the fields inside SQLite; the state is never parsed in Python.
         with self._connect() as db:
             rows=db.execute("SELECT id,json_extract(request,'$.goal'),json_extract(request,'$.mode'),json_extract(state,'$.status'),revision,"
-                            "json_extract(state,'$.round'),json_extract(request,'$.max_rounds'),updated_at "
+                            "json_extract(state,'$.round'),json_extract(request,'$.max_rounds'),updated_at,json_extract(request,'$.continues') "
                             'FROM missions ORDER BY rowid DESC LIMIT ?',(limit,)).fetchall()
-        return [{'id':i,'goal':g,'mode':'demo' if m is None else m,'status':s,'revision':r,'round':n,'max_rounds':x,'updated_at':u}
-                for i,g,m,s,r,n,x,u in rows]
+        # continues: the mission this one forks from, or None.
+        return [{'id':i,'goal':g,'mode':'demo' if m is None else m,'status':s,'revision':r,'round':n,'max_rounds':x,'updated_at':u,'continues':c}
+                for i,g,m,s,r,n,x,u,c in rows]
 
     def head(self,mid):
         """Revision, status and round without parsing the state in Python: the cheap poll."""

@@ -18,7 +18,7 @@ import contextvars
 import hashlib
 from typing import Literal
 from pydantic import BaseModel, Field, model_validator
-from fastapi import Body, FastAPI, Depends, Header, Response
+from fastapi import Body, FastAPI, Depends, Header, Query, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,9 +27,10 @@ from .contracts import digest
 from .transport import AccessGrant, ProviderError
 from .grants import GrantLedger
 from .exploration.models import (CONTEXT_CHAR_LIMIT, CONTEXT_MEMORY_LIMIT, CONTEXT_MISSION_LIMIT, CREW_ROLES, ContextItem,
-                                 Event, MissionRequest, MissionState, ModelId)
+                                 Event, MissionRequest, MissionState, ModelId, OperatorDecision)
 from .exploration.effort import DEFAULT as DEFAULT_EFFORT, accepted_efforts
-from .exploration.engine import initialize, explore, MissionCancelled
+from .exploration.engine import initialize, explore, MissionCancelled, operator_decisions, plan_digest
+from .exploration.tree import build_tree
 from .exploration.agents import DemoAgent, DemoVisionAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
 from .exploration.cli_seats import redact
@@ -38,7 +39,7 @@ from .readiness import INHERITS, endpoint_confirmed, origin
 from . import anchored
 from . import settings as operator_settings
 from .error_codes import api_error, prose_code
-from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, declare_resume, mission_change, obligation_states
+from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, declare, declare_resume, mission_change, obligation_states
 from .exploration.claim_scope import DERIVATION_VERSION as CLAIM_DERIVATION_VERSION, derive_claim_scope
 from .exploration.repository import MissionRepository, MissionFinished, RevisionConflict
 from .exploration.timeline import CURRENT_OP, MissionTimeline
@@ -136,6 +137,21 @@ class MissionCreate(MissionRequest):
         if isinstance(data,dict) and 'context_items' in data:
             raise ValueError('context_items are resolved by the service; send context references')
         return data
+
+    @model_validator(mode='after')
+    def room_for_the_parent(self):
+        # A fork attaches the mission it continues as its first prior mission.
+        prior=self.context.prior_mission_ids if self.context else []
+        if self.continues and self.continues not in prior and len(prior)>=CONTEXT_MISSION_LIMIT:
+            raise ValueError('A fork attaches the mission it continues; name at most four other prior missions')
+        return self
+
+class DecisionRequest(BaseModel):
+    """Operator decisions on the plan a mission waits on (contract C6), bound to the revision read."""
+    model_config={'extra':'forbid'}
+    decisions:list[OperatorDecision]=Field(default_factory=list,max_length=24)
+    expected_revision:int=Field(ge=0)
+    resume:bool=False
 
 class RoutePreviewRequest(BaseModel):
     model_config={'extra':'forbid'}
@@ -964,9 +980,16 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         return {'grants':ledger.list('mission',mid),'receipts':receipts,'receipts_truncated':len(receipts)>=1000}
 
     @app.get('/api/missions/{mid}/timeline',dependencies=[Depends(authorized)])
-    async def mission_timeline(mid:str):
+    async def mission_timeline(mid:str,after:int|None=Query(default=None,ge=0)):
         get(mid);rows=timeline.rows(mid)
-        return {'mission_id':mid,'kind':'operational','recorded':bool(rows),'count':len(rows),'rows':rows,
+        # cursor: the `after` to send next. It stops below the first row without a recorded
+        # outcome, so a row that finishes later is sent again with its outcome.
+        # ponytail: a row abandoned by a pause or crash stays open forever and holds the cursor
+        # there; the deltas only grow by what followed it.
+        open_rows=[r['sequence'] for r in rows if r['outcome_source']=='derived']
+        cursor=min(open_rows)-1 if open_rows else (rows[-1]['sequence'] if rows else 0)
+        if after is not None:rows=[r for r in rows if r['sequence']>after]
+        return {'mission_id':mid,'kind':'operational','recorded':bool(rows),'count':len(rows),'rows':rows,'cursor':cursor,
                 'note':'Operational record written by the service worker and operator routes; not scientific evidence. '
                        'A row whose outcome is not recorded is in flight while the mission status is running; '
                        'otherwise it was abandoned by a pause, a cancellation or a service exit.'}
@@ -1185,7 +1208,16 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         # The crew is checked against the Settings seats now and applied again, from the
         # Settings of the moment, when the route is bound at the first start.
         if body.crew:with_crew({'seats':settings_seats(body.vision_review)},body.crew)
-        items=await resolve_context(body.context) if body.context else []
+        refs=body.context
+        if body.continues:
+            # A fork continues a finished mission, whose supported scope is its first context item.
+            try:parent=repository.get(body.continues)
+            except KeyError:raise api_error(404,'context.unknown_record',facts={'kind':'mission','ref':body.continues}) from None
+            if parent['state']['status'] not in ('completed','budget_exhausted','needs_input'):
+                raise api_error(409,'fork.not_finished',facts={'mission_id':body.continues,'status':parent['state']['status']})
+            prior=[body.continues]+[ref for ref in (refs.prior_mission_ids if refs else []) if ref!=body.continues]
+            refs=ContextRefs(memory_record_ids=refs.memory_record_ids if refs else [],prior_mission_ids=prior)
+        items=await resolve_context(refs) if refs else []
         chars=sum(len(i['text']) for i in items)
         if chars>CONTEXT_CHAR_LIMIT:raise api_error(409,'context.too_large',facts={'chars':chars,'limit':CONTEXT_CHAR_LIMIT})
         request=MissionRequest.model_validate({**body.model_dump(mode='json',exclude={'crew','context'}),
@@ -1394,7 +1426,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         except RevisionConflict:raise api_error(409,'mission.revision_conflict',facts={'operation':'resume'}) from None
         return change
 
-    def schedule(row,declared=None,note='',approval=None,actor='operator'):
+    def schedule(row,declared=None,note='',approval=None,actor='operator',decided=None):
         """The one path that starts or resumes a mission: the live route is checked against
         the plan bound at the first start before anything is written; then the resume is
         recorded, the plan bound if this is the first start, and the worker scheduled with
@@ -1428,8 +1460,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 missing=[g for g in preview['required_grants'] if (g['destination'],g['destination_kind'],g['data_category']) not in approved]
                 if missing:raise api_error(409,'mission.grant_missing','No grant approved for the '+missing[0]['destination_kind']+' destination '+missing[0]['destination'],
                                            facts={'destination_kind':missing[0]['destination_kind'],'destination':missing[0]['destination']})
-        change=None
-        if row['state']['status'] in ('paused','error'):
+        # A decision change just recorded is this resume's declared change.
+        change=decided
+        if change is None and row['state']['status'] in ('paused','error'):
             change=record_resume(row,declared if declared is not None else MISSION_CHANGES['resume']['derived'],note or 'Resumed from the workspace.')
             row=get(row['id'])
         if route is not None and (bound is None or not granted):
@@ -1452,8 +1485,49 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         row=get(mid)
         if mid in running or row['state']['status'] not in ('ready','paused'):
             raise api_error(409,'mission.not_startable',facts={'status':'running' if mid in running else row['state']['status']})
+        refuse_undecided(row)
         schedule(row,approval=approval,actor='operator:'+principal)
         return {'id':mid,'status':'scheduled'}
+
+    def refuse_undecided(row):
+        # A plan awaiting the operator resumes only once a decision on its round is recorded.
+        state=MissionState.model_validate(row['state'])
+        if state.stop_code=='awaiting_decision' and state.status=='paused' and \
+                not any(c.kind=='decision' and c.round==state.round for c in state.changes):
+            raise api_error(409,'decision.required',facts={'round':state.round,'plan_digest':state.stop_facts.get('plan_digest')})
+
+    @app.post('/api/missions/{mid}/decisions',status_code=202)
+    async def decide(mid:str,body:DecisionRequest=Body(...),principal:str=Depends(authorized)):
+        """Pursue, park, drop or request a test on the plan the mission waits on (contract C6),
+        recorded as a declared change of kind 'decision'; resume: true then resumes the mission."""
+        row=get(mid);state=MissionState.model_validate(row['state'])
+        if mid in running or state.status!='paused' or state.stop_code!='awaiting_decision':
+            raise api_error(409,'decision.not_awaiting',facts={'status':'running' if mid in running else state.status,'stop_code':state.stop_code})
+        plan=next(r for r in state.model_records if r.role=='planner' and r.round==state.round)
+        current=plan_digest(plan)
+        if body.expected_revision!=row['revision'] or any(d.round!=state.round or d.plan_digest!=current for d in body.decisions):
+            raise api_error(409,'decision.stale',facts={'revision':row['revision'],'round':state.round,'plan_digest':current})
+        branches={b.id for b in state.branches}
+        for d in body.decisions:
+            if d.target_id not in (branches if d.target=='branch' else {f'plan-{state.round}'}):
+                raise api_error(409,'decision.unknown_target',facts={'target':d.target,'target_id':d.target_id})
+        if len(state.changes)>=64:raise api_error(409,'decision.limit',facts={'limit':64})
+        state,change=declare(state,'decision',MISSION_CHANGES['decision']['derived'],f'Operator decisions on the plan of round {state.round}.',
+                             decisions=body.decisions)
+        if state.release is not None:
+            state=state.model_copy(update={'release':release_ledger.invalidate_release(state.release,RESUME_STALE,
+                'Declared change '+change.id[:8]+' (decision): '+', '.join(change.derived_effects)+'; verify again after the mission stops.')})
+        try:repository.save(mid,state,expected_revision=row['revision'])
+        except RevisionConflict:raise api_error(409,'decision.stale',facts={'revision':row['revision'],'round':state.round,'plan_digest':current}) from None
+        if body.resume:schedule(get(mid),actor='operator:'+principal,decided=change)
+        return {'id':mid,'status':'scheduled' if body.resume else 'recorded','change':change.model_dump(mode='json')}
+
+    @app.get('/api/missions/{mid}/tree',dependencies=[Depends(authorized)])
+    async def mission_tree(mid:str):
+        # Derived on read, never evidence; the layout is deterministic (depth = round, lane = branch order).
+        row=get(mid);request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
+        return build_tree(state,timeline.rows(mid),operator_decisions(state),mission_id=mid,revision=row['revision'],
+                          continues=request.continues,goal=request.goal)
 
     @app.get('/api/changes',dependencies=[Depends(authorized)])
     async def change_kinds():
@@ -1466,8 +1540,11 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         # The declaration is checked before anything moves; a refusal names the table's reason.
         try:derived,checks=mission_change(declaration.kind,declaration.declared_effects)
         except ChangeRefused as refused:raise api_error(409,'mission.change_refused',str(refused),facts={'kind':declaration.kind}) from None
+        if declaration.kind=='decision':
+            raise api_error(409,'mission.change_refused','Operator decisions are sent to the decisions route of the mission',facts={'kind':'decision'})
         if mid in running or row['state']['status'] not in ('paused','error'):
             raise api_error(409,'mission.not_resumable',facts={'status':'running' if mid in running else row['state']['status']})
+        refuse_undecided(row)
         # A retry from an error is a declared change whose reason the operator states.
         if row['state']['status']=='error' and not declaration.note.strip():
             raise api_error(409,'mission.retry_note_required')

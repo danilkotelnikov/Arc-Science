@@ -40,6 +40,10 @@ REQUIRED_CHECKS = {
 MISSION_CHANGES = {
     'resume': {'applies': True, 'derived': ('analysis', 'claim'),
                'reason': 'Resuming may add evidence and derives the claim scope again; every release check is stale until the mission is verified again.'},
+    # Operator decisions on a plan (contract C6) choose which work runs, so what evidence can
+    # arrive: the same effects as a resume. They are sent to the decisions route, not declared here.
+    'decision': {'applies': True, 'derived': ('analysis', 'claim'),
+                 'reason': 'Decisions choose which planned work runs, so the evidence and the claim scope can change; every release check is stale until the mission is verified again.'},
     'presentation': {'applies': False, 'derived': ('presentation',),
                      'reason': 'Presentation changes to mission figures run only as recorded repair cycles after a visual review; there is no operator edit.'},
     'scientific_depiction': {'applies': False, 'derived': ('scientific_depiction',),
@@ -123,16 +127,20 @@ def molecular_effects(base_settings: dict, new_settings: dict) -> tuple[tuple[st
 
 
 def declare_resume(state, declared, note: str, at: int | None = None):
-    """Record a resume on the state: the change, and the event that binds it to this
+    return declare(state, 'resume', declared, note, at)
+
+
+def declare(state, kind, declared, note: str, at: int | None = None, decisions=()):
+    """Record a change on the state: the change, and the event that binds it to this
     point of the history (base_digest is the digest of every event before it)."""
     from .models import Change, Event
-    derived, checks = mission_change('resume', declared)
+    derived, checks = mission_change(kind, declared)
     base = digest([e.model_dump(mode='json') for e in state.events])
-    change = Change(id=uuid.uuid4().hex, kind='resume', declared_effects=tuple(declared), derived_effects=derived,
+    change = Change(id=uuid.uuid4().hex, kind=kind, declared_effects=tuple(declared), derived_effects=derived,
                     required_checks=checks, base_digest=base, note=note[:400], round=state.round,
-                    at=int(time.time()) if at is None else at)
+                    at=int(time.time()) if at is None else at, decisions=tuple(decisions))
     event = Event(kind='change_declared', round=state.round,
-                  detail=change.id + ': resume; declared ' + ', '.join(declared) + '; derived ' + ', '.join(derived))
+                  detail=change.id + ': ' + kind + '; declared ' + ', '.join(declared) + '; derived ' + ', '.join(derived))
     return state.model_copy(update={'changes': state.changes + (change,), 'events': state.events + (event,)}), change
 
 

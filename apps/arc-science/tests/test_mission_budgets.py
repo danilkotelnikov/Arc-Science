@@ -464,7 +464,7 @@ def test_a_store_from_before_updated_at_gains_the_column(tmp_path):
                                                                 canonical(initialize(request)).decode(), 0, 'k'))
     repository = MissionRepository(path)
     assert repository.list() == [{'id': 'old', 'goal': 'Old store', 'mode': 'demo', 'status': 'ready', 'revision': 0,
-                                  'round': 0, 'max_rounds': 5, 'updated_at': None}]
+                                  'round': 0, 'max_rounds': 5, 'updated_at': None, 'continues': None}]
     fresh = repository.create(MissionRequest(goal='New row'), initialize(MissionRequest(goal='New row')), key='n')
     assert repository.list()[0]['id'] == fresh['id'] and repository.list()[0]['updated_at'] > 0
 
