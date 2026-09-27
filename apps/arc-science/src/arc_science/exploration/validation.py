@@ -99,7 +99,7 @@ QUANTITIES = ((re.compile(r'shuffled (?:validation )?(?:error|mse|loss)|null (?:
                           r'correlation|coefficient of determination|pearson|spearman|kendall|rho|ρ|tau|'
                           r'standard deviation|variance|rmse|nrmse|rmsd|mae|mape|sd|sem|se|std|stdev|iqr|interquartile range|'
                           r'odds ratio|hazard ratio|slope|intercept|effect size|cohen\'?s d|'
-                          r'[pq][- ]?values?|fdr|false discovery rate|padj|p[- ]?adj(?:usted)?|adjusted p(?:[- ]?values?)?|'
+                          r'[pqtz][- ]?values?|fdr|false discovery rate|padj|p[- ]?adj(?:usted)?|adjusted p(?:[- ]?values?)?|'
                           r'[tz][- ]?stat(?:istic)?s?|[tz][- ]?scores?|'
                           r'(?:root[- ]mean[- ]squared?|rms|mean[- ]absolute(?:[- ]percentage)?|standard|relative|absolute|'
                           r'percentage|percent|normali[sz]ed|median|log|cross[- ]entropy)[- ](?:' + _SPLIT +
@@ -107,7 +107,18 @@ QUANTITIES = ((re.compile(r'shuffled (?:validation )?(?:error|mse|loss)|null (?:
               # A statistic of an error is not the error: 'standard error of the validation error'.
               (re.compile(r'\b(?:standard[- ](?:error|deviation)|std|stdev|sd|sem|se|variance|iqr|confidence interval|ci)'
                           r'[- ](?:of|in|for|on)[- ](?:the[- ])?(?:\w+[- ]){0,3}?(?:error|mse|loss)\b', re.I), ()),
-              (re.compile(r'\br(?:²|\^2)|\b[pr]' + _BARE + r'|\b[tz](?=\s*[=<>≤≥≈~:])', re.I), ()))
+              (re.compile(r'\br\^2|\b[pqrtz]' + _BARE, re.I), ()))
+# A statistic of an error, in the error's own clause, whatever stands between them: 'standard
+# error of the degree-2 validation error', "SD of the fit's validation error", 'SE (validation error)'.
+STATISTIC_OF = re.compile(r'\b(?:standard[- ](?:error|deviation)|std|stdev|s\.d\.|sd|sem|se|variance|iqr|interquartile range|'
+                          r'confidence interval|ci)\s*(?:\(|(?:of|in|for|on)\b)', re.I)
+ERROR_WORD = re.compile(r'\b(?:error|mse|loss)\b', re.I)
+# A split a preposition names right after a count word: '64 samples were in the validation set'.
+SPLIT_AFTER = re.compile(r'(?:\s+\w+){0,2}?\s+(?:in|of|from|for|on|within)\s+(?:the\s+|a\s+|its\s+)?'
+                         r'(?:(validation|held[- ]out|test)|train(?:ing|ed)?)\b', re.I)
+# Superscript exponents are read as caret ones: x⁹ is x^9, R² is R^2.
+SUPERSCRIPT = re.compile('[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+')
+SUPERSCRIPT_DIGITS = str.maketrans('⁻⁰¹²³⁴⁵⁶⁷⁸⁹', '-0123456789')
 
 
 # A sentence ends at ; ! or ?, or at a full stop before a capital letter, so the stop of an
@@ -138,18 +149,25 @@ def _joined(text, hyphen):
     return near is not None and near[0] == 0
 
 
-def _count(before, after=''):
+def _count(before, between='', trailing=''):
     """The count fields a sample count names: those of the split word nearest it, the first
-    between the number and its count word, else the last before the number; with none, the
-    whole data set."""
-    nearest = SPLIT_WORD.findall(after)[:1] or SPLIT_WORD.findall(before)[-1:]
+    between the number and its count word, else one a preposition names right after the count
+    word (trailing), else the last before the number; with none, the whole data set."""
+    after = SPLIT_AFTER.match(trailing)
+    nearest = SPLIT_WORD.findall(between)[:1] or ([after.group(1) or ''] if after else SPLIT_WORD.findall(before)[-1:])
     return (('n_validation',) if nearest[0] else ('n_train',)) if nearest else ('n',)
+
+
+def _of_error(sentence):
+    """The last error word before the number has a statistic of it earlier in its clause."""
+    errors = list(ERROR_WORD.finditer(sentence))
+    return bool(errors) and STATISTIC_OF.search(CLAUSE.split(sentence[:errors[-1].start()])[-1]) is not None
 
 
 def _tokens(text):
     """(number, the recorded fields its nearest quantity word names, or None) per number; the
     power of a variable comes last, named POWER."""
-    text = IDENTIFIER.sub(' ', text)
+    text = SUPERSCRIPT.sub(lambda m: '^' + m.group().translate(SUPERSCRIPT_DIGITS), IDENTIFIER.sub(' ', text))
     raw, powers = [], []
     for m in NUMBER.finditer(text):
         variable = text[m.start() - 2:m.start()] if m.start() >= 2 else ''
@@ -184,10 +202,15 @@ def _tokens(text):
         if before and after and after[0] < before[0] and not after[1] and (onward is None or after[0] <= onward):
             named = ()
         elif before:
-            named = _count(piece) if before[1] is COUNT else before[1]
+            named = before[1]
+            if named is COUNT:
+                cut = after[2] if after and after[1] is COUNT else 0
+                named = _count(piece, window[:cut], window[cut:])
+            elif set(named) <= set(MSE) and _of_error(SENTENCE.split(text[:group[0].start()])[-1]):
+                named = ()
         elif after:
             named, taken = after[1], group[-1].end() + after[2]
-            named = _count(piece, window[:after[2]]) if named is COUNT else named
+            named = _count(piece, window[:after[2]], window[after[2]:]) if named is COUNT else named
         else:
             named = None
         for m in group:

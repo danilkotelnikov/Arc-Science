@@ -58,30 +58,35 @@ _DOS = struct.Struct('<4s6IH')
 _DOS_MAGIC = b'\xc5\xd0\xd3\xc6'
 # Bytes that end a run of text: C0 controls except TAB, and DEL.
 _CONTROL = re.compile(rb'[\x00-\x08\x0a-\x1f\x7f]')
+_TEXT = frozenset(range(0x20, 0x7f)) | {0x09, 0x0D}
 
 
 def _comment_lines(block):
     return block == b'' or (block.endswith(b'\n') and all(line.startswith(b'%') for line in block[:-1].split(b'\n')))
 
 
-def _dos_header(prefix):
+def _dos_header(prefix, size):
     """A whole DOS header right before the PostScript is parsed: its fields are binary
     integers, so any of their bytes may be printable. The PostScript starts where the header
-    ends, and each preview is absent or lies after the PostScript section."""
+    ends, each preview is absent or lies after the PostScript section, and every section lies
+    within the file's size bytes."""
     start = len(prefix) - _DOS.size
     if start < 0 or not _comment_lines(prefix[:start]): return False
     magic, ps_offset, ps_length, *previews, _ = _DOS.unpack(prefix[start:])
-    return (magic == _DOS_MAGIC and ps_offset == _DOS.size and ps_length > 0
-            and all((offset, length) == (0, 0) or (offset >= ps_offset + ps_length and length > 0)
+    return (magic == _DOS_MAGIC and ps_offset == _DOS.size and 0 < ps_length <= size - start - ps_offset
+            and all((offset, length) == (0, 0) or (offset >= ps_offset + ps_length and 0 < length <= size - start - offset)
                     for offset, length in zip(previews[::2], previews[1::2])))
 
 
 def _holds_text(tail):
-    """Three or more characters in a row, ASCII or any UTF-8 script: the shortest word or tag.
-    A headless remainder's offset, length and checksum fields often put two printable bytes
-    side by side (a PS length of 0x24144 is 'DA'), so two cannot be refused."""
+    """Three or more characters in a row, ASCII or any UTF-8 script: the shortest word or tag;
+    or two printable bytes that no little-endian field of the remainder can hold. A field of
+    an offset or length below 16 MiB may put two side by side (a PS length of 0x24144 is 'DA'),
+    but inside one 4-byte field whose top byte is NUL.
+    ponytail: a headless section of 16 MiB or more with a printable pair is refused."""
     return any(len(piece) >= 3 for run in _CONTROL.split(tail)
-               for piece in run.decode('utf-8', 'replace').split('\ufffd'))
+               for piece in run.decode('utf-8', 'replace').split('\ufffd')) or any(
+        tail[i] in _TEXT and tail[i + 1] in _TEXT and tail[min(i | 3, len(tail) - 1)] != 0 for i in range(len(tail) - 1))
 
 
 def _eps_signature(data):
@@ -94,7 +99,7 @@ def _eps_signature(data):
     if at < 0: return False
     prefix = head[:at]
     if _comment_lines(prefix): return True
-    if _DOS_MAGIC in prefix: return _dos_header(prefix)
+    if _DOS_MAGIC in prefix: return _dos_header(prefix, len(data))
     return any((start == 0 or prefix[start - 1] == 0x0A) and _comment_lines(prefix[:start])
                and b'\x00' in prefix[start:] and not _holds_text(prefix[start:])
                for start in range(max(0, at - _DOS_HEADER), at))

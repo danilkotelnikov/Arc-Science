@@ -63,6 +63,7 @@ class Scripted(DemoAgent):
 
 FIT = {'id': 'fit', 'tool': 'polynomial_fit', 'arguments': {'degree': 2}}
 NULL = {'id': 'null', 'tool': 'permutation_control', 'arguments': {'permutations': 32}}
+DESCRIBE = {'id': 'describe', 'tool': 'describe_data', 'arguments': {}}
 READ = {'id': 'read', 'tool': 'literature_search', 'arguments': {'query': 'retraction fixture'}}
 
 
@@ -820,9 +821,15 @@ def test_a_value_hyphenated_to_its_quantity_word_is_checked():
 def test_only_the_r_squared_exponent_is_exempt_from_binding():
     assert numbers(['R^2 and r^2 of the fit']) == [] and numbers(['Degree 2^9.']) == ['2', '9']
     assert numbers(['The fit scales as r^9.']) == ['9']
-    for say in (lambda o: 'Degree 2^9.', lambda o: 'The fit scales as r^9.', lambda o: 'The fit scales as x^9.'):
+    # A superscript exponent is the same power as a caret one; only R\u00b2 is exempt.
+    assert numbers(['R\u00b2 and r\u00b2 of the fit']) == [] and numbers(['The response grows as x\u2079.']) == ['9']
+    assert numbers(['A x\u00b9\u2070 term']) == ['10'] and numbers(['A x\u207b\u00b9 term']) == ['-1']
+    for say in (lambda o: 'Degree 2^9.', lambda o: 'The fit scales as r^9.', lambda o: 'The fit scales as x^9.',
+                lambda o: 'The response grows as x\u2079.', lambda o: 'The response grows as x\u00b3.'):
         _, state = run(Scripted([FIT], say=say))
         assert ladder_of(state)['next']['needs'] == ['unbound_number']
+    _, state = run(Scripted([FIT], say=lambda o: f"Adding x\u00b2 lowered the validation error to {o['data']['validation_mse']:.3g}."))
+    assert ladder_of(state)['rung'] == 1
 
 
 def test_the_power_of_a_variable_names_a_term_of_the_fit_and_takes_no_other_name():
@@ -838,26 +845,48 @@ def test_the_power_of_a_variable_names_a_term_of_the_fit_and_takes_no_other_name
 
 def test_every_written_form_of_an_unrecorded_statistic_keeps_the_recorded_name_off():
     for written in ('p-value: ', 'p value ', 'p of ', 'p ', 'std ', 'IQR ', 'q-value ', 'FDR ', 'adjusted p ', 'padj ',
-                    't = ', 'z-score ', 'effect size ', 'standard error of the validation error '):
+                    't = ', 'z-score ', 'effect size ', 'standard error of the validation error ',
+                    't ', 't of ', 'z ', 'z of ', 'Z ', 't-value ', 'z-value ', 'q: ', 'q ', 'q of '):
         text = f'Validation error, {written}0.004.'
         assert [names for _, names in _tokens(text)] == [()], text
     for text in ('Validation median error 0.002.', 'Validation log loss 0.002.', 'Validation cross-entropy loss 0.002.'):
         assert [names for _, names in _tokens(text)] == [()], text
     for say in (lambda o: f"Validation error, p-value: {o['data']['validation_mse']:.3g}.",
                 lambda o: f"Validation error, std {o['data']['validation_mse']:.3g}.",
-                lambda o: f"Validation median error {o['data']['training_mse']:.3g}."):
+                lambda o: f"Validation median error {o['data']['training_mse']:.3g}.",
+                lambda o: f"Validation error, t {o['data']['validation_mse']:.3g}.",
+                lambda o: f"Validation error, z of {o['data']['validation_mse']:.3g}."):
         _, state = run(Scripted([FIT], say=say))
         assert ladder_of(state)['next']['needs'] == ['unbound_number']
 
 
+def test_a_statistic_of_an_error_keeps_the_recorded_name_off_whatever_stands_between():
+    assert list(_tokens('Standard error of the degree-2 validation error: 0.00404.')) == [('2', ('degree',)), ('0.00404', ())]
+    for text in ("The standard deviation of the quadratic fit's validation error is 0.00404.",
+                 'Standard error (validation error) 0.00404.', 'Standard error of the validation-set mean squared error 0.00404.',
+                 'The SD of the validation error across folds, 0.00404.'):
+        assert [names for _, names in _tokens(text)] == [()], text
+    v = lambda o: f"{o['data']['validation_mse']:.3g}"
+    for say in (lambda o: f'Standard error of the degree-2 validation error: {v(o)}.',
+                lambda o: f"The standard deviation of the quadratic fit's validation error is {v(o)}."):
+        _, state = run(Scripted([FIT], say=say))
+        assert ladder_of(state)['next']['needs'] == ['unbound_number']
+    # A statistic in another clause does not name the error.
+    _, state = run(Scripted([FIT], say=lambda o: f'The standard error of x was small, and the validation error was {v(o)}.'))
+    assert ladder_of(state)['rung'] == 1
+
+
 def test_a_value_hyphenated_to_an_unrecorded_statistic_is_checked_and_binds_nothing():
     for text in ('Validation error, RMSE-0.3.', 'Validation error, accuracy-0.99.', 'Validation error, AUC-0.9.',
-                 'Validation error, r-squared-0.9.', 'Validation error with p-0.001.'):
+                 'Validation error, r-squared-0.9.', 'Validation error with p-0.001.', 'Validation error, q-0.01.',
+                 'Validation error, t-2.1.', 'Validation error, z-2.1.'):
         assert [names for _, names in _tokens(text)] == [()], text
     assert numbers(['IL-6 and COVID-19 in a β-2 fit']) == []
     v = lambda o: f"{o['data']['validation_mse']:.3g}"
     for say in (lambda o: f'Validation error {v(o)} with RMSE-0.3 on the split.', lambda o: f'Validation error {v(o)}, accuracy-0.99.',
-                lambda o: f'Validation error {v(o)} with p-0.001.', lambda o: f'Validation error {v(o)} on n-500 samples.'):
+                lambda o: f'Validation error {v(o)} with p-0.001.', lambda o: f'Validation error {v(o)} on n-500 samples.',
+                lambda o: f'Validation error {v(o)}, q-0.01.', lambda o: f'Validation error {v(o)}, t-2.1.',
+                lambda o: f'Validation error {v(o)}, z-2.1.'):
         _, state = run(Scripted([FIT], say=say))
         assert ladder_of(state)['next']['needs'] == ['unbound_number']
 
@@ -877,3 +906,16 @@ def test_a_recorded_count_binds_through_its_own_name():
                 lambda o: f"The fit used {o['data']['n_validation']} samples."):
         _, state = run(Scripted([FIT], say=say))
         assert ladder_of(state)['next']['needs'] == ['unbound_number']
+    # The split may be named after the count word, or between the number and a later count word.
+    assert list(_tokens('Training error 0.1 and 500 samples in validation')) == [('0.1', ('training_mse',)), ('500', ('n_validation',))]
+    total = lambda o: o['data']['n_train'] + o['data']['n_validation']
+    for say in (lambda o: f"{total(o)} samples were in the validation set.",
+                lambda o: f"n = {total(o)} validation samples were used.",
+                lambda o: f"{total(o)} samples of the training data were used."):
+        _, state = run(Scripted([FIT, DESCRIBE], say=say))
+        assert ladder_of(state)['next']['needs'] == ['unbound_number']
+    for say in (lambda o: f"{o['data']['n_validation']} samples were in the validation set.",
+                lambda o: f"n = {o['data']['n_validation']} validation samples were used.",
+                lambda o: f"{total(o)} samples and the validation error {o['data']['validation_mse']:.3g}."):
+        _, state = run(Scripted([FIT, DESCRIBE], say=say))
+        assert ladder_of(state)['rung'] == 1

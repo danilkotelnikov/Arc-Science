@@ -284,10 +284,14 @@ def test_eps_dos_header_bytes_may_contain_a_newline(tmp_path, offset):
     'приветмиря \0\n'.encode('utf-8'),         # 23 bytes of UTF-8 text with a NUL
     b'% ok\r\n' + 'привет\xff'.encode('utf-8', 'surrogateescape') + b'\x00' * 8,
     b'abc\x00' + b'\x00' * 19,
+    b'ab\x00cd' + b'\x00' * 18,                 # two-byte runs no little-endian field can hold
+    b'\x00\x00ab' + b'\x00' * 19,               # a pair in a field's top bytes
+    b'\x00\x00\x00ab' + b'\x00' * 18,            # a pair across two fields
 ], ids=['text-line', 'long-run', 'no-nul', 'html-lines', 'script-after-comment', 'shell-line', 'shebang-nul',
         'plain-text-nul', 'comment-then-text', 'html-nul-line', 'text-after-binary', 'text-before-binary',
         'html-23', 'script-23', 'comment-script-23', 'alert-23', 'html-body-23', 'shell-23', 'curl-23',
-        'comment-html-23', 'html-spaces-23', 'utf8-text-23', 'utf8-text-then-junk', 'three-letter-word'])
+        'comment-html-23', 'html-spaces-23', 'utf8-text-23', 'utf8-text-then-junk', 'three-letter-word',
+        'two-byte-runs-23', 'pair-in-top-bytes', 'pair-across-fields'])
 def test_eps_signature_still_refuses_other_prefixes(prefix):
     from arc_science.bioart.client import _eps_signature
     assert not _eps_signature(prefix + b'%!PS-Adobe-3.1 EPSF-3.0\r\n')
@@ -312,6 +316,14 @@ def _dos_eps(ps_offset=30, ps_length=120_000, tiff_offset=0, tiff_length=0, chec
     return b'\xc5\xd0\xd3\xc6' + struct.pack('<IIIIII', ps_offset, ps_length, 0, 0, tiff_offset, tiff_length) + checksum
 
 
+def _whole(header):
+    """A DOS EPS file that holds every section its header declares."""
+    import struct
+    _, ps_offset, ps_length, wmf_offset, wmf_length, tiff_offset, tiff_length = struct.unpack('<4s6I', header[:28])
+    data = header + b'%!PS-Adobe-3.0 EPSF-3.0\r\n'
+    return data + b'\x00' * (max(ps_offset + ps_length, wmf_offset + wmf_length, tiff_offset + tiff_length) - len(data))
+
+
 def _remainder(ps_length):
     """The recorded NIH remainder with its PS-length field (bytes 4-7) replaced."""
     import struct
@@ -323,8 +335,8 @@ def _remainder(ps_length):
 
 @pytest.mark.parametrize('data', [
     _remainder(0x4144), _remainder(147_780), _remainder(0x4E44), _remainder(0x7E7E),
-    _dos_eps() + b'%!PS-Adobe-3.0 EPSF-3.0\r\n',
-    _dos_eps(ps_length=0x00024144, tiff_offset=30 + 0x00024144, tiff_length=0x4D4D) + b'%!PS-Adobe-3.0 EPSF-3.0\r\n',
+    _whole(_dos_eps()),
+    _whole(_dos_eps(ps_length=0x00024144, tiff_offset=30 + 0x00024144, tiff_length=0x4D4D)),
     b'% ok\r\n' + b' \x00\x00\x00D\x0f' + b'\x00' * 16 + b'%!PS-Adobe-3.1 EPSF-3.0\r\n',        # 22 bytes
     b'% ok\r\n' + b' \x00\x00\x00D\x0f' + b'\x00' * 18 + b'%!PS-Adobe-3.1 EPSF-3.0\r\n',        # 24 bytes
 ], ids=['length-DA', 'length-147780', 'length-DN', 'length-tildes', 'dos-header-30', 'dos-header-printable-fields',
@@ -343,9 +355,10 @@ def test_eps_signature_accepts_dos_headers_whatever_their_field_bytes(tmp_path, 
 ], ids=['length-CBA', 'length-0-0', 'length-AAA', 'tiff-length-CBA', 'tildes-everywhere'])
 def test_a_whole_dos_header_is_parsed_so_any_field_bytes_pass(tmp_path, ps_length, tiff_offset, tiff_length):
     """A 30-byte DOS header's fields are binary integers: three printable bytes in a length
-    field (a PS section of 2 MiB or more) are not text."""
+    field (a PS section of 2 MiB or more) are not text. The file holds every section it declares."""
     from arc_science.bioart.client import _eps_signature
     data = _dos_eps(ps_length=ps_length, tiff_offset=tiff_offset, tiff_length=tiff_length) + b'%!PS-Adobe-3.0 EPSF-3.0\r\n'
+    data += b'\x00' * (max(30 + ps_length, tiff_offset + tiff_length) - len(data))
     assert _eps_signature(data)
     client, _ = provider(tmp_path, 'EPS', data)
     assert client.verify(client.fetch(18, 64, 'EPS').receipt_path)['format'] == 'EPS'
@@ -358,8 +371,12 @@ def test_a_whole_dos_header_is_parsed_so_any_field_bytes_pass(tmp_path, ps_lengt
     _dos_eps(ps_length=1000, tiff_offset=40, tiff_length=10),     # a preview inside the PostScript section
     _dos_eps(ps_length=1000, tiff_offset=0, tiff_length=10),      # a preview length with no offset
     b'\xc5\xd0\xd3\xc6<script>alert(1)</script>x',          # 30 bytes of text behind the magic
-], ids=['offset-31', 'offset-text', 'empty-ps', 'tiff-overlaps', 'tiff-no-offset', 'script-behind-magic'])
+    _dos_eps(ps_length=0x414243),                                 # a PostScript section past the end of the file
+    _dos_eps(ps_length=1000, tiff_offset=1030, tiff_length=10),   # a preview past the end of the file
+], ids=['offset-31', 'offset-text', 'empty-ps', 'tiff-overlaps', 'tiff-no-offset', 'script-behind-magic',
+        'ps-past-end', 'tiff-past-end'])
 def test_a_dos_header_with_inconsistent_fields_is_refused(header):
     from arc_science.bioart.client import _eps_signature
     assert len(header) == 30
-    assert not _eps_signature(header + b'%!PS-Adobe-3.0 EPSF-3.0\r\n')
+    data = header + b'%!PS-Adobe-3.0 EPSF-3.0\r\n'
+    assert not _eps_signature(data + b'\x00' * (1030 - len(data)))
