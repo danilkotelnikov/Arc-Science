@@ -414,6 +414,7 @@ def _finisher(ledger,grant_id,destination,destination_kind,data_category,request
     def finish(outcome,reason=''):
         ledger.receipt(grant_id=grant_id,mission_id=None,destination=destination,destination_kind=destination_kind,data_category=data_category,
                        outcome=outcome,reason=str(reason)[:300],request_digest=request_digest,observation_id=None,role=None)
+    finish.grant_id=grant_id
     return finish
 
 
@@ -428,7 +429,8 @@ def consent_covered(ledger,destination,destination_kind,data_category,purpose,*,
 def consent_grant(ledger,destination,destination_kind,data_category,purpose,request_digest=None,*,given,remember_days):
     """At the point of sending: finish(outcome, reason) under a reserved grant, or None when
     nothing covers the call any more (revoked or expired since the gate). The flag with
-    remember_days writes the remembered grant now, after the route's own refusals, and it
+    remember_days writes the remembered grant now, so a route calls this only after its own
+    refusals and those of the component it hands the request to ahead of egress; it
     supersedes any earlier one; only this request body can, so model output, memory and
     connector text never do. Without the flag the remembered grant is used; the flag alone
     is a 'once' grant."""
@@ -752,6 +754,13 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         consent=dict(given=body.allow_egress,remember_days=body.remember_days)
         finish=None
         if consent_covered(ledger,prose_module.DETECTION_HOST,'detector',*DETECTION_GRANT,**consent):
+            # The detector's refusals ahead of egress run first, so a refused request writes,
+            # reserves and supersedes nothing; no await separates these from the detector's own.
+            if not detector.enabled:
+                prose_error(prose_module.ProseRefused('disabled','Detection is switched off on this service (ARC_PROSE_DETECTION=off)'))
+            if not prose_module.MIN_CHARS<=len(body.text)<=prose_module.MAX_CHARS:
+                prose_error(prose_module.ProseRefused('bounds',f'Text must be {prose_module.MIN_CHARS} to {prose_module.MAX_CHARS} characters'))
+            if detector.busy:prose_error(prose_module.ProseRefused('busy','A detection request is already in flight'))
             finish=consent_grant(ledger,prose_module.DETECTION_HOST,'detector',*DETECTION_GRANT,
                                  hashlib.sha256(body.text.encode('utf-8')).hexdigest(),**consent)
         held={'finish':finish,'sent':False};reset=detect_grant.set(held)
@@ -1069,11 +1078,17 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                     verified=(probe_subject(provider,'cli',e.model,e.effort,executable_sha256=executable_sha256) if e.transport=='cli'
                               else probe_subject(provider,'api',e.model,e.effort,endpoint=origin(e.endpoint),credential_ref=e.credential_ref))
                     distinct.setdefault(subject_digest(verified),(verified,e,[]))[2].append(role)
-                results=[];calls={d:[] for d in destinations}
+                results=[];calls={d:[] for d in destinations};withdrawn=set()
                 async with httpx.AsyncClient(trust_env=False) as client:
                     for digest_value,(verified,e,roles) in distinct.items():
                         record={'model':e.model,'effort':e.effort,'roles':roles,'transport':e.transport,'subject':verified,'subject_digest':digest_value}
                         started=time.monotonic();seat=None
+                        # Every model call re-reads its grant: one revoked or expired mid-probe
+                        # stops the calls still to come.
+                        grant=ledger.get(finishes[seat_destination(e)].grant_id)
+                        if grant is None or grant['state'] in ('revoked','expired'):
+                            results.append({**record,'ok':False,'error':'consent withdrawn','duration_ms':0})
+                            withdrawn.add(seat_destination(e));continue
                         try:
                             if e.transport=='cli':
                                 seat=CliAgent(command,e.model,e.model,provider=provider,efforts={'probe':e.effort} if e.effort else None);target=e.model
@@ -1099,7 +1114,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                     probes[key]={'at':at,'transport':key if transport=='cli' else 'api','provider':provider,'results':mine}
                     with (root/'providers'/(key+'-probes.jsonl')).open('a',encoding='utf-8') as log:log.write(json.dumps(probes[key])+'\n')
                 # One receipt per destination, naming how many model calls went there.
-                for d,finish in finishes.items():finish('ok' if all(calls[d]) else 'failed',f'{len(calls[d])} model call(s)')
+                for d,finish in finishes.items():
+                    finish('denied' if d in withdrawn else 'ok' if all(calls[d]) else 'failed',
+                           f'{len(calls[d])} model call(s)'+(', the rest withdrawn' if d in withdrawn else ''))
                 return reply
             except BaseException as error:
                 # Every reserved use has a receipt, even when the probe itself breaks.

@@ -100,14 +100,39 @@ def test_detection_with_remember_creates_a_grant_and_later_calls_reuse_it(client
     c.app.state.detector.transport = httpx.MockTransport(lambda r: httpx.Response(503))
     assert detect(c).status_code == 502
     assert [r['outcome'] for r in receipts(c, grant['id'])] == ['failed', 'ok', 'ok']
-    # A refusal before anything is sent is a denied receipt, not a silent use.
+    # A refusal before anything is sent does not touch the grant: no use, no receipt.
     assert detect(c, text='too short').status_code == 422
-    assert receipts(c, grant['id'])[0]['outcome'] == 'denied'
+    assert len(receipts(c, grant['id'])) == 3 and c.app.state.grants.get(grant['id'])['uses'] == 3
     # The flag alone still makes a one-off grant, not a remembered one.
     c.app.state.detector.transport = httpx.MockTransport(
         lambda r: httpx.Response(200, json=[{'detectionType': 'HEMINGWAY', 'detectionResult': {'grade': '8'}}]))
     assert detect(c, allow_egress=True).status_code == 200
     assert len(remembered_grants(c)) == 1
+
+
+def test_a_detection_refused_before_sending_writes_no_grant(client):
+    """The detector's own refusals (switched off, bounds, busy) come before any grant is
+    written: a refused remember neither creates a grant nor supersedes the operator's."""
+    c = client
+    assert detect(c, allow_egress=True, remember_days=30).status_code == 200
+    [grant] = remembered_grants(c)
+    before = c.get('/api/grants', headers=AUTH).json()
+    detector = c.app.state.detector
+    short = detect(c, text='too short', allow_egress=True, remember_days=30)
+    assert short.status_code == 422 and short.json()['detail']['code'] == 'prose.bounds'
+    detector.busy = True
+    busy = detect(c, allow_egress=True, remember_days=30)
+    detector.busy = False
+    assert busy.status_code == 409 and busy.json()['detail']['code'] == 'prose.busy'
+    detector.enabled = False
+    off = detect(c, allow_egress=True, remember_days=30)
+    detector.enabled = True
+    assert off.status_code == 409 and off.json()['detail']['code'] == 'prose.disabled'
+    # The flag alone on a refused request leaves no one-off grant either.
+    assert detect(c, text='too short', allow_egress=True).status_code == 422
+    assert c.get('/api/grants', headers=AUTH).json() == before
+    assert [(g['id'], g['state']) for g in remembered_grants(c)] == [(grant['id'], 'active')]
+    assert len(receipts(c, grant['id'])) == 1
 
 
 def test_only_thirty_days_can_be_remembered_and_only_with_the_flag(client):
@@ -263,3 +288,30 @@ def test_a_remembered_prose_seat_consent_is_reused_and_recorded(tmp_path, monkey
         assert [r['outcome'] for r in receipts(c, grant['id'])] == ['ok', 'ok']
         # The detector is a different destination: this grant does not reach it.
         assert detect(c).json()['detail']['code'] == 'prose.consent_required'
+
+
+def test_a_probe_revoked_between_model_calls_sends_no_further_call(cli_probe, tmp_path, monkeypatch):
+    """Consent is checked before every model call of a probe: a remembered grant revoked
+    while the first call runs stops the second one, and the receipt says denied."""
+    from arc_science.exploration import cli_seats
+    sent = []
+    original = cli_seats.CliAgent._call
+
+    async def call_then_revoke(self, *args, **kwargs):
+        sent.append(args[0])
+        try:
+            return await original(self, *args, **kwargs)
+        finally:
+            c.app.state.grants.revoke(grant['id'], 'changed my mind')
+
+    monkeypatch.setattr(cli_seats.CliAgent, '_call', call_then_revoke)
+    with TestClient(service.create_app(data_dir=tmp_path / 'data', token=TOKEN)) as c:
+        c.app.state.grants.remember(sys.executable, 'seat', *service.PROBE_GRANT)
+        [grant] = remembered_grants(c)
+        reply = c.post('/api/providers/claude-code/probe', headers=AUTH, json={})
+        assert reply.status_code == 200, reply.text
+        results = reply.json()['results']
+        assert len(sent) == 1 and len(results) == 2
+        assert results[0]['ok'] and not results[1]['ok'] and results[1]['error'] == 'consent withdrawn'
+        [receipt] = receipts(c, grant['id'])
+        assert receipt['outcome'] == 'denied'
