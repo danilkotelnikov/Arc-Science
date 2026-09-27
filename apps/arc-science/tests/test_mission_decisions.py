@@ -685,6 +685,47 @@ def test_a_gated_round_stripped_after_a_later_spend_check_does_not_verify_agains
     validate_evidence(stripped)
     with pytest.raises(ValueError, match='unbound tool request'):
         validate_context(request, stripped)
+    # Relabelled, it is still checked against its request: the round was decided and its facts do
+    # not name the plan, and the request sets no time budget.
+    for status, code in (('paused', 'awaiting_decision'), ('budget_exhausted', 'time_limit')):
+        forged = stripped.model_copy(update={'stop_code': code, 'status': status, 'stop_facts': {}})
+        with pytest.raises(ValueError, match='unbound tool request'):
+            validate_context(request, forged)
+
+
+def test_a_gate_pause_is_checked_against_its_request_whatever_its_label():
+    request = gated(max_cost_usd=0.02)
+    paused = run(request, Dear())
+    assert paused.stop_code == 'awaiting_decision'
+    validate_context(request, paused)
+    plan = next(r for r in paused.model_records if r.role == 'planner' and r.round == 0)
+    facts = {'kind': 'minutes', 'spent': 99, 'limit': 1}
+    for code, stop_facts, under in (
+            # No time budget, or one the facts do not name.
+            ('time_limit', facts, request), ('time_limit', facts, gated(max_cost_usd=0.02, max_minutes=5)),
+            # A pause naming another plan.
+            ('awaiting_decision', {'round': 0, 'plan_digest': 'f' * 64}, request),
+            # A spend the request's budget stops, labelled as a pause.
+            ('awaiting_decision', paused.stop_facts, gated(max_cost_usd=0.01))):
+        status = 'budget_exhausted' if code == 'time_limit' else 'paused'
+        forged = paused.model_copy(update={'stop_code': code, 'status': status, 'stop_facts': stop_facts})
+        with pytest.raises(ValueError, match='unbound tool request'):
+            validate_context(under, forged)
+    # Decided and waiting for the resume verifies; a pause after the resume recommitted the decided
+    # plan cannot have come from the engine: a decided round never pauses again.
+    decided = decide(paused, ('proposal', 'plan-0', 'pursue', ''))
+    validate_context(request, decided)
+    from arc_science.exploration.models import Event
+    resumed = decided.model_copy(update={'events': decided.events + (
+        Event(kind='plan_committed', round=0, detail='Reused.'), Event(kind='mission_stopped', round=0, detail='Paused.'))})
+    with pytest.raises(ValueError, match='unbound tool request'):
+        validate_context(request, resumed)
+    # The honest labels verify: a time stop the request sets, and an interruption after the decision.
+    timed = gated(max_cost_usd=0.02, max_minutes=1)
+    validate_context(timed, paused.model_copy(update={'stop_code': 'time_limit', 'status': 'budget_exhausted',
+                                                      'stop_facts': {'kind': 'minutes', 'spent': 1.5, 'limit': 1}}))
+    assert plan_digest(plan) == paused.stop_facts['plan_digest']
+    validate_context(request, decided.model_copy(update={'stop_code': 'interrupted', 'stop_facts': {}}))
 
 
 def test_the_action_limit_excuse_and_the_dispatch_fact_bind_to_what_ran():
@@ -879,3 +920,21 @@ def test_a_gated_live_mission_needs_the_approval_of_the_directive_category(confi
         assert settled(c, mid)['state']['stop_code'] == 'awaiting_decision'
         seat_grants = [g for g in c.get(f'/api/missions/{mid}/grants', headers=AUTH).json()['grants'] if g['destination_kind'] == 'seat']
         assert seat_grants and all('operator_directives' in g['data_category'] for g in seat_grants)
+
+
+def test_a_gated_live_mission_with_context_starts_from_its_own_preview(configured, tmp_path):
+    """Context and each_round together make the longest seat category the approval must repeat."""
+    with TestClient(app(tmp_path)) as c:
+        c.app.state.memory_routes._operation = fake_memory
+        context = {'memory_record_ids': ['rec-1']}
+        made = c.post('/api/missions', headers=AUTH, json={'goal': 'Live, steered, with context', 'mode': 'live', 'allow_egress': True,
+                                                           'max_rounds': 1, 'gate': 'each_round', 'context': context})
+        assert made.status_code == 201, made.text
+        mid = made.json()['id']
+        preview = c.post('/api/missions/preview', headers=AUTH, json={'gate': 'each_round', 'context': context}).json()
+        assert all('mission_context' in g['data_category'] and 'operator_directives' in g['data_category']
+                   for g in preview['required_grants'] if g['destination_kind'] == 'seat')
+        started = c.post(f'/api/missions/{mid}/start', headers=AUTH,
+                         json={'approved_route_digest': preview['route_digest'], 'grants': preview['required_grants']})
+        assert started.status_code == 202, started.text
+        assert settled(c, mid)['state']['stop_code'] == 'awaiting_decision'

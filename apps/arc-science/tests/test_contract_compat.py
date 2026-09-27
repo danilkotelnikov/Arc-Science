@@ -2,7 +2,10 @@
 
 The legacy vectors under fixtures/legacy were captured from the release before B0 through
 the service test client: a completed demo mission with required vision review (verified,
-then exported) and a demo mission interrupted mid-run by a service stop. Their stored
+then exported) and a demo mission interrupted mid-run by a service stop. dispatch_cut was
+captured later from that release's engine and repository (c06a4c6): a demo mission whose
+round-0 action was reserved and committed when the service stopped, before any dispatch fact
+existed; its row was paused by that release's restart handling. Their stored
 request and state JSON, event chain and capsule must keep their digests, resume, export and
 verify under the current code (journey J7)."""
 import asyncio
@@ -121,6 +124,20 @@ def test_legacy_event_chains_verify(tmp_path):
     repository = MissionRepository(legacy_store(tmp_path) / 'missions.db')
     for vector in VECTORS.values():
         assert repository.verify(vector['id'])
+
+
+def test_a_legacy_dispatch_cut_verifies_under_its_own_and_the_current_interruption_label():
+    """Captured from the release before dispatch facts: round 0's action reserved and committed,
+    then the service stopped (its row paused with no stop code; the current code labels a running
+    row 'interrupted'). More reserved than the plan has left to run is no cut."""
+    from arc_science.exploration.evidence import validate_evidence
+    state = MissionState.model_validate_json(raw('dispatch_cut', 'state'))
+    assert state.actions_used > len(state.observations) == 0 and state.stop_code == ''
+    assert not any(e.kind == 'actions_dispatched' for e in state.events)
+    for code in ('', 'interrupted'):
+        validate_evidence(state.model_copy(update={'stop_code': code}))
+    with pytest.raises(ValueError, match='unbound tool request'):
+        validate_evidence(state.model_copy(update={'actions_used': state.actions_used + 20}))
 
 
 def test_legacy_capsule_verifies_under_the_current_code():

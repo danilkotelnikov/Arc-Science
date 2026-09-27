@@ -977,3 +977,75 @@ def test_a_count_takes_the_split_its_sentence_names_and_never_falls_back_to_the_
     assert list(_tokens('The fit reduced validation error using 48 training samples.')) == [('48', ('n_train',))]
     _, state = run(Scripted([FIT], say=lambda o: f"The fit reduced validation error using {o['data']['n_train']} training samples."))
     assert ladder_of(state)['rung'] == 1
+
+
+# Integration fix round 1: counts, statistics of errors, units, mean and minimum, PubMed links, prior results.
+
+def test_a_count_keeps_the_split_named_before_it_over_one_later_in_its_sentence():
+    for text in ('The model was trained on 48 samples and then scored on the held-out test set.',
+                 'Training used 48 samples, which is small relative to the test set.',
+                 'The training set had 48 samples and we then moved on to the validation checks.'):
+        assert list(_tokens(text)) == [('48', ('n_train',))], text
+    assert list(_tokens('The model was trained on 16 samples and then scored on the held-out test set.')) == [('16', ('n_train',))]
+    # A split named after a later number belongs to that number, not to the total before it.
+    assert list(_tokens('Of 64 samples, 48 went to training.'))[0] == ('64', ('n',))
+    for field, rung in (('n_train', 1), ('n_validation', 0)):
+        _, state = run(Scripted([FIT], say=lambda o, f=field: f"The model was trained on {o['data'][f]} samples and then scored "
+                                                              'on the held-out test set.'))
+        assert ladder_of(state)['rung'] == rung, field
+
+
+def test_a_statistic_in_an_earlier_clause_does_not_claim_a_later_error():
+    for text in ('The CI for degree 2 excluded zero, validation error 0.12.',
+                 'With SE reported for each fold in the appendix, the validation error fell to 0.12.'):
+        assert [names for _, names in _tokens(text)][-1] == ('validation_mse',), text
+    v = lambda o: f"{o['data']['validation_mse']:.3g}"
+    _, state = run(Scripted([FIT], say=lambda o: f'With SE reported for each fold in the appendix, the validation error fell to {v(o)}.'))
+    assert ladder_of(state)['rung'] == 1
+
+
+def test_a_number_with_a_unit_or_multiplier_never_binds_a_unitless_record():
+    assert list(_tokens('The validation MSE was 0.0017%.')) == [('0.0017', None)]
+    assert list(_tokens('The model used 48k training samples.')) == [('48', None)]
+    # An ordinal is not a unit: a 2nd-degree fit still names its degree.
+    assert list(_tokens('A 2nd-degree fit.')) == [('2', ('degree',))]
+    v = lambda o: f"{o['data']['validation_mse']:.3g}"
+    for say in (lambda o: f'The validation MSE was {v(o)}%.', lambda o: f"The model used {o['data']['n_train']}k training samples."):
+        _, state = run(Scripted([FIT], say=say))
+        assert ladder_of(state)['next']['needs'] == ['unbound_number']
+
+
+def test_a_mean_or_minimum_shuffled_error_binds_only_its_own_statistic():
+    assert list(_tokens('Mean shuffled validation error was 1.21814')) == [('1.21814', ('mean_shuffled_validation_mse',))]
+    assert list(_tokens('Minimum shuffled validation error was 2.4434')) == [('2.4434', ('minimum_shuffled_validation_mse',))]
+    assert list(_tokens('Shuffled validation error was 2.4434')) == [
+        ('2.4434', ('minimum_shuffled_validation_mse', 'mean_shuffled_validation_mse'))]
+    for field, rung in (('minimum_shuffled_validation_mse', 0), ('mean_shuffled_validation_mse', 1)):
+        _, state = run(Scripted([NULL], falsifier_test=None,
+                                say=lambda o, f=field: f"Mean shuffled validation error was {o['data'][f]:.6g}."))
+        assert ladder_of(state)['rung'] == rung, field
+
+
+def test_a_retracted_work_cited_by_its_pubmed_link_blocks_l1():
+    records = EUROPEPMC['resultList']['result']
+    _, cited = run(Scripted([FIT, READ], say=lambda o: 'Consistent with https://pubmed.ncbi.nlm.nih.gov/9500042/ on the split.'),
+                   extra_tools=reads(records), egress=True)
+    ladder = ladder_of(cited, rows=[read_row()], verification=passing(cited))
+    assert ladder['rung'] == 0 and 'retracted_source' in ladder['next']['needs']
+
+
+def test_a_falsifier_set_after_the_planner_read_earlier_results_is_not_prespecified():
+    from arc_science.exploration.models import ContextItem
+
+    def ladder_under(item):
+        request = MissionRequest(goal='Ladder fixture', max_rounds=3, context_items=[item])
+        state = asyncio.run(explore(request, Scripted([FIT, NULL])))
+        assert state.status == 'completed', state.stop_reason
+        return ladder_of(state, verification=passing(state))
+    prior = dict(ref='mission-a', title='Earlier mission', digest='a' * 64, text='validation error 0.00404')
+    for item in (ContextItem(kind='mission', **prior), ContextItem(kind='memory', trust='model_output', **prior),
+                 ContextItem(kind='memory', source_uri='mission://mission-a/round/1', **prior)):
+        ladder = ladder_under(item)
+        assert ladder['rung'] == 2 and ladder['next'] == {'rung': 3, 'needs': ['falsifier_after_context']}, item
+    # An operator note is not an earlier result: the falsifier stays prespecified.
+    assert ladder_under(ContextItem(kind='memory', trust='user', **prior))['rung'] == 4

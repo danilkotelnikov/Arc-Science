@@ -161,6 +161,36 @@
   "status": "completed",
   "subject_digest": "d28ab4ad3ecbd71354dbf14b820151cfdea947f60eb30d787934d2fab892d1ad"
  },
+ "dispatch_cut": {
+  "chain": [
+   {
+    "hash": "8e227549fc903e280c5f10c94da057b126cbe957d4ef56ebd136337645b5400b",
+    "previous": "0000000000000000000000000000000000000000000000000000000000000000",
+    "revision": 0,
+    "state_digest": "c94717d737f1a0f8dc9840fd2f5ec23d45c71b2736fbd38f6c92df5f2c67d4c8"
+   },
+   {
+    "hash": "c017e870ed7cd92b84ba596571ac8d902aeca5efb9bcc2e7fbb3d4049ba2c15d",
+    "previous": "8e227549fc903e280c5f10c94da057b126cbe957d4ef56ebd136337645b5400b",
+    "revision": 1,
+    "state_digest": "8d9070e04cfb3a5f3e884550f3823c38d83ebebbe579770c6aeecb836a2a99fe"
+   },
+   {
+    "hash": "517f4b75fff238171abc2d952917c72d0b87cb47ee2f6f99f74db6c45ff0010e",
+    "previous": "c017e870ed7cd92b84ba596571ac8d902aeca5efb9bcc2e7fbb3d4049ba2c15d",
+    "revision": 2,
+    "state_digest": "72d625baa5204584e1b0e5ff559b41a7047f07665c2688a8ccab366eaefedffe"
+   }
+  ],
+  "id": "f38fa12faed44196a77a173b4979a3c2",
+  "release_subject_digest": null,
+  "request_digest": "20be7642614efb1703c5ce6e0c6733ffa754c49a985f986c84471910a1ce7bd7",
+  "revision": 2,
+  "scientific_digest": "f209e163fffc44e2def8f039d9a41927e11e18b6a8a09cb7c4c6de8947dfce04",
+  "state_digest": "72d625baa5204584e1b0e5ff559b41a7047f07665c2688a8ccab366eaefedffe",
+  "status": "paused",
+  "subject_digest": "12b284ea3a3b16151102ce4ef88b486e63c43b5d7c26540438aede190e285b91"
+ },
  "interrupted": {
   "chain": [
    {

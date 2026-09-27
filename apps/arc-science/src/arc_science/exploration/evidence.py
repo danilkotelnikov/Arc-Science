@@ -156,9 +156,19 @@ def _pending(state, round_number):
         return None
     committed = len(kinds) - 1 - kinds[::-1].index(("plan_committed", round_number))
     dispatched = [e.detail for e in state.events if e.kind == "actions_dispatched" and e.round == round_number]
+    reserved = state.actions_used - len(state.observations)
     if dispatched:
-        reserved = state.actions_used - len(state.observations)
         return "cut" if state.stop_code in CUT_OFF and reserved == len(dispatched[-1].split(", ")) else None
+    if state.stop_code in CUT_OFF and reserved > 0 and not any(e.kind == "actions_dispatched" for e in state.events):
+        # A record from before dispatch facts (release c06a4c6): its engine reserved the round's
+        # actions and committed before dispatching, so an interruption leaves only the reservation,
+        # at most one per action of the plan that has not run.
+        # ponytail: indistinguishable from a current record stripped of every dispatch fact and
+        # observation; a record version field would tell the two apart.
+        record = next((r for r in state.model_records if r.role == "planner" and r.round == round_number), None)
+        ran = {o.id for o in state.observations}
+        planned = Proposal.model_validate(record.payload).actions if record else ()
+        return "cut" if reserved <= sum(a.id not in ran for a in planned) else None
     gated = round_number == 0 or any(change.kind == "decision" for change in state.changes)
     stopped = any(kind == "mission_stopped" for kind, _ in kinds[committed + 1:])
     return "gate" if gated and stopped and state.actions_used == len(state.observations) else None
@@ -546,13 +556,30 @@ def validate_context(request, state: MissionState) -> None:
     # The action-limit excuse reads the planner's remaining actions: they follow from the request.
     if _budgets(state) - {(request.max_rounds, request.max_actions)}:
         raise ValueError("Recorded planner context does not bind to the mission's remaining rounds and actions")
-    # A plan left pending at a gate needs a gated mission, and a spend stop in its place the spend
-    # that stops it: the record's calls are the ones the check read, so it recomputes exactly.
-    # ponytail: a time stop is not recomputable from the record (the clock is in the timeline).
+    # A plan left pending at a gate needs a gated mission, and its stop the spend the record shows.
+    # The gate's pause checked the budgets after the plan's call, and no call follows until
+    # dispatch, so the record's calls are the ones every check read: a token, cost or usage stop
+    # recomputes exactly, and any other stop needs a spend none of them stops. A pause names its
+    # plan and was not preceded by a decision on its round (a decided round never pauses again;
+    # a decision after the pause waits for the resume); a time stop needs the time budget it names.
+    # ponytail: the minutes themselves are not recomputable from the record (the clock is in the timeline).
     if _relied_pending(state) == "gate":
-        from .engine import budget_stop  # the engine imports this module
-        if request.gate != "each_round" or (state.stop_code in ("token_limit", "cost_limit", "budget_unmeasurable")
-                                            and budget_stop(request, state, lambda: 0) != state.stop_code):
+        from .engine import budget_stop, plan_digest  # the engine imports this module
+        code, facts = state.stop_code, state.stop_facts
+        plan = next(r for r in state.model_records if r.role == "planner" and r.round == state.round)
+        spend = budget_stop(request, state, lambda: 0)
+        kinds = [(e.kind, e.round) for e in state.events]
+        committed = len(kinds) - 1 - kinds[::-1].index(("plan_committed", state.round))
+        decided = {c.id for c in state.changes if c.kind == "decision" and c.round == state.round}
+        if (request.gate != "each_round"
+                or spend != (code if code in ("token_limit", "cost_limit", "budget_unmeasurable") else None)
+                or code == "awaiting_decision" and (
+                    facts != {"round": state.round, "plan_digest": plan_digest(plan)}
+                    or any(e.kind == "change_declared" and e.detail.partition(":")[0] in decided
+                           for e in state.events[:committed]))
+                or code == "time_limit" and (
+                    request.max_minutes is None or facts.get("kind") != "minutes" or facts.get("limit") != request.max_minutes
+                    or not isinstance(facts.get("spent"), (int, float)) or facts["spent"] < request.max_minutes)):
             raise ValueError("Recorded proposal has an unbound tool request")
 
 

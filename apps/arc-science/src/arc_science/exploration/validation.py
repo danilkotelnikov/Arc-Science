@@ -25,7 +25,7 @@ import re
 
 from ..contracts import digest
 from .catalog import BIORENDER_CATALOG, BUILTIN_CATALOG, NUMERICAL_CATALOG
-from .models import Action, MissionState, ScopedBranch, VerificationReceipt
+from .models import Action, ContextItem, MissionState, ScopedBranch, VerificationReceipt
 
 NAMES = ('asserted', 'traced', 'recomputed', 'prespecified', 'severe', 'replicated')
 # The conditions of each rung; each is met or answered by exactly one need code.
@@ -70,6 +70,10 @@ DOI = re.compile(r'\b10\.\d{4,9}/\S+')
 CLOSERS = {')': '(', ']': '[', '}': '{', '>': '<'}
 TRAILING = '.,;:"\'\u201d\u2019\u00bb'
 PMID = re.compile(r'\bPMID:?\s*(\d+)', re.I)
+PUBMED_LINK = re.compile(r'\bpubmed\.ncbi\.nlm\.nih\.gov/(\d+)', re.I)
+# Suffixes that keep a number unitless: ordinals (2nd-degree). Any other unit or multiplier
+# (0.0017%, 48k) states a value no recorded field holds: the recorded fields are unitless.
+ORDINALS = frozenset({'', 'st', 'nd', 'rd', 'th'})
 MSE = ('training_mse', 'validation_mse', 'minimum_shuffled_validation_mse', 'mean_shuffled_validation_mse')
 # The recorded fields a quantity word names. The name nearest a number, within its sentence and
 # between its neighbouring numbers, decides what it must bind to (the one before it on a tie,
@@ -86,6 +90,9 @@ SPLIT_WORD = re.compile(r'\b(?:(validation|held[- ]out|test(?:ing|ed)?)|train(?:
 # window ends at the number).
 _BARE = r'(?=\s*(?:[=<>≤≥≈~:(]|(?:of|is|was|were|equals?|equalled|test|statistic)\b|-?$))'
 QUANTITIES = ((re.compile(r'shuffled (?:validation )?(?:error|mse|loss)|null (?:error|mse)', re.I), MSE[2:]),
+              # A named statistic of the shuffles binds only its own field (the longer name wins the tie).
+              (re.compile(r'\b(?:minimum|min|lowest|smallest|best) shuffled (?:validation )?(?:error|mse|loss)', re.I), MSE[2:3]),
+              (re.compile(r'\b(?:mean|average) shuffled (?:validation )?(?:error|mse|loss)', re.I), MSE[3:]),
               (re.compile(r'(?:validation|held[- ]out|test)' + _ERROR + r'|(?:error|mse|loss) on the (?:validation|held[- ]out|test)',
                           re.I), ('validation_mse',)),
               (re.compile(r'train(?:ing)?' + _ERROR + r'|(?:error|mse|loss) on the train(?:ing)?', re.I), ('training_mse',)),
@@ -134,6 +141,7 @@ SUPERSCRIPT_DIGITS = str.maketrans('⁻⁰¹²³⁴⁵⁶⁷⁸⁹', '-012345678
 SENTENCE = re.compile(r'[;!?](?:\s|$)|\.\s+(?=[A-ZА-ЯЁΑ-Ω])')
 # A name after a number stays within its clause: 'Validation error 0.004, training error 0.002'.
 CLAUSE = re.compile(r'[,;:]')
+ASIDE = re.compile(r',[^,;:]*,')
 RANGE = ('-', '–', '—')
 
 
@@ -156,12 +164,16 @@ def _joined(text, hyphen):
     return near is not None and near[0] == 0
 
 
-def _count(before, between='', trailing=''):
-    """The count fields a sample count names: those of the split word nearest it, the first
-    between the number and its count word, else one the rest of its sentence names (trailing,
-    SPLIT_AFTER), else the last in its sentence before the number; with none, the whole data set."""
+def _count(before, between='', trailing='', own=''):
+    """The count fields a sample count names: those of the split word nearest it, in order the
+    first between the number and its count word, the last between the number before it and it
+    (own), one the rest of its sentence up to the next number names (trailing, SPLIT_AFTER), the
+    last in its sentence before it (before); with none, the whole data set. A split word before
+    the number wins over a later one, which often describes another step ('trained on 48
+    samples, then scored on the test set'), unless it belongs to an earlier number."""
     after = SPLIT_AFTER.match(trailing)
-    nearest = SPLIT_WORD.findall(between)[:1] or ([after.group(1) or ''] if after else SPLIT_WORD.findall(before)[-1:])
+    nearest = (SPLIT_WORD.findall(between)[:1] or SPLIT_WORD.findall(own)[-1:]
+               or ([after.group(1) or ''] if after else SPLIT_WORD.findall(before)[-1:]))
     return (('n_validation',) if nearest[0] else ('n_train',)) if nearest else ('n',)
 
 
@@ -171,11 +183,15 @@ def _adjacent(text):
 
 
 def _of_error(sentence):
-    """The last error word before the number has a statistic of it earlier in its sentence (STATISTIC)."""
+    """The last error word before the number has a statistic of it earlier in its sentence
+    (STATISTIC), in the same clause once asides set off by a pair of commas are left out: 'the
+    standard error, over five folds, of the validation error', not 'the CI excluded zero,
+    validation error 0.12'."""
     errors = list(ERROR_WORD.finditer(sentence))
     return bool(errors) and any(
-        STATISTIC_LINK.search(between) and not STATEMENT_BREAK.search(between)
-        for between in (sentence[m.end():errors[-1].start()] for m in STATISTIC.finditer(sentence[:errors[-1].start()])))
+        STATISTIC_LINK.search(between) and not STATEMENT_BREAK.search(between) and not CLAUSE.search(between)
+        for between in (ASIDE.sub(' ', sentence[m.end():errors[-1].start()])
+                        for m in STATISTIC.finditer(sentence[:errors[-1].start()])))
 
 
 def _tokens(text):
@@ -213,14 +229,16 @@ def _tokens(text):
         end = groups[i + 1][0].start() if i + 1 < len(groups) else len(text)
         window = CLAUSE.split(SENTENCE.split(text[group[-1].end():end])[0])[0]
         after = _quantity(window, after=True)
-        # The number's sentence before it and after it: a count's split may stand anywhere in it.
+        # The number's sentence before it, and after it up to the next number: a count's split may
+        # stand anywhere in either, but one after the next number names that number.
         sentence = SENTENCE.split(text[:group[0].start()])[-1]
-        rest = SENTENCE.split(text[group[-1].end():])[0]
+        own = SENTENCE.split(text[groups[i - 1][-1].end() if i else 0:group[0].start()])[-1]
+        rest = SENTENCE.split(text[group[-1].end():end])[0]
         # The distance from the name to the next number, when that number is in the same clause.
         onward = len(window) - after[2] if after and i + 1 < len(groups) and group[-1].end() + len(window) == end else None
         if after and after[1] is COUNT and _adjacent(window[:after[0]]):
             # An explicit count word right after the number wins over any name before it.
-            named, taken = _count(sentence, window[:after[2]], rest[after[2]:]), group[-1].end() + after[2]
+            named, taken = _count(sentence, window[:after[2]], rest[after[2]:], own), group[-1].end() + after[2]
         elif before and after and after[0] < before[0] and not after[1] and (onward is None or after[0] <= onward):
             named = ()
         elif before:
@@ -228,16 +246,16 @@ def _tokens(text):
             if named is COUNT:
                 # A later count word names this number only when nearer than the one before it.
                 cut = after[2] if after and after[1] is COUNT and after[0] < before[0] else 0
-                named = _count(sentence, window[:cut], rest[cut:])
+                named = _count(sentence, window[:cut], rest[cut:], own)
             elif set(named) <= set(MSE) and _of_error(sentence):
                 named = ()
         elif after:
             named, taken = after[1], group[-1].end() + after[2]
-            named = _count(sentence, window[:after[2]], rest[after[2]:]) if named is COUNT else named
+            named = _count(sentence, window[:after[2]], rest[after[2]:], own) if named is COUNT else named
         else:
             named = None
         for m in group:
-            yield m.group(1), named
+            yield m.group(1), (named if m.group(2).lower() in ORDINALS else None)
     for m in powers:
         yield m.group(1), POWER
 
@@ -387,7 +405,7 @@ def _retraction(scoped, evidence):
     checked by a completed OpenAlex lookup of a literature read the claim uses, and none is
     retracted. A search hit the claim does not cite is not a citation."""
     cited = {_doi(m.group()) for text in scoped.supported_scope for m in DOI.finditer(text)}
-    pmids = {m.group(1) for text in scoped.supported_scope for m in PMID.finditer(text)}
+    pmids = {m.group(1) for text in scoped.supported_scope for pattern in (PMID, PUBMED_LINK) for m in pattern.finditer(text)}
     if not cited and not pmids:
         return None
     checked, retracted, resolved = set(), set(), set()
@@ -442,6 +460,11 @@ def _prespecified(state, branch, evidence):
     idea = next((b for b in introduced.payload['branches'] if b.get('id') == branch.id), {}) if introduced else {}
     if idea.get('falsifier_test') != branch.falsifier_test.model_dump(mode='json'):
         return 'falsifier_after_observation'
+    # A planner shown earlier results (a prior mission, or memory a mission wrote: the items only
+    # the planner reads) may have set the threshold after seeing their outcome.
+    # ponytail: any such item counts, whatever its dataset; context items do not record one.
+    if any(ContextItem.model_validate(item).planner_only for item in introduced.input_context.get('mission_context') or ()):
+        return 'falsifier_after_context'
     events = list(state.events)
     committed = next((i for i, e in enumerate(events) if e.kind == 'plan_committed' and e.round == introduced.round), None)
     request = lambda o: (o.tool, None if o.tool == 'permutation_control' else digest(o.action.arguments), o.dataset_digest)

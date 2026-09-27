@@ -255,6 +255,15 @@ def test_j7_the_legacy_mission_resumes_exports_and_verifies(tmp_path):
         verified(c, interrupted)
         capsule = c.get(f'/api/missions/{interrupted}/capsule', headers=AUTH)
         assert capsule.status_code == 200 and verify_capsule(capsule.content)['integrity']
+        # Cut mid-dispatch by the legacy engine: a reservation, no dispatch fact, no observation.
+        cut = VECTORS['dispatch_cut']['id']
+        state = c.get(f'/api/missions/{cut}', headers=AUTH).json()['state']
+        assert state['status'] == 'paused' and state['actions_used'] > len(state['observations']) == 0
+        verified(c, cut)
+        assert c.post(f'/api/missions/{cut}/start', headers=AUTH).status_code == 202
+        row = settled(c, cut)
+        assert row['state']['status'] == 'completed', row['state']['stop_reason']
+        verified(c, cut)
 
 
 def test_j8_a_remembered_bioart_grant_skips_the_flag_then_expires_and_is_refused(tmp_path, monkeypatch):

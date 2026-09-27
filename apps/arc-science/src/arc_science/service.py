@@ -94,7 +94,8 @@ class ProbeReply(BaseModel):
 class GrantRequest(BaseModel):
     destination:str=Field(min_length=1,max_length=400)
     destination_kind:str=Field(min_length=1,max_length=20)
-    data_category:str=Field(default='',max_length=200)
+    # The grant ledger's own limit: a seat category with context and directives runs past 200.
+    data_category:str=Field(default='',max_length=500)
     purpose:str=Field(default='',max_length=200)
     scope:str='mission'
 
