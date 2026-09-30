@@ -178,7 +178,7 @@ def main(argv=None):
                     'candidate_digest':packet['candidate_digest'],'packet_digest':packet['packet_digest'],
                     'images':len(packet['images']),'provider_executed':False}
         elif args.command=='figure-review':
-            import httpx
+            from .net import outbound_client
             import time
             from .figure_review import configured_figure_vision_endpoint,read_review_packet,request_visual_review
             from .service import _secret
@@ -192,7 +192,7 @@ def main(argv=None):
                     resource=config.endpoint,credential_ref=ref,expires_at=int(time.time())+60,
                     auth_style='x-api-key' if config.provider=='anthropic' else 'bearer')
             async def execute_review():
-                async with httpx.AsyncClient(trust_env=False) as client:
+                async with outbound_client(config.endpoint,asynchronous=True) as client:
                     return await request_visual_review(packet,config=config,client=client,resolver=resolve,
                         project=project,principal='local-operator',allow_egress=True)
             result=asyncio.run(execute_review())

@@ -12,6 +12,7 @@ from copy import deepcopy
 from .catalog import BIORENDER_CATALOG, NUMERICAL_CATALOG, PUBLIC_CATALOG
 from .claim_scope import DERIVATION_VERSION, latest_assessments
 from .models import MissionState
+from .validation import claim_ladder, effective, lookup, references, render, segments, study_vocabulary
 
 # Fields of Observation.data per trusted tool (tools.py).
 NUMERIC_FIELDS = {'polynomial_fit': ('degree', 'training_mse', 'validation_mse', 'n_train', 'n_validation', 'split'),
@@ -22,7 +23,13 @@ UNCERTAINTY_NOTE = ('MSE values are errors on the exploratory validation split o
                     'no confidence interval or standard error is computed in this build.')
 INDEPENDENCE_REASONS = ('shared_identity', 'unverified_identity', 'missing_independent_role')
 NOTE = ('Claim cards are derived on read from the persisted claim scope, the recorded reconciliation, '
-        'the evidence graph and the operational timeline; nothing here is validation.')
+        'the evidence graph and the operational timeline; nothing here is validation. supported_scope_rendered shows '
+        'each number reference as its recorded value [field, observation id], each source as the works its '
+        'retrieval returned and each name token found in the study\'s own vocabulary as the name, with where the '
+        'study recorded it; a reference that does not resolve stays as written.')
+OUTSIDE_NOTE = ('Uncertainty details, next tests and each role\'s findings are rendered with their own reference '
+                'diagnostics but lie outside the ladder\'s guarantee: only the supported scope bears the rungs, and a '
+                'next test is an instruction, not a result.')
 EMPTY_NOTE = 'Claim scope is derived when the mission stops; nothing yet.'
 
 
@@ -53,13 +60,13 @@ def _timing(timeline_rows, action_id):
             'time_source': 'timeline', 'receipt_id': row.get('receipt_id')}
 
 
-def _evidence(observation, scoped, timeline_rows):
+def _evidence(observation, counted, timeline_rows):
     data = observation.data
     text = lambda key: data.get(key) if isinstance(data.get(key), str) else None
     return {'id': observation.id, 'tool': observation.tool, 'tool_version': observation.tool_version,
             'method': observation.tool + '@' + observation.tool_version, 'digest': observation.digest,
             'status': observation.status, 'claim_eligible': observation.claim_eligible,
-            'replayable': observation.replayable, 'counts_for_scope': observation.id in scoped.evidence_ids,
+            'replayable': observation.replayable, 'counts_for_scope': observation.id in counted,
             'source_kind': source_kind(observation.tool), 'round': observation.round,
             **_timing(timeline_rows, observation.id),
             'numeric_summary': {key: data[key] for key in NUMERIC_FIELDS.get(observation.tool, ()) if key in data},
@@ -154,7 +161,11 @@ def route_states(state: MissionState) -> list[dict]:
     return routes
 
 
-def build_claims(state: MissionState, timeline_rows: list[dict], graph: dict | None, release: dict | None) -> dict:
+def build_claims(state: MissionState, timeline_rows: list[dict], graph: dict | None, release: dict | None,
+                 receipts: list[dict] | None = None, request=None) -> dict:
+    """`receipts` are the mission's grant-ledger receipts; without them the ladder cannot
+    confirm the receipt of an external read. `request` (the MissionRequest) gives the goal and
+    chosen context of the study's vocabulary; without it they add no names."""
     scope = state.claim_scope
     check = next((c for c in (release or {}).get('checks', ()) if c.get('name') == 'claim_scope'), None)
     check_state = check['state'] if check else 'unknown'
@@ -162,25 +173,47 @@ def build_claims(state: MissionState, timeline_rows: list[dict], graph: dict | N
     stale_reason = check.get('reason', '') if stale else ''
     latest = latest_assessments(state)
     branches = {branch.id: branch for branch in state.branches}
+    # The ladder reads the replay receipt only against the current subject of the release.
+    verification = (release or {}).get('verification')
+    subject = (release or {}).get('subject_digest')
+    names = study_vocabulary(state, request)
     claims = []
     for scoped in (scope.branches if scope else ()):
         branch = branches[scoped.branch_id]
-        findings = [{'role': role, 'round': assessed.round, 'model': assessed.model, 'position': assessed.position,
-                     'finding': assessed.finding, 'next_test': assessed.next_test, 'evidence_ids': list(assessed.evidence_ids)}
+        # References resolve mission-wide; the card's evidence is the claim's effective evidence.
+        found = lookup(state, scoped, timeline_rows, receipts)
+        counted = effective(state, scoped)
+
+        def shown(item, key):
+            """The item with its text `key` rendered beside the raw field, and its typed segments."""
+            return {**item, key + '_rendered': render(item[key], found, names), key + '_segments': segments(item[key], found, names)}
+        findings = [shown({'role': role, 'round': assessed.round, 'model': assessed.model, 'position': assessed.position,
+                           'finding': assessed.finding, 'next_test': assessed.next_test,
+                           'evidence_ids': list(assessed.evidence_ids)}, 'finding')
                     for role, assessed in sorted(((role, latest[(role, bid)]) for role, bid in latest if bid == branch.id),
                                                  key=lambda item: item[0])]
+        uncertainties = [shown(u.model_dump(mode='json'), 'detail') for u in scoped.uncertainties]
+        next_tests = [shown(t.model_dump(mode='json'), 'test') for t in scoped.next_tests]
+        outside = [u['detail'] for u in uncertainties] + [t['test'] for t in next_tests] + [f['finding'] for f in findings]
         claims.append({
             'claim_id': branch.id, 'branch_id': branch.id, 'title': branch.title,
             'requested': scoped.requested, 'status': scoped.status,
             'supported_scope': list(scoped.supported_scope), 'scope_qualifier': scoped.scope_qualifier,
-            'uncertainties': [u.model_dump(mode='json') for u in scoped.uncertainties],
-            'evidence': [_evidence(o, scoped, timeline_rows) for o in state.observations if o.branch_id == branch.id],
+            'supported_scope_rendered': [render(text, found, names) for text in scoped.supported_scope],
+            'supported_scope_segments': [segments(text, found, names) for text in scoped.supported_scope],
+            'references': references(scoped.supported_scope, found, names),
+            'outside_ladder_references': references(outside, found, names), 'outside_ladder_note': OUTSIDE_NOTE,
+            'uncertainties': uncertainties,
+            'evidence': [_evidence(o, counted, timeline_rows) for o in state.observations
+                         if o.branch_id == branch.id or o.id in counted],
             'independence': _independence(state, scoped, latest),
             'findings': findings,
             'alternatives': _alternatives(state, branch, graph),
-            'next_tests': [t.model_dump(mode='json') for t in scoped.next_tests],
+            'next_tests': next_tests,
             'units': None, 'units_note': UNITS_NOTE,
-            'stale_derivation': stale, 'stale_reason': stale_reason, 'claim_scope_check': check_state})
+            'stale_derivation': stale, 'stale_reason': stale_reason, 'claim_scope_check': check_state,
+            'ladder': claim_ladder(state, scoped, timeline_rows=timeline_rows, receipts=receipts,
+                                   verification=verification, subject=subject, request=request)})
     return {'source': 'derived',
             'derivation_version': scope.derivation_version if scope else None,
             'current_derivation_version': DERIVATION_VERSION,

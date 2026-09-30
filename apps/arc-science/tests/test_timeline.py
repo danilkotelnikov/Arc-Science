@@ -186,7 +186,7 @@ def test_pause_fences_the_worker_and_resume_is_a_declared_change(tmp_path, monke
         pause_row = next(r for r in rows if r['operation'] == 'pause')
         assert pause_row['actor'] == 'operator:token' and pause_row['outcome'] == 'paused' and pause_row['detail'] == state['stop_reason']
         again = c.post(f'/api/missions/{mid}/pause', headers=AUTH)
-        assert again.status_code == 409 and 'Only a running mission can be paused' in again.json()['detail']
+        assert again.status_code == 409 and 'Only a running mission can be paused' in again.json()['detail']['detail']
         assert c.post(f'/api/missions/{mid}/start', headers=AUTH).status_code == 202
         final = wait_final(c, mid)['state']
         assert final['status'] == 'completed'
@@ -278,9 +278,9 @@ def test_a_retry_from_an_error_is_a_declared_change_with_a_stated_reason(tmp_pat
         assert rows[1]['detail'] == 'Planning failed validation or provider execution.'
         body = {'kind': 'resume', 'declared_effects': ['analysis', 'claim']}
         refused = c.post(f'/api/missions/{mid}/changes', headers=AUTH, json=body)
-        assert refused.status_code == 409 and 'states its reason' in refused.json()['detail']
+        assert refused.status_code == 409 and 'states its reason' in refused.json()['detail']['detail']
         blank = c.post(f'/api/missions/{mid}/changes', headers=AUTH, json={**body, 'note': '   '})
-        assert blank.status_code == 409 and 'states its reason' in blank.json()['detail']
+        assert blank.status_code == 409 and 'states its reason' in blank.json()['detail']['detail']
         assert c.post(f'/api/missions/{mid}/start', headers=AUTH).status_code == 409
         Failing.fail = False
         retried = c.post(f'/api/missions/{mid}/changes', headers=AUTH, json={**body, 'note': 'Retry after error: provider fixed'})

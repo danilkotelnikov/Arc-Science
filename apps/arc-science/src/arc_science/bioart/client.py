@@ -6,29 +6,129 @@ import json
 import math
 from pathlib import Path
 import re
+import struct
 import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from PIL import Image
 
+from ..net import ProxyUnsupported, outbound_client, system_proxy
 from .cache import Cache, digest, encoded
 from .deadline import request_deadline
+from .errors import BioArtError
 from .isolation import request_in_child
 from .models import BioArtLimits, BioArtReceipt, ORIGIN, _is_neutral_caption, positive_id
-from .parsing import parse_entry, parse_search
+from .parsing import action_id, discover_chunk, parse_entry, parse_search, parse_search_action
 from ..vector_assets import (_read_regular, _validate_svg, _SOURCE_LIMIT, _SVG_NS,
-    _local_name, _LOCAL_URL, _MAX_SVG_NODES, _MAX_SVG_DEPTH, import_vector)
+    _local_name, _LOCAL_URL, _MAX_SVG_NODES, _MAX_SVG_DEPTH, _render_pdf, import_vector)
 
 _HASH = re.compile(r'[0-9a-f]{64}')
 _MIME = {'SVG':{'image/svg+xml'}, 'PNG':{'image/png'},
          'AI':{'application/postscript','application/pdf','application/illustrator','application/octet-stream'},
          'EPS':{'application/postscript','application/eps','application/octet-stream'}}
+_THUMBNAIL_MIME = {'image/jpeg', 'image/png'}
+_CHUNK_MIME = {'application/javascript', 'text/javascript'}
+_SEARCH_MIME = {'text/x-component'}
 _FILE_PATH = re.compile(r'/api/bioarts/[1-9][0-9]*/files/[1-9][0-9]*')
+_ACTION_ID = re.compile(r'[0-9a-f]{40,64}')
+_PNG = b'\x89PNG\r\n\x1a\n'
+SCHEMA = 'arc-bioart-asset/2'
+THUMBNAIL_LIMIT = 512 * 1024
+
+
+def clean_query(query):
+    """Plain words only: CloudSearch syntax (: ? & " ( ) [ ] { } * \\) never reaches NIH."""
+    if (not isinstance(query, str) or not query.strip() or len(query) > 200 or
+            not all(character.isalnum() or character in " -'" for character in query)):
+        raise BioArtError('bioart.invalid_query')
+    return query.strip()
+
+
+def _format_of(mimes):
+    for name, allowed in (*_MIME.items(), ('THUMBNAIL', _THUMBNAIL_MIME)):
+        if set(mimes) == allowed: return name
+    return None
+
+
+# A DOS EPS header is 30 bytes; NIH leaves a 23-byte remainder of one. Allow up to 32.
+_DOS_HEADER = 32
+# A whole DOS header: magic, PS offset and length, WMF and TIFF preview offset and length, checksum.
+_DOS = struct.Struct('<4s6IH')
+_DOS_MAGIC = b'\xc5\xd0\xd3\xc6'
+# Bytes that end a run of text: C0 controls except TAB, and DEL.
+_CONTROL = re.compile(rb'[\x00-\x08\x0a-\x1f\x7f]')
+_TEXT = frozenset(range(0x20, 0x7f)) | {0x09, 0x0D}
+
+
+def _comment_lines(block):
+    return block == b'' or (block.endswith(b'\n') and all(line.startswith(b'%') for line in block[:-1].split(b'\n')))
+
+
+def _dos_header(prefix, size):
+    """A whole DOS header right before the PostScript is parsed: its fields are binary
+    integers, so any of their bytes may be printable. The PostScript starts where the header
+    ends, each preview is absent or lies after the PostScript section, and every section lies
+    within the file's size bytes."""
+    start = len(prefix) - _DOS.size
+    if start < 0 or not _comment_lines(prefix[:start]): return False
+    magic, ps_offset, ps_length, *previews, _ = _DOS.unpack(prefix[start:])
+    return (magic == _DOS_MAGIC and ps_offset == _DOS.size and 0 < ps_length <= size - start - ps_offset
+            and all((offset, length) == (0, 0) or (offset >= ps_offset + ps_length and 0 < length <= size - start - offset)
+                    for offset, length in zip(previews[::2], previews[1::2])))
+
+
+def _holds_text(tail):
+    """Three or more characters in a row, ASCII or any UTF-8 script: the shortest word or tag;
+    or two printable bytes that no little-endian field of the remainder can hold. A field of
+    an offset or length below 16 MiB may put two side by side (a PS length of 0x24144 is 'DA'),
+    but inside one 4-byte field whose top byte is NUL; the PostScript length may put three
+    (_blank_length).
+    ponytail: a headless section of 16 MiB or more with a printable pair is refused."""
+    return any(len(piece) >= 3 for run in _CONTROL.split(_blank_length(tail))
+               for piece in run.decode('utf-8', 'replace').split('\ufffd')) or any(
+        tail[i] in _TEXT and tail[i + 1] in _TEXT and tail[min(i | 3, len(tail) - 1)] != 0 for i in range(len(tail) - 1))
+
+
+def _eps_signature(data):
+    """Only '%' comment lines may precede %!PS-Adobe- within 4 KiB, then optionally a binary
+    DOS EPS header. A header with its magic is parsed (_dos_header). The headless remainder
+    NIH serves (at most 32 bytes) has no fields left to parse: it must hold a NUL and no text,
+    and since its bytes may be 0x0A, every line start in that window is tried as its start."""
+    head = data[:4096]
+    at = head.find(b'%!PS-Adobe-')
+    if at < 0: return False
+    prefix = head[:at]
+    if _comment_lines(prefix): return True
+    if _DOS_MAGIC in prefix: return _dos_header(prefix, len(data))
+    return any((start == 0 or prefix[start - 1] == 0x0A) and _comment_lines(prefix[:start])
+               and b'\x00' in prefix[start:] and not _holds_text(prefix[start:])
+               for start in range(max(0, at - _DOS_HEADER), at))
+
+
+def _blank_length(tail):
+    """The remainder with its PostScript length field (bytes 4-7) blanked when that length is
+    below 16 MiB (top byte NUL): its three low bytes may all be printable (0x414243 is 'CBA')."""
+    return tail[:4] + b'\x00\x00\x00' + tail[7:] if len(tail) >= 8 and tail[7] == 0 else tail
+
+
+def _sniff(data, format):
+    """The requested format by magic bytes; SVG goes through the passive intake check."""
+    if format == 'SVG': return _validate_untyped_svg(data)
+    matches = {'PNG': data.startswith(_PNG), 'AI': data.startswith(b'%PDF-'), 'EPS': _eps_signature(data),
+               'THUMBNAIL': data.startswith((_PNG, b'\xff\xd8\xff'))}.get(format, False)
+    if not matches:
+        raise BioArtError('bioart.file_rejected', f'BioArt file does not match the magic bytes (signature) of {format}',
+                          format=format)
 
 
 class BioArtCacheMiss(ValueError):
     """Fresh verified metadata or source bytes are absent with egress disabled."""
+
+
+def _utf8(data):
+    try: return data.decode('utf-8')
+    except UnicodeError: raise ValueError('BioArt metadata must be UTF-8') from None
 
 
 def _load(raw):
@@ -95,6 +195,47 @@ def _validate_untyped_svg(data):
 
 
 def _eligibility(data, format):
+    """arc-bioart-asset/2: SVG preview needs only the passive intake check; AI imports as PDF."""
+    if format=='SVG':
+        _svg_root(data)
+        try:
+            width,height=_validate_svg(data)
+            if max(width,height)>1_000_000:
+                raise ValueError('SVG source dimensions exceed provider safety limit')
+            if len(data)>_SOURCE_LIMIT: raise ValueError('SVG exceeds existing vector import size limit')
+        except ValueError as exc:
+            try: _validate_untyped_svg(data); preview=True
+            except ValueError: preview=False
+            return preview,False,str(exc)
+        return True,True,None
+    _sniff(data,format)
+    if format=='PNG': return _eligibility_v1(data,format)
+    if format=='AI':
+        # The receipt claims only what import_vector(kind='pdf') will accept.
+        if len(data)>_SOURCE_LIMIT: return False,False,'AI exceeds existing vector import size limit'
+        # Without the PDF runtime the answer depends on this install, not on the bytes: record nothing.
+        try: import pypdfium2  # noqa: F401
+        except ImportError: raise BioArtError('bioart.runtime_missing') from None
+        try: _render_pdf(data,inspect_only=True)
+        except ValueError as exc: return False,False,str(exc)
+        return False,True,'AI is imported through its PDF-compatible representation'
+    return False,False,'EPS originals are download-only; never executed'
+
+
+def _thumbnail(data):
+    try:
+        with Image.open(BytesIO(data)) as image:
+            kind = image.format
+            if kind not in {'JPEG','PNG'} or not 0<image.width<=2048 or not 0<image.height<=2048:
+                raise ValueError('unsupported')
+            image.verify()
+    except (OSError,ValueError,Image.DecompressionBombError):
+        raise BioArtError('bioart.file_rejected','BioArt thumbnail is not a bounded JPEG or PNG image') from None
+    return data,'image/jpeg' if kind=='JPEG' else 'image/png'
+
+
+def _eligibility_v1(data, format):
+    """arc-bioart-asset/1 rules, kept so v1 receipts (also written by the native client) verify."""
     if format=='SVG':
         # Source identity and rendering eligibility are separate. Retain unsupported
         # originals as downloads; the existing vector validator still controls import.
@@ -134,33 +275,51 @@ class BioArtClient:
         self.cache=Cache(cache_dir,self.limits.max_cache_bytes); self.client=client
         self._last_content_type = None
 
-    def _request(self,path,limit,mimes):
+    def _request(self,path,limit,mimes,*,action=None,body=None):
         if not self.allow_egress: raise BioArtCacheMiss('Missing or stale cache; explicit --allow-egress required')
         # Only local code constructs endpoint paths; redirects are never followed.
         if not path.startswith('/') or path.startswith('//') or '\\' in path:
             raise ValueError('Invalid BioArt endpoint')
+        post = {'action':action,'body':body} if action is not None else {}
         if self.client is None:
             if _FILE_PATH.fullmatch(path):
                 metadata = {}
                 data = request_in_child(path,limit,mimes,self.limits,metadata=metadata)
                 self._last_content_type = metadata['content_type']
                 return data
-            return request_in_child(path,limit,mimes,self.limits)
+            return request_in_child(path,limit,mimes,self.limits,**post)
         # Injected transports are trusted test/integration code, not an arbitrary
         # native-code sandbox. Owned production HTTPX always uses process isolation.
         with request_deadline(self.limits.timeout_seconds) as remaining:
-            return self._request_bounded(path,limit,mimes,remaining)
+            return self._request_bounded(path,limit,mimes,remaining,**post)
 
-    def _request_bounded(self,path,limit,mimes,remaining):
+    def _request_bounded(self,path,limit,mimes,remaining,action=None,body=None):
+        # The only POST is the read-only discoverSearch Server Action on /discover.
+        if action is not None and (path!='/discover' or not isinstance(action,str) or not _ACTION_ID.fullmatch(action)
+                                   or not isinstance(body,str) or len(body.encode('utf-8'))>1024):
+            raise ValueError('Invalid BioArt search action request')
+        headers={'Accept':', '.join(sorted(mimes)), 'Accept-Encoding':'identity'}
+        if action is not None:
+            headers.update({'Next-Action':action,'Content-Type':'text/plain;charset=UTF-8'})
         owned = self.client is None
-        client = self.client or httpx.Client(trust_env=False,follow_redirects=False)
+        try:
+            client = self.client or outbound_client(ORIGIN)
+        except ProxyUnsupported as error:
+            raise BioArtError('bioart.proxy_unsupported',str(error)) from None
         try:
             for attempt in range(self.limits.max_retries+1):
                 try:
-                    with client.stream('GET',ORIGIN+path,timeout=remaining(),
-                                       follow_redirects=False,headers={'Accept':', '.join(sorted(mimes)), 'Accept-Encoding':'identity'}) as response:
+                    with client.stream('GET' if action is None else 'POST',ORIGIN+path,timeout=remaining(),
+                                       content=None if action is None else body.encode('utf-8'),
+                                       follow_redirects=False,headers=headers) as response:
                         remaining()
                         status=response.status_code
+                        if action is not None and status==404:
+                            head=b''
+                            for chunk in response.iter_bytes():
+                                head+=chunk
+                                if len(head)>1024: break
+                            if b'Server action not found' in head: raise BioArtError('bioart.action_stale')
                         if status in (429,500,502,503,504) and attempt<self.limits.max_retries:
                             delay=0.25*(2**attempt)
                             retry=response.headers.get('retry-after')
@@ -173,14 +332,17 @@ class BioArtClient:
                                 delay=max(0,delay)
                             if delay>=remaining(): raise ValueError('BioArt request total timeout during retry wait')
                             time.sleep(delay); continue
-                        if status!=200: raise ValueError(f'BioArt HTTP {status}; no redirect or access fallback')
+                        if status!=200:
+                            raise BioArtError('bioart.http_status',f'BioArt HTTP {status}; no redirect or access fallback',status=status)
                         if response.headers.get('content-encoding','identity').lower()!='identity':
                             raise ValueError('Unsupported BioArt content encoding; bounded identity transfer required')
                         content_type=response.headers.get('content-type')
                         mime=(content_type or '').split(';')[0].strip().lower()
-                        untyped_svg=(content_type is None and mimes==_MIME['SVG']
-                                     and _FILE_PATH.fullmatch(path) is not None)
-                        if (content_type is not None and len(content_type)>1024) or (mime not in mimes and not untyped_svg):
+                        # NIH's file endpoint sends no Content-Type for any format: accept a
+                        # missing type only for a known file request, then check magic bytes.
+                        untyped=(content_type is None and _FILE_PATH.fullmatch(path) is not None
+                                 and _format_of(mimes) is not None)
+                        if (content_type is not None and len(content_type)>1024) or (mime not in mimes and not untyped):
                             raise ValueError('Unexpected BioArt MIME type')
                         length=response.headers.get('content-length')
                         if length is not None:
@@ -195,43 +357,71 @@ class BioArtClient:
                             data.extend(chunk)
                         if not size: raise ValueError('Empty BioArt response')
                         if length is not None and size!=int(length): raise ValueError('BioArt response content length mismatch or truncated body')
-                        if untyped_svg: _validate_untyped_svg(bytes(data))
+                        if untyped: _sniff(bytes(data),_format_of(mimes))
                         remaining()
                         self._last_content_type = content_type
                         return bytes(data)
-                except httpx.TransportError:
-                    if attempt>=self.limits.max_retries: raise ValueError('BioArt transport timeout or connection failure') from None
+                except httpx.TransportError as error:
+                    if attempt<self.limits.max_retries: continue
+                    if isinstance(error,httpx.TimeoutException):
+                        raise ValueError('BioArt transport timeout') from None
+                    # A refused or unresolvable connection is not a timeout (web maps those to 504).
+                    try: proxy=urlsplit(system_proxy(ORIGIN) or '')
+                    except ProxyUnsupported: proxy=urlsplit('')
+                    raise BioArtError('bioart.unreachable',
+                                      proxy=f'{proxy.hostname}:{proxy.port}' if proxy.hostname else None) from None
             raise ValueError('BioArt retry limit exhausted')
         finally:
             if owned: client.close()
 
-    def _metadata(self,path,parser):
-        index='metadata-'+digest(path.encode())+'.json'
+    def _metadata(self,path,parser,*,fetch=None,suffix='.html',limit=None,source=None):
+        """Cache-first bytes for path; parser takes bytes; fetch overrides the plain HTML GET.
+        source names a non-HTML body in the index key, so older caches of path are never parsed as it."""
+        limit=limit or self.limits.max_metadata_bytes
+        index='metadata-'+digest((path if source is None else f'{path}#{source}').encode())+'.json'
         raw=self.cache.read(index,4096)
         if raw is not None:
             value=_load(raw)
             if not isinstance(value,dict) or set(value)!={'url','retrieved_at','sha256'} or value['url']!=ORIGIN+path or not isinstance(value['sha256'],str) or not _HASH.fullmatch(value['sha256']):
                 raise ValueError('Invalid metadata cache index')
             timestamp=_timestamp(value['retrieved_at'])
-            html=self.cache.read(value['sha256']+'.html',self.limits.max_metadata_bytes)
+            html=self.cache.read(value['sha256']+suffix,limit)
             if html is None or digest(html)!=value['sha256']: raise ValueError('Metadata cache hash mismatch')
-            result=parser(html.decode('utf-8'))
-            if time.time()-timestamp<=self.limits.metadata_ttl_seconds: return result,html,value['sha256']
-        data=self._request(path,self.limits.max_metadata_bytes,{'text/html'})
-        try: result=parser(data.decode('utf-8'))
-        except UnicodeError: raise ValueError('BioArt metadata must be UTF-8') from None
+            # A stale body is refetched unparsed: an older parser's cache must not read as drift.
+            if time.time()-timestamp<=self.limits.metadata_ttl_seconds: return parser(html),html,value['sha256']
+        data=fetch() if fetch else self._request(path,limit,{'text/html'})
+        result=parser(data)
         sha=digest(data)
-        self.cache.write({sha+'.html':data,index:encoded({'url':ORIGIN+path,'retrieved_at':time.time(),'sha256':sha})},replace=(index,))
+        self.cache.write({sha+suffix:data,index:encoded({'url':ORIGIN+path,'retrieved_at':time.time(),'sha256':sha})},replace=(index,))
         return result,data,sha
 
     def inspect(self,entry_id):
         positive_id(entry_id)
-        return self._metadata(f'/bioart/{entry_id}',lambda html:parse_entry(html,entry_id))[0]
+        return self._metadata(f'/bioart/{entry_id}',lambda data:parse_entry(_utf8(data),entry_id))[0]
+
+    def thumbnail(self,entry_id,file_id):
+        """A search-result thumbnail (JPEG or PNG, at most 512 KiB), cached like metadata."""
+        positive_id(entry_id); positive_id(file_id)
+        path=f'/api/bioarts/{entry_id}/files/{file_id}'
+        return self._metadata(path,_thumbnail,suffix='.thumbnail',limit=THUMBNAIL_LIMIT,
+                              fetch=lambda:self._request(path,THUMBNAIL_LIMIT,_THUMBNAIL_MIME))[0]
+
+    def _search_action(self,query):
+        body=json.dumps([f'type:bioart AND {query}?start=0&size=24'],ensure_ascii=False)
+        for _ in range(2):  # a stale action id (NIH redeployed) is re-resolved once
+            page=self._request('/discover',self.limits.max_metadata_bytes,{'text/html'})
+            chunk=self._request(discover_chunk(_utf8(page)),1024**2,_CHUNK_MIME)
+            try:
+                return self._request('/discover',self.limits.max_metadata_bytes,_SEARCH_MIME,
+                                     action=action_id(_utf8(chunk)),body=body)
+            except BioArtError as error:
+                if error.code!='bioart.action_stale': raise
+        raise BioArtError('bioart.drift','BioArt schema drift: NIH still reports the discoverSearch action as not found after re-resolving it')
 
     def search(self,query):
-        if not isinstance(query,str) or not query.strip() or len(query)>200 or any(ord(c)<32 for c in query):
-            raise ValueError('Invalid BioArt search query')
-        return self._metadata('/discover?'+urlencode({'q':query,'sort':'relevance'}),parse_search)[0]
+        query=clean_query(query)
+        return self._metadata('/discover?'+urlencode({'q':query,'sort':'relevance'}),parse_search_action,
+                              fetch=lambda:self._search_action(query),suffix='.rsc',source='discoverSearch')[0]
 
     def search_snapshot(self,query,source: Path):
         """Operator-supplied rendered DOM, never represented as an authenticated fetch."""
@@ -252,7 +442,7 @@ class BioArtClient:
         if representation_id is not None: positive_id(representation_id)
         if not isinstance(format,str) or format.upper() not in _MIME: raise ValueError('Unsupported BioArt format')
         format=format.upper()
-        entry,_,page_hash=self._metadata(f'/bioart/{entry_id}',lambda html:parse_entry(html,entry_id))
+        entry,_,page_hash=self._metadata(f'/bioart/{entry_id}',lambda data:parse_entry(_utf8(data),entry_id))
         if representation_id is None:
             compatible=tuple(r for r in entry.representations if format in r.files)
             if not compatible:
@@ -264,7 +454,8 @@ class BioArtClient:
             if representation is None: raise ValueError('Unknown entry representation')
             if format not in representation.files: raise ValueError('Format absent from representation')
         if entry.license!='Public Domain': raise ValueError('Unknown or restricted license requires operator review; fetch/import blocked')
-        index='fetch-'+digest(encoded([entry_id,representation_id,format,page_hash]))+'.json'
+        # Keyed by schema too: a v1 receipt stays verifiable but is not reused as a v2 fetch.
+        index='fetch-'+digest(encoded([entry_id,representation_id,format,page_hash,SCHEMA]))+'.json'
         existing=self.cache.read(index,4096)
         if existing is not None:
             value=_load(existing)
@@ -280,12 +471,12 @@ class BioArtClient:
         data=self._request(f'/api/bioarts/{entry_id}/files/{file_id}',self.limits.max_file_bytes,_MIME[format])
         preview,eligible,limitation=_eligibility(data,format)
         sha=digest(data); source=sha+'.'+format.lower()
-        value={'schema':'arc-bioart-asset/1','entry_id':entry_id,'entry_url':ORIGIN+f'/bioart/{entry_id}',
+        value={'schema':SCHEMA,'entry_id':entry_id,'entry_url':ORIGIN+f'/bioart/{entry_id}',
             'title':entry.title,'license':entry.license,'credit':entry.credit,'creator':entry.creator,
             'collection':entry.collection,'citation':entry.citation,'representation_id':representation_id,
             'caption':representation.caption,'format':format,'file_id':file_id,'retrieved_at':time.time(),
             'source_page_sha256':page_hash,'sha256':sha,'size':len(data),'source_file':source,
-            'source_content_type':self._last_content_type,
+            'source_content_type':self._last_content_type,'sniffed_format':format,
             'preview_eligible':preview,'import_eligible':eligible,'limitation':limitation,
             'rights_verified':False,'scientific_validity_established':False}
         receipt_data=encoded(value); name=digest(receipt_data)+'.receipt.json'
@@ -304,7 +495,11 @@ class BioArtClient:
         required={'schema','entry_id','entry_url','title','license','credit','creator','collection','citation',
             'representation_id','caption','format','file_id','retrieved_at','source_page_sha256','sha256','size',
             'source_file','preview_eligible','import_eligible','limitation','rights_verified','scientific_validity_established'}
-        if not isinstance(value,dict) or set(value) not in (required,required|{'source_content_type'}) or value['schema']!='arc-bioart-asset/1': raise ValueError('Invalid receipt schema')
+        schema=value.get('schema') if isinstance(value,dict) else None
+        shapes={'arc-bioart-asset/1':(required,required|{'source_content_type'}),
+                SCHEMA:(required|{'source_content_type','sniffed_format'},)}
+        if schema not in shapes or set(value) not in shapes[schema]: raise ValueError('Invalid receipt schema')
+        v1=schema=='arc-bioart-asset/1'
         for field in ('sha256','source_page_sha256'):
             if not isinstance(value[field],str) or not _HASH.fullmatch(value[field]): raise ValueError('Invalid receipt hash')
         positive_id(value['entry_id']); positive_id(value['representation_id']); positive_id(value['file_id'])
@@ -325,12 +520,13 @@ class BioArtClient:
         if 'source_content_type' in value:
             content_type=value['source_content_type']
             if content_type is None:
-                if format!='SVG': raise ValueError('Missing source MIME is only supported for validated SVG')
-                _validate_untyped_svg(data)
+                if v1 and format!='SVG': raise ValueError('Missing source MIME is only supported for validated SVG')
+                if format=='SVG': _validate_untyped_svg(data)  # v2 sniffs the other formats in _eligibility
             elif (not isinstance(content_type,str) or len(content_type)>1024 or
                     content_type.split(';')[0].strip().lower() not in _MIME[format]):
                 raise ValueError('Invalid receipt source MIME')
-        preview,eligible,limitation=_eligibility(data,format)
+        if not v1 and value['sniffed_format']!=format: raise ValueError('Receipt sniffed format mismatch')
+        preview,eligible,limitation=(_eligibility_v1 if v1 else _eligibility)(data,format)
         if (value['preview_eligible'] is not preview or value['import_eligible'] is not eligible or value['limitation']!=limitation or
                 value['rights_verified'] is not False or value['scientific_validity_established'] is not False):
             raise ValueError('Receipt eligibility/assertion mismatch')
@@ -338,8 +534,13 @@ class BioArtClient:
 
     def import_asset(self,receipt: Path,project: Path):
         value=self.verify(receipt)
-        if not value['import_eligible']: raise ValueError('BioArt source is not import eligible: '+str(value['limitation']))
+        if not value['import_eligible']:
+            raise BioArtError('bioart.not_eligible','BioArt source is not import eligible: '+str(value['limitation']))
+        # AI files from NIH are PDF-compatible: they go through the PDF importer by explicit kind.
+        kind='pdf' if value['format']=='AI' else None
+        note=[value['license'],value['credit'],value['citation'],
+              'source format AI (PDF-compatible)' if kind else None,f'receipt SHA256 {Path(receipt).name[:64]}']
         provenance={'origin':'nih_bioart','title':value['title'],'source_url':value['entry_url'],
-            'permission_note':f"{value['license']}; {value['credit']}; {value['citation']}; receipt SHA256 {Path(receipt).name[:64]}",
+            'permission_note':'; '.join(part for part in note if part is not None),
             'external_rendering_authorized':True}
-        return import_vector(self.cache.root/value['source_file'],project,provenance,expected_sha256=value['sha256'])
+        return import_vector(self.cache.root/value['source_file'],project,provenance,expected_sha256=value['sha256'],kind=kind)

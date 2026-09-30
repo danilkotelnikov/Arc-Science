@@ -18,7 +18,10 @@ import time
 
 from . import anchored
 
-SUBJECT_KINDS=('mission','request','persistent')
+SUBJECT_KINDS=('mission','request','persistent','remembered')
+# D009: an explicit consent sent with remember_days covers the same destination and data
+# category for this many days; no other length is accepted.
+REMEMBER_DAYS=30
 DESTINATION_KINDS=('seat','mcp','acp','public_read','biorender','prose','bioart','detector')
 SCOPES=('once','mission','persistent')
 SOURCES=('operator-ui','settings')
@@ -39,7 +42,7 @@ CREATE TABLE IF NOT EXISTS receipts(
   id TEXT PRIMARY KEY, grant_id TEXT, mission_id TEXT, destination TEXT NOT NULL,
   destination_kind TEXT NOT NULL, data_category TEXT NOT NULL, at INTEGER NOT NULL,
   outcome TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', request_digest TEXT,
-  observation_id TEXT, role TEXT);
+  observation_id TEXT, role TEXT, reason_code TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS grants_subject ON grants(subject_kind,subject_id);
 CREATE INDEX IF NOT EXISTS grants_destination ON grants(destination,destination_kind);
 CREATE INDEX IF NOT EXISTS grant_events_grant ON grant_events(grant_id,kind);
@@ -57,7 +60,7 @@ FROM grants g'''
 _GRANT_COLUMNS=('id','subject_kind','subject_id','destination','destination_kind','data_category','purpose',
                 'scope','route_digest','settings_revision','source','granted_at','expires_at','max_uses')
 _RECEIPT_COLUMNS=('id','grant_id','mission_id','destination','destination_kind','data_category','at',
-                  'outcome','reason','request_digest','observation_id','role')
+                  'outcome','reason','request_digest','observation_id','role','reason_code')
 _EVENT_COLUMNS=('seq','grant_id','kind','at','detail')
 _DIGEST=re.compile(r'[0-9a-f]{64}')
 
@@ -76,12 +79,18 @@ def _state(row,now):
     return 'active'
 
 def _grant(row,now):
-    grant=dict(row);grant['state']=_state(row,now);return grant
+    grant=dict(row);grant['state']=_state(row,now);grant['kind']=row['subject_kind'];return grant
 
 class GrantLedger:
-    def __init__(self,path):
+    def __init__(self,path,clock=time.time):
+        # The clock is injectable so expiry can be tested; every stored time is epoch seconds.
+        self.clock=clock
         self.path=Path(path);self.path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-        with closing(sqlite3.connect(self.path,timeout=15)) as db: db.executescript(_SCHEMA)
+        with closing(sqlite3.connect(self.path,timeout=15)) as db:
+            db.executescript(_SCHEMA)
+            # A ledger from before reason codes gains the column; its old receipts read ''.
+            if 'reason_code' not in {row[1] for row in db.execute('PRAGMA table_info(receipts)')}:
+                db.execute("ALTER TABLE receipts ADD COLUMN reason_code TEXT NOT NULL DEFAULT ''");db.commit()
         anchored.owner_only(self.path)  # raises PermissionError rather than serving an open ledger
 
     def _db(self):
@@ -92,11 +101,12 @@ class GrantLedger:
                route_digest='',settings_revision='',source='operator-ui',expires_at=None,max_uses=None):
         _one_of(subject_kind,SUBJECT_KINDS,'subject_kind');_one_of(destination_kind,DESTINATION_KINDS,'destination_kind')
         _one_of(scope,SCOPES,'scope');_one_of(source,SOURCES,'source')
-        if (subject_kind=='persistent')!=(subject_id==''): raise ValueError('subject_id is empty exactly for a persistent grant')
+        if (subject_kind in ('persistent','remembered'))!=(subject_id==''):
+            raise ValueError('subject_id is empty exactly for a persistent or remembered grant')
         if scope=='once': max_uses=1
         if max_uses is not None and (not isinstance(max_uses,int) or max_uses<1): raise ValueError('max_uses must be a positive integer')
         if expires_at is not None and not isinstance(expires_at,int): raise ValueError('expires_at must be epoch seconds')
-        now=int(time.time())
+        now=int(self.clock())
         row=dict(id=secrets.token_hex(16),subject_kind=subject_kind,subject_id=_text(subject_id,'subject_id',required=False),
                  destination=_text(destination,'destination'),destination_kind=destination_kind,
                  data_category=_text(data_category,'data_category'),purpose=_text(purpose,'purpose',required=False),scope=scope,
@@ -105,15 +115,42 @@ class GrantLedger:
                  granted_at=now,expires_at=expires_at,max_uses=max_uses)
         with self._db() as db:
             db.execute('BEGIN IMMEDIATE')
+            if subject_kind=='remembered':
+                # One remembered grant per destination and category: the new one supersedes the
+                # rest in this step, so revoking the one the operator sees ends the consent.
+                for old in db.execute(_GRANTS_SQL+" WHERE g.subject_kind='remembered' AND g.destination=? AND g.data_category=?",
+                                      (row['destination'],row['data_category'])).fetchall():
+                    if _state(old,now)=='active':
+                        db.execute('INSERT INTO grant_events(grant_id,kind,at,detail) VALUES (?,?,?,?)',(old['id'],'revoked',now,'superseded by '+row['id']))
             db.execute('INSERT INTO grants('+','.join(_GRANT_COLUMNS)+') VALUES ('+','.join(':'+c for c in _GRANT_COLUMNS)+')',row)
             db.execute('INSERT INTO grant_events(grant_id,kind,at,detail) VALUES (?,?,?,?)',(row['id'],'created',now,source))
             db.commit()
             return _grant(db.execute(_GRANTS_SQL+' WHERE g.id=?',(row['id'],)).fetchone(),now)
 
+    def remember(self,destination,destination_kind,data_category,purpose=''):
+        """A 'remembered' grant for exactly this destination and data category, expiring after
+        REMEMBER_DAYS. Only a route acting on the operator's explicit request body calls this."""
+        return self.create(subject_kind='remembered',destination=destination,destination_kind=destination_kind,data_category=data_category,
+                           purpose=purpose,scope='persistent',source='operator-ui',expires_at=int(self.clock())+REMEMBER_DAYS*86400)
+
+    def remembered(self,destination,data_category,now=None,*,reserve=True):
+        """The newest active remembered grant for exactly this destination and data category,
+        or None. By default one use is reserved in the same transaction and the caller records
+        the receipt; reserve=False only looks."""
+        now=int(self.clock()) if now is None else int(now)
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            rows=db.execute(_GRANTS_SQL+""" WHERE g.subject_kind='remembered' AND g.destination=? AND g.data_category=?
+                ORDER BY g.granted_at DESC, g.rowid DESC""",(destination,data_category)).fetchall()
+            row=next((r for r in rows if _state(r,now)=='active'),None)
+            if row is not None and reserve: self._reserve(db,row['id'],now)
+            db.commit()
+            return None if row is None else _grant(db.execute(_GRANTS_SQL+' WHERE g.id=?',(row['id'],)).fetchone(),now)
+
     def get(self,grant_id):
         with self._db() as db:
             row=db.execute(_GRANTS_SQL+' WHERE g.id=?',(grant_id,)).fetchone()
-        return _grant(row,int(time.time())) if row else None
+        return _grant(row,int(self.clock())) if row else None
 
     def revoke(self,grant_id,reason=''):
         """The revocation event; a second revoke returns the first one unchanged."""
@@ -124,7 +161,7 @@ class GrantLedger:
             prior=db.execute('SELECT '+','.join(_EVENT_COLUMNS)+' FROM grant_events WHERE grant_id=? AND kind=? ORDER BY seq LIMIT 1',
                              (grant_id,'revoked')).fetchone()
             if prior: db.commit();return dict(prior)
-            at=int(time.time())
+            at=int(self.clock())
             seq=db.execute('INSERT INTO grant_events(grant_id,kind,at,detail) VALUES (?,?,?,?)',(grant_id,'revoked',at,reason)).lastrowid
             db.commit()
         return {'seq':seq,'grant_id':grant_id,'kind':'revoked','at':at,'detail':reason}
@@ -138,13 +175,13 @@ class GrantLedger:
     def reserve(self,grant_id):
         """Consume one use; False when the grant is unknown, revoked, expired or exhausted."""
         with self._db() as db:
-            db.execute('BEGIN IMMEDIATE');ok=self._reserve(db,grant_id,int(time.time()));db.commit()
+            db.execute('BEGIN IMMEDIATE');ok=self._reserve(db,grant_id,int(self.clock()));db.commit()
         return ok
 
     def authorize(self,subject_kind,subject_id,destination,destination_kind):
         """The most specific active grant for this destination — the subject's own before a
         persistent one — reserved in the same transaction; otherwise why not."""
-        now=int(time.time())
+        now=int(self.clock())
         with self._db() as db:
             db.execute('BEGIN IMMEDIATE')
             rows=db.execute(_GRANTS_SQL+''' WHERE g.destination=? AND g.destination_kind=?
@@ -153,20 +190,25 @@ class GrantLedger:
                 (destination,destination_kind,subject_kind,subject_id)).fetchall()
             for row in rows:
                 if _state(row,now)=='active' and self._reserve(db,row['id'],now):
-                    db.commit();return {'allowed':True,'grant_id':row['id'],'reason':'Grant '+row['id'][:12]+' ('+row['scope']+')'}
+                    db.commit();return {'allowed':True,'grant_id':row['id'],'reason':'Grant '+row['id'][:12]+' ('+row['scope']+')',
+                                        'reason_code':'grant.active'}
             db.commit()
-        if not rows: return {'allowed':False,'grant_id':None,'reason':'No grant for '+destination+' ('+destination_kind+')'}
-        return {'allowed':False,'grant_id':rows[0]['id'],'reason':'Grant '+rows[0]['id'][:12]+' for '+destination+' is '+_state(rows[0],now)}
+        if not rows: return {'allowed':False,'grant_id':None,'reason':'No grant for '+destination+' ('+destination_kind+')','reason_code':'grant.none'}
+        state=_state(rows[0],now)
+        return {'allowed':False,'grant_id':rows[0]['id'],'reason':'Grant '+rows[0]['id'][:12]+' for '+destination+' is '+state,
+                'reason_code':'grant.'+state}
 
     def receipt(self,*,destination,destination_kind,data_category,outcome,reason='',grant_id=None,mission_id=None,
-                request_digest=None,observation_id=None,role=None):
+                request_digest=None,observation_id=None,role=None,reason_code=None):
+        """reason_code is the decision's code for a refusal (grant.none, grant.revoked, ...);
+        it defaults to call.<outcome>."""
         _one_of(destination_kind,DESTINATION_KINDS,'destination_kind');_one_of(outcome,OUTCOMES,'outcome')
         if request_digest is not None and not _DIGEST.fullmatch(request_digest):
             raise ValueError('request_digest must be a sha256 hex digest of the arguments, never the arguments')
         row=dict(id=secrets.token_hex(16),grant_id=grant_id,mission_id=mission_id,destination=_text(destination,'destination'),
-                 destination_kind=destination_kind,data_category=_text(data_category,'data_category'),at=int(time.time()),
+                 destination_kind=destination_kind,data_category=_text(data_category,'data_category'),at=int(self.clock()),
                  outcome=outcome,reason=_text(reason,'reason',required=False),request_digest=request_digest,
-                 observation_id=observation_id,role=role)
+                 observation_id=observation_id,role=role,reason_code=reason_code or 'call.'+outcome)
         with self._db() as db:
             db.execute('INSERT INTO receipts('+','.join(_RECEIPT_COLUMNS)+') VALUES ('+','.join(':'+c for c in _RECEIPT_COLUMNS)+')',row)
         return row
@@ -176,7 +218,7 @@ class GrantLedger:
         if subject_kind is not None: where.append('g.subject_kind=?');args.append(subject_kind)
         if subject_id is not None: where.append('g.subject_id=?');args.append(subject_id)
         sql=_GRANTS_SQL+(' WHERE '+' AND '.join(where) if where else '')+' ORDER BY g.granted_at DESC, g.rowid DESC'
-        now=int(time.time())
+        now=int(self.clock())
         with self._db() as db: return [_grant(row,now) for row in db.execute(sql,args)]
 
     def receipts(self,mission_id=None,grant_id=None,limit=200):

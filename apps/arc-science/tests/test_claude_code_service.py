@@ -101,7 +101,7 @@ def test_egress_consent_and_vision_are_enforced_for_the_cli_transport(configured
     with TestClient(create_app(data_dir=tmp_path / 'data', token='t' * 40)) as client:
         denied = client.post('/api/missions', headers=AUTH, json={'goal': 'Vision', 'mode': 'live', 'max_rounds': 1,
                                                                    'allow_egress': True, 'vision_review': True})
-        assert denied.status_code == 409 and 'vision' in denied.json()['detail'].lower()
+        assert denied.status_code == 409 and 'vision' in denied.json()['detail']['detail'].lower()
         # Live mode without egress consent is refused before any mission exists (contract validation).
         refused = client.post('/api/missions', headers=AUTH, json={'goal': 'No consent', 'mode': 'live',
                                                                     'max_rounds': 1, 'allow_egress': False})

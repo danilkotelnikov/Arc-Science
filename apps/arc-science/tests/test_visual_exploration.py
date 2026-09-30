@@ -510,4 +510,4 @@ def test_live_required_vision_needs_separate_configured_model(tmp_path, monkeypa
         response = client.post("/api/missions", headers={"Authorization": "Bearer " + token}, json={
             "goal": "Inspect fixture", "mode": "live", "allow_egress": True, "vision_review": True})
         assert response.status_code == 409
-        assert "vision" in response.json()["detail"].lower()
+        assert "vision" in response.json()["detail"]["detail"].lower()

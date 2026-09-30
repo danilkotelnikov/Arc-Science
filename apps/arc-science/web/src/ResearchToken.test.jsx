@@ -939,6 +939,62 @@ test('claim cards are rendered from the derived claims answer with every row in 
   expect(within(scope).queryByRole('alert')).not.toBeInTheDocument();
 });
 
+test('claim texts show the service rendering of their references as text, falling back to the raw fields', async () => {
+  const text = value => ({kind: 'text', text: value, observation_id: null, field: null, value: null, resolved: null, diagnostic: null, rendered: value});
+  const number = {kind: 'number', text: '{{fit-quadratic.validation_mse}}', observation_id: 'fit-quadratic', field: 'validation_mse', value: 0.0014, resolved: true, diagnostic: null, rendered: '0.0014 [validation_mse, fit-quadratic]'};
+  const name = {kind: 'name', text: '{{name:p53}}', observation_id: null, field: null, value: 'p53', resolved: true, diagnostic: null, rendered: 'p53'};
+  const raw = 'analyst: Error {{fit-quadratic.validation_mse}} for {{name:p53}} <b>bold</b>.';
+  const claim = {...exampleClaim,
+    supported_scope: [raw, 'falsifier: Unrendered {{x.y}}.'],
+    supported_scope_rendered: ['analyst: Error 0.0014 [validation_mse, fit-quadratic] for p53 <b>bold</b>.'],
+    supported_scope_segments: [[text('analyst: Error '), number, text(' for '), name, text(' <b>bold</b>.')]],
+    uncertainties: [{...exampleClaim.uncertainties[0], detail: 'Raw {{name:BRCA1}} detail.', detail_rendered: 'Shown BRCA1 detail.'}],
+    next_tests: [{...exampleClaim.next_tests[0], test: 'Collect more beyond {{fit-quadratic.n_train}}.', test_segments: [text('Collect more beyond '), {...number, text: '{{fit-quadratic.n_train}}', field: 'n_train', value: 48, rendered: '48 [n_train, fit-quadratic]'}, text('.')]}],
+    findings: [{...exampleClaim.findings[0], finding: 'Raw {{name:p53}} finding.', finding_rendered: 'Shown p53 finding.', finding_segments: [text('Shown '), name, text(' finding.')]}]};
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path.endsWith('/claims') ? json({...exampleClaims, claims: [claim]}) : original(path, options));
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  await openTab(user, 'Claims');
+  const card = await within(screen.getByRole('region', {name: 'Claim scope'})).findByRole('article');
+  expect(card).toHaveTextContent('analyst: Error 0.0014 [validation_mse, fit-quadratic] for p53 <b>bold</b>.');
+  expect(card).not.toHaveTextContent('{{fit-quadratic.validation_mse}}');
+  // Segments are text nodes: markup in a text stays text, and names and values carry their kind for styling.
+  expect(card.querySelector('b')).toBeNull();
+  expect([...card.querySelectorAll('.research-ref')].map(el => [el.dataset.kind, el.textContent])).toEqual([
+    ['number', '0.0014 [validation_mse, fit-quadratic]'], ['name', 'p53'], ['name', 'p53'], ['number', '48 [n_train, fit-quadratic]']]);
+  // A scope line without a rendering shows its raw text; the rendered string stands in when no segments came.
+  expect(card).toHaveTextContent('falsifier: Unrendered {{x.y}}.');
+  expect(card).toHaveTextContent('shared identity: Shown BRCA1 detail.');
+  expect(card).toHaveTextContent('Reviewer (QA): Collect more beyond 48 [n_train, fit-quadratic].');
+  expect(card).toHaveTextContent('Reviewer (QA), support: Shown p53 finding.');
+});
+
+test('texts outside the ladder carry its note, and a typed numeral or an unresolved reference is marked', async () => {
+  const text = (value, diagnostic = null) => ({kind: 'text', text: value, observation_id: null, field: null, value: null, resolved: null, diagnostic, rendered: value});
+  const number = {kind: 'number', text: '{{fit-quadratic.validation_mse}}', observation_id: 'fit-quadratic', field: 'validation_mse', value: 0.0014, resolved: true, diagnostic: null, rendered: '0.0014 [validation_mse, fit-quadratic]'};
+  const unresolved = {kind: 'number', text: '{{ghost.n}}', observation_id: 'ghost', field: 'n', value: null, resolved: false, diagnostic: 'unresolved_reference', rendered: '{{ghost.n}}'};
+  const note = 'Uncertainty details, next tests and each role\'s findings lie outside the ladder\'s guarantee.';
+  const claim = {...exampleClaim, outside_ladder_note: note,
+    findings: [{...exampleClaim.findings[0], finding: 'MSE 0.5 versus {{fit-quadratic.validation_mse}} over {{ghost.n}}.',
+      finding_segments: [text('MSE 0.5 versus ', 'literal_numeral'), number, text(' over '), unresolved, text('.')]}]};
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (path, options = {}) => path.endsWith('/claims') ? json({...exampleClaims, claims: [claim]}) : original(path, options));
+  const user = userEvent.setup(); render(<ResearchWorkspace token="operator" setToken={vi.fn()}/>);
+  await openMission(user);
+  await openTab(user, 'Claims');
+  const card = await within(screen.getByRole('region', {name: 'Claim scope'})).findByRole('article');
+  // The uncertainty, findings and next-test rows each open the service's note; the scope row does not.
+  const hints = within(card).getAllByRole('button', {name: 'Outside the ladder'});
+  expect(hints).toHaveLength(3);
+  await user.click(hints[1]);
+  expect(await screen.findByText(note)).toBeInTheDocument();
+  // Each diagnosed segment says what is wrong with it; a traced value carries no diagnostic.
+  expect([...card.querySelectorAll('[data-diagnostic]')].map(el => [el.dataset.diagnostic, el.textContent])).toEqual([
+    ['literal_numeral', 'MSE 0.5 versus '], ['unresolved_reference', '{{ghost.n}}']]);
+  expect(card).toHaveTextContent('MSE 0.5 versus 0.0014 [validation_mse, fit-quadratic] over {{ghost.n}}.');
+});
+
 test('the poll that sees the mission stop also lands its claim cards and timeline, without reselecting', async () => {
   // The claim scope exists only once the mission has stopped: the final poll's side reads must not be lost
   // when the status change ends the polling (the poll's abort signal is shared by those reads).

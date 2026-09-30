@@ -12,18 +12,27 @@ import subprocess
 import time
 import uuid
 import hmac
-import httpx
 import json
-from pydantic import BaseModel, Field
-from fastapi import Body, FastAPI, Depends, Header, HTTPException, Response
-from fastapi.responses import FileResponse
+import contextvars
+import hashlib
+from typing import Literal
+from pydantic import BaseModel, Field, model_validator
+from fastapi import Body, FastAPI, Depends, Header, Query, Response
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .contracts import digest
+from .net import outbound_client
 from .transport import AccessGrant, ProviderError
 from .grants import GrantLedger
-from .exploration.models import Event, MissionRequest, MissionState
-from .exploration.engine import initialize, explore, MissionCancelled
+from .exploration.models import (CONTEXT_CHAR_LIMIT, CONTEXT_MEMORY_LIMIT, CONTEXT_MISSION_LIMIT, CREW_ROLES, ContextItem,
+                                 Event, MissionRequest, MissionState, ModelId, OperatorDecision)
+from .exploration.effort import DEFAULT as DEFAULT_EFFORT, accepted_efforts
+from .exploration.engine import initialize, explore, MissionCancelled, operator_decisions, plan_digest
+from .exploration.tree import build_tree
 from .exploration.agents import DemoAgent, DemoVisionAgent
 from .exploration.providers import HTTPAgent, ModelEndpoint
 from .exploration.cli_seats import redact
@@ -31,14 +40,16 @@ from .credentials import credential_path, credential_source, read_credential_man
 from .readiness import INHERITS, endpoint_confirmed, origin
 from . import anchored
 from . import settings as operator_settings
-from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, declare_resume, mission_change, obligation_states
+from .error_codes import api_error, prose_code
+from .exploration.changes import ChangeRefused, MISSION_CHANGES, RESUME_STALE, declare, declare_resume, mission_change, obligation_states
 from .exploration.claim_scope import DERIVATION_VERSION as CLAIM_DERIVATION_VERSION, derive_claim_scope
 from .exploration.repository import MissionRepository, MissionFinished, RevisionConflict
 from .exploration.timeline import CURRENT_OP, MissionTimeline
+from .exploration.spend import running_minutes, spent
 from .exploration.capsule import export_capsule, verify_capsule
 from .exploration import release as release_ledger
 from .exploration.evidence import evidence_graph
-from .exploration.catalog import TrustedPublicTools
+from .exploration.catalog import PUBLIC_READ_ORIGINS, TrustedPublicTools
 from .diagnostics import host_session
 
 VERSION=__version__
@@ -48,10 +59,15 @@ NATIVE_SESSION_ENV='ARC_NATIVE_SESSION_SECRET'
 class ProseText(BaseModel):
     text:str=Field(min_length=1,max_length=20000)
 
-class ProseDetect(ProseText):
+class Remember(BaseModel):
+    """D009: with the call's consent flag, remember_days: 30 also remembers that consent for
+    exactly this destination and data category; later calls without the flag reuse it."""
+    remember_days:Literal[30]|None=None
+
+class ProseDetect(ProseText,Remember):
     allow_egress:bool=False
 
-class ProseHumanise(ProseText):
+class ProseHumanise(ProseText,Remember):
     """The text leaves this machine for the prose seat's provider: consent per request."""
     allow_egress:bool=False
     instructions:str=Field(default='',max_length=2000)
@@ -66,7 +82,7 @@ class ChangeDeclaration(BaseModel):
     declared_effects:list[str]=Field(default_factory=list,max_length=5)
     note:str=Field(default='',max_length=400)
 
-class ProbeRequest(BaseModel):
+class ProbeRequest(Remember):
     """Explicit consent: a provider probe spends real tokens."""
     spend_tokens:bool=False
 
@@ -78,7 +94,8 @@ class ProbeReply(BaseModel):
 class GrantRequest(BaseModel):
     destination:str=Field(min_length=1,max_length=400)
     destination_kind:str=Field(min_length=1,max_length=20)
-    data_category:str=Field(default='',max_length=200)
+    # The grant ledger's own limit: a seat category with context and directives runs past 200.
+    data_category:str=Field(default='',max_length=500)
     purpose:str=Field(default='',max_length=200)
     scope:str='mission'
 
@@ -89,6 +106,62 @@ class StartRequest(BaseModel):
 
 class RevokeRequest(BaseModel):
     reason:str=Field(default='',max_length=400)
+
+class CrewEntry(BaseModel):
+    """A crew entry as sent: the role name and effort are checked by the service, so a refusal
+    names the role, the level and the levels the seat accepts."""
+    model_config={'extra':'forbid'}
+    model:ModelId
+    effort:str|None=Field(default=None,max_length=20)
+
+class ContextRefs(BaseModel):
+    """Earlier work to attach to a mission, by reference; the service resolves the text."""
+    model_config={'extra':'forbid'}
+    memory_record_ids:list[str]=Field(default_factory=list,max_length=CONTEXT_MEMORY_LIMIT)
+    prior_mission_ids:list[str]=Field(default_factory=list,max_length=CONTEXT_MISSION_LIMIT)
+
+    @model_validator(mode='after')
+    def bounded_ids(self):
+        if any(not 1<=len(ref)<=200 for ref in self.memory_record_ids+self.prior_mission_ids):
+            raise ValueError('A context reference is 1 to 200 characters')
+        return self
+
+    def __bool__(self):return bool(self.memory_record_ids or self.prior_mission_ids)
+
+class MissionCreate(MissionRequest):
+    """The create body (contract C3): the request fields, the crew as sent and the context by
+    reference. context_items are resolved by the service and never accepted from a caller."""
+    crew:dict[str,CrewEntry]|None=None
+    context:ContextRefs|None=None
+
+    @model_validator(mode='before')
+    @classmethod
+    def no_items(cls,data):
+        if isinstance(data,dict) and 'context_items' in data:
+            raise ValueError('context_items are resolved by the service; send context references')
+        return data
+
+    @model_validator(mode='after')
+    def room_for_the_parent(self):
+        # A fork attaches the mission it continues as its first prior mission.
+        prior=self.context.prior_mission_ids if self.context else []
+        if self.continues and self.continues not in prior and len(prior)>=CONTEXT_MISSION_LIMIT:
+            raise ValueError('A fork attaches the mission it continues; name at most four other prior missions')
+        return self
+
+class DecisionRequest(BaseModel):
+    """Operator decisions on the plan a mission waits on (contract C6), bound to the revision read."""
+    model_config={'extra':'forbid'}
+    decisions:list[OperatorDecision]=Field(default_factory=list,max_length=24)
+    expected_revision:int=Field(ge=0)
+    resume:bool=False
+
+class RoutePreviewRequest(BaseModel):
+    model_config={'extra':'forbid'}
+    vision_review:bool=False
+    crew:dict[str,CrewEntry]|None=None
+    context:ContextRefs|None=None
+    gate:Literal['auto','each_round']='auto'
 
 
 def _configured_native_session_secret():
@@ -243,6 +316,60 @@ def live_seats(vision_review=False):
     return live_route(vision_review)['seats']
 
 
+BODY_LIMIT=1024*1024
+
+
+class BodyLimit:
+    """Pure ASGI: counts the body bytes a request actually sends, with or without
+    Content-Length, and refuses the read with the coded 413 once they pass the limit."""
+    def __init__(self,app):self.app=app
+
+    async def __call__(self,scope,receive,send):
+        if scope['type']!='http':return await self.app(scope,receive,send)
+        seen=0
+        async def limited():
+            nonlocal seen
+            message=await receive()
+            seen+=len(message.get('body',b''))
+            if seen>BODY_LIMIT:raise api_error(413,'request.too_large',facts={'limit_bytes':BODY_LIMIT})
+            return message
+        await self.app(scope,limited,send)
+
+
+def with_crew(route,crew):
+    """The route with a mission's crew applied: per role, the model and effort replace the
+    Settings seat's; provider, transport, endpoint and credential stay. Applied before the
+    route is digested, so an approval covers the crew. Refusals carry crew codes."""
+    if not crew:return route
+    seats=dict(route['seats'])
+    for role,entry in crew.items():
+        if role not in CREW_ROLES:raise api_error(422,'crew.unknown_role',facts={'role':role})
+        seat=seats.get(role)
+        if seat is None:raise api_error(422,'crew.no_seat',facts={'role':role})
+        # A seat or model without effort control accepts only the default, stored as None so no
+        # level is sent and the provider's own default applies.
+        accepted=list(accepted_efforts(seat.provider,seat.transport,entry.model));allowed=accepted or [DEFAULT_EFFORT]
+        if entry.effort is not None and entry.effort not in allowed:
+            raise api_error(422,'crew.effort_not_supported',facts={'role':role,'effort':entry.effort,'allowed':allowed})
+        try:seats[role]=ModelEndpoint.model_validate({**seat.model_dump(),'model':entry.model,'effort':entry.effort if accepted else None})
+        except ValueError:raise api_error(422,'crew.model_not_supported',facts={'role':role}) from None
+    return {**route,'seats':seats,'crew':sorted(crew)}
+
+
+def settings_seats(vision_review=False):
+    """The Settings seats a crew is checked against; a role without one is simply absent."""
+    try:return live_route(vision_review)['seats']
+    except Exception:return {}
+
+
+def refuse_uncosted(request,seats):
+    """Fail closed: a cost budget needs every seat to report a cost per call, and only the
+    Claude Code CLI does. Checked at creation and again against the route bound at start."""
+    if request.max_cost_usd is None:return
+    unreported=[role for role,seat in seats.items() if (seat.provider,seat.transport)!=('anthropic','cli')]
+    if unreported:raise api_error(409,'budget.cost_unreported',facts={'roles':unreported})
+
+
 def seat_plan(route):
     """The whole route without secrets (per seat: provider, transport, model, effort,
     credential name, endpoint or executable, OpenClaw agent and isolation; per consented
@@ -261,10 +388,17 @@ def seat_plan(route):
 
 # What each kind of destination receives under a mission grant, in the operator's words.
 SEAT_CATEGORY='mission goal, dataset points, prior observations and assessments';SEAT_PURPOSE='planning, review and refutation'
+MISSION_CONTEXT_CATEGORY='mission_context: memory records and earlier mission findings the operator attached'
+# A mission gated each_round sends the planner the operator's decisions, notes included.
+OPERATOR_DIRECTIVES_CATEGORY='operator_directives: the operator decisions on each plan, with their notes'
+
+
+def seat_category(context=False,directives=False):
+    return '; '.join([SEAT_CATEGORY]+[MISSION_CONTEXT_CATEGORY]*bool(context)+[OPERATOR_DIRECTIVES_CATEGORY]*bool(directives))
 CONNECTOR_CATEGORY='tool arguments the planner chooses';PUBLIC_READ_CATEGORY='query text the planner chooses'
 BIORENDER_CATEGORY='template search terms the planner chooses'
-# The origin each shipped public-read tool reaches (public_reads.py fixes the URLs).
-PUBLIC_READ_ORIGINS={'literature_search':'https://www.ebi.ac.uk','pdb_metadata':'https://data.rcsb.org'}
+# The retraction check of a literature search is its own destination under its own grant.
+OPENALEX_ORIGIN='https://api.openalex.org';RETRACTION_CATEGORY='DOIs of the works a literature search returned'
 
 
 def seat_destination(cfg):
@@ -280,19 +414,26 @@ def connector_destination(entry):
     return (entry.get('command','')+' '+shlex.join(entry.get('args') or [])).strip()
 
 
-def route_preview(route,settings_revision=None):
+def route_preview(route,settings_revision=None,context=False,directives=False):
     """The grants a live route needs before its first start, one per destination, from the
     same snapshot `seat_plan` digests: seats, consented connectors, public reads and
-    BioRender when enabled. Passive: nothing is called and no secret is read."""
+    BioRender when enabled. Passive: nothing is called and no secret is read. A seat the
+    mission's crew overrides says so and is untested on that model; attached context adds
+    its data category to what the seats receive, and nothing else; so does the gate each_round,
+    whose operator directives reach the planner."""
     route_digest,_=seat_plan(route)
+    crew=route.get('crew',())
     seats=[{'role':role,'provider':e.provider,'transport':e.transport,'model':e.model,'effort':e.effort,'destination':seat_destination(e),
-            'destination_kind':'seat','data_category':SEAT_CATEGORY,'purpose':SEAT_PURPOSE} for role,e in route['seats'].items()]
+            'destination_kind':'seat','data_category':seat_category(context,directives),'purpose':SEAT_PURPOSE,
+            'source':'mission' if role in crew else 'settings',**({'tested':False} if role in crew else {})}
+           for role,e in route['seats'].items()]
     connectors=[{'name':s['name'],'kind':'mcp','destination':connector_destination(s),'destination_kind':'mcp',
                  'data_category':CONNECTOR_CATEGORY,'purpose':'tool call'} for s in route['mcp_servers']]
     connectors+=[{'name':a['name'],'kind':'acp','destination':connector_destination(a),'destination_kind':'acp',
                   'data_category':CONNECTOR_CATEGORY,'purpose':'consultation'} for a in route['acp_agents']]
     public_reads=[{'destination':o,'destination_kind':'public_read','data_category':PUBLIC_READ_CATEGORY,'purpose':'public metadata read'}
                   for o in dict.fromkeys(PUBLIC_READ_ORIGINS.values())] if os.environ.get('ARC_PUBLIC_READS')=='1' else []
+    if public_reads:public_reads.append({'destination':OPENALEX_ORIGIN,'destination_kind':'public_read','data_category':RETRACTION_CATEGORY,'purpose':'retraction check'})
     biorender=None
     if os.environ.get('ARC_BIORENDER_READS')=='1':
         from .biorender import BIORENDER_ENDPOINT
@@ -311,10 +452,47 @@ def request_grant(ledger,destination,destination_kind,data_category,purpose,requ
     grant=ledger.create(subject_kind='request',subject_id=uuid.uuid4().hex,destination=destination,destination_kind=destination_kind,
                         data_category=data_category,purpose=purpose,scope='once',route_digest='',settings_revision='',source='operator-ui',max_uses=1)
     ledger.reserve(grant['id'])
+    return _finisher(ledger,grant['id'],destination,destination_kind,data_category,request_digest)
+
+
+def _finisher(ledger,grant_id,destination,destination_kind,data_category,request_digest):
     def finish(outcome,reason=''):
-        ledger.receipt(grant_id=grant['id'],mission_id=None,destination=destination,destination_kind=destination_kind,data_category=data_category,
+        ledger.receipt(grant_id=grant_id,mission_id=None,destination=destination,destination_kind=destination_kind,data_category=data_category,
                        outcome=outcome,reason=str(reason)[:300],request_digest=request_digest,observation_id=None,role=None)
+    finish.grant_id=grant_id
     return finish
+
+
+def consent_covered(ledger,destination,destination_kind,data_category,purpose,*,given,remember_days):
+    """The consent gate of a per-call route: True when the request body carries the consent
+    flag, or an active remembered grant covers exactly this destination and data category.
+    Nothing is written here; remember_days alone is refused."""
+    if remember_days and not given:raise api_error(422,'consent.remember_needs_consent')
+    return bool(given) or ledger.remembered(destination,data_category,reserve=False) is not None
+
+
+def consent_grant(ledger,destination,destination_kind,data_category,purpose,request_digest=None,*,given,remember_days):
+    """At the point of sending: finish(outcome, reason) under a reserved grant, or None when
+    nothing covers the call any more (revoked or expired since the gate). The flag with
+    remember_days writes the remembered grant now, so a route calls this only after its own
+    refusals and those of the component it hands the request to ahead of egress; it
+    supersedes any earlier one; only this request body can, so model output, memory and
+    connector text never do. Without the flag the remembered grant is used; the flag alone
+    is a 'once' grant."""
+    if given and remember_days:
+        grant=ledger.remember(destination,destination_kind,data_category,purpose)
+        grant=grant if ledger.reserve(grant['id']) else None
+    else:
+        grant=None if given else ledger.remembered(destination,data_category)
+    if grant is not None:return _finisher(ledger,grant['id'],destination,destination_kind,data_category,request_digest)
+    return request_grant(ledger,destination,destination_kind,data_category,purpose,request_digest) if given else None
+
+
+# The data category and purpose of each per-call route's grants; the detector's pair is the
+# one prose.Detector passes to its egress hook.
+DETECTION_GRANT=('the submitted text','third-party AI-text detection')
+HUMANISE_GRANT=('the submitted text and instructions','a reader-facing edit by the prose seat')
+PROBE_GRANT=('a fixed readiness prompt that spends tokens','a provider readiness probe')
 
 
 class GuardedSeatAgent:
@@ -453,6 +631,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     repository=MissionRepository(root/'missions.db');running={}
     # The grant ledger is operational and append-only, apart from the mission state and its chain.
     ledger=GrantLedger(root/'grants.db');consented=functools.partial(request_grant,ledger)
+    # The mission's grant-ledger receipts: the ladder checks each external read's receipt against them.
+    def mission_receipts(mid):return ledger.receipts(mission_id=mid,limit=1000)
     # The operational timeline: when each operation started and ended; never evidence.
     timeline=MissionTimeline(root/'timeline.db')
     INTERRUPTED=('Service exit noticed; the mission was running and is now paused (event mission_interrupted). '
@@ -489,7 +669,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         if (native_session_secret and x_arc_native_session and
                 secrets.compare_digest(x_arc_native_session,native_session_secret)):
             return 'native'
-        raise HTTPException(401,'Authentication required',headers={'WWW-Authenticate':'Bearer'})
+        raise api_error(401,'auth.required',headers={'WWW-Authenticate':'Bearer'})
 
     @app.get('/api/session/status',dependencies=[Depends(authorized)])
     async def session_status():
@@ -500,7 +680,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     # project is the workspace (ARC_PROJECT) and the cache path it passes is absolute
     # under that workspace, not under the data directory.
     bioart_project=Path(os.environ.get('ARC_PROJECT') or root)
-    app.include_router(create_bioart_router(bioart_project if bioart_project.is_dir() else root,authorized,egress=consented))
+    # A live NIH read is covered by the request's flag or a remembered grant (D009).
+    app.include_router(create_bioart_router(bioart_project if bioart_project.is_dir() else root,authorized,egress=functools.partial(consent_grant,ledger)))
 
     from .molecular_jobs import MolecularJobs
     def default_preset():
@@ -510,22 +691,35 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     app.include_router(molecular_jobs.router)
 
     from . import prose as prose_module
-    detector=prose_module.Detector(root);detector.egress=consented
+    # The detect route reserves its grant before calling the detector and hands it over here;
+    # any other caller keeps a one-off grant per request.
+    detect_grant=contextvars.ContextVar('detect_grant',default=None)
+    def detector_egress(*args):
+        held=detect_grant.get()
+        if held is None:return consented(*args)
+        held['sent']=True;return held['finish']
+    detector=prose_module.Detector(root);detector.egress=detector_egress
     app.state.detector=detector
+    def prose_capabilities():
+        # The detector asks for the flag on each call; this service also accepts a remembered grant.
+        found=detector.capabilities()
+        return {**found,'detection':{**found['detection'],'consent':'allow_egress: true on the request, or an active 30-day '
+                'remembered grant for this destination and data category; the text leaves this machine'}}
 
     # Prose control: a rule-based local rewrite that never touches scientific content,
-    # and third-party detection that needs consent on every request because the text
-    # leaves this machine. Neither result is an authorship or validity claim.
+    # and third-party detection that needs consent (the request's flag or a remembered
+    # grant) because the text leaves this machine. Neither result is an authorship or
+    # validity claim.
     @app.get('/api/prose/rules',dependencies=[Depends(authorized)])
     async def prose_rules():
         return {'rules':list(prose_module.RULE_TABLE),'rules_version':prose_module.RULES_VERSION,
                 'protected_classes':[name for name,_ in prose_module.PROTECTED],'protection_version':prose_module.PROTECTION_VERSION,
-                **detector.capabilities()}
+                **prose_capabilities()}
 
     def prose_error(refused):
         status={'consent_required':422,'bounds':422,'empty':422,'too_long':422,'refused_instruction':422,'disabled':409,'busy':409,
                 'preservation_failed':409,'provenance_missing':409,'audit_key':409,'seat_unavailable':409}.get(refused.code,502)
-        raise HTTPException(status,{'code':refused.code,'detail':str(refused),'spans':list(refused.spans)})
+        raise api_error(status,prose_code(refused.code),str(refused),facts={'reason':refused.code},spans=list(refused.spans))
 
     @app.post('/api/prose/rewrite',dependencies=[Depends(authorized)])
     async def prose_rewrite(body:ProseText):
@@ -565,24 +759,30 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             line({'status':'refused_instruction'})
             prose_error(prose_module.ProseRefused('refused_instruction','The instruction asks for detector evasion or impersonation, which this '
                 'behaviour does not do; the reader-facing edit is available without it',[{'change':'instruction','class':'refused','literal':matched}]))
+        # The seat's own refusals ahead of egress run before any consent is written or used.
+        if not body.text.strip():prose_error(prose_module.ProseRefused('empty','Nothing to rewrite'))
+        if len(body.text)>prose_module.MAX_CHARS:
+            prose_error(prose_module.ProseRefused('too_long',f'Text exceeds {prose_module.MAX_CHARS} characters'))
         try:cfg=configured_prose_endpoint()
-        except Exception as error:raise HTTPException(409,'The prose seat is not usable: '+str(error)[:300]) from None
-        if cfg is None:raise HTTPException(409,'Configure the prose seat in the settings before a seat rewrite')
+        except Exception as error:raise api_error(409,'prose.seat_unusable','The prose seat is not usable: '+str(error)[:300]) from None
+        if cfg is None:raise api_error(409,'prose.seat_unconfigured')
         if cfg.transport=='api':
             # A missing credential is a local prerequisite, not a provider answer.
             try:_secret(cfg.credential_ref)
             except ValueError as error:prose_error(prose_module.ProseRefused('seat_unavailable','The prose seat has no stored credential: '+str(error)[:200]))
-        if not body.allow_egress:
-            prose_error(prose_module.ProseRefused('consent_required','The text would leave this machine for the '+cfg.provider
-                +' seat; send allow_egress: true to consent to this one request'))
+        destination=seat_destination(cfg);consent=dict(given=body.allow_egress,remember_days=body.remember_days)
+        refusal=prose_module.ProseRefused('consent_required','The text would leave this machine for the '+cfg.provider
+            +' seat; send allow_egress: true to consent to this one request')
+        if not consent_covered(ledger,destination,'prose',*HUMANISE_GRANT,**consent):prose_error(refusal)
         if humanise_lock.locked():prose_error(prose_module.ProseRefused('busy','A seat rewrite is already in flight'))
         async with humanise_lock:
+            # The consent is also a grant in the ledger (once, or the remembered one), with its receipt.
+            finish=consent_grant(ledger,destination,'prose',*HUMANISE_GRANT,keyed,**consent)
+            if finish is None:prose_error(refusal)
             line({'status':'attempted','provider':cfg.provider,'transport':cfg.transport,'model':cfg.model,'chars':len(body.text)})
-            # The consent is also a once-scoped grant in the ledger, with its receipt.
-            finish=consented(seat_destination(cfg),'prose','the submitted text and instructions','a reader-facing edit by the prose seat',keyed)
             seat=None
             try:
-                async with httpx.AsyncClient(trust_env=False) as client:
+                async with outbound_client(asynchronous=True) as client:
                     if cfg.transport=='cli':
                         command=claude_code_command() if cfg.provider=='anthropic' else [cfg.endpoint]
                         seat=CliAgent(command,cfg.model,cfg.model,provider=cfg.provider,efforts={'prose':cfg.effort} if cfg.effort else None)
@@ -594,7 +794,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 finish('failed',refused.code);line({'status':refused.code});prose_error(refused)
             except Exception as error:
                 finish('failed','provider_rejected');line({'status':'provider_rejected'})
-                raise HTTPException(502,{'code':'provider_rejected','detail':'The prose seat did not return a usable edit: '+str(error)[:200],'spans':[]}) from None
+                raise api_error(502,'prose.provider_rejected','The prose seat did not return a usable edit: '+str(error)[:200],
+                                facts={'reason':'provider_rejected'},spans=[]) from None
             finally:
                 if seat is not None and hasattr(seat,'close'):seat.close()
             finish('ok');line({'status':result['status'],'rewritten_sha256':result['rewritten_sha256']})
@@ -606,8 +807,30 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         current=operator_settings.current()
         if current is not None and not (current.get('prose') or {}).get('detection',True):
             prose_error(prose_module.ProseRefused('disabled','Detection is switched off in the settings'))
-        try:return await detector.detect(body.text,allow_egress=body.allow_egress)
-        except prose_module.ProseRefused as refused:prose_error(refused)
+        # Consent is this body's flag or a remembered grant for exactly this destination and
+        # category; without either the detector refuses in its own words and nothing is written.
+        consent=dict(given=body.allow_egress,remember_days=body.remember_days)
+        finish=None
+        if consent_covered(ledger,prose_module.DETECTION_HOST,'detector',*DETECTION_GRANT,**consent):
+            # The detector's refusals ahead of egress run first, so a refused request writes,
+            # reserves and supersedes nothing; no await separates these from the detector's own.
+            if not detector.enabled:
+                prose_error(prose_module.ProseRefused('disabled','Detection is switched off on this service (ARC_PROSE_DETECTION=off)'))
+            if not prose_module.MIN_CHARS<=len(body.text)<=prose_module.MAX_CHARS:
+                prose_error(prose_module.ProseRefused('bounds',f'Text must be {prose_module.MIN_CHARS} to {prose_module.MAX_CHARS} characters'))
+            if detector.busy:prose_error(prose_module.ProseRefused('busy','A detection request is already in flight'))
+            # The audit key is a local prerequisite of the attempt record.
+            try:detector._key()
+            except prose_module.ProseRefused as refused:prose_error(refused)
+            finish=consent_grant(ledger,prose_module.DETECTION_HOST,'detector',*DETECTION_GRANT,
+                                 hashlib.sha256(body.text.encode('utf-8')).hexdigest(),**consent)
+        held={'finish':finish,'sent':False};reset=detect_grant.set(held)
+        try:return await detector.detect(body.text,allow_egress=finish is not None)
+        except prose_module.ProseRefused as refused:
+            # Refused before anything left (bounds, busy, switched off): the reserved use is denied.
+            if finish is not None and not held['sent']:finish('denied',refused.code)
+            prose_error(refused)
+        finally:detect_grant.reset(reset)
 
     # Operator settings: the native supervisor owns the file; the service reads the
     # snapshot and forwards a whole replacement with the revision the operator saw.
@@ -619,6 +842,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
              'prose':('next prose request','Detection and the prose seat read the settings on each request.'),
              'blender':('next render submission','The default preset is read when a render is submitted.'),
              'viewer':('next Molecules session','The Molecules workspace reads viewer defaults when its session token changes; this build does not reload them on save.')}
+    # The same moments as stable codes for a localised page.
+    APPLIES={'seats':'mission_start','providers':'mission_start','mcp_servers':'mission_start','acp_agents':'mission_start',
+             'prose':'prose_request','blender':'render_submit','viewer':'molecules_session'}
     APPLIED={'restart_required':[],'restart_note':'No setting in this build needs a restart.'}
     def settings_changed(before,after):
         changed=[]
@@ -628,15 +854,17 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         changed+=[section for section in ('mcp_servers','acp_agents','prose','blender','viewer') if before.get(section)!=after.get(section)]
         return changed
     async def settings_report(snap,changed):
-        effects=[{'section':section,'applies':EFFECTS[section.split('.')[0]][0],'note':EFFECTS[section.split('.')[0]][1]} for section in changed]
+        effects=[{'section':section,'applies':EFFECTS[section.split('.')[0]][0],'applies_code':APPLIES[section.split('.')[0]],
+                  'note':EFFECTS[section.split('.')[0]][1]} for section in changed]
         return {**snap,**APPLIED,'changed':changed,'effects':effects,'applied_live':changed,
                 'bound_missions':await asyncio.to_thread(repository.count_bound_live)}
     settings_writer=asyncio.Semaphore(1)
     @app.get('/api/settings',dependencies=[Depends(authorized)])
     async def settings_snapshot():
         try:snap=await asyncio.to_thread(operator_settings.snapshot)
-        except operator_settings.SettingsUnavailable as why:raise HTTPException(503,str(why)) from None
-        except (operator_settings.SettingsRejected,ValueError,OSError,subprocess.SubprocessError) as why:raise HTTPException(500,str(why)[:700]) from None
+        except operator_settings.SettingsUnavailable as why:raise api_error(503,'settings.unavailable',str(why)) from None
+        except (operator_settings.SettingsRejected,ValueError,OSError,subprocess.SubprocessError) as why:
+            raise api_error(500,'settings.read_failed',str(why)[:700]) from None
         return await settings_report(snap,[])
 
     @app.put('/api/settings',dependencies=[Depends(authorized)])
@@ -645,10 +873,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             try:
                 before=(await asyncio.to_thread(operator_settings.snapshot))['settings']
                 snap=await asyncio.to_thread(operator_settings.replace,body.settings,body.if_revision)
-            except operator_settings.SettingsUnavailable as why:raise HTTPException(503,str(why)) from None
-            except operator_settings.SettingsStale as why:raise HTTPException(409,str(why)) from None
-            except operator_settings.SettingsRejected as why:raise HTTPException(422,str(why)) from None
-            except (ValueError,OSError,subprocess.SubprocessError) as why:raise HTTPException(500,str(why)[:700]) from None
+            except operator_settings.SettingsUnavailable as why:raise api_error(503,'settings.unavailable',str(why)) from None
+            except operator_settings.SettingsStale as why:raise api_error(409,'settings.revision_conflict',str(why)) from None
+            except operator_settings.SettingsRejected as why:raise api_error(422,'settings.rejected',str(why)) from None
+            except (ValueError,OSError,subprocess.SubprocessError) as why:raise api_error(500,'settings.write_failed',str(why)[:700]) from None
         return await settings_report(snap,settings_changed(before,snap['settings']))
 
     # Connectors: the operator's connection checks. Listing an MCP server's tools and
@@ -656,7 +884,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     # data is a per-entry setting, and every mission call still needs egress consent.
     def connector_entries(key):
         current=operator_settings.current()
-        if current is None:raise HTTPException(503,'Settings are not available to this service')
+        if current is None:raise api_error(503,'settings.unavailable')
         return [dict(entry) for entry in (current.get(key) or [])]
 
     @app.post('/api/mcp/servers/check',dependencies=[Depends(authorized)])
@@ -664,7 +892,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         from .exploration import mcp_tools
         entries=connector_entries('mcp_servers')
         try:report=await mcp_tools.inspect_servers(entries)
-        except RuntimeError as why:raise HTTPException(503,str(why)) from None
+        except RuntimeError as why:raise api_error(503,'mcp.unavailable',str(why)) from None
         return {'sdk':mcp_tools.sdk_version(),'servers':report,
                 'consented':[e['name'] for e in entries if e.get('enabled',True) and e.get('consent')]}
 
@@ -690,10 +918,15 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     memory_routes.set_snapshot_source(memory_snapshots)
     app.include_router(memory_routes.router)
 
+    # A body without Content-Length (chunked) is counted as it arrives; the route reading it
+    # gets the coded 413 instead of more bytes, before validation and before authentication.
+    # Added first, so it sits inside the header middleware and the route sees its refusal directly.
+    app.add_middleware(BodyLimit)
+
     @app.middleware('http')
     async def security_headers(request,call_next):
-        if request.headers.get('content-length','0').isdigit() and int(request.headers.get('content-length','0'))>1024*1024:
-            return Response(status_code=413)
+        if request.headers.get('content-length','0').isdigit() and int(request.headers.get('content-length','0'))>BODY_LIMIT:
+            return JSONResponse({'detail':api_error(413,'request.too_large',facts={'limit_bytes':BODY_LIMIT}).detail},status_code=413)
         response=await call_next(request)
         response.headers['X-Content-Type-Options']='nosniff'
         response.headers['Referrer-Policy']='no-referrer'
@@ -701,9 +934,24 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         response.headers.setdefault('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
         return response
 
+    @app.exception_handler(StarletteHTTPException)
+    async def coded_http_error(request,why):
+        # FastAPI answers a body it cannot decode with a plain-text 400 (no route here raises one); it gets the request.invalid code.
+        if why.status_code==400 and not isinstance(why.detail,dict):
+            return JSONResponse({'detail':api_error(400,'request.invalid',facts={'errors':[
+                {'loc':['body'],'type':'body_unreadable','msg':str(why.detail)[:200]}]}).detail},status_code=400)
+        return await http_exception_handler(request,why)
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request,why):
+        # A body or query that fails validation is refused before any route runs; the
+        # facts name each failing field and never echo its value.
+        errors=[{'loc':list(e.get('loc',())),'type':e.get('type',''),'msg':e.get('msg','')} for e in why.errors()]
+        return JSONResponse({'detail':api_error(422,'request.invalid',facts={'errors':errors}).detail},status_code=422)
+
     def get(mid):
         try:return repository.get(mid)
-        except KeyError:raise HTTPException(404,'Unknown mission') from None
+        except KeyError:raise api_error(404,'mission.not_found',facts={'mission_id':mid}) from None
 
     def health_document():
         # host_session says who started the service (the desktop marks its own child); it is
@@ -728,8 +976,64 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     @app.get('/api/missions/preview',dependencies=[Depends(authorized)])
     async def mission_preview(vision_review:int=0):
         try:route=live_route(bool(vision_review))
-        except Exception as error:raise HTTPException(409,'Configure the model seats before starting: '+str(error)[:300]) from None
+        except Exception as error:raise api_error(409,'mission.seats_unconfigured','Configure the model seats before starting: '+str(error)[:300]) from None
         return route_preview(route,settings_revision())
+
+    @app.post('/api/missions/preview',dependencies=[Depends(authorized)])
+    async def mission_preview_for(body:RoutePreviewRequest):
+        # The same preview for a mission as it would be created: its crew applied, its context named.
+        try:route=live_route(body.vision_review)
+        except Exception as error:raise api_error(409,'mission.seats_unconfigured','Configure the model seats before starting: '+str(error)[:300]) from None
+        return route_preview(with_crew(route,body.crew),settings_revision(),context=bool(body.context),directives=body.gate=='each_round')
+
+    def mission_summary(mid,request,state):
+        """What a prior mission contributes: its goal, status, mode and data origin, its current
+        release status with the blocking reasons, and each claim's supported scope, evidence and
+        open uncertainty as the claim scope derived them. A demo run or a blocked release says so."""
+        titles={b.id:b.title for b in state.branches}
+        claims=[{'branch_id':b.branch_id,'title':titles.get(b.branch_id,''),'requested':b.requested,'status':b.status,
+                 'supported_scope':list(b.supported_scope),'scope_qualifier':b.scope_qualifier,'evidence_ids':list(b.evidence_ids),
+                 'uncertainties':[u.reason+': '+u.detail for u in b.uncertainties]}
+                for b in (state.claim_scope.branches if state.claim_scope else ())]
+        # The same inputs as the mission's own view (with_release): its timeline checks read receipts.
+        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(mid),timeline_rows=timeline.rows(mid),
+                                                 receipts=mission_receipts(mid))
+        return json.dumps({'goal':request.goal,'status':state.status,'mode':request.mode,'data_origin':state.data_origin,
+                           'release':{'status':decision.status,'blocking_reasons':list(decision.blocking_reasons)},'claims':claims},
+                          ensure_ascii=False,separators=(',',':'))
+
+    def memory_record(ref):
+        try:record=memory_routes._operation('inspect',ref)
+        except Exception as why:
+            # The memory routes answer 404 for an unknown record; anything else is the store failing.
+            if getattr(why,'status_code',None)==404:raise api_error(404,'context.unknown_record',facts={'kind':'memory','ref':ref}) from None
+            raise api_error(503,'memory.unavailable') from None
+        # Only visible records: a disabled record is unknown to a mission.
+        if not isinstance(record,dict) or record.get('visibility')!='visible':
+            raise api_error(404,'context.unknown_record',facts={'kind':'memory','ref':ref})
+        # The trust label and source travel with the text: a record a mission wrote is earlier
+        # model agreement, which the engine shows the planner only.
+        labels={k:str(record[k])[:limit] for k,limit in (('trust',40),('source_uri',400)) if record.get(k)}
+        return {'kind':'memory','ref':ref,'digest':record['content_digest'],'text':record['text'],**labels,
+                'title':f"{record.get('role','')} record {record.get('seq','')} of session {record.get('session_id','')}"[:300]}
+
+    async def resolve_context(refs):
+        """The attached records and missions as item dicts in the order named, each once."""
+        items=[await asyncio.to_thread(memory_record,ref) for ref in dict.fromkeys(refs.memory_record_ids)]
+        for ref in dict.fromkeys(refs.prior_mission_ids):
+            try:row=repository.get(ref)
+            except KeyError:raise api_error(404,'context.unknown_record',facts={'kind':'mission','ref':ref}) from None
+            state=MissionState.model_validate(row['state'])
+            items.append({'kind':'mission','ref':ref,'title':row['request']['goal'][:300],'digest':release_ledger.subject_digest(state),
+                          'text':mission_summary(ref,MissionRequest.model_validate(row['request']),state)})
+        return items
+
+    @app.post('/api/missions/context/preview',dependencies=[Depends(authorized)])
+    async def context_preview(refs:ContextRefs):
+        # Read-only: what the context would hold and its size, for the composer to show.
+        items=await resolve_context(refs);total=sum(len(i['text']) for i in items)
+        return {'items':[{**{k:i[k] for k in ('kind','ref','title','digest')},'chars':len(i['text'])} for i in items],
+                'total_chars':total,'limit':CONTEXT_CHAR_LIMIT,'over_limit':total>CONTEXT_CHAR_LIMIT}
 
     @app.get('/api/missions/{mid}/grants',dependencies=[Depends(authorized)])
     async def mission_grants(mid:str):
@@ -739,9 +1043,16 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         return {'grants':ledger.list('mission',mid),'receipts':receipts,'receipts_truncated':len(receipts)>=1000}
 
     @app.get('/api/missions/{mid}/timeline',dependencies=[Depends(authorized)])
-    async def mission_timeline(mid:str):
+    async def mission_timeline(mid:str,after:int|None=Query(default=None,ge=0)):
         get(mid);rows=timeline.rows(mid)
-        return {'mission_id':mid,'kind':'operational','recorded':bool(rows),'count':len(rows),'rows':rows,
+        # cursor: the `after` to send next. It stops below the first row without a recorded
+        # outcome, so a row that finishes later is sent again with its outcome.
+        # ponytail: a row abandoned by a pause or crash stays open forever and holds the cursor
+        # there; the deltas only grow by what followed it.
+        open_rows=[r['sequence'] for r in rows if r['outcome_source']=='derived']
+        cursor=min(open_rows)-1 if open_rows else (rows[-1]['sequence'] if rows else 0)
+        if after is not None:rows=[r for r in rows if r['sequence']>after]
+        return {'mission_id':mid,'kind':'operational','recorded':bool(rows),'count':len(rows),'rows':rows,'cursor':cursor,
                 'note':'Operational record written by the service worker and operator routes; not scientific evidence. '
                        'A row whose outcome is not recorded is in flight while the mission status is running; '
                        'otherwise it was abandoned by a pause, a cancellation or a service exit.'}
@@ -754,7 +1065,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         try:graph=evidence_graph(state)
         except ValueError:graph=None
         # 'routes' is additive and read-only here; the capsule's claims.json is unchanged.
-        return {'mission_id':mid,**build_claims(state,timeline.rows(mid),graph,row['release']),'routes':route_states(state)}
+        return {'mission_id':mid,**build_claims(state,timeline.rows(mid),graph,row['release'],receipts=mission_receipts(mid),
+                                                request=MissionRequest.model_validate(row['request'])),
+                'routes':route_states(state)}
 
     @app.get('/api/grants',dependencies=[Depends(authorized)])
     async def list_grants(subject_kind:str|None=None,subject_id:str|None=None):
@@ -764,7 +1077,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     async def revoke_grant(grant_id:str,body:RevokeRequest=Body(default=RevokeRequest())):
         # Idempotent: the next call of a running mission under this grant is refused and recorded.
         try:return ledger.revoke(grant_id,body.reason)
-        except KeyError:raise HTTPException(404,'Unknown grant') from None
+        except KeyError:raise api_error(404,'grant.not_found',facts={'grant_id':grant_id}) from None
 
     # The last probe record per CLI transport name and, for API subjects, per provider.
     PROVIDERS=('anthropic','openai','gemini','openclaw')
@@ -807,7 +1120,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             transport_cache[provider]={'at':time.monotonic(),'value':value}
         return {**transport_cache[provider]['value'],'last_probe':probes[name]}
 
-    probe_lock=asyncio.Lock();probe_last={'at':0.0}
+    probe_lock=asyncio.Lock();probe_last=app.state.probe_last={'at':0.0}
     PROBE_COOLDOWN=30.0
     PROBE_INSTRUCTIONS='You are Arc Science\'s readiness probe. Return only the JSON object {"ok": true}.'
 
@@ -823,54 +1136,80 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         from .exploration.cli_seats import CliAgent, executable_digest
         from .readiness import subject as probe_subject, subject_digest
         provider='anthropic' if provider=='claude-code' else provider
-        if provider not in PROVIDERS:raise HTTPException(404,'Unknown provider')
+        if provider not in PROVIDERS:raise api_error(404,'provider.unknown',facts={'provider':provider})
         name=CLI_TRANSPORTS[provider][1] if provider in CLI_TRANSPORTS else None
-        if not consent.spend_tokens:raise HTTPException(422,'Confirm spend_tokens=true; a probe makes a real model call per configured model')
         settings=operator_settings.current() or {}
         try:seats=provider_seats(settings,provider)
-        except Exception as error:raise HTTPException(409,str(error)) from None
-        if not seats:raise HTTPException(409,f'No seat uses the provider {provider}')
-        if probe_lock.locked():raise HTTPException(409,'A probe is already running')
-        if time.monotonic()-probe_last['at']<PROBE_COOLDOWN:raise HTTPException(429,'Probe cooldown: wait before spending again')
+        except Exception as error:raise api_error(409,'probe.seat_invalid',str(error),facts={'provider':provider}) from None
+        if not seats:raise api_error(409,'probe.no_seat',f'No seat uses the provider {provider}',facts={'provider':provider})
+        # Consent names where the tokens go, as a mission seat grant does: the endpoint origin
+        # or the CLI executable. The body's spend_tokens, or a remembered grant for each of them.
+        destinations=list(dict.fromkeys(seat_destination(e) for e in seats.values()))
+        given=dict(given=consent.spend_tokens,remember_days=consent.remember_days)
+        if not all(consent_covered(ledger,d,'seat',*PROBE_GRANT,**given) for d in destinations):raise api_error(422,'probe.consent_required')
+        if probe_lock.locked():raise api_error(409,'probe.busy')
+        if time.monotonic()-probe_last['at']<PROBE_COOLDOWN:
+            raise api_error(429,'probe.cooldown',facts={'retry_after_s':max(1,int(PROBE_COOLDOWN-(time.monotonic()-probe_last['at']))+1)})
         async with probe_lock:
+            finishes={d:consent_grant(ledger,d,'seat',*PROBE_GRANT,**given) for d in destinations}
+            if None in finishes.values():
+                for f in finishes.values():
+                    if f is not None:f('denied','consent withdrawn before the probe')
+                raise api_error(422,'probe.consent_required')
             probe_last['at']=time.monotonic()
-            command=_cli_command(settings,provider) if any(e.transport=='cli' for e in seats.values()) else None
-            executable_sha256=await executable_digest(command[0]) if command else None
-            # The subject names what a result verifies; readiness matches a seat to it by digest.
-            distinct={}
-            for role,e in seats.items():
-                verified=(probe_subject(provider,'cli',e.model,e.effort,executable_sha256=executable_sha256) if e.transport=='cli'
-                          else probe_subject(provider,'api',e.model,e.effort,endpoint=origin(e.endpoint),credential_ref=e.credential_ref))
-                distinct.setdefault(subject_digest(verified),(verified,e,[]))[2].append(role)
-            results=[]
-            async with httpx.AsyncClient(trust_env=False) as client:
-                for digest_value,(verified,e,roles) in distinct.items():
-                    record={'model':e.model,'effort':e.effort,'roles':roles,'transport':e.transport,'subject':verified,'subject_digest':digest_value}
-                    started=time.monotonic();seat=None
-                    try:
-                        if e.transport=='cli':
-                            seat=CliAgent(command,e.model,e.model,provider=provider,efforts={'probe':e.effort} if e.effort else None);target=e.model
-                        else:
-                            seat=HTTPAgent(e,client=client,project='probe',principal='local-operator',
-                                           resolver=lambda ref,principal,project,e=e:access_grant(e,ref,principal,project));target=e
-                        await seat._call(target,PROBE_INSTRUCTIONS,{'probe':True},ProbeReply,role='probe')
-                        call=seat.calls[-1]
-                        results.append({**record,'ok':True,'observed_model':call['observed_model'],
-                                        'identity_verified':call['identity_verified'],'applied_effort':call['applied_effort'],
-                                        'duration_ms':int((time.monotonic()-started)*1000)})
-                    except Exception as error:
-                        results.append({**record,'ok':False,'error':redact(str(error))[:300],
-                                        'duration_ms':int((time.monotonic()-started)*1000)})
-                    finally:
-                        if seat is not None and hasattr(seat,'close'):seat.close()
-            at=int(time.time());reply={'at':at,'transport':name if command else 'api','provider':provider,'results':results}
-            (root/'providers').mkdir(parents=True,exist_ok=True)
-            for key,transport in ((name,'cli'),(provider,'api')):
-                mine=[r for r in results if r['transport']==transport]
-                if not mine:continue
-                probes[key]={'at':at,'transport':key if transport=='cli' else 'api','provider':provider,'results':mine}
-                with (root/'providers'/(key+'-probes.jsonl')).open('a',encoding='utf-8') as log:log.write(json.dumps(probes[key])+'\n')
-            return reply
+            try:
+                command=_cli_command(settings,provider) if any(e.transport=='cli' for e in seats.values()) else None
+                executable_sha256=await executable_digest(command[0]) if command else None
+                # The subject names what a result verifies; readiness matches a seat to it by digest.
+                distinct={}
+                for role,e in seats.items():
+                    verified=(probe_subject(provider,'cli',e.model,e.effort,executable_sha256=executable_sha256) if e.transport=='cli'
+                              else probe_subject(provider,'api',e.model,e.effort,endpoint=origin(e.endpoint),credential_ref=e.credential_ref))
+                    distinct.setdefault(subject_digest(verified),(verified,e,[]))[2].append(role)
+                results=[];calls={d:[] for d in destinations};withdrawn=set()
+                async with outbound_client(asynchronous=True) as client:
+                    for digest_value,(verified,e,roles) in distinct.items():
+                        record={'model':e.model,'effort':e.effort,'roles':roles,'transport':e.transport,'subject':verified,'subject_digest':digest_value}
+                        started=time.monotonic();seat=None
+                        # Every model call re-reads its grant: one revoked or expired mid-probe
+                        # stops the calls still to come.
+                        grant=ledger.get(finishes[seat_destination(e)].grant_id)
+                        if grant is None or grant['state'] in ('revoked','expired'):
+                            results.append({**record,'ok':False,'error':'consent withdrawn','duration_ms':0})
+                            withdrawn.add(seat_destination(e));continue
+                        try:
+                            if e.transport=='cli':
+                                seat=CliAgent(command,e.model,e.model,provider=provider,efforts={'probe':e.effort} if e.effort else None);target=e.model
+                            else:
+                                seat=HTTPAgent(e,client=client,project='probe',principal='local-operator',
+                                               resolver=lambda ref,principal,project,e=e:access_grant(e,ref,principal,project));target=e
+                            await seat._call(target,PROBE_INSTRUCTIONS,{'probe':True},ProbeReply,role='probe')
+                            call=seat.calls[-1]
+                            results.append({**record,'ok':True,'observed_model':call['observed_model'],
+                                            'identity_verified':call['identity_verified'],'applied_effort':call['applied_effort'],
+                                            'duration_ms':int((time.monotonic()-started)*1000)})
+                        except Exception as error:
+                            results.append({**record,'ok':False,'error':redact(str(error))[:300],
+                                            'duration_ms':int((time.monotonic()-started)*1000)})
+                        finally:
+                            if seat is not None and hasattr(seat,'close'):seat.close()
+                        calls[seat_destination(e)].append(results[-1]['ok'])
+                at=int(time.time());reply={'at':at,'transport':name if command else 'api','provider':provider,'results':results}
+                (root/'providers').mkdir(parents=True,exist_ok=True)
+                for key,transport in ((name,'cli'),(provider,'api')):
+                    mine=[r for r in results if r['transport']==transport]
+                    if not mine:continue
+                    probes[key]={'at':at,'transport':key if transport=='cli' else 'api','provider':provider,'results':mine}
+                    with (root/'providers'/(key+'-probes.jsonl')).open('a',encoding='utf-8') as log:log.write(json.dumps(probes[key])+'\n')
+                # One receipt per destination, naming how many model calls went there.
+                for d,finish in finishes.items():
+                    finish('denied' if d in withdrawn else 'ok' if all(calls[d]) else 'failed',
+                           f'{len(calls[d])} model call(s)'+(', the rest withdrawn' if d in withdrawn else ''))
+                return reply
+            except BaseException as error:
+                # Every reserved use has a receipt, even when the probe itself breaks.
+                for finish in finishes.values():finish('failed',type(error).__name__)
+                raise
 
     from .readiness import create_router as readiness_router
     readiness_api=readiness_router(authorized=authorized,root=root,repository=repository,cli_transport=cli_transport,cli_transports=CLI_TRANSPORTS,
@@ -926,33 +1265,66 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 'public_network_tools_enabled':os.environ.get('ARC_PUBLIC_READS')=='1',
                 'biorender':biorender,
                 'blender':'batch adapter retained; renderer availability must be checked separately',
-                'prose':detector.capabilities(),
+                'prose':prose_capabilities(),
                 'publication_authorization':False}
 
     @app.post('/api/missions',status_code=201,dependencies=[Depends(authorized)])
-    async def new_mission(request:MissionRequest,idempotency_key:str|None=Header(default=None)):
-        if request.mode=='live':
+    async def new_mission(body:MissionCreate,idempotency_key:str|None=Header(default=None)):
+        refs=body.context
+        if body.continues:
+            # A fork continues a finished mission, whose supported scope is its first context item.
+            try:parent=repository.get(body.continues)
+            except KeyError:raise api_error(404,'context.unknown_record',facts={'kind':'mission','ref':body.continues}) from None
+            if parent['state']['status'] not in ('completed','budget_exhausted','needs_input'):
+                raise api_error(409,'fork.not_finished',facts={'mission_id':body.continues,'status':parent['state']['status']})
+            prior=[body.continues]+[ref for ref in (refs.prior_mission_ids if refs else []) if ref!=body.continues]
+            refs=ContextRefs(memory_record_ids=refs.memory_record_ids if refs else [],prior_mission_ids=prior)
+        named=sorted([('memory',r) for r in dict.fromkeys(refs.memory_record_ids)]+[('mission',r) for r in dict.fromkeys(refs.prior_mission_ids)]) if refs else []
+        earlier=repository.by_key(idempotency_key) if idempotency_key else None
+        # An idempotent retry returns the frozen mission: the Settings of the moment are checked
+        # only for a new one. The crew is checked against the Settings seats now and applied
+        # again, from the Settings of the moment, when the route is bound at the first start.
+        if body.crew and earlier is None:with_crew({'seats':settings_seats(body.vision_review)},body.crew)
+        if earlier is not None:
+            # A retry reuses the context frozen by the first request instead of resolving it again,
+            # so a prior mission that moved on since does not turn the retry into a conflict.
+            frozen=MissionRequest.model_validate(earlier['request']).context_items
+            if sorted((i.kind,i.ref) for i in frozen)!=named:raise api_error(409,'mission.idempotency_conflict')
+            items=[i.model_dump(mode='json') for i in frozen]
+        else:items=await resolve_context(refs) if refs else []
+        # The parent leads, whatever else is attached.
+        items.sort(key=lambda i:(i['kind'],i['ref'])!=('mission',body.continues))
+        chars=sum(len(i['text']) for i in items)
+        if chars>CONTEXT_CHAR_LIMIT:raise api_error(409,'context.too_large',facts={'chars':chars,'limit':CONTEXT_CHAR_LIMIT})
+        # Every new mission writes its claims as references and is held to the ladder (D019).
+        request=MissionRequest.model_validate({**body.model_dump(mode='json',exclude={'crew','context'}),'ladder_policy':'references',
+            **({'crew':{role:entry.model_dump() for role,entry in body.crew.items()}} if body.crew else {}),
+            **({'context_items':[ContextItem(**i) for i in items]} if items else {})})
+        if request.mode=='live' and earlier is None:
             try:live_seats_ready()
-            except Exception:raise HTTPException(409,'Configure model endpoints and server-side credential files before live use') from None
+            except Exception:raise api_error(409,'mission.live_unconfigured') from None
             if request.vision_review:
                 try:_secret(configured_vision_endpoint().credential_ref)
-                except Exception:raise HTTPException(409,'Configure a separate vision model endpoint and server-side credential file before required vision review') from None
+                except Exception:raise api_error(409,'mission.vision_unconfigured') from None
             if os.environ.get('ARC_BIORENDER_READS')=='1':
                 try:biorender_configuration()
-                except Exception:raise HTTPException(409,'Configure the separate BioRender credential, protocol and schema pin before enabling reads') from None
+                except Exception:raise api_error(409,'mission.biorender_unconfigured') from None
+            refuse_uncosted(request,live_seats(request.vision_review))
         try:
             row=repository.create(request,initialize(request),key=idempotency_key or uuid.uuid4().hex)
             memory_routes.schedule_capture(row['id'],MissionState.model_validate(row['state']))
-            return row
-        except RevisionConflict:raise HTTPException(409,'Idempotency key conflicts with an earlier request') from None
-        except ValueError:raise HTTPException(422,'Invalid creation key or mission state') from None
+            # A demo mission runs the fixture agents: its crew is recorded, not applied.
+            return {**row,'crew_applies':request.mode=='live'} if request.crew else row
+        except RevisionConflict:raise api_error(409,'mission.idempotency_conflict') from None
+        except ValueError:raise api_error(422,'mission.invalid') from None
 
     def with_release(row):
         # The current decision is derived on read from the persisted ledger; it is
         # never a claim of validity, only of eligibility for human review. The validated
         # state is returned beside the row so one request validates it once.
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
-        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(row['id']))
+        decision=release_ledger.current_decision(request,state,event_chain_ok=repository.verify(row['id']),timeline_rows=timeline.rows(row['id']),
+                                                 receipts=mission_receipts(row['id']))
         obligations={change.id:list(obligation_states(change,decision)) for change in state.changes}
         return {**row,'release':decision.model_dump(mode='json'),'change_obligations':obligations},state
 
@@ -964,13 +1336,13 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         # Artifact manifests only: the image bytes are served by the artifact route, and
         # the export and verify paths read full artifacts from the repository.
         row,state=with_release(get(mid))
-        return manifest_view(row,state)
+        return {**manifest_view(row,state),'spent':spent(state,minutes=running_minutes(timeline.rows(mid)))}
 
     @app.get('/api/missions/{mid}/head',dependencies=[Depends(authorized)])
     async def mission_head(mid:str):
         # The cheap poll: revision, status and round read inside SQLite, no release derivation.
         try:return {'id':mid,**repository.head(mid)}
-        except KeyError:raise HTTPException(404,'Unknown mission') from None
+        except KeyError:raise api_error(404,'mission.not_found',facts={'mission_id':mid}) from None
 
     @app.get('/api/missions/{mid}/release',dependencies=[Depends(authorized)])
     async def read_release(mid:str):return with_release(get(mid))[0]['release']
@@ -989,6 +1361,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             # stall mission progress, status polling or cancellation.
             memory_routes.schedule_capture(mid,state)
         def cancelled():return repository.status(mid)=='cancelled'
+        # Minutes run across every start and resume, for the time budget.
+        def clock():return running_minutes(timeline.rows(mid))
         receipts={}   # op -> the receipt row the guard wrote for it; timeline linkage only
         def note(receipt):
             op=CURRENT_OP.get()
@@ -1013,7 +1387,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                 fields={'grant_id':verdict['grant_id'],'mission_id':mid,'destination':destination,'destination_kind':kind,'data_category':category,
                         'role':role,'request_digest':request_digest(*args) if request_digest else None,'observation_id':None}
                 if not verdict['allowed']:
-                    note(ledger.receipt(**fields,outcome='denied',reason=verdict['reason']))
+                    note(ledger.receipt(**fields,outcome='denied',reason=verdict['reason'],reason_code=verdict['reason_code']))
                     raise error('Refused by the grant ledger: '+verdict['reason'])
                 try:result=await call(*args)
                 except Exception as why:
@@ -1026,7 +1400,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             return spec,guard(kind,destination,category,function,request_digest=lambda arguments:digest(arguments))
         agent=None;consultations=None;mcp=None
         try:
-            async with httpx.AsyncClient(trust_env=False) as client:
+            async with outbound_client(asynchronous=True) as client:
                 tools=TrustedPublicTools()
                 if request.mode=='demo':agent=DemoVisionAgent() if request.vision_review else DemoAgent()
                 else:
@@ -1059,11 +1433,12 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                                        'falsifier':third.transport,'vision':vision.transport if vision else None})
                     def guard_seat(role,call,*args):
                         cfg=cfgs.get(role) or second
-                        return guard('seat',seat_destination(cfg),SEAT_CATEGORY,call,role=role,error=ProviderError)(*args)
+                        return guard('seat',seat_destination(cfg),seat_category(bool(request.context_items),request.gate=='each_round'),call,role=role,error=ProviderError)(*args)
                     agent=GuardedSeatAgent(agent,guard_seat)
                     if os.environ.get('ARC_PUBLIC_READS')=='1':
                         from .exploration.public_reads import public_tools
-                        tools=combine_trusted_tools(tools,public_tools(client))
+                        retraction=lambda call:guard('public_read',OPENALEX_ORIGIN,RETRACTION_CATEGORY,call,request_digest=lambda dois:digest(dois))
+                        tools=combine_trusted_tools(tools,public_tools(client,openalex=retraction))
                         for name,origin_ in PUBLIC_READ_ORIGINS.items():
                             if name in tools:tools[name]=guard_tool(tools[name],origin_,'public_read',PUBLIC_READ_CATEGORY)
                     if os.environ.get('ARC_BIORENDER_READS')=='1':
@@ -1099,15 +1474,16 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
                         for name,binding in mcp.tools.items():
                             if name in tools:raise ValueError('Connector tool name collides: '+name)
                             tools[name]=guard_tool(binding,connector_destination(server_of[name]),'mcp')
-                        await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools,log=log)
+                        await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools,log=log,clock=clock)
                 else:
-                    await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools,log=log)
+                    await explore(request,agent,initial=MissionState.model_validate(row['state']),emit=emit,cancelled=cancelled,extra_tools=tools,log=log,clock=clock)
         except (MissionCancelled,RevisionConflict):pass
         except asyncio.CancelledError:raise
         except Exception as why:
             fresh=repository.get(mid)
             if fresh['state']['status']!='cancelled':
-                error=MissionState.model_validate({**fresh['state'],'status':'error','stop_reason':'Service execution failed; inspect configuration. No success inferred.'})
+                error=MissionState.model_validate({**fresh['state'],'status':'error','stop_reason':'Service execution failed; inspect configuration. No success inferred.',
+                                                  'stop_code':'service_failed','stop_facts':{}})
                 with suppress(RevisionConflict):repository.save(mid,error,expected_revision=fresh['revision'])
                 timeline.record(mid,operation='stop',role='service',source='worker',round=fresh['state']['round'],outcome='error',
                                 detail=redact(str(why))[:300] or 'Service execution failed')
@@ -1126,10 +1502,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             state=state.model_copy(update={'release':release_ledger.invalidate_release(state.release,RESUME_STALE,
                 'Declared change '+change.id[:8]+' (resume): '+', '.join(change.derived_effects)+'; verify again after the mission stops.')})
         try:repository.save(row['id'],state,expected_revision=row['revision'])
-        except RevisionConflict:raise HTTPException(409,'Mission changed; retry') from None
+        except RevisionConflict:raise api_error(409,'mission.revision_conflict',facts={'operation':'resume'}) from None
         return change
 
-    def schedule(row,declared=None,note='',approval=None,actor='operator'):
+    def schedule(row,declared=None,note='',approval=None,actor='operator',decided=None):
         """The one path that starts or resumes a mission: the live route is checked against
         the plan bound at the first start before anything is written; then the resume is
         recorded, the plan bound if this is the first start, and the worker scheduled with
@@ -1138,27 +1514,34 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         request=MissionRequest.model_validate(row['request']);route=None
         if request.mode=='live':
             try:route=live_route(request.vision_review)
-            except Exception as error:raise HTTPException(409,'Configure the model seats before starting: '+str(error)[:300]) from None
+            except Exception as error:raise api_error(409,'mission.seats_unconfigured','Configure the model seats before starting: '+str(error)[:300]) from None
+            route=with_crew(route,request.crew)
+            refuse_uncosted(request,route['seats'])
             route_digest,detail=seat_plan(route)
             state=MissionState.model_validate(row['state'])
             bound=next((e for e in reversed(state.events) if e.kind=='seats_bound'),None)
             if bound is not None and not bound.detail.startswith('sha256:'+route_digest+' '):
-                raise HTTPException(409,'The model seats or connectors changed since this mission was first started; a permission change is a '
-                                        'separate authorization: restore the seats or create a new mission')
+                raise api_error(409,'mission.seats_changed','The model seats or connectors changed since this mission was first started; a permission change is a '
+                                    'separate authorization: restore the seats or create a new mission',facts={'route_digest':route_digest})
             granted=ledger.list('mission',row['id'])
             if bound is None or not granted:
                 if approval is None:
-                    raise HTTPException(409,'Review the route and approve its grants before the first start' if bound is None else
-                                        'This mission was bound before its grants were recorded; review the route and approve its grants to start it')
+                    if bound is None:raise api_error(409,'mission.approval_required')
+                    raise api_error(409,'mission.grants_unrecorded')
                 revision=settings_revision()
                 if approval.approved_route_digest!=route_digest:
-                    raise HTTPException(409,'The route changed since it was previewed; review it again'+(f'; settings revision {revision[:12]}' if revision else ''))
-                preview=route_preview(route,revision)
-                approved={(g.destination,g.destination_kind) for g in approval.grants if g.scope=='mission'}
-                missing=[g for g in preview['required_grants'] if (g['destination'],g['destination_kind']) not in approved]
-                if missing:raise HTTPException(409,'No grant approved for the '+missing[0]['destination_kind']+' destination '+missing[0]['destination'])
-        change=None
-        if row['state']['status'] in ('paused','error'):
+                    raise api_error(409,'mission.route_changed','The route changed since it was previewed; review it again'+(f'; settings revision {revision[:12]}' if revision else ''),
+                                    facts={'route_digest':route_digest,'settings_revision':revision})
+                preview=route_preview(route,revision,context=bool(request.context_items),directives=request.gate=='each_round')
+                # The data category is part of what was approved: attached context changes what the
+                # seats receive but not the route digest, so a plain approval does not cover it.
+                approved={(g.destination,g.destination_kind,g.data_category) for g in approval.grants if g.scope=='mission'}
+                missing=[g for g in preview['required_grants'] if (g['destination'],g['destination_kind'],g['data_category']) not in approved]
+                if missing:raise api_error(409,'mission.grant_missing','No grant approved for the '+missing[0]['destination_kind']+' destination '+missing[0]['destination'],
+                                           facts={'destination_kind':missing[0]['destination_kind'],'destination':missing[0]['destination']})
+        # A decision change just recorded is this resume's declared change.
+        change=decided
+        if change is None and row['state']['status'] in ('paused','error'):
             change=record_resume(row,declared if declared is not None else MISSION_CHANGES['resume']['derived'],note or 'Resumed from the workspace.')
             row=get(row['id'])
         if route is not None and (bound is None or not granted):
@@ -1170,7 +1553,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
             state=MissionState.model_validate(row['state'])
             state=state.model_copy(update={'events':state.events+(Event(kind='seats_bound',round=state.round,detail=detail[:1200]),)})
             try:repository.save(row['id'],state,expected_revision=row['revision'])
-            except RevisionConflict:raise HTTPException(409,'Mission changed; retry') from None
+            except RevisionConflict:raise api_error(409,'mission.revision_conflict',facts={'operation':'bind'}) from None
         timeline.record(row['id'],operation='resume' if change else 'start',role='operator',source='operator',actor=actor,
                         round=row['state']['round'],outcome='resumed' if change else 'scheduled',detail=(change.note if change else ''))
         running[row['id']]=asyncio.create_task(worker(row['id'],route))
@@ -1180,9 +1563,50 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     async def start(mid:str,approval:StartRequest|None=Body(default=None),principal:str=Depends(authorized)):
         row=get(mid)
         if mid in running or row['state']['status'] not in ('ready','paused'):
-            raise HTTPException(409,'Only ready or interrupted missions can start or resume')
+            raise api_error(409,'mission.not_startable',facts={'status':'running' if mid in running else row['state']['status']})
+        refuse_undecided(row)
         schedule(row,approval=approval,actor='operator:'+principal)
         return {'id':mid,'status':'scheduled'}
+
+    def refuse_undecided(row):
+        # A plan awaiting the operator resumes only once a decision on its round is recorded.
+        state=MissionState.model_validate(row['state'])
+        if state.stop_code=='awaiting_decision' and state.status=='paused' and \
+                not any(c.kind=='decision' and c.round==state.round for c in state.changes):
+            raise api_error(409,'decision.required',facts={'round':state.round,'plan_digest':state.stop_facts.get('plan_digest')})
+
+    @app.post('/api/missions/{mid}/decisions',status_code=202)
+    async def decide(mid:str,body:DecisionRequest=Body(...),principal:str=Depends(authorized)):
+        """Pursue, park, drop or request a test on the plan the mission waits on (contract C6),
+        recorded as a declared change of kind 'decision'; resume: true then resumes the mission."""
+        row=get(mid);state=MissionState.model_validate(row['state'])
+        if mid in running or state.status!='paused' or state.stop_code!='awaiting_decision':
+            raise api_error(409,'decision.not_awaiting',facts={'status':'running' if mid in running else state.status,'stop_code':state.stop_code})
+        plan=next(r for r in state.model_records if r.role=='planner' and r.round==state.round)
+        current=plan_digest(plan)
+        if body.expected_revision!=row['revision'] or any(d.round!=state.round or d.plan_digest!=current for d in body.decisions):
+            raise api_error(409,'decision.stale',facts={'revision':row['revision'],'round':state.round,'plan_digest':current})
+        branches={b.id for b in state.branches}
+        for d in body.decisions:
+            if d.target_id not in (branches if d.target=='branch' else {f'plan-{state.round}'}):
+                raise api_error(409,'decision.unknown_target',facts={'target':d.target,'target_id':d.target_id})
+        if len(state.changes)>=64:raise api_error(409,'decision.limit',facts={'limit':64})
+        state,change=declare(state,'decision',MISSION_CHANGES['decision']['derived'],f'Operator decisions on the plan of round {state.round}.',
+                             decisions=body.decisions)
+        if state.release is not None:
+            state=state.model_copy(update={'release':release_ledger.invalidate_release(state.release,RESUME_STALE,
+                'Declared change '+change.id[:8]+' (decision): '+', '.join(change.derived_effects)+'; verify again after the mission stops.')})
+        try:repository.save(mid,state,expected_revision=row['revision'])
+        except RevisionConflict:raise api_error(409,'decision.stale',facts={'revision':row['revision'],'round':state.round,'plan_digest':current}) from None
+        if body.resume:schedule(get(mid),actor='operator:'+principal,decided=change)
+        return {'id':mid,'status':'scheduled' if body.resume else 'recorded','change':change.model_dump(mode='json')}
+
+    @app.get('/api/missions/{mid}/tree',dependencies=[Depends(authorized)])
+    async def mission_tree(mid:str):
+        # Derived on read, never evidence; the layout is deterministic (depth = round, lane = branch order).
+        row=get(mid);request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
+        return build_tree(state,timeline.rows(mid),operator_decisions(state),mission_id=mid,revision=row['revision'],
+                          continues=request.continues,goal=request.goal)
 
     @app.get('/api/changes',dependencies=[Depends(authorized)])
     async def change_kinds():
@@ -1194,22 +1618,25 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         row=get(mid)
         # The declaration is checked before anything moves; a refusal names the table's reason.
         try:derived,checks=mission_change(declaration.kind,declaration.declared_effects)
-        except ChangeRefused as refused:raise HTTPException(409,str(refused)) from None
+        except ChangeRefused as refused:raise api_error(409,'mission.change_refused',str(refused),facts={'kind':declaration.kind}) from None
+        if declaration.kind=='decision':
+            raise api_error(409,'mission.change_refused','Operator decisions are sent to the decisions route of the mission',facts={'kind':'decision'})
         if mid in running or row['state']['status'] not in ('paused','error'):
-            raise HTTPException(409,'Only an interrupted or errored mission can be resumed')
+            raise api_error(409,'mission.not_resumable',facts={'status':'running' if mid in running else row['state']['status']})
+        refuse_undecided(row)
         # A retry from an error is a declared change whose reason the operator states.
         if row['state']['status']=='error' and not declaration.note.strip():
-            raise HTTPException(409,'A retry from an error states its reason in the note')
+            raise api_error(409,'mission.retry_note_required')
         change=schedule(row,declaration.declared_effects,declaration.note,actor='operator:'+principal)
         return {'id':mid,'status':'scheduled','change':change.model_dump(mode='json')}
 
     @app.post('/api/missions/{mid}/pause')
     async def pause(mid:str,principal:str=Depends(authorized)):
-        get(mid);actor='operator:'+principal
+        before=get(mid);actor='operator:'+principal
         # The pause save bumps the revision, so the worker's late commit is refused; the task is cancelled as for cancel.
         try:row=repository.pause(mid,actor=actor)
-        except RevisionConflict:raise HTTPException(409,'Mission changed; retry pause') from None
-        except ValueError as why:raise HTTPException(409,str(why)) from None
+        except RevisionConflict:raise api_error(409,'mission.revision_conflict','Mission changed; retry pause',facts={'operation':'pause'}) from None
+        except ValueError as why:raise api_error(409,'mission.not_pausable',str(why),facts={'status':before['state']['status']}) from None
         if mid in running:running[mid].cancel()
         timeline.record(mid,operation='pause',role='operator',source='operator',actor=actor,round=row['state']['round'],
                         outcome='paused',detail=row['state']['stop_reason'])
@@ -1221,8 +1648,8 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     async def cancel(mid:str,principal:str=Depends(authorized)):
         before=get(mid);actor='operator:'+principal
         try:row=repository.cancel(mid,actor=actor)
-        except MissionFinished as finished:raise HTTPException(409,str(finished)) from None
-        except RevisionConflict:raise HTTPException(409,'Mission changed; retry cancellation') from None
+        except MissionFinished as finished:raise api_error(409,'mission.finished',str(finished),facts={'status':before['state']['status']}) from None
+        except RevisionConflict:raise api_error(409,'mission.revision_conflict','Mission changed; retry cancellation',facts={'operation':'cancel'}) from None
         if mid in running:running[mid].cancel()
         # A repeated cancel changes nothing (same revision) and records nothing.
         if row['revision']!=before['revision']:
@@ -1236,7 +1663,7 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     async def artifact(mid:str,artifact_digest:str):
         state=MissionState.model_validate(get(mid)['state'])
         item=next((item for item in state.artifacts if item.digest==artifact_digest),None)
-        if item is None:raise HTTPException(404,'Unknown mission artifact')
+        if item is None:raise api_error(404,'mission.artifact_not_found',facts={'artifact_digest':artifact_digest})
         return Response(item.bytes,media_type=item.media_type,
                         headers={'ETag':'"'+item.digest+'"','Content-Disposition':'inline'})
 
@@ -1246,13 +1673,14 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         # ledger exactly as the capsule does.
         row=get(mid)
         item=next((a for a in MissionState.model_validate(row['state']).artifacts if a.digest==artifact_digest),None)
-        if item is None:raise HTTPException(404,'Unknown mission artifact')
+        if item is None:raise api_error(404,'mission.artifact_not_found',facts={'artifact_digest':artifact_digest})
         chain=repository.verify(mid)
-        if not chain:raise HTTPException(409,'Mission integrity check failed')
+        if not chain:raise api_error(409,'mission.integrity_failed')
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
-        try:release_ledger.assert_exportable(request,state,event_chain_ok=chain)
+        try:release_ledger.assert_exportable(request,state,event_chain_ok=chain,timeline_rows=timeline.rows(mid),receipts=mission_receipts(mid))
         except release_ledger.ReleaseBlocked as blocked:
-            raise HTTPException(409,'Release blocked; verify the mission and resolve: '+', '.join(blocked.reasons)) from None
+            raise api_error(409,'release.blocked','Release blocked; verify the mission and resolve: '+', '.join(blocked.reasons),
+                            facts={'reasons':list(blocked.reasons)}) from None
         return Response(item.bytes,media_type=item.media_type,
                         headers={'ETag':'"'+item.digest+'"','Content-Disposition':f'attachment; filename="arc-{mid}-{item.digest[:12]}.png"'})
 
@@ -1260,22 +1688,22 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
     async def capsule(mid:str):
         row=get(mid)
         chain=repository.verify(mid)
-        if not chain:raise HTTPException(409,'Mission integrity check failed')
+        if not chain:raise api_error(409,'mission.integrity_failed')
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
         # Every release export consults the ledger: a blocked mission is not exported.
-        try:decision=release_ledger.assert_exportable(request,state,event_chain_ok=chain)
+        rows=timeline.rows(mid);receipts=mission_receipts(mid)
+        try:decision=release_ledger.assert_exportable(request,state,event_chain_ok=chain,timeline_rows=rows,receipts=receipts)
         except release_ledger.ReleaseBlocked as blocked:
-            raise HTTPException(409,'Release blocked; verify the mission and resolve: '+', '.join(blocked.reasons)) from None
+            raise api_error(409,'release.blocked','Release blocked; verify the mission and resolve: '+', '.join(blocked.reasons),
+                            facts={'reasons':list(blocked.reasons)}) from None
         # Capsule format 3: the decision, the derived graph and claims, and the operational
         # timeline and grants travel with the state; the informational members are never evidence.
         from .exploration.claims import build_claims
         release=decision.model_dump(mode='json')
         try:graph=evidence_graph(state)
-        except ValueError:raise HTTPException(409,'Evidence graph is invalid; verify the mission') from None
-        rows=timeline.rows(mid)
-        receipts=ledger.receipts(mission_id=mid,limit=1000)
+        except ValueError:raise api_error(409,'mission.evidence_invalid') from None
         grants={'grants':ledger.list('mission',mid),'receipts':receipts,'receipts_truncated':len(receipts)>=1000}
-        data=export_capsule(request,state,release=release,claims=build_claims(state,rows,graph,release),timeline=rows,grants=grants)
+        data=export_capsule(request,state,release=release,claims=build_claims(state,rows,graph,release,receipts=receipts,request=request),timeline=rows,grants=grants)
         return Response(data,media_type='application/zip',headers={'Content-Disposition':f'attachment; filename="arc-{mid}.zip"'})
 
     @app.post('/api/missions/{mid}/verify',dependencies=[Depends(authorized)])
@@ -1284,9 +1712,9 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         # Verification writes the ledger; it never competes with an active worker
         # (the revision lock below catches a start that slips in meanwhile).
         if mid in running or row['state']['status']=='running':
-            raise HTTPException(409,'Mission is still running; verify after it finishes')
+            raise api_error(409,'mission.running')
         chain=repository.verify(mid)
-        if not chain:raise HTTPException(409,'Mission integrity check failed')
+        if not chain:raise api_error(409,'mission.integrity_failed')
         request=MissionRequest.model_validate(row['request']);state=MissionState.model_validate(row['state'])
         if state.status in ('completed','budget_exhausted','needs_input') and (
                 state.claim_scope is None or state.claim_scope.derivation_version!=CLAIM_DERIVATION_VERSION):
@@ -1297,9 +1725,10 @@ def create_app(*,data_dir:Path|None=None,token:str|None=None):
         report=await asyncio.to_thread(verify_capsule,export_capsule(request,state))
         # Persist what was observed and the decision it yields; a later change stales it.
         receipt=release_ledger.receipt_from_report(report,state)
-        decision=release_ledger.evaluate_release(request,state,receipt,event_chain_ok=chain)
+        decision=release_ledger.evaluate_release(request,state,receipt,event_chain_ok=chain,timeline_rows=timeline.rows(mid),
+                                                 receipts=mission_receipts(mid))
         try:repository.save(mid,state.model_copy(update={'release':decision}),expected_revision=row['revision'])
-        except RevisionConflict:raise HTTPException(409,'Mission changed during verification; retry') from None
+        except RevisionConflict:raise api_error(409,'mission.revision_conflict','Mission changed during verification; retry',facts={'operation':'verify'}) from None
         return {**report,'event_chain':True,'release':decision.model_dump(mode='json')}
 
     static=Path(__file__).parent/'static'

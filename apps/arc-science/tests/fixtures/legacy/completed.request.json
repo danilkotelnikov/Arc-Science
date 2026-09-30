@@ -1,0 +1,1 @@
+{"allow_egress":false,"goal":"Legacy completed mission","max_actions":20,"max_branches":12,"max_model_calls":24,"max_parallel":3,"max_rounds":5,"mode":"demo","points":null,"seed":17,"vision_review":true}

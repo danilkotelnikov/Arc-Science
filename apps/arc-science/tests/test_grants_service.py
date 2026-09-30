@@ -26,7 +26,7 @@ if args[:2] == ['auth', 'status']:
 if args == ['--version']:
     print('9.9.9'); sys.exit(0)
 model = args[args.index('--model') + 1]
-request = json.loads(sys.stdin.read())
+request = json.JSONDecoder().raw_decode(sys.stdin.read())[0]  # the JSON head; a fenced block or the reference listing may follow
 ctx = request['context']
 if request['response_schema'].get('title') == 'Reconciliation':
     text = json.dumps({'assessments': [], 'summary': 'nothing'})
@@ -121,12 +121,12 @@ def test_the_preview_is_bound_at_the_first_start_and_nothing_starts_without_its_
         mid = row['id']
         # No body, a stale digest, and an approval missing a destination are each refused before anything is written.
         refused = c.post(f'/api/missions/{mid}/start', headers=AUTH)
-        assert refused.status_code == 409 and 'approve' in refused.json()['detail']
+        assert refused.status_code == 409 and 'approve' in refused.json()['detail']['detail']
         stale = c.post(f'/api/missions/{mid}/start', headers=AUTH, json={'approved_route_digest': 'f' * 64, 'grants': preview['required_grants']})
-        assert stale.status_code == 409 and stale.json()['detail'].startswith('The route changed since it was previewed; review it again')
-        assert preview['settings_revision'][:12] in stale.json()['detail']
+        assert stale.status_code == 409 and stale.json()['detail']['detail'].startswith('The route changed since it was previewed; review it again')
+        assert preview['settings_revision'][:12] in stale.json()['detail']['detail']
         partial = c.post(f'/api/missions/{mid}/start', headers=AUTH, json={'approved_route_digest': preview['route_digest'], 'grants': preview['required_grants'][:1]})
-        assert partial.status_code == 409 and partial.json()['detail'] == 'No grant approved for the mcp destination ' + fake
+        assert partial.status_code == 409 and partial.json()['detail']['detail'] == 'No grant approved for the mcp destination ' + fake
         assert c.get(f'/api/missions/{mid}/grants', headers=AUTH).json() == {'grants': [], 'receipts': [], 'receipts_truncated': False}
         assert c.get(f'/api/missions/{mid}', headers=AUTH).json()['state']['status'] == 'ready'
         # A settings save that changes the route makes the approval stale; the message names the revision.
@@ -134,7 +134,7 @@ def test_the_preview_is_bound_at_the_first_start_and_nothing_starts_without_its_
         doc['seats']['planner']['model'] = 'claude-sonnet-5'
         changed = settings.replace(doc, None)
         moved = c.post(f'/api/missions/{mid}/start', headers=AUTH, json=approve_with(preview))
-        assert moved.status_code == 409 and changed['revision'][:12] in moved.json()['detail']
+        assert moved.status_code == 409 and changed['revision'][:12] in moved.json()['detail']['detail']
         doc['seats']['planner']['model'] = 'claude-opus-5'
         settings.replace(doc, None)
         assert c.post(f'/api/missions/{mid}/start', headers=AUTH, json=approve_with(preview)).status_code == 202
@@ -205,7 +205,7 @@ def test_two_servers_behind_one_launcher_are_two_destinations_with_independent_g
         row = c.post('/api/missions', headers=AUTH, json={'goal': 'Twins', 'mode': 'live', 'max_rounds': 2, 'allow_egress': True}).json()
         mid = row['id']
         short = c.post(f'/api/missions/{mid}/start', headers=AUTH, json={'approved_route_digest': preview['route_digest'], 'grants': preview['required_grants'][:2]})
-        assert short.status_code == 409 and short.json()['detail'] == 'No grant approved for the mcp destination ' + twin
+        assert short.status_code == 409 and short.json()['detail']['detail'] == 'No grant approved for the mcp destination ' + twin
         (connected / 'hold-planner').touch()
         assert c.post(f'/api/missions/{mid}/start', headers=AUTH, json=approve_with(preview)).status_code == 202
         wait_for(lambda: lines(connected / 'planner-calls.log') == ['planning'], 'the first planner call')
@@ -241,7 +241,7 @@ def test_a_mission_bound_before_the_ledger_asks_for_approval_before_it_runs(conn
         bound = state.model_copy(update={'events': state.events + (Event(kind='seats_bound', round=0, detail='sha256:' + preview['route_digest'] + ' {}'),)})
         repo.save(mid, bound, expected_revision=current['revision'])
         refused = c.post(f'/api/missions/{mid}/start', headers=AUTH)
-        assert refused.status_code == 409 and 'bound before its grants were recorded' in refused.json()['detail']
+        assert refused.status_code == 409 and 'bound before its grants were recorded' in refused.json()['detail']['detail']
         assert c.get(f'/api/missions/{mid}/grants', headers=AUTH).json()['grants'] == []
         assert c.post(f'/api/missions/{mid}/start', headers=AUTH, json=approve_with(preview)).status_code == 202
         granted = c.get(f'/api/missions/{mid}/grants', headers=AUTH).json()['grants']
@@ -323,9 +323,10 @@ def test_the_preview_lists_public_reads_and_biorender_when_enabled_with_one_gran
     assert preview['route_digest'] == service.seat_plan(route)[0] and preview['settings_revision'] == 'r' * 64
     assert [(s['destination'], s['model']) for s in preview['seats']] == [('https://api.openai.com', 'a'), ('https://api.openai.com', 'b'), ('https://api.openai.com', 'a')]
     assert [(c['kind'], c['destination']) for c in preview['connectors']] == [('mcp', 'https://tools.example/mcp'), ('acp', 'agent')]
-    assert [p['destination'] for p in preview['public_reads']] == ['https://www.ebi.ac.uk', 'https://data.rcsb.org']
+    assert [p['destination'] for p in preview['public_reads']] == ['https://www.ebi.ac.uk', 'https://data.rcsb.org', 'https://api.openalex.org']
     assert preview['biorender']['destination'] == 'https://mcp.services.biorender.com/mcp'
     assert [(g['destination_kind'], g['destination']) for g in preview['required_grants']] == [
         ('seat', 'https://api.openai.com'), ('mcp', 'https://tools.example/mcp'), ('acp', 'agent'),
-        ('public_read', 'https://www.ebi.ac.uk'), ('public_read', 'https://data.rcsb.org'), ('biorender', 'https://mcp.services.biorender.com/mcp')]
+        ('public_read', 'https://www.ebi.ac.uk'), ('public_read', 'https://data.rcsb.org'), ('public_read', 'https://api.openalex.org'),
+        ('biorender', 'https://mcp.services.biorender.com/mcp')]
     assert all(g['scope'] == 'mission' and g['data_category'] and g['purpose'] for g in preview['required_grants'])

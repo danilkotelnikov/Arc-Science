@@ -1,9 +1,9 @@
 from __future__ import annotations
 import base64
 import hashlib
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from pydantic import Field, model_validator
-from ..contracts import Record, Digest, Identifier, canonical, digest
+from ..contracts import Record, Versioned, Digest, Identifier, canonical, digest
 
 Id = Annotated[str, Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')]
 
@@ -11,7 +11,49 @@ class Point(Record):
     x: float = Field(ge=-1e6, le=1e6)
     y: float = Field(ge=-1e12, le=1e12)
 
-class MissionRequest(Record):
+CREW_ROLES = ('planner', 'reviewer', 'falsifier', 'vision')
+CrewRole = Literal['planner', 'reviewer', 'falsifier', 'vision']
+# A model id as a seat sends it: never an option-like word a CLI could read as a flag. Slashes
+# and colons (org/model, local-model:q4) are allowed as Settings allows them; a seat whose
+# provider refuses them (the Gemini API) refuses the crew entry with its own code.
+ModelId = Annotated[str, Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$')]
+
+
+class CrewSeat(Record):
+    """One role's model and effort for this mission; provider, transport, endpoint and
+    credential stay the Settings seat's. effort None sends no level (the transport default)."""
+    model: ModelId
+    effort: Literal['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] | None = None
+
+
+# Mission context limits (contract C2).
+CONTEXT_MEMORY_LIMIT, CONTEXT_MISSION_LIMIT, CONTEXT_CHAR_LIMIT = 50, 5, 24_000
+
+
+class ContextItem(Versioned):
+    """Earlier work the operator attached, resolved by the service and frozen at creation:
+    a memory record (digest = its content digest) or a prior mission's supported scope and
+    claims (digest = its release subject digest). Evidence to weigh, never permission.
+    A memory record keeps its trust label and source, so a seat can weigh it."""
+    LATER_FIELDS = ('trust', 'source_uri')
+    kind: Literal['memory', 'mission']
+    ref: str = Field(min_length=1, max_length=200)
+    title: str = Field(max_length=300)
+    digest: Digest
+    text: str = Field(max_length=CONTEXT_CHAR_LIMIT)
+    trust: str | None = Field(default=None, max_length=40)
+    source_uri: str | None = Field(default=None, max_length=400)
+
+    @property
+    def planner_only(self) -> bool:
+        """Earlier model agreement: a prior mission, or a memory record a mission wrote (model
+        output, or an engine event such as a derived claim scope). The planner reads it; the two
+        reviewers do not, so their support stays independent of that earlier verdict."""
+        return self.kind == 'mission' or self.trust == 'model_output' or (self.source_uri or '').startswith('mission://')
+
+
+class MissionRequest(Versioned):
+    LATER_FIELDS = ('max_tokens', 'max_cost_usd', 'max_minutes', 'crew', 'context_items', 'gate', 'continues', 'ladder_policy')
     goal: str = Field(min_length=3, max_length=10000)
     mode: Literal['demo', 'live'] = 'demo'
     seed: int = Field(default=17, ge=0, le=2147483647)
@@ -23,6 +65,21 @@ class MissionRequest(Record):
     max_parallel: int = Field(default=3, ge=1, le=8)
     allow_egress: bool = False
     vision_review: bool = False
+    # Spend budgets (contract C2); None is no budget. Enforced before each model step.
+    max_tokens: int | None = Field(default=None, ge=1000, le=5_000_000)
+    max_cost_usd: float | None = Field(default=None, ge=0.01, le=500)
+    max_minutes: int | None = Field(default=None, ge=1, le=1440)
+    # Per-role model and effort overrides for the live seats (contract C2); None is Settings as is.
+    crew: dict[CrewRole, CrewSeat] | None = None
+    context_items: tuple[ContextItem, ...] = Field(default=(), max_length=CONTEXT_MEMORY_LIMIT + CONTEXT_MISSION_LIMIT)
+    # each_round pauses after every committed plan, a stopping one too, until the operator decides (C6).
+    gate: Literal['auto', 'each_round'] = 'auto'
+    # The finished mission this one continues (a fork); its supported scope is attached as context.
+    continues: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{1,80}$')
+    # How release holds claims to the ladder (D019). 'references': claims write numbers and sources
+    # as references and are held to their minimum rung; 'legacy': a mission stored before that keeps
+    # its export eligibility and shows its ladder only. The service creates new missions as 'references'.
+    ladder_policy: Literal['legacy', 'references'] = 'legacy'
 
     @model_validator(mode='after')
     def egress_consent(self):
@@ -30,12 +87,31 @@ class MissionRequest(Record):
             raise ValueError('Live models require explicit permission to send mission data')
         return self
 
-class BranchIdea(Record):
+    @model_validator(mode='after')
+    def bounded_context(self):
+        kinds = [item.kind for item in self.context_items]
+        if kinds.count('memory') > CONTEXT_MEMORY_LIMIT or kinds.count('mission') > CONTEXT_MISSION_LIMIT:
+            raise ValueError('Mission context exceeds its item limits')
+        if sum(len(item.text) for item in self.context_items) > CONTEXT_CHAR_LIMIT:
+            raise ValueError('Mission context exceeds its character limit')
+        return self
+
+class FalsifierTest(Record):
+    """A branch's falsifier stated as a measurement before it runs: the hypothesis is
+    refuted when the named tool reports `metric` on the `direction` side of `threshold`."""
+    tool: str = Field(min_length=1, max_length=80)
+    metric: str = Field(min_length=1, max_length=120)
+    threshold: float
+    direction: Literal['above', 'below']
+
+class BranchIdea(Versioned):
+    LATER_FIELDS = ('falsifier_test',)
     id: Id
     title: str = Field(min_length=1, max_length=180)
     hypothesis: str = Field(min_length=1, max_length=1000)
     falsifier: str = Field(min_length=1, max_length=700)
     parents: tuple[Id, ...] = Field(default=(), max_length=8)
+    falsifier_test: FalsifierTest | None = None
 
 class Branch(BranchIdea):
     created_round: int = Field(ge=0)
@@ -119,6 +195,15 @@ class ModelRecord(Record):
     payload: dict
     # Per-call transport provenance (observed identity, usage, contract) when the
     # agent reports it; absent for scripted fixtures and older records.
+    transport: dict | None = None
+
+
+class UnboundCall(Record):
+    """A reserved model call that produced no accepted record: the engine rejected the
+    answer, or the provider failed. The transport record is kept so its usage still counts."""
+    role: str
+    round: int = Field(ge=0)
+    outcome: Literal['rejected', 'failed']
     transport: dict | None = None
 
 
@@ -213,7 +298,8 @@ class VisualReport(VisualReply):
         return self.model_dump(mode='json', exclude={'input_context'})
 
 
-class VisionRecord(Record):
+class VisionRecord(Versioned):
+    LATER_FIELDS = ('transport',)
     candidate_digest: Digest
     reviewed_digests: tuple[Digest, ...] = Field(min_length=1, max_length=8)
     context_digest: Digest
@@ -223,6 +309,8 @@ class VisionRecord(Record):
     model: Identifier
     status: Literal['reserved', 'accepted', 'rejected']
     report_digest: Digest | None = None
+    # Per-call transport provenance (usage above all) of an accepted review.
+    transport: dict | None = None
 
     @model_validator(mode='after')
     def valid_status(self):
@@ -304,7 +392,7 @@ class ScopedBranch(Record):
 
 
 class ClaimScope(Record):
-    derivation_version: Literal['arc-claim-scope-1', 'arc-claim-scope-2', 'arc-claim-scope-3'] = 'arc-claim-scope-3'
+    derivation_version: Literal['arc-claim-scope-1', 'arc-claim-scope-2', 'arc-claim-scope-3', 'arc-claim-scope-4'] = 'arc-claim-scope-4'
     basis_round: int = Field(ge=0)
     branches: tuple[ScopedBranch, ...] = Field(default=(), max_length=64)
     counts: dict[str, int]
@@ -316,9 +404,58 @@ class ClaimScope(Record):
 ChangeEffect = Literal['presentation', 'scientific_depiction', 'analysis', 'claim', 'permission']
 
 
-class Change(Record):
+class OperatorDecision(Record):
+    """The operator's choice of which work to do next on one plan (contract C6): an execution
+    decision, never a verdict on the evidence. A proposal target is the plan node 'plan-<round>'."""
+    target: Literal['branch', 'proposal']
+    target_id: Id
+    directive: Literal['pursue', 'park', 'drop', 'request_test']
+    note: str = Field(default='', max_length=400)
+    round: int = Field(ge=0)
+    plan_digest: Digest
+
+
+# What each operator directive asks of the next planner, inside the operator-directive fence.
+ASKS = {'pursue': 'Keep testing this.', 'park': 'Parked: its actions are withheld until the operator pursues it again.',
+        'drop': 'Dropped: its actions are withheld.', 'request_test': 'Propose an action that tests this branch.'}
+WITHHOLDS = ('park', 'drop')
+
+
+def operator_directives(decisions):
+    """What the planner reads of each decision (JSON dicts): the engine sends it, evidence checks it."""
+    return [{**{k: d[k] for k in ('target', 'target_id', 'directive', 'note', 'round')}, 'ask': ASKS[d['directive']]}
+            for d in decisions]
+
+
+def asks_for_more(decisions, round_number):
+    """Whether this round's decisions (JSON dicts, in order) refuse a stopping plan. The latest
+    decision on a target stands. A proposal decision answers the plan itself: pursue accepts it,
+    anything else asks again. Without one, a request_test on a branch, or a pursue on a branch
+    parked or dropped in an earlier round, asks for work the plan does not propose."""
+    now = [d for d in decisions if d['round'] == round_number]
+    proposal = next((d['directive'] for d in reversed(now) if d['target'] == 'proposal'), None)
+    if proposal:
+        return proposal != 'pursue'
+    before = {d['target_id']: d['directive'] for d in decisions if d['target'] == 'branch' and d['round'] < round_number}
+    latest = {d['target_id']: d['directive'] for d in now if d['target'] == 'branch'}
+    return any(v == 'request_test' or (v == 'pursue' and before.get(k) in WITHHOLDS) for k, v in latest.items())
+
+
+def withholding(decisions, round_number, branch_id):
+    """The decision (JSON dict with its change_id) that withholds an action of this round's plan
+    on this branch, or None: a withholding proposal decision of the round covers its whole plan,
+    otherwise the latest decision on the branch stands across rounds."""
+    known = [d for d in decisions if d['round'] <= round_number]
+    proposal = next((d for d in reversed(known) if d['target'] == 'proposal' and d['round'] == round_number), None)
+    why = proposal if proposal and proposal['directive'] in WITHHOLDS else next(
+        (d for d in reversed(known) if d['target'] == 'branch' and d['target_id'] == branch_id), None)
+    return why if why and why['directive'] in WITHHOLDS else None
+
+
+class Change(Versioned):
+    LATER_FIELDS = ('decisions',)
     id: Id
-    kind: Literal['resume']
+    kind: Literal['resume', 'decision']
     declared_effects: tuple[ChangeEffect, ...] = Field(min_length=1, max_length=5)
     derived_effects: tuple[ChangeEffect, ...] = Field(min_length=1, max_length=5)
     required_checks: tuple[str, ...] = Field(min_length=1, max_length=12)
@@ -326,11 +463,15 @@ class Change(Record):
     note: str = Field(default='', max_length=400)
     round: int = Field(ge=0)
     at: int = Field(ge=0)
+    # The operator decisions a 'decision' change records; none continues the plan as proposed.
+    decisions: tuple[OperatorDecision, ...] = Field(default=(), max_length=24)
 
     @model_validator(mode='after')
     def declaration_covers_derivation(self):
         if any(effect not in self.declared_effects for effect in self.derived_effects):
             raise ValueError('A change declaration cannot be narrower than its derived effects')
+        if self.decisions and self.kind != 'decision':
+            raise ValueError('Only a decision change carries operator decisions')
         return self
 
 
@@ -341,7 +482,7 @@ class Change(Record):
 CheckState = Literal['satisfied', 'failed', 'unknown', 'error', 'stale', 'not_applicable']
 MissionCheck = Literal['operational_status', 'event_chain_integrity', 'replay_integrity',
                        'numerical_reproduction', 'artifact_reproduction', 'evidence_graph',
-                       'reconciliation', 'visual_review', 'claim_scope']
+                       'reconciliation', 'visual_review', 'claim_scope', 'claim_rungs']
 
 class ReleaseCheck(Record):
     name: MissionCheck
@@ -387,7 +528,8 @@ class ReleaseDecision(Record):
         return self
 
 
-class MissionState(Record):
+class MissionState(Versioned):
+    LATER_FIELDS = ('stop_code', 'stop_facts', 'unbound_calls')
     request_digest: Digest
     status: Literal['ready','running','completed','budget_exhausted','needs_input','error','paused','cancelled'] = 'ready'
     round: int = 0
@@ -398,6 +540,8 @@ class MissionState(Record):
     observations: tuple[Observation, ...] = ()
     assessments: tuple[Assessed, ...] = ()
     model_records: tuple[ModelRecord, ...] = ()
+    # Calls whose answer was rejected or failed; their usage counts toward the spend.
+    unbound_calls: tuple[UnboundCall, ...] = ()
     artifacts: tuple[Artifact, ...] = Field(default=(), max_length=64)
     visual_reports: tuple[VisualReport, ...] = Field(default=(), max_length=64)
     vision_records: tuple[VisionRecord, ...] = Field(default=(), max_length=64)
@@ -411,6 +555,10 @@ class MissionState(Record):
     focus: str | None = None
     publication_eligible: Literal[False] = False
     stop_reason: str = ''
+    # Why the mission stopped, as a registered error_codes.STOP_CODES key, and the variable
+    # parts of stop_reason; empty for missions stored before codes existed.
+    stop_code: str = ''
+    stop_facts: dict[str, Any] = {}
     # The persisted release ledger; None until verification or a terminal transition.
     release: ReleaseDecision | None = None
 

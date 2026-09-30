@@ -17,8 +17,9 @@ from __future__ import annotations
 from .models import ClaimScope, ClaimUncertainty, MissionState, ProposedNextTest, ScopedBranch
 
 # 1: the original derivation; 2: a requested-only model identity never counts as an
-# independent reviewer; 3: connector content never counts as a successful test.
-DERIVATION_VERSION = 'arc-claim-scope-3'
+# independent reviewer; 3: connector content never counts as a successful test; 4: the scope
+# keeps each complete finding, which the ladder validates (D019).
+DERIVATION_VERSION = 'arc-claim-scope-4'
 ROLES = ('analyst', 'falsifier')
 SCOPE_QUALIFIER = 'on the exploratory validation split of the frozen dataset; not independent data'
 
@@ -104,7 +105,8 @@ def scope_branch(branch, state: MissionState, latest) -> ScopedBranch:
         status = 'contradicted'
     else:
         status = 'unresolved'
-    scope = tuple(finding[:900] for finding in supported)
+    # Canonical and complete: the ladder validates every reference in it; only presentation shortens it.
+    scope = tuple(supported)
     return ScopedBranch(branch_id=branch.id, requested=branch.hypothesis, status=status,
                         supported_scope=scope, scope_qualifier=SCOPE_QUALIFIER if scope else '',
                         uncertainties=tuple(uncertainties), next_tests=tuple(next_tests),

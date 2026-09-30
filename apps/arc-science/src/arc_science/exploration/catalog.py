@@ -60,6 +60,8 @@ PUBLIC_CATALOG = {
         },
     },
 }
+# The origin each shipped public-read tool reaches (public_reads.py fixes the URLs).
+PUBLIC_READ_ORIGINS = {'literature_search': 'https://www.ebi.ac.uk', 'pdb_metadata': 'https://data.rcsb.org'}
 
 BIORENDER_CATALOG = {
     "biorender_search": {

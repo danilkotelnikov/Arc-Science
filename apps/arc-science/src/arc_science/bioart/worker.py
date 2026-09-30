@@ -21,7 +21,8 @@ def main(directory):
     root=Path(directory)
     try:
         request=json.loads(_read_regular(root/'request.json',4096,'BioArt worker request'))
-        if not isinstance(request,dict) or set(request)!={'path','limit','mimes','limits'}:
+        keys={'path','limit','mimes','limits'}
+        if not isinstance(request,dict) or set(request) not in (keys,keys|{'action','body'}):
             raise ValueError('Invalid BioArt worker request')
         limits=BioArtLimits(**request['limits'])
         path=request['path'];limit=request['limit'];mimes=request['mimes']
@@ -31,7 +32,9 @@ def main(directory):
             raise ValueError('Invalid BioArt worker request bounds')
         client=BioArtClient(root/'unused-cache',allow_egress=True,limits=limits)
         with request_deadline(limits.timeout_seconds) as remaining:
-            data=client._request_bounded(path,limit,set(mimes),remaining)
+            # _request_bounded validates the optional search action (id, body size, path).
+            data=client._request_bounded(path,limit,set(mimes),remaining,
+                                         action=request.get('action'),body=request.get('body'))
         fd=_open_directory(root)
         try:_write_regular_at(fd,'response.bin',data)
         finally:anchored.close_directory(fd)

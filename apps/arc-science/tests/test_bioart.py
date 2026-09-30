@@ -104,7 +104,7 @@ def test_cache_only_requires_no_network_and_fetch_is_bound(tmp_path):
     client.allow_egress = True
     receipt = client.fetch(18,64,'svg')
     value = client.verify(receipt.receipt_path)
-    assert value['schema'] == 'arc-bioart-asset/1'
+    assert value['schema'] == 'arc-bioart-asset/2'
     assert value['file_id'] == 626860
     assert value['sha256'] == hashlib.sha256(SVG).hexdigest()
     assert receipt.source_path.read_bytes() == SVG
@@ -184,7 +184,7 @@ def test_limits_and_native_environment_bridge(tmp_path,monkeypatch):
         with pytest.raises(ValueError): api().BioArtSettings.from_environment(tmp_path)
 
 
-def test_cli_cache_commands_and_import_match_both_validators(tmp_path,capsys,monkeypatch):
+def test_cli_cache_commands_and_import_match_both_validators(tmp_path,capsys,monkeypatch,svg_rasterizer):
     client,_=transport_client(tmp_path)
     receipt=client.fetch(18,64,'svg')
     monkeypatch.setenv('ARC_BIOART_CACHE_DIR',str(tmp_path/'cache'))
@@ -356,7 +356,7 @@ def test_svg_huge_dimensions_are_not_eligible(tmp_path):
     assert client.verify(receipt.receipt_path)['import_eligible'] is False
 
 
-@pytest.mark.parametrize('format,file_id,mime,data,preview',[('AI',626856,'application/postscript',b'%!PS-Adobe-3.0 synthetic',False),('EPS',626857,'application/postscript',b'%!PS-Adobe-3.0 EPSF-3.0 synthetic',False),('PNG',626859,'image/png',None,True)])
+@pytest.mark.parametrize('format,file_id,mime,data,preview',[('EPS',626857,'application/postscript',b'%!PS-Adobe-3.0 EPSF-3.0 synthetic',False),('PNG',626859,'image/png',None,True)])
 def test_non_svg_originals_have_explicit_download_preview_limits(tmp_path,format,file_id,mime,data,preview):
     if data is None:
         from io import BytesIO
@@ -375,16 +375,16 @@ def test_non_svg_originals_have_explicit_download_preview_limits(tmp_path,format
     assert value['limitation']
 
 
-def test_search_query_is_encoded_and_reused_offline(tmp_path):
+def test_search_query_syntax_never_reaches_the_network(tmp_path):
+    # Live search is the discoverSearch action (test_bioart_search.py); '&' would page it.
     calls=[]
     def respond(request):
         calls.append(str(request.url))
         return httpx.Response(200,text='<a href="/bioart/18">Antibody</a>',headers={'content-type':'text/html'})
     client=api().BioArtClient(tmp_path/'cache',allow_egress=True,client=httpx.Client(transport=httpx.MockTransport(respond)))
-    assert client.search('antibody & grey')[0].entry_id==18
-    client.allow_egress=False
-    assert client.search('antibody & grey')[0].entry_id==18
-    assert calls==['https://bioart.niaid.nih.gov/discover?q=antibody+%26+grey&sort=relevance']
+    with pytest.raises(ValueError,match='letters, digits'):
+        client.search('antibody & grey')
+    assert calls==[]
 
 
 def test_malicious_duplicate_flight_mapping_json_rejected():

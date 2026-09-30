@@ -42,7 +42,7 @@ def test_the_demo_mission_stops_with_a_scope_per_hypothesis_that_the_reconciliat
     request, state = demo()
     assert state.status == 'completed' and state.claim_scope is not None
     scope = state.claim_scope
-    assert scope.derivation_version == 'arc-claim-scope-3' and scope.basis_round == state.round
+    assert scope.derivation_version == 'arc-claim-scope-4' and scope.basis_round == state.round
     assert {b.branch_id for b in scope.branches} == {b.id for b in state.branches}
     # The linear baseline was challenged by both roles: contradicted, with the findings kept as uncertainty.
     linear = scoped(state, 'linear')
@@ -148,8 +148,8 @@ def test_a_scope_derived_under_an_earlier_rule_is_stale_not_contradictory():
     validate_evidence(older)
     ledger = release.evaluate_release(request, older, None, event_chain_ok=True)
     check = next(c for c in ledger.checks if c.name == 'claim_scope')
-    assert check.state == 'stale' and 'arc-claim-scope-2' in check.reason and 'arc-claim-scope-3' in check.reason
-    assert claim_scope.derive_claim_scope(older).derivation_version == 'arc-claim-scope-3'
+    assert check.state == 'stale' and 'arc-claim-scope-2' in check.reason and 'arc-claim-scope-4' in check.reason
+    assert claim_scope.derive_claim_scope(older).derivation_version == 'arc-claim-scope-4'
     # Under the current version a scope that does not follow from the record is refused.
     with pytest.raises(ValueError, match='does not follow'):
         validate_evidence(state.model_copy(update={'claim_scope': state.claim_scope.model_copy(update={'basis_round': 99})}))
@@ -202,3 +202,35 @@ def test_the_scope_is_cleared_on_resume_and_derived_again_at_the_next_stop():
     assert resumed.claim_scope is not None and resumed.claim_scope.basis_round == resumed.round
     ledger = release.evaluate_release(resumed_request, paused, None, event_chain_ok=True)
     assert next(c.state for c in ledger.checks if c.name == 'claim_scope') == 'not_applicable'
+
+
+def test_the_canonical_scope_keeps_each_complete_finding():
+    """Version 4 (LADDER-REF): the ladder validates the complete findings, so the scope is no
+    longer cut to 900 characters; only presentation may shorten it."""
+    long = 'Validation error {{obs-1.validation_mse}} ' + 'x' * (900 - 42)
+    assert len(long) == 900
+    request, state = hand_built([{'role': 'analyst', 'position': 'support', 'finding': long},
+                                 {'role': 'falsifier', 'position': 'support', 'finding': long}])
+    scope = claim_scope.derive_claim_scope(state)
+    assert claim_scope.DERIVATION_VERSION == 'arc-claim-scope-4' == scope.derivation_version
+    assert scope.branches[0].supported_scope == ('analyst: ' + long, 'falsifier: ' + long)
+
+
+def test_a_version_3_scope_the_current_rule_derives_unchanged_stays_current():
+    """Version 4 only stopped cutting findings at 900 characters: a version-3 scope that the
+    current rule derives unchanged is still current, so a stored mission exports untouched.
+    One whose findings were cut is stale and is derived again on verify."""
+    request, state = demo()
+    v3 = state.model_copy(update={'claim_scope': state.claim_scope.model_copy(update={'derivation_version': 'arc-claim-scope-3'})})
+    check = next(c for c in release.evaluate_release(request, v3, None, event_chain_ok=True).checks if c.name == 'claim_scope')
+    assert check.state == 'satisfied', check.reason
+    long = 'y' * 900
+    request, state = hand_built([{'role': 'analyst', 'position': 'support', 'finding': long},
+                                 {'role': 'falsifier', 'position': 'support', 'finding': long}])
+    scope = claim_scope.derive_claim_scope(state)
+    cut = scope.model_copy(update={'derivation_version': 'arc-claim-scope-3',
+                                   'branches': tuple(b.model_copy(update={'supported_scope': tuple(t[:900] for t in b.supported_scope)})
+                                                     for b in scope.branches)})
+    check = next(c for c in release.evaluate_release(request, state.model_copy(update={'claim_scope': cut}), None,
+                                                     event_chain_ok=True).checks if c.name == 'claim_scope')
+    assert check.state == 'stale' and 'arc-claim-scope-3' in check.reason

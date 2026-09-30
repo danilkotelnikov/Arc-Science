@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import io
 import json
-import os
 import time
 import zipfile
 
@@ -15,6 +14,7 @@ from arc_science.exploration.agents import DemoAgent
 from arc_science.exploration.claims import route_states
 from arc_science.exploration.engine import explore, initialize
 from arc_science.exploration.models import MissionRequest, MissionState, ModelRecord
+from test_contract_compat import needs_rasterizer
 
 TOKEN = 't' * 40
 AUTH = {'Authorization': 'Bearer ' + TOKEN}
@@ -32,12 +32,6 @@ def finished(c, mid):
             return row
         time.sleep(.01)
     raise AssertionError('mission did not finish')
-
-
-def needs_rasterizer():
-    from arc_science.svg_raster import cairo_available
-    if not os.environ.get('ARC_SVG2PNG') and not cairo_available():
-        pytest.skip('No SVG rasterizer: set ARC_SVG2PNG or install cairosvg so the demo mission has artifacts')
 
 
 @pytest.fixture(scope='module')
@@ -123,13 +117,16 @@ def test_repository_list_status_and_head_equal_the_full_parse(tmp_path, demo):
     for mid in reversed(ids):
         full = repo.get(mid)
         expected.append({'id': mid, 'goal': full['request']['goal'], 'mode': full['request'].get('mode', 'demo'),
-                         'status': full['state']['status'], 'revision': full['revision']})
+                         'status': full['state']['status'], 'revision': full['revision'],
+                         'round': full['state']['round'], 'max_rounds': full['request']['max_rounds'], 'continues': None})
         assert repo.head(mid) == {'revision': full['revision'], 'status': full['state']['status'], 'round': full['state']['round']}
         assert repo.status(mid) == full['state']['status']
-    assert repo.list() == expected
+    listed = repo.list()
+    assert [{k: v for k, v in row.items() if k != 'updated_at'} for row in listed] == expected
+    assert all(isinstance(row['updated_at'], int) for row in listed)
     assert [item['status'] for item in expected] == ['ready', 'cancelled', 'completed']
     assert repo.head(ids[0])['round'] == demo.round > 0
-    assert repo.list(limit=1) == expected[:1]
+    assert repo.list(limit=1) == listed[:1]
 
 
 # --- route states ---

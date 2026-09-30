@@ -47,8 +47,12 @@ def test_c1_demo_claims_follow_the_persisted_scope_in_order(demo):
     for scoped, card in zip(state.claim_scope.branches, result['claims']):
         assert card['branch_id'] == scoped.branch_id and card['requested'] == scoped.requested
         assert card['supported_scope'] == list(scoped.supported_scope) and card['scope_qualifier'] == scoped.scope_qualifier
-        assert card['uncertainties'] == [u.model_dump(mode='json') for u in scoped.uncertainties]
-        assert card['next_tests'] == [t.model_dump(mode='json') for t in scoped.next_tests]
+        # The raw fields as recorded, with their rendering beside them (*_rendered, *_segments).
+        raw = lambda items, key: [{k: v for k, v in item.items() if k not in (key + '_rendered', key + '_segments')} for item in items]
+        assert raw(card['uncertainties'], 'detail') == [u.model_dump(mode='json') for u in scoped.uncertainties]
+        assert raw(card['next_tests'], 'test') == [t.model_dump(mode='json') for t in scoped.next_tests]
+        assert [u['detail_rendered'] for u in card['uncertainties']] == [
+            ''.join(s['rendered'] for s in u['detail_segments']) for u in card['uncertainties']]
         assert card['units'] is None and card['units_note'] == UNITS_NOTE
         assert card['stale_derivation'] is False and card['stale_reason'] == '' and card['claim_scope_check'] == 'unknown'
         assert card['title'] == next(b.title for b in state.branches if b.id == scoped.branch_id)
@@ -108,7 +112,7 @@ def test_c3_a_scope_derived_under_an_earlier_rule_is_stale_and_export_stays_bloc
     older = state.model_copy(update={'claim_scope': state.claim_scope.model_copy(update={'derivation_version': 'arc-claim-scope-2'})})
     decision = release.current_decision(request, older, event_chain_ok=True).model_dump(mode='json')
     result = build_claims(older, [], evidence_graph(older), decision)
-    assert result['derivation_version'] == 'arc-claim-scope-2' and result['current_derivation_version'] == 'arc-claim-scope-3'
+    assert result['derivation_version'] == 'arc-claim-scope-2' and result['current_derivation_version'] == 'arc-claim-scope-4'
     for card in result['claims']:
         assert card['stale_derivation'] is True and card['claim_scope_check'] == 'stale'
         assert 'earlier rule' in card['stale_reason'] and 'arc-claim-scope-2' in card['stale_reason']

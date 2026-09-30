@@ -116,11 +116,11 @@ def test_authorize_prefers_mission_grant_then_persistent(ledger):
     assert decision['allowed'] and decision['grant_id'] == persistent['id']
     ledger.revoke(persistent['id'], 'and this one')
     decision = ledger.authorize('mission', 'm1', 'https://api.openai.com', 'seat')
-    assert decision == {'allowed': False, 'grant_id': mission['id'], 'reason': decision['reason']}
+    assert decision == {'allowed': False, 'grant_id': mission['id'], 'reason': decision['reason'], 'reason_code': 'grant.revoked'}
     assert 'revoked' in decision['reason']
     assert ledger.get(other['id'])['uses'] == 0  # another mission's grant never applies
     decision = ledger.authorize('mission', 'm1', 'cmd:unknown-tool', 'mcp')
-    assert decision == {'allowed': False, 'grant_id': None, 'reason': 'No grant for cmd:unknown-tool (mcp)'}
+    assert decision == {'allowed': False, 'grant_id': None, 'reason': 'No grant for cmd:unknown-tool (mcp)', 'reason_code': 'grant.none'}
     # The kind is part of the destination identity: a seat grant does not cover an MCP server at the same address.
     assert ledger.authorize('mission', 'm2', 'https://api.openai.com', 'mcp')['allowed'] is False
     assert ledger.authorize('mission', 'm2', 'https://api.openai.com', 'seat')['grant_id'] == other['id']

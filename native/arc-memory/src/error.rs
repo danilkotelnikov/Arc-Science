@@ -18,6 +18,22 @@ pub enum Error {
     InvalidVector,
     /// Stored bytes failed an integrity check against their recorded digest.
     Corrupt(&'static str),
+    /// A retrieval would exceed the bounded read budget.
+    ReadBudget,
+}
+
+impl Error {
+    /// Machine-readable cause, reported beside the message on the wire.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Error::Sqlite(_) | Error::Io(_) => "storage",
+            Error::NotFound => "not_found",
+            Error::Conflict => "conflict",
+            Error::InvalidVector => "invalid_vector",
+            Error::Corrupt(_) => "corrupt",
+            Error::ReadBudget => "read_budget",
+        }
+    }
 }
 
 impl fmt::Display for Error {
@@ -29,6 +45,10 @@ impl fmt::Display for Error {
             Error::Conflict => write!(f, "idempotency key reused for different content"),
             Error::InvalidVector => write!(f, "embedder produced an invalid vector"),
             Error::Corrupt(what) => write!(f, "corrupt: {what}"),
+            Error::ReadBudget => write!(
+                f,
+                "retrieval exceeds the bounded read budget; narrow the session range or search limit"
+            ),
         }
     }
 }

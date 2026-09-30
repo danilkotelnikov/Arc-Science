@@ -11,7 +11,7 @@ from ..contracts import canonical, digest
 from .models import MissionRequest, MissionState, ReleaseDecision
 from . import tools
 from .catalog import trusted_replay, trusted_version
-from .evidence import evidence_graph
+from .evidence import evidence_graph, validate_context
 from .vision import required_visual_reason
 
 CAPSULE_FORMAT='arc-research-capsule/2'
@@ -124,6 +124,9 @@ def verify_capsule(blob:bytes)->dict:
     if runtime['numeric_source_sha256']!=hashlib.sha256(Path(tools.__file__).read_bytes()).hexdigest():
         raise ValueError('Numeric implementation changed; explicitly review migration before replay')
     reproduced=0;artifacts_reproduced=0;failures=[graph_failure] if graph_failure else [];snapshot_only=[]
+    # Each model call's attached context is recomputed from the frozen request, not trusted from the record.
+    try:validate_context(request,state)
+    except ValueError as exc:failures.append('model context: '+str(exc))
     branches={b.id for b in state.branches}
     for obs in state.observations:
         if (obs.id,obs.branch_id,obs.tool)!=(obs.action.id,obs.action.branch_id,obs.action.tool) or obs.branch_id not in branches:

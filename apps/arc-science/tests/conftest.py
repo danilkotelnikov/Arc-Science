@@ -1,5 +1,45 @@
 import importlib
+import os
+from pathlib import Path
+
 import pytest
+
+# The Cairo-free rasterizer that svg_raster falls back to on Windows, when it is built
+# (cargo build --release --manifest-path native/arc-svg/Cargo.toml), in-tree or under CARGO_TARGET_DIR.
+_TARGETS = [Path(__file__).resolve().parents[3] / 'native/arc-svg/target',
+            *([Path(os.environ['CARGO_TARGET_DIR'])] if os.environ.get('CARGO_TARGET_DIR') else [])]
+_SVG2PNG = next((path for path in (t / 'release/arc-svg2png.exe' for t in _TARGETS) if path.is_file()), None)
+if not os.environ.get('ARC_SVG2PNG') and _SVG2PNG:
+    os.environ['ARC_SVG2PNG'] = str(_SVG2PNG)
+_NO_RASTERIZER = 'No SVG rasterizer: set ARC_SVG2PNG to arc-svg2png (native/arc-svg) or install Cairo'
+
+
+def _no_rasterizer():
+    from arc_science import svg_raster
+    return not os.environ.get('ARC_SVG2PNG') and not svg_raster.cairo_available()
+
+
+@pytest.fixture(autouse=True)
+def _fail_svg_rendering_without_a_rasterizer(monkeypatch):
+    """Any test that renders SVG fails naming the missing prerequisite, not 'SVG conversion
+    failed'. It decides when the render is called, so a test that sets ARC_SVG2PNG itself
+    (to a stub, with a faked process) still runs without a real rasterizer."""
+    from arc_science import svg_raster
+    render = svg_raster.render_png_bytes
+
+    def guarded(*args, **kwargs):
+        if _no_rasterizer():
+            pytest.fail(_NO_RASTERIZER)
+        return render(*args, **kwargs)
+    monkeypatch.setattr(svg_raster, 'render_png_bytes', guarded)
+
+
+@pytest.fixture
+def svg_rasterizer():
+    """For tests whose point is an SVG import: a missing rasterizer fails them, never skips."""
+    if _no_rasterizer():
+        pytest.fail(_NO_RASTERIZER)
+
 
 def module(name):
     try:

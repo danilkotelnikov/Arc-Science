@@ -16,15 +16,18 @@ from ..contracts import digest
 from .models import (CheckState, MissionCheck, MissionRequest, MissionState, ReleaseCheck,
                      ReleaseDecision, VerificationReceipt)
 from .claim_scope import DERIVATION_VERSION, derive_claim_scope
+from .validation import DEFECTS, GRAMMAR, GUARANTEE, is_numeric, unmet
 from .vision import current_artifacts
 
 POLICY = {'version': 'arc-mission-release-1',
           'checks': ['operational_status', 'event_chain_integrity', 'replay_integrity',
                      'numerical_reproduction', 'artifact_reproduction', 'evidence_graph',
-                     'reconciliation', 'visual_review', 'claim_scope'],
+                     'reconciliation', 'visual_review', 'claim_scope', 'claim_rungs'],
           'verifier': 'arc-mission-verifier-1'}
 POLICY_DIGEST = digest(POLICY)
 BLOCKING = ('failed', 'unknown', 'error', 'stale')
+# Earlier scope versions whose rule differs from the current one only where the stored scope shows it.
+SAME_RULE = ('arc-claim-scope-3',)
 
 
 class ReleaseBlocked(PermissionError):
@@ -127,14 +130,20 @@ def _claim_scope(state):
         return 'not_applicable', 'The claim scope is derived when the mission stops; it has not stopped.', ()
     if state.claim_scope is None:
         return 'unknown', 'The mission stopped without a derived claim scope; verification derives and records it.', ()
-    if state.claim_scope.derivation_version != DERIVATION_VERSION:
-        return 'stale', ('The recorded claim scope was derived under an earlier rule (' + state.claim_scope.derivation_version
-                         + '); verification derives it again under ' + DERIVATION_VERSION + '.'), ()
     try:
         expected = derive_claim_scope(state)
     except Exception:
+        expected = None
+    version = state.claim_scope.derivation_version
+    recorded = state.claim_scope.model_copy(update={'derivation_version': DERIVATION_VERSION})
+    # Version 4 only stopped cutting findings at 900 characters: a version-3 scope the current
+    # rule derives unchanged is current, so a stored mission still exports untouched.
+    if version != DERIVATION_VERSION and not (version in SAME_RULE and expected is not None and recorded == expected):
+        return 'stale', ('The recorded claim scope was derived under an earlier rule (' + version
+                         + '); verification derives it again under ' + DERIVATION_VERSION + '.'), ()
+    if expected is None:
         return 'error', 'The claim scope could not be derived from the recorded reconciliation.', ()
-    if state.claim_scope != expected:
+    if recorded != expected:
         return 'failed', 'The recorded claim scope does not follow from the recorded reconciliation.', ()
     counts = dict(state.claim_scope.counts)
     missing = counts.pop('without_next_test', 0)
@@ -143,6 +152,44 @@ def _claim_scope(state):
     return ('satisfied', 'Every hypothesis carries its evidence-supported scope and remaining uncertainty ('
             + (summary or 'no hypotheses') + f'); a next discriminating test is proposed for {total - missing} of {total}; '
             'provisional support is exploratory, never validation.', ())
+
+
+def _claim_rungs(request, state, verification, subject, timeline_rows, receipts):
+    """Every assessed claim meets every condition of its minimum rung: L2 when it rests on
+    numbers (numerical evidence, a number reference or a typed numeral), L1 otherwise. An
+    untested hypothesis claims nothing and is held to no rung. A legacy mission's claims were
+    written before references existed: only the reference-grammar needs are waived for it, and
+    every other unmet condition still blocks. The displayed ladder is never changed by this."""
+    legacy = request.ladder_policy == 'legacy'
+    if state.claim_scope is None:
+        return 'not_applicable', 'No claim scope is recorded yet; the claim_scope check covers a stopped mission without one.', ()
+    held = [b for b in state.claim_scope.branches if b.status != 'unassessed']
+    if not held:
+        return 'not_applicable', 'No hypothesis was assessed, so no claim is held to a minimum rung.', ()
+    short, defect, waived = [], False, 0
+    for scoped in held:
+        minimum = 2 if is_numeric(state, scoped) else 1
+        every = unmet(state, scoped, minimum, timeline_rows=timeline_rows, receipts=receipts,
+                      verification=verification, subject=subject, request=request)
+        needs = [need for need in every if not (legacy and need in GRAMMAR)]
+        waived += len(needs) < len(every)
+        if needs:
+            defect = defect or any(need in DEFECTS for need in needs)
+            short.append(scoped.branch_id + ' needs L' + str(minimum) + ' (' + ', '.join(needs) + ')')
+    if short:
+        # A defect in the evidence fails; a step not yet taken (verification) is unknown.
+        return ('failed' if defect else 'unknown'), 'Below the minimum rung: ' + '; '.join(short)[:600], ()
+    if waived:
+        # A waived claim's numbers are not traced: never certify them with the guarantee.
+        met = ('All ' + str(len(held)) + ' assessed claims meet every other condition of their minimum rung (numeric L2, '
+               'others L1). A legacy mission predates references, so the reference grammar is waived for '
+               + str(waived) + ' of them: their numbers are not traced to recorded values and their displayed ladder '
+               'stays below that rung. ')
+    else:
+        met = ('All ' + str(len(held)) + ' assessed claims reach their minimum rung (numeric L2, others L1): ' + GUARANTEE
+               + '. ' + ('A legacy mission predates references; none of its claims needed the reference grammar waived. '
+                         if legacy else ''))
+    return 'satisfied', met + 'A rung records how far the evidence was checked, never that a claim is true.', ()
 
 
 def _replay(name, receipt: VerificationReceipt | None, current_subject, state):
@@ -175,8 +222,11 @@ def _replay(name, receipt: VerificationReceipt | None, current_subject, state):
 
 
 def evaluate_release(request: MissionRequest, state: MissionState, verification: VerificationReceipt | None,
-                     *, event_chain_ok: bool | None) -> ReleaseDecision:
-    """Compute the current decision. Pure: it never turns an old unknown into satisfied."""
+                     *, event_chain_ok: bool | None, timeline_rows: list | None = None,
+                     receipts: list | None = None) -> ReleaseDecision:
+    """Compute the current decision. Pure: it never turns an old unknown into satisfied.
+    `timeline_rows` and the mission's grant-ledger `receipts` let the rung check confirm the
+    receipts of external reads; without them those receipts stay unchecked."""
     subject = subject_digest(state)
     checks = []
 
@@ -196,6 +246,7 @@ def evaluate_release(request: MissionRequest, state: MissionState, verification:
     add('reconciliation', _reconciliation(state))
     add('visual_review', _visual(request, state))
     add('claim_scope', _claim_scope(state))
+    add('claim_rungs', _claim_rungs(request, state, verification, subject, timeline_rows, receipts))
     blocking = tuple(f'{c.name}:{c.state}' for c in checks if c.state in BLOCKING)
     return ReleaseDecision(policy_digest=POLICY_DIGEST, subject_digest=subject,
                            status='blocked' if blocking else 'eligible_for_human_review',
@@ -214,13 +265,14 @@ def receipt_from_report(report: dict, state: MissionState) -> VerificationReceip
                                verified_at=int(time.time()))
 
 
-def current_decision(request: MissionRequest, state: MissionState, *, event_chain_ok: bool | None) -> ReleaseDecision:
+def current_decision(request: MissionRequest, state: MissionState, *, event_chain_ok: bool | None,
+                     timeline_rows: list | None = None, receipts: list | None = None) -> ReleaseDecision:
     """Re-evaluate against the persisted verification receipt, keeping a declared
     invalidation (a stale mark whose basis has not changed) until a fresh verification
     replaces the ledger."""
     persisted = state.release
     receipt = persisted.verification if persisted else None
-    fresh = evaluate_release(request, state, receipt, event_chain_ok=event_chain_ok)
+    fresh = evaluate_release(request, state, receipt, event_chain_ok=event_chain_ok, timeline_rows=timeline_rows, receipts=receipts)
     if persisted is None:
         return fresh
     stale = {c.name: c for c in persisted.checks if c.state == 'stale'}
@@ -243,8 +295,9 @@ def invalidate_release(decision: ReleaseDecision, affected, reason: str) -> Rele
                                        'eligible_for_human_review': not blocking, 'decided_at': int(time.time())})
 
 
-def assert_exportable(request: MissionRequest, state: MissionState, *, event_chain_ok: bool | None) -> ReleaseDecision:
-    decision = current_decision(request, state, event_chain_ok=event_chain_ok)
+def assert_exportable(request: MissionRequest, state: MissionState, *, event_chain_ok: bool | None,
+                      timeline_rows: list | None = None, receipts: list | None = None) -> ReleaseDecision:
+    decision = current_decision(request, state, event_chain_ok=event_chain_ok, timeline_rows=timeline_rows, receipts=receipts)
     if not decision.eligible_for_human_review:
         raise ReleaseBlocked(decision.blocking_reasons)
     return decision

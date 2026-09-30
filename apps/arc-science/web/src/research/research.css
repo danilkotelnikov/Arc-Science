@@ -20,3 +20,10 @@
   box-shadow: inset var(--bp-bar) 0 0 var(--accent);
 }
 .research-saved .list-box-item { align-items: flex-start; flex-direction: column; gap: 4px; }
+
+/* A reference the service resolved in a claim text: a name token reads as an identifier, a
+   recorded value (with its field and observation) or a cited retrieval as data. */
+.research-ref--name { font-family: var(--font-mono); }
+.research-ref--number, .research-ref--source { font-weight: 600; font-variant-numeric: tabular-nums; }
+/* A typed numeral or a reference that did not resolve: marked, and its title names the diagnostic. */
+.research-flag, .research-ref[data-diagnostic] { text-decoration: underline wavy var(--danger); text-underline-offset: 3px; }

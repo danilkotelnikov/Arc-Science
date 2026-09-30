@@ -50,7 +50,7 @@ def contract_violations():
 
 
 model = args[args.index('--model') + 1] if '--model' in args else 'unknown'
-request = json.loads(sys.stdin.read())
+request = json.JSONDecoder().raw_decode(sys.stdin.read())[0]  # the JSON head; a fenced block may follow
 schema_title = request['response_schema'].get('title', '')
 violations = contract_violations()
 if violations:

@@ -84,7 +84,8 @@ test('seats load by themselves, are edited in the workspace and persisted by the
   const invalid = {...snap.settings, seats: {...snap.settings.seats, vision: {...snap.settings.seats.vision, provider: 'gemini', model: ''}}};
   const rejected = await request.put('/api/settings', {headers, data: {settings: invalid, if_revision: snap.revision}});
   expect(rejected.status()).toBe(422);
-  expect((await rejected.json()).detail).toContain('seats.vision.model');
+  expect((await rejected.json()).detail).toMatchObject({code: 'settings.rejected'});
+  expect((await rejected.json()).detail.detail).toContain('seats.vision.model');
   expect((await (await request.get('/api/settings', {headers})).json()).revision).toBe(snap.revision);
   check();
 });

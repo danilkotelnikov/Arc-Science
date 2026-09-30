@@ -248,11 +248,13 @@ class McpToolset:
     async def _connect(self, server, ClientSession, StdioServerParameters, stdio_client, streamable_http_client):
         if server.get('transport') == 'http':
             import httpx
-            # No proxies from the environment, no redirects; the SDK's own timeouts (30 s
-            # requests, 300 s idle event stream); the settings owner already required https
-            # or an exact loopback.
-            client = await self.stack.enter_async_context(httpx.AsyncClient(trust_env=False, follow_redirects=False,
-                                                                            timeout=httpx.Timeout(30, read=300)))
+            from ..net import outbound_client
+            # The system proxy for a remote https server, none for a loopback one; no other
+            # environment settings, no redirects; the SDK's own timeouts (30 s requests,
+            # 300 s idle event stream); the settings owner already required https or an
+            # exact loopback.
+            client = await self.stack.enter_async_context(outbound_client(
+                server['url'], asynchronous=True, timeout=httpx.Timeout(30, read=300)))
             read, write, _ = await self.stack.enter_async_context(streamable_http_client(server['url'], http_client=client))
         else:
             command = server['command']
