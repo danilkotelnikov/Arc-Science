@@ -4,6 +4,8 @@
 //   node test/no-deepseek-net.mjs --trace <file>  judge an existing trace file (no server is started)
 // Options: --archive <asar>  --install <dir>  --wait <seconds, default 60>  --list (every hit)  --strict (count docs and tests too)  --json <file>
 // Exit 0 only when no DeepSeek address is found. Allowed: test/net.allow.json (pi-ai catalog, model names).
+// The live part also fails when the trace has no start row (the tracer did not load) or no loopback connect or accept row (it did not see the page load),
+// and it removes everything it made (throwaway home, junctions) in a finally block.
 // The live part starts a server from the archive under test on a throwaway data home and stops it again (only the processes it started).
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -12,6 +14,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { openAsar } from '../lib/asar.mjs';
+import { quietConfig, removeHome, linkTree, treeHash, treeDiff } from '../lib/testhome.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -167,36 +170,44 @@ function readTrace(file) {
   return rows;
 }
 // The live run starts the web profile from the archive under test (--archive), with the installed Electron only as the runtime,
-// on a throwaway data home: the profile config files are copied, the plugin packages are linked, and the test fails if a real
-// profile file changed. It traces the Node host only; the desktop shell and the browser half are not exercised.
+// on a throwaway data home: the profile config files are copied (the MCP clients switched off, no saved theme: lib/testhome.mjs),
+// the plugin packages are hard-linked file by file, and the test fails if a real profile file or package file changed. It traces the Node host only; the desktop
+// shell and the browser half are not exercised. Whatever the run creates (home, junctions, server) is removed again in the finally block.
 async function liveRun(traceFile, waitSec) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const exe = path.join(installDir, 'DeepSeek Harness.exe');
   const cli = path.join(archive, 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js');
   const unpacked = archive + '.unpacked';
-  if (!fs.existsSync(unpacked)) fs.symlinkSync(path.join(installDir, 'resources', 'app.asar.unpacked'), unpacked, 'junction');
-  const sha = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
-  console.log(`live: tracing the archive ${path.relative(root, archive)} (sha256 ${sha.slice(0, 16)})`);
   const realProfile = path.join(home, '.dsh', 'profiles', 'web');
-  const configs = fs.readdirSync(realProfile).filter((f) => f !== 'node_modules' && fs.statSync(path.join(realProfile, f)).isFile());
   const hashOf = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
-  const before = new Map(configs.map((f) => [f, hashOf(path.join(realProfile, f))]));
-  const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-home-'));
-  fs.mkdirSync(path.join(testHome, 'profiles', 'web'), { recursive: true });
-  for (const f of configs) fs.copyFileSync(path.join(realProfile, f), path.join(testHome, 'profiles', 'web', f));
-  const link = path.join(testHome, 'profiles', 'web', 'node_modules');
-  fs.symlinkSync(path.join(realProfile, 'node_modules'), link, 'junction');
-  fs.rmSync(traceFile, { force: true });
-  const log = traceFile + '.server.log';
-  const out = fs.openSync(log, 'w');
-  const tracer = path.join(here, 'net-trace.cjs').replace(/\\/g, '/');
-  const child = spawn(exe, ['--expose-internals', cli, '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', '0'], {
-    cwd: installDir, stdio: ['ignore', out, out], windowsHide: true,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: testHome, ARC_NET_TRACE: traceFile, NODE_OPTIONS: `--require=${tracer}` },
-  });
+  let madeUnpacked = false, testHome = null, child = null, out = null, before = null, nmBefore = null, stoppedAt = null;
   try {
+    if (!fs.existsSync(unpacked)) { fs.symlinkSync(path.join(installDir, 'resources', 'app.asar.unpacked'), unpacked, 'junction'); madeUnpacked = true; }
+    const sha = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
+    console.log(`live: tracing the archive ${path.relative(root, archive)} (sha256 ${sha.slice(0, 16)})`);
+    const configs = fs.readdirSync(realProfile).filter((f) => f !== 'node_modules' && fs.statSync(path.join(realProfile, f)).isFile());
+    before = new Map(configs.map((f) => [f, hashOf(path.join(realProfile, f))]));
+    testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-home-'));
+    fs.mkdirSync(path.join(testHome, 'profiles', 'web'), { recursive: true });
+    for (const f of configs) {
+      const from = path.join(realProfile, f), to = path.join(testHome, 'profiles', 'web', f);
+      if (f === 'cordis.patch.yml') fs.writeFileSync(to, quietConfig(fs.readFileSync(from, 'utf8'))); else fs.copyFileSync(from, to);
+    }
+    // the plugin packages: a real tree of hard links (the loader must see the same path layout as in the real app); the real files are hashed before and after
+    nmBefore = treeHash(path.join(realProfile, 'node_modules'));
+    const nm = linkTree(path.join(realProfile, 'node_modules'), path.join(testHome, 'profiles', 'web', 'node_modules'));
+    console.log(`live: plugin packages ${nm.linked} files hard-linked, ${nm.copied} copied, ${nm.skipped} links skipped, ${nm.dirs} folders`);
+    fs.rmSync(traceFile, { force: true });
+    const log = traceFile + '.server.log';
+    out = fs.openSync(log, 'w');
+    const tracer = path.join(here, 'net-trace.cjs').replace(/\\/g, '/');
+    child = spawn(exe, ['--expose-internals', cli, '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', '0'], {
+      cwd: installDir, stdio: ['ignore', out, out], windowsHide: true,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: testHome, ARC_NET_TRACE: traceFile, NODE_OPTIONS: `--require=${tracer}` },
+    });
     let url = null;
     for (let i = 0; i < 90 && !url; i++) { // wait for the printed URL
-      await new Promise((r) => setTimeout(r, 1000));
+      await sleep(1000);
       url = fs.readFileSync(log, 'utf8').match(/(http:\/\/127\.0\.0\.1:\d+\/\?token=\S+)/)?.[1];
     }
     if (!url) throw new Error('the web server did not print its URL (see ' + log + ')');
@@ -206,16 +217,22 @@ async function liveRun(traceFile, waitSec) {
     const r2 = await fetch(new URL(r1.headers.get('location') || '/', url).href, { headers: { cookie } });
     console.log(`live: page loaded (HTTP ${r2.status}); waiting ${waitSec} s for background connections`);
     await r2.arrayBuffer();
-    await new Promise((r) => setTimeout(r, waitSec * 1000));
+    await sleep(waitSec * 1000);
+    stoppedAt = Date.now();
   } finally {
     // stop only what this run started: the server process and its own children (never another app window)
-    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    fs.closeSync(out);
-    await new Promise((r) => setTimeout(r, 1500));
-    try { fs.rmdirSync(link); } catch { /* in use */ }
-    if (!fs.existsSync(link)) { try { fs.rmSync(testHome, { recursive: true, force: true }); } catch { /* in use */ } } // never descend into the junction
-    for (const [f, h] of before) if (hashOf(path.join(realProfile, f)) !== h) { console.log(`FAIL the live run changed the real profile file ${f}`); process.exitCode = 1; }
+    if (child) spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    if (out !== null) fs.closeSync(out);
+    await sleep(1500);
+    if (testHome && !(await removeHome(testHome))) console.log(`WARN the throwaway home ${testHome} could not be removed (a process still holds it); remove it by hand`);
+    if (madeUnpacked) { try { fs.rmdirSync(unpacked); } catch { console.log(`WARN the junction ${unpacked} could not be removed`); } }
+    if (before) for (const [f, h] of before) if (hashOf(path.join(realProfile, f)) !== h) { console.log(`FAIL the live run changed the real profile file ${f}`); process.exitCode = 1; }
+    if (nmBefore) { // a write through a hard link changes the real file; a rewrite by someone else (another helper) shows up the same way
+      const diff = treeDiff(nmBefore, treeHash(path.join(realProfile, 'node_modules')));
+      if (diff.length) { console.log(`FAIL the real plugin packages changed during the run (${diff.length}): ${diff.slice(0, 8).join('; ')}`); process.exitCode = 1; }
+    }
   }
+  return { stoppedAt };
 }
 
 // ---------- run ----------
@@ -252,24 +269,42 @@ if (flag('--list')) for (const h of hits) console.log(`${h.allowed ? 'ALLOWED' :
 if (flag('--json')) fs.writeFileSync(opt('--json'), JSON.stringify({ counts, hits, owners: { web: [...owners.web], desktop: [...owners.desktop], ids: { web: [...owners.ids.web], desktop: [...owners.ids.desktop] } } }, null, 1));
 
 let liveBad = [];
+const liveProblems = [];
 const traceArg = opt('--trace');
 if (flag('--live') || traceArg) {
   const traceFile = path.resolve(traceArg || path.join(os.tmpdir(), 'arc-net-trace.jsonl'));
-  if (!traceArg) await liveRun(traceFile, Number(opt('--wait', 60)));
+  const run = traceArg ? null : await liveRun(traceFile, Number(opt('--wait', 60)));
   const rowsT = readTrace(traceFile);
   const byHost = new Map();
+  const programs = new Map();
+  let pipes = 0;
   for (const r of rowsT) {
-    if (!r.host || r.kind === 'start' || r.kind === 'spawn') continue;
+    if (r.kind === 'start') continue;
+    if (r.kind === 'spawn') { programs.set(r.host, (programs.get(r.host) || 0) + 1); continue; }
+    if (r.via === 'ipc') { pipes++; continue; } // a named pipe is a path on this machine, not a host
+    if (!r.host) continue;
     const h = String(r.host).toLowerCase();
     const e = byHost.get(h) || { n: 0, kinds: new Set(), ports: new Set(), from: r.from };
     e.n++; e.kinds.add(r.kind); if (r.port) e.ports.add(r.port); byHost.set(h, e);
   }
   console.log(`\nLIVE HOSTS (${rowsT.length} trace lines, ${new Set(rowsT.map((r) => r.pid)).size} processes)`);
   for (const [h, e] of [...byHost].sort((x, y) => y[1].n - x[1].n)) console.log(`${String(e.n).padStart(4)}  ${h.padEnd(34)} ${[...e.kinds].join('/').padEnd(18)} ${[...e.ports].join(',')}  ${isDeepseekHost(h) ? '<-- DEEPSEEK' : isLocalHost(h) ? '' : '<-- NOT LOCAL'}`);
+  console.log(`skipped ${pipes} named-pipe (ipc) rows: a pipe is not a host`);
+  console.log(`child programs started: ${programs.size ? [...programs].map(([p, n]) => `${p} x${n}`).join(', ') : 'none'} (only Node children are traced; a program that is not Node is not, so its own connections are not in this table)`);
+  const startRow = rowsT.find((r) => r.kind === 'start');
+  const windowSec = run && startRow ? (run.stoppedAt - Date.parse(startRow.t)) / 1000 : null;
+  console.log(`observation window: ${windowSec === null ? 'not measured (an existing trace file was judged)' : `${windowSec.toFixed(1)} s, from the tracer start to the end of the wait`}`);
   // a startup that reaches any host other than this machine is a finding: the update checks and the service calls are meant to be off
   liveBad = [...byHost.keys()].filter((h) => !isLocalHost(h));
+  // a trace that saw nothing proves nothing: the tracer must have loaded (start row) and must have seen this machine.
+  // The page load is a client of this machine that connects to the server, so the tracer logs it as an inbound (accept) row;
+  // an outbound loopback connect row (for example to a local MCP gateway) counts as well.
+  if (!startRow) liveProblems.push('the trace has no start row: the tracer did not load');
+  if (!rowsT.some((r) => (r.kind === 'connect' || r.kind === 'accept') && r.via === 'net' && isLocalHost(String(r.host).toLowerCase()))) liveProblems.push('the trace has no loopback connect or accept row: the page load was not seen');
+  console.log(`loopback rows: ${rowsT.filter((r) => r.kind === 'connect' && r.via === 'net' && isLocalHost(String(r.host).toLowerCase())).length} outbound connect, ${rowsT.filter((r) => r.kind === 'accept').length} inbound accept`);
 }
 
-const fail = bad.length > 0 || liveBad.length > 0;
-console.log(`\n${fail ? 'FAIL' : 'PASS'}: ${bad.length} static findings${flag('--live') || traceArg ? `, ${liveBad.length} hosts other than this machine in the live trace` : ' (live part not run; add --live)'}`);
+const fail = bad.length > 0 || liveBad.length > 0 || liveProblems.length > 0 || process.exitCode === 1;
+for (const p of liveProblems) console.log('FAIL ' + p);
+console.log(`\n${fail ? 'FAIL' : 'PASS'}: ${bad.length} static findings${flag('--live') || traceArg ? `, ${liveBad.length} hosts other than this machine in the live trace, ${liveProblems.length} trace gaps` : ' (live part not run; add --live)'}`);
 process.exit(fail ? 1 : 0);

@@ -1,8 +1,9 @@
 'use strict';
 // Network tracer. Load it with  NODE_OPTIONS=--require=<this file>  (works under ELECTRON_RUN_AS_NODE=1).
 // Every DNS lookup and every connection attempt becomes one JSON line in the file named by ARC_NET_TRACE:
-//   {t, pid, kind, host, port, via, from}
-// kind: dns | connect | tls | http | fetch | spawn.  `from` is the first package frame of the call stack.
+//   {t, pid, kind, host, port, via, from}      (a connection over a named pipe or a socket file has via "ipc" and a `path` field instead of `host`)
+// kind: dns | connect | accept | tls | http | fetch | spawn.  `from` is the first package frame of the call stack.
+// accept is an inbound connection to a server of this process (host = the caller, port = the local port).
 // The tracer only observes. It never blocks or changes a call, and it never logs headers, bodies or arguments.
 // Children started with child_process get the same NODE_OPTIONS, so they are traced too.
 const file = process.env.ARC_NET_TRACE;
@@ -29,8 +30,10 @@ if (file && !globalThis.__ARC_NET_TRACE__) {
   const log = (kind, host, port, via) => {
     try {
       const h = host == null ? '' : String(host);
-      const row = { t: new Date().toISOString(), pid: process.pid, kind, host: h, port: port == null ? '' : Number(port) || String(port), via: via || '', from: where() };
-      if (seen.has(h)) row.name = seen.get(h);
+      const row = { t: new Date().toISOString(), pid: process.pid, kind };
+      if (via === 'ipc') row.path = h; else row.host = h; // a pipe path is a path, never a host
+      Object.assign(row, { port: port == null ? '' : Number(port) || String(port), via: via || '', from: where() });
+      if (via !== 'ipc' && seen.has(h)) row.name = seen.get(h);
       fs.appendFileSync(file, JSON.stringify(row) + '\n');
     } catch { /* tracing must never break the process */ }
   };
@@ -74,6 +77,13 @@ if (file && !globalThis.__ARC_NET_TRACE__) {
       } else if (typeof a === 'string') log('connect', a, '', 'ipc');
     } catch { /* ignore */ }
     return origConnect.apply(this, args);
+  };
+
+  // --- inbound: a client that connects to a server of this process (the page load of the live test shows up here, as the host that called) ---
+  const origEmit = net.Server.prototype.emit;
+  net.Server.prototype.emit = function emit(ev, sock) {
+    try { if (ev === 'connection' && sock && sock.remoteAddress) log('accept', String(sock.remoteAddress).replace(/^::ffff:/, ''), sock.localPort, 'net'); } catch { /* ignore */ }
+    return origEmit.apply(this, arguments);
   };
 
   // --- TLS ---

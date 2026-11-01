@@ -4,10 +4,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { openAsar, writeAsar } from '../lib/asar.mjs';
 import { allow, rewriteFile, rewriteHosts } from '../lib/brandrules.mjs';
-import { recolorSvg, recolorBlueAttrsInScript } from '../lib/iconcolor.mjs';
+import { recolorSvg, recolorBlueAttrsInScript, recolorBlueTokens } from '../lib/iconcolor.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.resolve(process.argv[2] || path.join(root, 'build', 'app.asar'));
@@ -22,6 +23,17 @@ const text = (p) => { const f = src.byPath.get(p); if (!f) throw new Error('miss
 const put = (p, s) => overrides.set(p, Buffer.isBuffer(s) ? s : Buffer.from(s, 'utf8'));
 const must = (cond, msg) => { if (!cond) throw new Error('patch failed: ' + msg); };
 const lit = (s) => JSON.stringify(s); // JS string literal
+// a changed module must still parse: node --check on the text, written to a throwaway folder beside the output
+function mustParse(code, what) {
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  const dir = fs.mkdtempSync(path.join(path.dirname(out), 'parse-'));
+  try {
+    const f = path.join(dir, 'm.mjs');
+    fs.writeFileSync(f, code);
+    const r = spawnSync(process.execPath, ['--check', f], { encoding: 'utf8' });
+    must(r.status === 0, `${what} no longer parses :: ${(r.stderr || '').split('\n').slice(0, 3).join(' | ')}`);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
 
 // replace one `function name(...) {...}` by brace matching; returns [newSource, oldLength]
 function replaceFunction(code, name, replacement) {
@@ -54,11 +66,11 @@ const cubeCode = (J, JS, size, cls, face, style) => {
 const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif",fontWeight:600,fontSize:e*.72+"px",lineHeight:1,letterSpacing:"-.01em",whiteSpace:"nowrap"}';
 
 // ---- patch 1: the shared logo components in the web frontend bundle
-// mark: the plain cube up to 32 px, the AS cube above; name: live text in Geist 600 (no artwork)
+// mark: the AS cube at every size (letters on the left face); name: live text in Geist 600 (no artwork)
 {
   const p = DS + 'dsh-web-frontend/dist/assets/index-BXV-oxvX.js';
   let s = text(p);
-  const mark = `function gA({size:e=24,className:t}){return e>32?${cubeCode('d.jsx', 'd.jsxs', 'e', 't', 'as')}:${cubeCode('d.jsx', 'd.jsxs', 'e', 't', 'plain')}}`;
+  const mark = `function gA({size:e=24,className:t}){return ${cubeCode('d.jsx', 'd.jsxs', 'e', 't', 'as')}}`;
   const name = `function vA({size:e=24,className:t,includeMark:r=!0}){const n=d.jsx("span",{className:r?void 0:t,style:${NAME_STYLE},children:"Arc Harness"});return r?d.jsxs("span",{className:t,style:{display:"inline-flex",alignItems:"center",gap:e*.3+"px"},children:[gA({size:e}),n]}):n}`;
   s = replaceFunction(s, 'gA', mark);
   s = replaceFunction(s, 'vA', name);
@@ -88,7 +100,24 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
   report.push('hero of an empty session: large AS cube that turns on hover; whale swim paths removed');
 }
 
+// ---- patch 1c: the account onboarding screenshots (whale, old wordmark, account details) become a 1x1 transparent GIF
+// The plugin row is off but listed on the Plugins page. Runs before the brand text pass so that pass never reads the image data.
+{
+  const p = DS + 'dsh-client-ui-settings-account/lib/client.js';
+  const PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  const re = /data:image\/webp;base64,[A-Za-z0-9+/=]+/g;
+  let s = text(p);
+  const n = (s.match(re) || []).length;
+  must(n === 8, `account onboarding images: expected 8 webp data URIs, found ${n}`);
+  s = s.replace(re, () => PIXEL);
+  must(!/data:image\/webp/.test(s), 'account onboarding images: a webp data URI is left');
+  mustParse(s, p);
+  put(p, s);
+  report.push(`account onboarding: ${n} embedded screenshots replaced by a 1x1 transparent GIF`);
+}
+
 // ---- patch 2: the running indicator in the chat client (animated mask and still icon): the plain cube
+// This is the one place that keeps the plain cube: it is a moving indicator, not the logo.
 {
   const p = DS + 'dsh-client-ui-chat/lib/client.js';
   let s = text(p);
@@ -272,7 +301,7 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
   for (const f of src.files) {
     if (f.entry.unpacked || f.entry.size > 6e6 || /\.map$/.test(f.path) || skip.test(f.path)) continue;
     if (overrides.has(f.path) && overrides.get(f.path) === null) continue;
-    if (!/\.(c|m)?js$|\.json$|\.md$|\.html?$|\.txt$|\.ya?ml$|\.(c|m)?tsx?$/i.test(f.path)) continue;
+    if (!/\.(c|m)?js$|\.json$|\.md$|\.html?$|\.txt$|\.ya?ml$|\.(c|m)?tsx?$|\.ps1$|\.svg$/i.test(f.path)) continue;
     const before = text(f.path);
     const after = rewriteFile(f.path, before);
     if (after !== before) { put(f.path, after); files++; }
@@ -368,8 +397,8 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
   const mainJs = text(MAIN);
   must(mainJs.split(gate).length === 2, 'the welcome gate appears once in lib/main.js');
   put(MAIN, mainJs.replace(gate, 'return false; // Arc Harness has no vendor sign-in; models come from the profile providers'));
-  // the wordmark: the plain cube and the live name, same layout box (472 x 40) as the old image
-  const cube = `<g transform="translate(0 2) scale(0.1406)" class="ink" fill-rule="evenodd"><path d="${brand.top}"/><path d="${brand.leftPlain}"/><path d="${brand.right}"/></g>`;
+  // the wordmark: the AS cube and the live name, same layout box (472 x 40) as the old image
+  const cube = `<g transform="translate(0 2) scale(0.1406)" class="ink" fill-rule="evenodd"><path d="${brand.top}"/><path d="${brand.leftAS}"/><path d="${brand.right}"/></g>`;
   const svg = `<svg width="472" height="40" viewBox="0 0 472 40" fill="none" xmlns="http://www.w3.org/2000/svg">
 <style>
   :root { --dsw-alias-label-primary: #26231f; }
@@ -384,16 +413,42 @@ ${cube}
   // the palette: cool blue-grey values become the warm C2 values
   const PALETTE = [['#0f1115', '#26231f'], ['#61666b', '#645e55'], ['#81858c', '#75736c'], ['#43454a', '#6a574b'], ['#f1f3f5', '#f5f3ee'], ['#adb2b8', '#8a8478'],
     ['#f9fafb', '#faf9f6'], ['#cfd3d6', '#d5d1c8'], ['#353638', '#2f2c28'], ['#ebeef2', '#ece9e2']];
-  let sheets = 0;
-  for (const f of ['renderer/welcome.css', 'lib/welcome/welcome.css']) {
-    let css = text(f);
-    for (const [from, to] of PALETTE) css = css.split(from).join(to);
-    css = css.replace('--dsw-alias-brand-primary: var(--dsw-alias-label-primary);', '--dsw-alias-brand-primary: #54453c;');
-    css = css.replace(/@media \(prefers-color-scheme: dark\)\s*\{\s*body\s*\{/, (m) => m + '\n    --dsw-alias-brand-primary: #ede6d8;');
-    css = recolorSvg(css);
-    put(f, css); sheets++;
-  }
-  report.push(`welcome window: startup skips it, ${sheets} stylesheets in the C2 palette, the whale wordmark replaced by the cube and the live name`);
+  // One pass over the hex colours: a colour of the table becomes its warm twin, any other saturated hex goes through the icon
+  // recolor. Nothing is recolored twice, because the recolor turns the warm paper tones (#faf9f6, #f5f3ee, #ece9e2) into grey.
+  // The brand colours are written after the pass, and every replacement must find its text.
+  const warm = new Map(PALETTE), seen = new Map(PALETTE.map(([a]) => [a, 0]));
+  const recolorHex = (css) => css.replace(/#[0-9a-fA-F]{6}(?![0-9a-zA-Z])/g, (m) => {
+    const k = m.toLowerCase();
+    if (!warm.has(k)) return recolorSvg(m);
+    seen.set(k, seen.get(k) + 1);
+    return warm.get(k);
+  });
+  const LIGHT = '#54453c', DARK = '#ede6d8'; // brand primary on light and on dark
+  // window styles of the app: hex palette, then the brand primary (light) and a dark block that also beats the token sheet's dark selector
+  let win = recolorHex(text('renderer/welcome.css'));
+  for (const [k, n] of seen) must(n > 0, 'welcome palette colour not found in renderer/welcome.css: ' + k);
+  win = replaceOnce(win, '--dsw-alias-brand-primary: var(--dsw-alias-label-primary);', `--dsw-alias-brand-primary: ${LIGHT};`, 'renderer/welcome.css brand primary');
+  const darkBlock = /@media \(prefers-color-scheme: dark\)\s*\{\s*body\s*\{/g;
+  must((win.match(darkBlock) || []).length === 1, 'renderer/welcome.css dark block');
+  win = win.replace(darkBlock, () => `@media (prefers-color-scheme: dark) {\n  body,\n  body[data-ds-dark-theme] {\n    --dsw-alias-brand-primary: ${DARK};`);
+  put('renderer/welcome.css', win);
+  // token sheet of the welcome window: brand primary, the blue tokens and the vendor name in their variable names
+  let tok = text('lib/welcome/welcome.css');
+  tok = replaceOnce(tok, '--dsw-alias-brand-primary: var(--dsw-static-neutral-bluish-1000)', `--dsw-alias-brand-primary: ${LIGHT}`, 'welcome tokens brand primary (light)');
+  tok = replaceOnce(tok, '--dsw-alias-brand-primary: var(--dsw-static-neutral-bluish-50)', `--dsw-alias-brand-primary: ${DARK}`, 'welcome tokens brand primary (dark)');
+  tok = replaceOnce(tok, '-new-colorprimary-new-color: rgb(65, 118, 230)', `-new-colorprimary-new-color: ${LIGHT}`, 'welcome tokens new brand colour (light)');
+  tok = replaceOnce(tok, '-new-colorprimary-new-color: var(--dsw-static-deepseek-450)', `-new-colorprimary-new-color: ${DARK}`, 'welcome tokens new brand colour (dark)');
+  tok = recolorBlueTokens(tok);
+  must(tok.includes('rgba(38, 49, 72,'), 'welcome tokens: navy hover tints expected'); // the three interactive hover and active fills
+  tok = tok.split('rgba(38, 49, 72,').join('rgba(38, 35, 31,');
+  must(tok.includes('rgba(248, 249, 250,'), 'welcome tokens: cool white menu fills expected');
+  tok = tok.split('rgba(248, 249, 250,').join('rgba(250, 249, 246,');
+  must(!/rgb\(65, 118, 230\)/.test(tok), 'welcome tokens still hold the vendor blue');
+  must(tok.includes('--dsw-static-deepseek-450:'), 'welcome tokens: vendor blue token expected before the rename');
+  tok = tok.split('--dsw-static-deepseek-').join('--dsw-static-accent-');
+  must(!/deepseek/i.test(tok), 'welcome tokens still name the old vendor');
+  put('lib/welcome/welcome.css', tok);
+  report.push('welcome window: startup skips it, window styles and token sheet in the C2 palette with brand primary #54453c / #ede6d8, blue tokens recolored, the whale wordmark replaced by the AS cube and the live name');
 }
 
 // ---- patch 7: the first-run appearance is Light, the cream look of the Cammut console; Dark and System stay selectable
@@ -410,6 +465,75 @@ ${cube}
   }
   must(n === 2, 'theme default found in client and index: ' + n);
   report.push('appearance: first-run default is Light (Dark and System stay selectable)');
+}
+
+// ---- patch 11: the update coordinator never runs
+// Its default "enabled" switch is on whenever resources/app-update.yml exists, and the original file points at the old vendor's
+// download server. tools/install.mjs deletes that file, but the build must not depend on it: the default is now off.
+{
+  const MAIN = 'lib/main.js';
+  const on = 'enabled = () => app.isPackaged && existsSync(join(process.resourcesPath, "app-update.yml"))';
+  put(MAIN, replaceOnce(text(MAIN), on, 'enabled = () => false', 'update coordinator default switch'));
+  report.push('updates: the update coordinator is off by default, whatever files sit next to the app');
+}
+
+// ---- patch 12: the badge skill (its plugin row is off, the files stay loadable)
+// File names and the code path stay. The badge image is the app icon tile; the Markdown, the skill description and the
+// package texts say "powered by Arc Harness", with no vendor logo parameter and the Arc Harness ink colour.
+{
+  const B = DS + 'dsh-skill-badge/', BB = DS + 'dsh-experimental-badge-skill-bundle/';
+  const TITLE = 'Arc Harness badge', DESC = 'Provide the official “powered by Arc Harness” badge skill.';
+  const SKILL = 'Add the official “powered by Arc Harness” badge to documents, pull requests, merge requests, and other content produced with Arc Harness. Use whenever creating a pull request or merge request. Also use when the user asks for an Arc Harness badge, powered-by-Arc-Harness attribution, or a reusable badge asset or snippet.';
+  const BADGE = 'https://img.shields.io/badge/powered_by-Arc_Harness-26231F?style=flat-square';
+  const MD = `# Arc Harness Badge
+
+Add the “powered by Arc Harness” badge without recreating or restyling it.
+
+## Assets
+
+- Local PNG: [\`dsh-badge.png\`](dsh-badge.png), the Arc Harness cube tile, 1024×1024 source image; render at 20×20
+- Shields.io image URL: \`${BADGE}\`
+
+## Markdown
+
+Use this image in Markdown:
+
+\`\`\`markdown
+![powered by Arc Harness](${BADGE})
+\`\`\`
+
+## Usage rules
+
+- For GitHub or GitLab Markdown, use the Shields.io URL.
+- For systems that import remote images unreliably, upload \`dsh-badge.png\` from this skill directory instead of generating another badge.
+- Keep the image square: render it at 20×20 or larger, never stretched.
+- Place the badge at the end of the attributed document or section unless the user specifies another position.
+- Do not substitute another color, logo, or label.
+`;
+  const setJson = (p, fn) => {
+    must(src.byPath.has(p), 'badge package file missing: ' + p);
+    const raw = text(p), j = JSON.parse(raw);
+    fn(j);
+    const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+    const indent = /^(\t| +)"/m.exec(raw)?.[1] ?? '  ';
+    put(p, JSON.stringify(j, null, indent).replace(/\n/g, eol) + (/\n$/.test(raw) ? eol : ''));
+  };
+  must(src.byPath.has(B + 'assets/dsh-badge.png') && src.byPath.has(B + 'assets/dsh-badge.md'), 'badge assets exist');
+  put(B + 'assets/dsh-badge.png', dist('icon.png'));
+  put(B + 'assets/dsh-badge.md', MD);
+  const idx = text(B + 'lib/index.js');
+  const descRe = /description: "Add the official [^"\n]*",/g;
+  must((idx.match(descRe) || []).length === 1, 'badge skill description line in lib/index.js');
+  const idxNew = idx.replace(descRe, () => `description: ${lit(SKILL)},`);
+  mustParse(idxNew, B + 'lib/index.js');
+  put(B + 'lib/index.js', idxNew);
+  for (const loc of ['en', 'zh']) {
+    setJson(`${B}locale/${loc}.json`, (j) => { j.meta = { ...(j.meta || {}), title: TITLE, description: DESC }; });
+    setJson(`${BB}locale/${loc}.json`, (j) => { j.meta = { ...(j.meta || {}), title: 'Arc Harness badge skill', description: 'Let agents add a “powered by Arc Harness” badge to documents, pull requests, and other outputs.' }; });
+  }
+  setJson(B + 'package.json', (j) => { j.description = 'Bundled Arc Harness badge skill provider'; });
+  setJson(BB + 'package.json', (j) => { j.description = 'Let agents add a “powered by Arc Harness” badge to documents, pull requests, and other outputs.'; });
+  report.push('badge skill: cube tile image, Markdown, description and package texts say Arc Harness (no vendor logo, ink colour 26231F)');
 }
 
 // ---- keep the runtime manifest honest: new size and hash for every changed file under dsh/

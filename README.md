@@ -5,7 +5,7 @@ This folder rebuilds the app archive from the pristine one, so every change is a
 
 ## Look
 
-- Logo: the Arc Science AS cube (Omniverso/Brand cube AS 2026-10-19). One colour: #0A0A0A on light pages, white on dark pages. The plain cube mark shows at 32 px and below. The product name is live text in Geist 600.
+- Logo: the Arc Science AS cube (Omniverso/Brand cube AS 2026-10-19). One colour: #0A0A0A on light pages, white on dark pages. The AS cube is the logo at every size (the owner asked for it on 2026-11-01); only the moving "running" indicator in the chat keeps the plain cube, because it is an animation. The product name is live text in Geist 600.
 - Theme: the cream C2 look of the Cammut and Arc Science console (Omniverso/Cammut + Arc Science UI preview 2026-10-23). Paper #faf9f6, dark-brown primary #54453c, Geist, 10 px cards, 8 px controls. No blue.
 
 ## Folders
@@ -29,6 +29,14 @@ This folder rebuilds the app archive from the pristine one, so every change is a
 | `purge/` | Non-English files removed and Chinese text translated in the plugin packages. |
 | `linkstrip/` | Outside links and source fields removed from plugin documents and package metadata. |
 | `_legacy-*.tar.xz` | Archived legacy work (tile logo build, v0 and Radium skins). Not used. |
+
+## What the tests cover, and what they do not
+
+- The static scans read text files, JSON values, script strings, SVG text, YAML and PowerShell help in the archive and in both profiles. They do not read pictures (PNG, WebP), the binary files in `app.asar.unpacked` (the LibreOffice kit and its notices stay), or files over 12 MB.
+- The live trace and the screen crawl run the **web profile** of the candidate archive on a throwaway data home, in Node and in headless Edge. The Electron main process, the desktop window, the menus, the welcome window and the installer were never started by any test. The welcome window is checked only by the build (`build-check.mjs`). They are checked by hand after an install.
+- The live trace sees Node connections only. A helper started by a plugin (Python, for example) and the local gateway's own relays are outside it. The test configuration switches the MCP client rows off, so the run does not touch Cammut or Composio.
+- Names that stay until the rename slices: the command `dsh`, the folder `.dsh`, the Documents folder `deepseek-harness`, `@deepseek-ai/*` and `dsh-*` package names, `DSH_HOME`, the exe and installer names, the `dsh-session-*.zip` export name. The independent scan reports them as "names that wait for the rename slices". A lower-case `dsh` in a sentence is not one of them: that fails.
+- Third-party plugin packages that are switched off (the remote plugin, the skill badge, the account plugin) are not shown, but the badge and account assets were rewritten anyway.
 
 ## Rebuild
 

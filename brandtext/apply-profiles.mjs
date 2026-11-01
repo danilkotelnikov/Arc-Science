@@ -11,7 +11,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { allow, rewriteFile, DEAD_HOST } from '../lib/brandrules.mjs';
-import { recolorSvg } from '../lib/iconcolor.mjs';
+import { recolorSvg, recolorBlueAttrsInScript } from '../lib/iconcolor.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const home = path.join(os.homedir(), '.dsh');
@@ -31,7 +31,7 @@ function* walk(dir, depth = 0) {
   try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
   for (const e of ents) {
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) { if (e.name === '.pnpm' || e.name === '.bin' || e.name.startsWith('_archive')) continue; if (depth < 6) yield* walk(p, depth + 1); }
+    if (e.isDirectory()) { if (e.name === '.pnpm' || e.name === '.bin' || e.name.startsWith('_archive')) continue; if (depth < 12) yield* walk(p, depth + 1); }
     else yield p;
   }
 }
@@ -44,16 +44,28 @@ if (args.includes('--restore')) {
   fs.mkdirSync(stage, { recursive: true });
   const r = tar('-xJf', ARCHIVE, '-C', STAGE);
   if (r.status) { console.error(r.stderr); process.exit(1); }
-  let n = 0;
+  let n = 0, changedSince = 0;
+  // A file whose hash differs from the committed list was edited after the rewrite: it is left alone unless --force is given,
+  // so a restore never wipes newer work. A path with .. is refused: the list is read from an archive.
+  let known = {};
+  try { known = JSON.parse(fs.readFileSync(path.join(here, 'profile-state.json'), 'utf8')).files || {}; } catch { /* no list yet */ }
+  const force = args.includes('--force');
+  const drive = path.parse(os.homedir()).root;
   for (const rel of JSON.parse(fs.readFileSync(path.join(stage, 'list.json'), 'utf8'))) {
-    const target = path.join(path.parse(os.homedir()).root, rel);
+    if (rel.split('/').includes('..') || path.isAbsolute(rel)) { console.error('refused an unsafe path in the originals list: ' + rel); process.exit(1); }
+    const target = path.join(drive, rel);
+    const expected = known[rel.replace(/^Users\/[^/]+\//, '~/')];
+    if (expected && !force) {
+      let cur = null; try { cur = crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex'); } catch { /* absent: restore it */ }
+      if (cur && cur !== expected) { changedSince++; console.log('changed after the rewrite, left alone: ' + rel); continue; }
+    }
     const tmp = target + '.arc-tmp';
     fs.copyFileSync(path.join(stage, 'files', rel), tmp);
     fs.renameSync(tmp, target);
     n++;
   }
   fs.rmSync(stage, { recursive: true, force: true });
-  console.log(`restored ${n} files`);
+  console.log(`restored ${n} files` + (changedSince ? `, ${changedSince} left alone because they changed after the rewrite (use --force to overwrite them)` : ''));
   process.exit(0);
 }
 
@@ -78,15 +90,43 @@ if (args.includes('--manifest')) {
 
 const changed = [];
 let scanned = 0;
+// Files that stay as they were. dsh-hoh is a plugin of the owner that sends a retrieval query to Cammut at run time; the old
+// wording of the query ranks the stored notes, so rewriting it would change what the plugin finds (QA finding, 2026-11-01).
+const KEEP = /[\\/]dsh-hoh[\\/]lib[\\/]index\.js$|[\\/]local-plugins[\\/]dsh-english[\\/]/;   // (the second part: a translation tool of this kit with old file copies)
+// The Visualize plugin names its first style "whale" in its code (STYLE_IDS, the style table, locale keys) and shows the id on its
+// settings page. The id is renamed to "cube" everywhere in the three runtime files at once, so the id and the table keys still agree.
+const VISUALIZE_FILES = /@nagi-ovo[\\/]dsh-visualize[\\/]lib[\\/](?:index\.js|client\.js|index\.d\.ts)$/;
+const renameStyleId = (text) => text
+  .replace(/"whale"/g, '"cube"')
+  .replace(/"style\.whale(\.desc)?"/g, (m, d) => `"style.cube${d || ''}"`)
+  .replace(/^(\s*)whale: \{/gm, '$1cube: {');
+// Sentences whose meaning the mechanical rewrite would change are written by hand. Each pair is "text after the rewrite" and "the sentence".
+// The script stops if a text is not found, so a later change of the rules cannot leave a wrong sentence behind.
+const FIXES = [
+  [/dsh-context[\\/]lib[\\/]client\.js$/, [
+    ['Arc Harness list price on models.dev is off-peak;', 'DeepSeek model list prices on models.dev are off-peak rates;'],
+    ['Arc Harness’s models.dev rates are its off-peak rates;', 'DeepSeek model rates on models.dev are off-peak rates;'],
+    ["Arc Harness's official image-size conversion", "the official DeepSeek model image-size conversion"],
+  ]],
+  // the version badge on the side card shows the package name in capitals; the package id stays
+  [/dsh-better-sidebar[\\/]lib[\\/]client\.js$/, [['children: "DSH-better-sidebar"', 'children: "better-sidebar"']]],
+  [/dsh-vision-router[\\/]lib[\\/]official-deepseek-catalog\.js$/, [['the official Arc Harness catalog', 'the official DeepSeek model catalog']]],
+  [/@nagi-ovo[\\/]dsh-visualize[\\/]lib[\\/](?:index|client)\.js$/, [['"Arc Harness · Arc Harness (default)"', '"Arc Harness (default)"']]],
+];
 const consider = (p) => {
-  if (skip.test(norm(p)) || !/\.(c|m)?js$|\.json$|\.md$|\.html?$|\.txt$|\.svg$|\.ya?ml$|\.(c|m)?tsx?$/i.test(p)) return;
+  if (skip.test(norm(p)) || KEEP.test(p) || !/\.(c|m)?js$|\.json$|\.md$|\.html?$|\.txt$|\.svg$|\.ya?ml$|\.ps1$|\.(c|m)?tsx?$/i.test(p)) return;
   let st; try { st = fs.statSync(p); } catch { return; }
-  if (st.size > 6e6) return;
+  if (st.size > 12e6) return;   // (profile packages carry bundled libraries of 7 MB that also hold the plugin's own descriptions)
   scanned++;
   const before = fs.readFileSync(p, 'utf8');
-  let after = /\.svg$/i.test(p) ? recolorSvg(before) : rewriteFile(p, before);
-  // two plugins look for a newer version at the public npm registry and at GitHub on every start; those checks are off
-  if (/dsh-(context|vision-router)[\\/]lib[\\/].*\.js$/.test(p)) {
+  let after = /\.svg$/i.test(p) ? recolorSvg(rewriteFile(p, before)) : rewriteFile(p, before);
+  if (VISUALIZE_FILES.test(p)) after = renameStyleId(after);
+  // inline SVG icons in plugin scripts: blue and purple fills become ink, as in the app archive
+  if (/\.(c|m)?js$/i.test(p)) after = recolorBlueAttrsInScript(after);
+  for (const [re, pairs] of FIXES) if (re.test(p)) for (const [from, to] of pairs) { if (!after.includes(from)) { if (after.includes(to)) continue; console.error(`FIX not found in ${p}: ${from}`); process.exit(1); } after = after.split(from).join(to); }
+  // plugins that look for a newer version at the public npm registry and at GitHub (the two helper plugins, and every plugin-updater or
+  // update-check script): those checks are off. Installing a plugin by name stays a user action.
+  if (/dsh-(context|vision-router)[\\/]lib[\\/].*\.js$|[\\/](?:plugin-updater|update-check)\.js$/.test(p)) {
     after = after.replace(/registry\.npm(?:js\.org|mirror\.com)|api\.github\.com/g, DEAD_HOST);
     // a fetch to the dead name would still send a CONNECT to the system proxy; a local port that refuses at once sends nothing out
     after = after.replace(/https:\/\/arc-harness\.invalid/g, 'http://127.0.0.1:9');

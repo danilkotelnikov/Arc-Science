@@ -13,7 +13,8 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { classify } from '../lib/brandrules.mjs';
-import { findIn } from './independent-scan.mjs';
+import { findIn, TIER } from './independent-scan.mjs';
+import { quietConfig, removeHome, linkTree, treeHash, treeDiff } from '../lib/testhome.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -28,11 +29,12 @@ if (!phase) {
   let bad = 0;
   fs.mkdirSync(outDir, { recursive: true });
   for (const ph of ['first-run', 'dark', 'light']) {
+    fs.rmSync(path.join(outDir, `report-${ph}.json`), { force: true }); // a report left by an earlier run must not stand in for this one
     const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...argv, '--phase', ph], { stdio: 'inherit' });
-    if (r.status) bad++;
+    if (r.status !== 0) { bad++; console.log(`FAIL phase ${ph}: the child ${r.status === null ? 'was killed or did not start' : 'exited with ' + r.status}`); } // a killed child has status null
     try { reports.push(JSON.parse(fs.readFileSync(path.join(outDir, `report-${ph}.json`), 'utf8'))); } catch { bad++; }
   }
-  const merged = { asar, failures: reports.flatMap((r) => r.failures), warnings: reports.flatMap((r) => r.warnings), phases: reports.map((r) => r.scheme) };
+  const merged = { asar, failures: reports.flatMap((r) => r.failures), warnings: reports.flatMap((r) => r.warnings), skipped: reports.flatMap((r) => r.skipped || []), phases: reports.map((r) => r.scheme) };
   const lines = {};
   for (const r of reports) for (const sc of Object.values(r.scheme)) for (const [n, v] of Object.entries(sc.screens || {})) (lines[n] ||= []).push(v.lines);
   for (const [n, arr] of Object.entries(lines)) if (arr.length > 1 && Math.min(...arr) < 0.4 * Math.max(...arr)) merged.failures.push(`screen ${n}: the text read differs a lot between phases (${arr.join(', ')} lines)`);
@@ -54,7 +56,7 @@ if (!fs.existsSync(unpacked)) { fs.symlinkSync('C:/Users/danil/AppData/Local/Pro
 const serverLog = path.join(outDir, 'server.log');
 // a throwaway home keeps the settings, sessions and storages of the test apart from Danil's data;
 // only the plugin profiles are shared (read for plugins and config)
-// The profile is a copy of its small config files plus a junction to its plugin packages: the app writes settings
+// The profile is a copy of its small config files plus a hard-linked copy of its plugin packages: the app writes settings
 // (for example the theme choice) into cordis.patch.yml, and that must never reach the real profile.
 const realProfile = path.join(os.homedir(), '.dsh', 'profiles', 'web');
 const hashOf = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
@@ -62,19 +64,26 @@ const realConfigs = fs.readdirSync(realProfile).filter((f) => f !== 'node_module
 const realBefore = new Map(realConfigs.map((f) => [f, hashOf(path.join(realProfile, f))]));
 const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-home-'));
 fs.mkdirSync(path.join(testHome, 'profiles', 'web'), { recursive: true });
-for (const f of realConfigs) fs.copyFileSync(path.join(realProfile, f), path.join(testHome, 'profiles', 'web', f));
+// The copy of cordis.patch.yml has the MCP clients switched off (no python child, no call to the local gateway) and no saved theme (lib/testhome.mjs);
+// the dark and light phases append their own theme row below, the first-run phase has none.
+for (const f of realConfigs) {
+  const from = path.join(realProfile, f), to = path.join(testHome, 'profiles', 'web', f);
+  if (f === 'cordis.patch.yml') fs.writeFileSync(to, quietConfig(fs.readFileSync(from, 'utf8'))); else fs.copyFileSync(from, to);
+}
 if (phase === 'dark' || phase === 'light') {
   const cfg = path.join(testHome, 'profiles', 'web', 'cordis.patch.yml');
   fs.appendFileSync(cfg, `\n- id: ui-theme\n  name: "@deepseek-ai/dsh-client-ui-theme"\n  config:\n    preference: ${phase}\n`);
 }
-fs.symlinkSync(path.join(realProfile, 'node_modules'), path.join(testHome, 'profiles', 'web', 'node_modules'), 'junction');
-// Junctions are unlinked first and nothing is removed recursively while one is left (a recursive delete that follows a junction
-// would erase the real plugin packages). Every exit, early ones included, goes through here.
+// The plugin packages are a real tree of hard links to the real files (a junction to the real folder made ten plugins fail to load, because the
+// loader resolves @deepseek-ai/* from the real path). The real package files are hashed before and after: a write through a link would change them.
+const nmReal = path.join(realProfile, 'node_modules');
+const nmBefore = treeHash(nmReal);
+const nmCounts = linkTree(nmReal, path.join(testHome, 'profiles', 'web', 'node_modules'));
+console.log(`plugin packages: ${nmCounts.linked} files hard-linked, ${nmCounts.copied} copied, ${nmCounts.skipped} links skipped, ${nmCounts.dirs} folders`);
+// Every exit, early ones included, goes through here. removeHome never enters a link.
 async function cleanupHome() {
   await new Promise((r) => setTimeout(r, 1200));
-  const link = path.join(testHome, 'profiles', 'web', 'node_modules');
-  try { fs.rmdirSync(link); } catch { /* absent or in use */ }
-  if (!fs.existsSync(link)) { try { fs.rmSync(testHome, { recursive: true, force: true }); } catch { /* in use */ } }
+  if (!(await removeHome(testHome))) console.log(`WARN the throwaway home ${testHome} could not be removed; remove it by hand`);
   if (madeUnpacked) { try { fs.rmdirSync(unpacked); } catch { /* in use */ } }
 }
 const server = spawn(EXE, ['--expose-internals', `${asar}/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js`, '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', '0'],
@@ -231,7 +240,7 @@ const SCREENS = [
   })),
 ];
 
-const report = { asar, scheme: {}, failures: [], warnings: [] };
+const report = { asar, scheme: {}, failures: [], warnings: [], skipped: [] };
 const fail = (m) => { report.failures.push(m); console.log('FAIL ' + m); };
 const warn = (m) => { report.warnings.push(m); };
 
@@ -245,13 +254,18 @@ async function crawl(scheme, tag) {
     if (!(await closeAll())) warn(`${tag}: a dialog stayed open`);
     let ok = false;
     try { if (s.pre) await evalIn(s.pre); ok = await s.run(); } catch (e) { warn(`${tag}/${s.name}: ${e.message}`); }
-    if (!ok) { if (s.optional) warn(`${tag}/${s.name}: not present (${s.optional})`); else fail(`${tag}/${s.name}: screen could not be opened`); continue; }
+    // a screen may be skipped only with a stated reason; a skip without one fails
+    if (!ok) {
+      if (s.optional) { warn(`${tag}/${s.name}: not present (${s.optional})`); report.skipped.push({ screen: `${tag}/${s.name}`, reason: s.optional }); } else fail(`${tag}/${s.name}: screen could not be opened`);
+      continue;
+    }
     await sleep(500);
     const lines = await evalIn('__arc.texts()');
     const col = await evalIn('__arc.colours()');
     await shot(`${tag}-${s.name}`);
     // two word finders: the build rules and the independent scan (lower case command and provider names are the rename slices' work)
-    const dirty = lines.flatMap((l) => { const ids = [classify(l), ...findIn(l).filter((id) => id !== 'dsh word' && id !== 'deepseek word')].filter(Boolean); return ids.length ? [[l, ids[0]]] : []; });
+    // (TIER holds the ids that are counted but do not fail)
+    const dirty = lines.flatMap((l) => { const ids = [classify(l), ...findIn(l).filter((id) => !TIER.has(id))].filter(Boolean); return ids.length ? [[l, ids[0]]] : []; });
     for (const [l, c] of dirty) fail(`${tag}/${s.name}: [${c}] ${l.slice(0, 100)}`);
     for (const b of col.blue) fail(`${tag}/${s.name}: blue ${b}`);
     const bad = col.contrast.filter((c) => c.ratio < 3);
@@ -295,7 +309,11 @@ try {
   try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch { /* in use */ }
   await cleanupHome();
   for (const [f, h] of realBefore) if (hashOf(path.join(realProfile, f)) !== h) fail(`the test changed the real profile file ${f}`);
+  const nmDiff = treeDiff(nmBefore, treeHash(nmReal));
+  if (nmDiff.length) fail(`the real plugin packages changed during the run (${nmDiff.length}): ${nmDiff.slice(0, 8).join('; ')}`);
   fs.writeFileSync(path.join(outDir, `report-${phase}.json`), JSON.stringify(report, null, 1));
 }
+console.log(`phase ${phase}: ${Object.values(report.scheme).reduce((n, sc) => n + Object.keys(sc.screens || {}).length, 0)} screens read, skipped ${report.skipped.length}`);
+for (const k of report.skipped) console.log(`  skipped ${k.screen}: ${k.reason}`);
 console.log(`phase ${phase}: failures ${report.failures.length}, warnings ${report.warnings.length}`);
 process.exit(report.failures.length ? 1 : 0);

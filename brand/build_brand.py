@@ -9,7 +9,8 @@ Reads (never writes) the brand cube folder and the C2 UI preview:
 Writes brand/dist/: brand.json (paths for the patcher), cube-as.svg, cube-mark.svg, favicon.svg, favicon-dark.svg,
 geist.css (Geist and Geist Mono as embedded fonts), GEIST-OFL.txt, icon.png (1024) and tray.ico.
 Colours: the cube is one colour, #0A0A0A on light pages and white on dark pages.
-At 32 px and below the plain cube mark (no letters) is used; the product name is live text in Geist 600.
+The AS cube (letters on the left face) is the logo at every size, favicons included. Only the moving running indicator in the
+chat keeps the plain cube (cube-mark.svg, leftPlain), because it is an animation and not the logo. The product name is live text in Geist 600.
 """
 from __future__ import annotations
 
@@ -66,8 +67,8 @@ def main() -> int:
 
     (OUT / 'cube-as.svg').write_text(svg(INK, as_left), encoding='utf-8')
     (OUT / 'cube-mark.svg').write_text(svg(INK, mk_left), encoding='utf-8')
-    (OUT / 'favicon.svg').write_text(svg(INK, mk_left), encoding='utf-8')          # light tab strips
-    (OUT / 'favicon-dark.svg').write_text(svg(WHITE, mk_left), encoding='utf-8')   # dark tab strips
+    (OUT / 'favicon.svg').write_text(svg(INK, as_left), encoding='utf-8')          # light tab strips
+    (OUT / 'favicon-dark.svg').write_text(svg(WHITE, as_left), encoding='utf-8')   # dark tab strips
 
     # app icon: cream tile with the AS cube, readable on light and dark task bars
     side, inset = 960.0, 32.0
