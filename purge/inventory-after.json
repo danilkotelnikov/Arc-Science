@@ -1,0 +1,476 @@
+{
+ "label": "after",
+ "date": "2026-10-31T22:03:53.291Z",
+ "profiles": {
+  "web": {
+   "@anysearch/anysearch-dsh": {
+    "files": 30,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "@ayanehana/dsh-reasoning-effort": {
+    "files": 34,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "src/client/agent-tutorial.zh.md"
+    ],
+    "cjkFileList": []
+   },
+   "@liustack/modlens": {
+    "files": 30,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "@liustack/modsearch": {
+    "files": 30,
+    "cjkFiles": 1,
+    "cjkChars": 22,
+    "byKind": {
+     "code": {
+      "files": 1,
+      "cjkChars": 22
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": [
+     [
+      "dist/main.js",
+      22
+     ]
+    ]
+   },
+   "@michengai/dsh-archive-manager": {
+    "files": 38,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "@michengai/dsh-skills-manager": {
+    "files": 48,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "@nagi-ovo/dsh-visualize": {
+    "files": 50,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "aegis": {
+    "files": 563,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "ds-harness-remote": {
+    "files": 515,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "dsh-auto-review": {
+    "files": 207,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "dsh-better-sidebar": {
+    "files": 476,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "dsh-chat-import": {
+    "files": 205,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "dsh-client-auto-continue": {
+    "files": 73,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "dsh-context": {
+    "files": 10,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "dsh-vision-router": {
+    "files": 277,
+    "cjkFiles": 5,
+    "cjkChars": 2218,
+    "byKind": {
+     "code": {
+      "files": 5,
+      "cjkChars": 2218
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": [
+     [
+      "index.js",
+      3
+     ],
+     [
+      "lib/http-compat.js",
+      43
+     ],
+     [
+      "lib/runtime-i18n-boundary.js",
+      2134
+     ],
+     [
+      "lib/runtime-i18n-core.js",
+      7
+     ],
+     [
+      "lib/twin-image-capability-fallback.js",
+      31
+     ]
+    ]
+   },
+   "superpowers-dsh": {
+    "files": 92,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   }
+  },
+  "desktop": {
+   "@anysearch/anysearch-dsh": {
+    "files": 30,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "@ayanehana/dsh-reasoning-effort": {
+    "files": 34,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "src/client/agent-tutorial.zh.md"
+    ],
+    "cjkFileList": []
+   },
+   "@liustack/modlens": {
+    "files": 30,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "@liustack/modsearch": {
+    "files": 30,
+    "cjkFiles": 1,
+    "cjkChars": 22,
+    "byKind": {
+     "code": {
+      "files": 1,
+      "cjkChars": 22
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": [
+     [
+      "dist/main.js",
+      22
+     ]
+    ]
+   },
+   "@michengai/dsh-archive-manager": {
+    "files": 38,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "@michengai/dsh-skills-manager": {
+    "files": 48,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "@nagi-ovo/dsh-visualize": {
+    "files": 50,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "aegis": {
+    "files": 563,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "ds-harness-remote": {
+    "files": 515,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "dsh-auto-review": {
+    "files": 207,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "dsh-better-sidebar": {
+    "files": 476,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "dsh-chat-import": {
+    "files": 205,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "dsh-client-auto-continue": {
+    "files": 73,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "dsh-context": {
+    "files": 10,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   },
+   "dsh-vision-router": {
+    "files": 277,
+    "cjkFiles": 5,
+    "cjkChars": 2218,
+    "byKind": {
+     "code": {
+      "files": 5,
+      "cjkChars": 2218
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": [
+     [
+      "index.js",
+      3
+     ],
+     [
+      "lib/http-compat.js",
+      43
+     ],
+     [
+      "lib/runtime-i18n-boundary.js",
+      2134
+     ],
+     [
+      "lib/runtime-i18n-core.js",
+      7
+     ],
+     [
+      "lib/twin-image-capability-fallback.js",
+      31
+     ]
+    ]
+   },
+   "superpowers-dsh": {
+    "files": 92,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": []
+   }
+  }
+ },
+ "totals": {
+  "files": 5356,
+  "cjkFiles": 12,
+  "cjkChars": 4480,
+  "note": "README.md, docs/policy.md and locale/en.json are owned by another worker and counted separately per package"
+ }
+}

@@ -1,0 +1,398 @@
+[
+ {
+  "pkg": "@liustack/modlens",
+  "file": "dsh/client.js",
+  "find": "/选择模型|select model|current model/i",
+  "replace": "/select model|current model/i",
+  "note": "host label matcher: drop Chinese alternative, English one stays",
+  "all": false
+ },
+ {
+  "pkg": "@liustack/modsearch",
+  "file": "dist/main.js",
+  "find": "/i,\n  /推特/,\n  /推文/,\n  /发推/,\n  /在\\s*[Xx]\\s*上/,\n  /[Xx]\\s*(?:平台|帖子)/\n];",
+  "replace": "/i\n];",
+  "note": "Chinese query detectors for X/Twitter routing removed; English detectors stay",
+  "all": false
+ },
+ {
+  "pkg": "@michengai/dsh-archive-manager",
+  "file": "lib/client.js",
+  "find": "/new|create|新建|add|\\+|созда/",
+  "replace": "/new|create|add|\\+|созда/",
+  "note": "host button matcher: drop Chinese alternative",
+  "all": false
+ },
+ {
+  "pkg": "@michengai/dsh-archive-manager",
+  "file": "lib/client.js",
+  "find": "/action|操作|действи|more|更多|选项|options|menu/",
+  "replace": "/action|действи|more|options|menu/",
+  "note": "host button matcher: drop Chinese alternatives",
+  "all": false
+ },
+ {
+  "pkg": "@michengai/dsh-archive-manager",
+  "file": "lib/client.js",
+  "find": "/action|操作|действи|more|更多/",
+  "replace": "/action|действи|more/",
+  "note": "host button matcher: drop Chinese alternatives",
+  "all": false
+ },
+ {
+  "pkg": "ds-harness-remote",
+  "file": "dist/client/header.js",
+  "find": "/(?:open|打开).{0,12}vs\\s*code|vs\\s*code.{0,12}(?:open|打开)|session\\s*logs?|download.{0,12}session\\s*logs?|会话日志|下载.{0,8}日志/i",
+  "replace": "/open.{0,12}vs\\s*code|vs\\s*code.{0,12}open|session\\s*logs?|download.{0,12}session\\s*logs?/i",
+  "note": "host label matcher: drop Chinese alternatives",
+  "all": false
+ },
+ {
+  "pkg": "ds-harness-remote",
+  "file": "dist/client.github.js",
+  "find": "/(?:open|打开).{0,12}vs\\s*code|vs\\s*code.{0,12}(?:open|打开)|session\\s*logs?|download.{0,12}session\\s*logs?|会话日志|下载.{0,8}日志/i",
+  "replace": "/open.{0,12}vs\\s*code|vs\\s*code.{0,12}open|session\\s*logs?|download.{0,12}session\\s*logs?/i",
+  "note": "host label matcher: drop Chinese alternatives",
+  "all": false
+ },
+ {
+  "pkg": "ds-harness-remote",
+  "file": "dist/client.js",
+  "find": "/(?:open|打开).{0,12}vs\\s*code|vs\\s*code.{0,12}(?:open|打开)|session\\s*logs?|download.{0,12}session\\s*logs?|会话日志|下载.{0,8}日志/i",
+  "replace": "/open.{0,12}vs\\s*code|vs\\s*code.{0,12}open|session\\s*logs?|download.{0,12}session\\s*logs?/i",
+  "note": "host label matcher: drop Chinese alternatives",
+  "all": false
+ },
+ {
+  "pkg": "dsh-vision-router",
+  "file": "lib/client.js",
+  "find": "label.startsWith('设置') || label.startsWith('Settings')",
+  "replace": "label.startsWith('Settings')",
+  "note": "host menu label: Chinese alternative dropped",
+  "all": false
+ },
+ {
+  "pkg": "dsh-vision-router",
+  "file": "lib/client.js",
+  "find": "(?: · (?:图片识别|Image understanding))?",
+  "replace": "(?: · Image understanding)?",
+  "note": "row title matcher: Chinese alternative dropped",
+  "all": false
+ },
+ {
+  "pkg": "dsh-vision-router",
+  "file": "lib/settings-limit-client-prelude.js",
+  "find": "originalText.includes('整轮视觉工具上限')",
+  "replace": "originalText.includes('Whole-turn vision-tool limit')",
+  "note": "label matcher uses the English label that the same plugin renders",
+  "all": false
+ },
+ {
+  "pkg": "dsh-vision-router",
+  "file": "lib/settings-limit-client-prelude.js",
+  "find": "text.includes('设置协议')||text.includes('Settings contract')",
+  "replace": "text.includes('Settings contract')",
+  "note": "Chinese alternative dropped",
+  "all": false
+ },
+ {
+  "pkg": "dsh-vision-router",
+  "file": "lib/vision-capability-router.js",
+  "find": " || /原样转述|所有文字|逐字|识别文字/.test(q)",
+  "replace": "",
+  "note": "Chinese question detector dropped; English detector stays",
+  "all": false
+ },
+ {
+  "pkg": "dsh-vision-router",
+  "file": "lib/vision-limit-diagnostics.js",
+  "find": "block.text.includes('本轮视觉总时间预算已耗尽')",
+  "replace": "block.text.includes('The total vision time budget for this turn is exhausted')",
+  "note": "matches the English text that lib/structured-flow-hardening.js now emits (same cached translation)",
+  "all": false
+ },
+ {
+  "pkg": "dsh-vision-router",
+  "file": "lib/v2-settings-ia-integration.js",
+  "find": "/^(?:配置顺序：|执行顺序：|Baseline order: |Execution order: )/",
+  "replace": "/^(?:Baseline order: |Execution order: )/",
+  "note": "Chinese label prefixes dropped",
+  "all": false
+ },
+ {
+  "pkg": "dsh-vision-router",
+  "file": "lib/vision-capability-benchmark-hardening.js",
+  "find": "[:：]",
+  "replace": "[:\\uFF1A]",
+  "note": "fullwidth colon written as an escape; behavior identical",
+  "all": false
+ },
+ {
+  "pkg": "dsh-vision-router",
+  "file": "lib/vision-resilience.js",
+  "find": "/[.!?。！？]$/",
+  "replace": "/[.!?\\u3002\\uFF01\\uFF1F]$/",
+  "note": "fullwidth sentence end marks written as escapes; behavior identical",
+  "all": false
+ },
+ {
+  "pkg": "dsh-vision-router",
+  "file": "lib/twin-image-capability-fallback.js",
+  "find": "[.!?。！？]",
+  "replace": "[.!?\\u3002\\uFF01\\uFF1F]",
+  "note": "fullwidth sentence end marks written as escapes; behavior identical",
+  "all": false
+ },
+ {
+  "pkg": "dsh-better-sidebar",
+  "file": "lib/client-mermaid.js",
+  "find": "\"　\"",
+  "replace": "\"\\u3000\"",
+  "note": "ideographic space as escape in whitespace table; behavior identical",
+  "all": false
+ },
+ {
+  "pkg": "dsh-better-sidebar",
+  "file": "lib/client-mermaid.js",
+  "find": "\"\\f\\n\\r\t\\v \\xA0            \\u2028\\u2029  　﻿\"",
+  "replace": "\"\\f\\n\\r\t\\v \\xA0            \\u2028\\u2029  \\u3000﻿\"",
+  "note": "ideographic space as escape in whitespace table; behavior identical",
+  "all": false
+ },
+ {
+  "pkg": "aegis",
+  "file": "benchmarks/README.md",
+  "find": "- [Chinese table](results/gpt-5-6-sol-xhigh-extended-20260811-v2-7-6.zh-CN.md)\n",
+  "replace": "",
+  "note": "link to a removed Chinese table",
+  "all": false
+ },
+ {
+  "pkg": "aegis",
+  "file": "benchmarks/README.md",
+  "find": "- [Chinese table](results/gpt-5-6-sol-xhigh-standard-20260913-v2-10-1.zh-CN.md)\n",
+  "replace": "",
+  "note": "link to a removed Chinese table",
+  "all": false
+ },
+ {
+  "pkg": "aegis",
+  "file": "benchmarks/README.md",
+  "find": "- [Chinese table](results/gpt-5-6-sol-xhigh-standard-20260925-v2-10-8.zh-CN.md)\n",
+  "replace": "",
+  "note": "link to a removed Chinese table",
+  "all": false
+ },
+ {
+  "pkg": "aegis",
+  "file": "benchmarks/README.md",
+  "find": "- [Chinese table](results/gpt-5-6-sol-xhigh-standard-20261011-v2-13-0.zh-CN.md)\n",
+  "replace": "",
+  "note": "link to a removed Chinese table",
+  "all": false
+ },
+ {
+  "pkg": "aegis",
+  "file": "README.en.md",
+  "find": "- [README.zh-CN.md](README.zh-CN.md)\n",
+  "replace": "",
+  "note": "link to the removed Chinese README",
+  "all": false
+ },
+ {
+  "pkg": "aegis",
+  "file": "docs/adr/ADR-0002-kimi-native-plugin-is-the-automatic-entry.md",
+  "find": "- `docs/current/AEGIS_FAST_TRACK_PLAYBOOK_ZH.md`\n",
+  "replace": "",
+  "note": "reference to the removed Chinese playbook",
+  "all": false
+ },
+ {
+  "pkg": "aegis",
+  "file": "docs/current/README.md",
+  "find": " or `docs/current/AEGIS_FAST_TRACK_PLAYBOOK_ZH.md`",
+  "replace": "",
+  "note": "reference to the removed Chinese playbook",
+  "all": false
+ },
+ {
+  "pkg": "aegis",
+  "file": "docs/current/README.md",
+  "find": " or `docs/current/AEGIS_WORKFLOW_GUIDE_ZH.md`",
+  "replace": "",
+  "note": "reference to the removed Chinese workflow guide",
+  "all": false
+ },
+ {
+  "pkg": "aegis",
+  "file": "docs/current/AEGIS_RULE_LAYERING.md",
+  "find": "The root `GLOBAL_USER_RULES_TEMPLATE.md` and\n`GLOBAL_USER_RULES_TEMPLATE.zh-CN.md` files are English and Chinese mirrors of\none manual host/profile routing prefix. They are not method owners, host\nadapters, or proof that Aegis is installed and discoverable. They are not\nupdated by `aegis:update`; users must re-copy or merge them when a release",
+  "replace": "The root `GLOBAL_USER_RULES_TEMPLATE.md` file is\none manual host/profile routing prefix. It is not a method owner, host\nadapter, or proof that Aegis is installed and discoverable. It is not\nupdated by `aegis:update`; users must re-copy or merge it when a release",
+  "note": "the Chinese mirror template was removed",
+  "all": false
+ },
+ {
+  "pkg": "dsh-chat-import",
+  "file": "lib/client.js",
+  "find": "docs/INTERCHANGE-GUIDE.zh-CN.md",
+  "replace": "docs/INTERCHANGE-GUIDE.md",
+  "note": "guide URL points to the English guide",
+  "all": false
+ },
+ {
+  "pkg": "dsh-chat-import",
+  "file": "docs/architecture.md",
+  "find": "[SETTINGS-MIGRATION.zh-CN.md](SETTINGS-MIGRATION.zh-CN.md)",
+  "replace": "[SETTINGS-MIGRATION.md](SETTINGS-MIGRATION.md)",
+  "note": "link to the English guide",
+  "all": false
+ },
+ {
+  "pkg": "dsh-client-auto-continue",
+  "file": "docs/screenshots/README.md",
+  "find": "| View | English | Chinese | Viewport |",
+  "replace": "| View | English | Viewport |",
+  "note": "Chinese screenshot column removed",
+  "all": false
+ },
+ {
+  "pkg": "dsh-client-auto-continue",
+  "file": "docs/screenshots/README.md",
+  "find": "| --- | --- | --- | --- |",
+  "replace": "| --- | --- | --- |",
+  "note": "Chinese screenshot column removed",
+  "all": false
+ },
+ {
+  "pkg": "dsh-client-auto-continue",
+  "file": "docs/screenshots/README.md",
+  "find": "| [01-settings-section.zh.png](01-settings-section.zh.png) ",
+  "replace": "",
+  "note": "Chinese screenshot column removed",
+  "all": false
+ },
+ {
+  "pkg": "dsh-client-auto-continue",
+  "file": "docs/screenshots/README.md",
+  "find": "| [02-settings-card.zh.png](02-settings-card.zh.png) ",
+  "replace": "",
+  "note": "Chinese screenshot column removed",
+  "all": false
+ },
+ {
+  "pkg": "dsh-client-auto-continue",
+  "file": "docs/screenshots/README.md",
+  "find": "| [07-card-panels.zh.png](07-card-panels.zh.png) ",
+  "replace": "",
+  "note": "Chinese screenshot column removed",
+  "all": false
+ },
+ {
+  "pkg": "dsh-client-auto-continue",
+  "file": "docs/screenshots/README.md",
+  "find": "| [08-composer-toggle.zh.png](08-composer-toggle.zh.png) ",
+  "replace": "",
+  "note": "Chinese screenshot column removed",
+  "all": false
+ },
+ {
+  "pkg": "aegis",
+  "file": "tests/e2e/aegis-doctor-check.sh",
+  "find": "\"Only when user explicitly invokes Aegis\"",
+  "replace": "\"only when user explicitly invokes Aegis\"",
+  "note": "test expectation follows the English text that scripts/aegis-doctor.py now writes",
+  "all": false,
+  "phase": "post"
+ },
+ {
+  "pkg": "aegis",
+  "file": "tests/e2e/aegis-doctor-check.sh",
+  "find": "\"Only when user explicitly invokes Aegis\"",
+  "replace": "\"only when user explicitly invokes Aegis\"",
+  "note": "test expectation follows the English text that scripts/aegis-doctor.py now writes",
+  "all": false,
+  "phase": "post"
+ },
+ {
+  "pkg": "aegis",
+  "file": "tests/e2e/aegis-doctor-check.sh",
+  "find": "\"At the start of each round, first determine whether there are relevant Aegis skills\"",
+  "replace": "\"At the start of each turn, first check if there is a relevant Aegis skill\"",
+  "note": "test expectation follows the English text that scripts/aegis-doctor.py now writes",
+  "all": false,
+  "phase": "post"
+ },
+ {
+  "pkg": "aegis",
+  "file": "tests/e2e/aegis-doctor-check.sh",
+  "find": "\"At the start of each round, first determine whether there are relevant Aegis skills\"",
+  "replace": "\"At the start of each turn, first check if there is a relevant Aegis skill\"",
+  "note": "test expectation follows the English text that scripts/aegis-doctor.py now writes",
+  "all": false,
+  "phase": "post"
+ },
+ {
+  "pkg": "dsh-chat-import",
+  "file": "docs/INTERCHANGE-GUIDE.md",
+  "find": "\n> Chinese version: [INTERCHANGE-GUIDE.zh-CN.md](INTERCHANGE-GUIDE.zh-CN.md)",
+  "replace": "",
+  "note": "link to the removed Chinese guide",
+  "all": false,
+  "phase": "post"
+ },
+ {
+  "pkg": "dsh-chat-import",
+  "file": "docs/INTERCHANGE-GUIDE.md",
+  "find": "\r\n> Chinese version: [INTERCHANGE-GUIDE.zh-CN.md](INTERCHANGE-GUIDE.zh-CN.md)",
+  "replace": "",
+  "note": "link to the removed Chinese guide",
+  "all": false,
+  "phase": "post"
+ },
+ {
+  "pkg": "dsh-chat-import",
+  "file": "docs/INTERCHANGE.md",
+  "find": "> [Conversion Guide (Skill Instructions for Agents)](INTERCHANGE-GUIDE.zh-CN.md) or\n> [Conversion Guide (English)](INTERCHANGE-GUIDE.md)",
+  "replace": "> [Conversion Guide (Skill Instructions for Agents)](INTERCHANGE-GUIDE.md)",
+  "note": "link to the removed Chinese guide",
+  "all": false,
+  "phase": "post"
+ },
+ {
+  "pkg": "dsh-chat-import",
+  "file": "docs/INTERCHANGE.md",
+  "find": "> [Conversion Guide (Skill Instructions for Agents)](INTERCHANGE-GUIDE.zh-CN.md) or\r\n> [Conversion Guide (English)](INTERCHANGE-GUIDE.md)",
+  "replace": "> [Conversion Guide (Skill Instructions for Agents)](INTERCHANGE-GUIDE.md)",
+  "note": "link to the removed Chinese guide",
+  "all": false,
+  "phase": "post"
+ },
+ {
+  "pkg": "dsh-chat-import",
+  "file": "CHANGELOG.md",
+  "find": " ([Chinese](docs/SETTINGS-MIGRATION.zh-CN.md))",
+  "replace": "",
+  "note": "link to the removed Chinese guide",
+  "all": false,
+  "phase": "post"
+ },
+ {
+  "pkg": "dsh-chat-import",
+  "file": "CHANGELOG.md",
+  "find": " ([Chinese](docs/SETTINGS-MIGRATION.zh-CN.md))",
+  "replace": "",
+  "note": "link to the removed Chinese guide",
+  "all": false,
+  "phase": "post"
+ },
+ {
+  "pkg": "dsh-chat-import",
+  "file": "CHANGELOG.md",
+  "dropSections": {
+   "start": "<h3 id=\"cn-",
+   "end": "<h3 id=\"en-",
+   "switcher": "^\\[中文\\]\\(#cn-"
+  },
+  "note": "bilingual changelog: Chinese sections dropped, the English sections of the same releases stay"
+ }
+]

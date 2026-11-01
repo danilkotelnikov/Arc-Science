@@ -1,0 +1,8 @@
+# large or generated files stay out of the history
+/pristine/app.asar
+/pristine/*.png
+/pristine/*.ico
+/build/
+/_scratch/
+*.tar.xz
+node_modules/

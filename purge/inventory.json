@@ -1,0 +1,3106 @@
+{
+ "label": "before",
+ "date": "2026-10-31T21:29:37.291Z",
+ "profiles": {
+  "web": {
+   "@anysearch/anysearch-dsh": {
+    "files": 35,
+    "cjkFiles": 3,
+    "cjkChars": 6345,
+    "byKind": {
+     "docs": {
+      "files": 3,
+      "cjkChars": 6345
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "docs/integration-options.zh-CN.md",
+     "docs/user-guide.zh-CN.md",
+     "README.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "docs/integration-options.zh-CN.md",
+      2655
+     ],
+     [
+      "docs/user-guide.zh-CN.md",
+      2538
+     ],
+     [
+      "README.zh-CN.md",
+      1152
+     ]
+    ]
+   },
+   "@ayanehana/dsh-reasoning-effort": {
+    "files": 36,
+    "cjkFiles": 4,
+    "cjkChars": 1581,
+    "byKind": {
+     "docs": {
+      "files": 4,
+      "cjkChars": 1581
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "locale/zh.json",
+     "README.zh.md",
+     "src/client/agent-tutorial.zh.md"
+    ],
+    "cjkFileList": [
+     [
+      "CHANGELOG.md",
+      2
+     ],
+     [
+      "README.en.md",
+      4
+     ],
+     [
+      "README.zh.md",
+      16
+     ],
+     [
+      "src/client/agent-tutorial.zh.md",
+      1559
+     ]
+    ]
+   },
+   "@liustack/modlens": {
+    "files": 37,
+    "cjkFiles": 14,
+    "cjkChars": 17137,
+    "byKind": {
+     "docs": {
+      "files": 13,
+      "cjkChars": 17133
+     },
+     "code": {
+      "files": 1,
+      "cjkChars": 4
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "docs/cli.zh-CN.md",
+     "docs/harness-setup.zh-CN.md",
+     "docs/output-schema.zh-CN.md",
+     "docs/security.zh-CN.md",
+     "docs/troubleshooting.zh-CN.md",
+     "README.zh-CN.md",
+     "skills/modlens/references/configure.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "docs/cli.md",
+      2
+     ],
+     [
+      "docs/cli.zh-CN.md",
+      1111
+     ],
+     [
+      "docs/harness-setup.md",
+      2
+     ],
+     [
+      "docs/harness-setup.zh-CN.md",
+      3263
+     ],
+     [
+      "docs/output-schema.md",
+      2
+     ],
+     [
+      "docs/output-schema.zh-CN.md",
+      493
+     ],
+     [
+      "docs/security.md",
+      2
+     ],
+     [
+      "docs/security.zh-CN.md",
+      1465
+     ],
+     [
+      "docs/troubleshooting.md",
+      2
+     ],
+     [
+      "docs/troubleshooting.zh-CN.md",
+      3343
+     ],
+     [
+      "dsh/client.js",
+      4
+     ],
+     [
+      "README.zh-CN.md",
+      3218
+     ],
+     [
+      "skills/modlens/references/configure.md",
+      2
+     ],
+     [
+      "skills/modlens/references/configure.zh-CN.md",
+      4228
+     ]
+    ]
+   },
+   "@liustack/modsearch": {
+    "files": 39,
+    "cjkFiles": 20,
+    "cjkChars": 17685,
+    "byKind": {
+     "docs": {
+      "files": 19,
+      "cjkChars": 17651
+     },
+     "code": {
+      "files": 1,
+      "cjkChars": 34
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "docs/dsh.zh-CN.md",
+     "docs/harness-setup.zh-CN.md",
+     "docs/security.zh-CN.md",
+     "docs/troubleshooting.zh-CN.md",
+     "README.zh-CN.md",
+     "skills/modsearch/references/cli.zh-CN.md",
+     "skills/modsearch/references/configure.zh-CN.md",
+     "skills/modsearch/references/output-schema.zh-CN.md",
+     "skills/modsearch/references/runtime.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "CHANGELOG.md",
+      6
+     ],
+     [
+      "dist/main.js",
+      34
+     ],
+     [
+      "docs/dsh.md",
+      4
+     ],
+     [
+      "docs/dsh.zh-CN.md",
+      2640
+     ],
+     [
+      "docs/harness-setup.md",
+      4
+     ],
+     [
+      "docs/harness-setup.zh-CN.md",
+      1244
+     ],
+     [
+      "docs/security.md",
+      4
+     ],
+     [
+      "docs/security.zh-CN.md",
+      1504
+     ],
+     [
+      "docs/troubleshooting.md",
+      8
+     ],
+     [
+      "docs/troubleshooting.zh-CN.md",
+      2703
+     ],
+     [
+      "README.zh-CN.md",
+      2166
+     ],
+     [
+      "skills/modsearch/references/cli.md",
+      4
+     ],
+     [
+      "skills/modsearch/references/cli.zh-CN.md",
+      986
+     ],
+     [
+      "skills/modsearch/references/configure.md",
+      4
+     ],
+     [
+      "skills/modsearch/references/configure.zh-CN.md",
+      4143
+     ],
+     [
+      "skills/modsearch/references/output-schema.md",
+      4
+     ],
+     [
+      "skills/modsearch/references/output-schema.zh-CN.md",
+      1204
+     ],
+     [
+      "skills/modsearch/references/runtime.md",
+      4
+     ],
+     [
+      "skills/modsearch/references/runtime.zh-CN.md",
+      1011
+     ],
+     [
+      "skills/modsearch/SKILL.md",
+      8
+     ]
+    ]
+   },
+   "@michengai/dsh-archive-manager": {
+    "files": 43,
+    "cjkFiles": 6,
+    "cjkChars": 20349,
+    "byKind": {
+     "docs": {
+      "files": 5,
+      "cjkChars": 20337
+     },
+     "code": {
+      "files": 1,
+      "cjkChars": 12
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "CHANGELOG.zh-CN.md",
+     "locale/ru.json",
+     "locale/zh.json",
+     "README.ru.md",
+     "README.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "assets/branding/banner.txt",
+      83
+     ],
+     [
+      "CHANGELOG.md",
+      28
+     ],
+     [
+      "CHANGELOG.zh-CN.md",
+      13888
+     ],
+     [
+      "lib/client.js",
+      12
+     ],
+     [
+      "README.ru.md",
+      4
+     ],
+     [
+      "README.zh-CN.md",
+      6334
+     ]
+    ]
+   },
+   "@michengai/dsh-skills-manager": {
+    "files": 52,
+    "cjkFiles": 3,
+    "cjkChars": 11174,
+    "byKind": {
+     "docs": {
+      "files": 3,
+      "cjkChars": 11174
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "assets/branding/dsh-banner-zh-CN.webp",
+     "CHANGELOG.zh-CN.md",
+     "locale/zh.json",
+     "README.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "CHANGELOG.md",
+      4
+     ],
+     [
+      "CHANGELOG.zh-CN.md",
+      7421
+     ],
+     [
+      "README.zh-CN.md",
+      3749
+     ]
+    ]
+   },
+   "@nagi-ovo/dsh-visualize": {
+    "files": 50,
+    "cjkFiles": 5,
+    "cjkChars": 21,
+    "byKind": {
+     "docs": {
+      "files": 5,
+      "cjkChars": 21
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": [
+     [
+      "assets/references/charts.md",
+      4
+     ],
+     [
+      "assets/styles/editorial.md",
+      11
+     ],
+     [
+      "assets/styles/paper.md",
+      1
+     ],
+     [
+      "assets/styles/sketch.md",
+      1
+     ],
+     [
+      "README.en.md",
+      4
+     ]
+    ]
+   },
+   "aegis": {
+    "files": 573,
+    "cjkFiles": 30,
+    "cjkChars": 27818,
+    "byKind": {
+     "docs": {
+      "files": 19,
+      "cjkChars": 26471
+     },
+     "scripts": {
+      "files": 11,
+      "cjkChars": 1347
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "benchmarks/results/gpt-5-6-sol-xhigh-extended-20260731.zh-CN.md",
+     "benchmarks/results/gpt-5-6-sol-xhigh-extended-20260811-v2-7-6.zh-CN.md",
+     "benchmarks/results/gpt-5-6-sol-xhigh-extended-20260811.zh-CN.md",
+     "benchmarks/results/gpt-5-6-sol-xhigh-standard-20260913-v2-10-1.zh-CN.md",
+     "benchmarks/results/gpt-5-6-sol-xhigh-standard-20260925-v2-10-8.zh-CN.md",
+     "benchmarks/results/gpt-5-6-sol-xhigh-standard-20261011-v2-13-0.zh-CN.md",
+     "docs/current/AEGIS_FAST_TRACK_PLAYBOOK_ZH.md",
+     "docs/current/AEGIS_WORKFLOW_GUIDE_ZH.md",
+     "GLOBAL_USER_RULES_TEMPLATE.zh-CN.md",
+     "README.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "benchmarks/results/gpt-5-6-sol-xhigh-extended-20260731.zh-CN.md",
+      245
+     ],
+     [
+      "benchmarks/results/gpt-5-6-sol-xhigh-extended-20260811-v2-7-6.zh-CN.md",
+      245
+     ],
+     [
+      "benchmarks/results/gpt-5-6-sol-xhigh-extended-20260811.zh-CN.md",
+      245
+     ],
+     [
+      "benchmarks/results/gpt-5-6-sol-xhigh-standard-20260913-v2-10-1.zh-CN.md",
+      254
+     ],
+     [
+      "benchmarks/results/gpt-5-6-sol-xhigh-standard-20260925-v2-10-8.zh-CN.md",
+      254
+     ],
+     [
+      "benchmarks/results/gpt-5-6-sol-xhigh-standard-20261011-v2-13-0.zh-CN.md",
+      254
+     ],
+     [
+      "docs/adr/ADR-0001-aegis-method-pack-is-not-runtime-core.md",
+      902
+     ],
+     [
+      "docs/adr/ADR-0002-kimi-native-plugin-is-the-automatic-entry.md",
+      815
+     ],
+     [
+      "docs/adr/ADR-0003-current-branch-first-git-lifecycle.md",
+      5297
+     ],
+     [
+      "docs/current/AEGIS_ACTIVATION_MODE.md",
+      3
+     ],
+     [
+      "docs/current/AEGIS_FAST_TRACK_PLAYBOOK.md",
+      8
+     ],
+     [
+      "docs/current/AEGIS_FAST_TRACK_PLAYBOOK_ZH.md",
+      4384
+     ],
+     [
+      "docs/current/AEGIS_WORKFLOW_GUIDE.md",
+      9
+     ],
+     [
+      "docs/current/AEGIS_WORKFLOW_GUIDE_ZH.md",
+      3923
+     ],
+     [
+      "GLOBAL_USER_RULES_TEMPLATE.zh-CN.md",
+      368
+     ],
+     [
+      "README.zh-CN.md",
+      2670
+     ],
+     [
+      "RELEASE-NOTES.md",
+      6486
+     ],
+     [
+      "scripts/aegis-doctor.py",
+      120
+     ],
+     [
+      "skills/brainstorming/SKILL.md",
+      100
+     ],
+     [
+      "skills/using-aegis/SKILL.md",
+      9
+     ],
+     [
+      "tests/e2e/aegis-doctor-check.sh",
+      20
+     ],
+     [
+      "tests/e2e/agentic-benchmark-render-check.sh",
+      76
+     ],
+     [
+      "tests/e2e/analyze-transcript.sh",
+      621
+     ],
+     [
+      "tests/e2e/install-verification-policy-check.sh",
+      27
+     ],
+     [
+      "tests/e2e/kimi-code-host-boundary-check.sh",
+      11
+     ],
+     [
+      "tests/e2e/trigger-health-check.sh",
+      9
+     ],
+     [
+      "tests/e2e/workflow-quality-check.sh",
+      102
+     ],
+     [
+      "tests/helpers/render_agentic_benchmark.py",
+      351
+     ],
+     [
+      "tests/helpers/score_agentic_benchmark_outcome.py",
+      2
+     ],
+     [
+      "tests/helpers/test_aegis_doctor.py",
+      8
+     ]
+    ]
+   },
+   "ds-harness-remote": {
+    "files": 516,
+    "cjkFiles": 4,
+    "cjkChars": 160,
+    "byKind": {
+     "code": {
+      "files": 4,
+      "cjkChars": 160
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "locale/zh.json"
+    ],
+    "cjkFileList": [
+     [
+      "dist/client/header.js",
+      12
+     ],
+     [
+      "dist/client.github.js",
+      12
+     ],
+     [
+      "dist/client.js",
+      12
+     ],
+     [
+      "dist/index.js",
+      124
+     ]
+    ]
+   },
+   "dsh-auto-review": {
+    "files": 212,
+    "cjkFiles": 6,
+    "cjkChars": 7447,
+    "byKind": {
+     "docs": {
+      "files": 5,
+      "cjkChars": 7293
+     },
+     "sourcemap": {
+      "files": 1,
+      "cjkChars": 154
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "lib/client.js.map",
+     "README-es.md",
+     "README-hi.md",
+     "README-pt.md",
+     "README-zh.md"
+    ],
+    "cjkFileList": [
+     [
+      "CHANGELOG.md",
+      15
+     ],
+     [
+      "lib/client.js.map",
+      154
+     ],
+     [
+      "README-es.md",
+      13
+     ],
+     [
+      "README-hi.md",
+      13
+     ],
+     [
+      "README-pt.md",
+      13
+     ],
+     [
+      "README-zh.md",
+      7239
+     ]
+    ]
+   },
+   "dsh-better-sidebar": {
+    "files": 478,
+    "cjkFiles": 31,
+    "cjkChars": 20080,
+    "byKind": {
+     "code": {
+      "files": 27,
+      "cjkChars": 14271
+     },
+     "docs": {
+      "files": 1,
+      "cjkChars": 3684
+     },
+     "scripts": {
+      "files": 2,
+      "cjkChars": 2080
+     },
+     "markup": {
+      "files": 1,
+      "cjkChars": 45
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "locale/zh.json",
+     "README_ZH.md"
+    ],
+    "cjkFileList": [
+     [
+      "lib/client-editor.js",
+      6529
+     ],
+     [
+      "lib/client-locale.js",
+      226
+     ],
+     [
+      "lib/client-mermaid.js",
+      6483
+     ],
+     [
+      "lib/client-registry.js",
+      202
+     ],
+     [
+      "lib/client-terminal.js",
+      17
+     ],
+     [
+      "lib/client.js",
+      202
+     ],
+     [
+      "lib/index.js",
+      2
+     ],
+     [
+      "lib/types/archive-route.d.ts",
+      2
+     ],
+     [
+      "lib/types/client/diff/rows.d.ts",
+      2
+     ],
+     [
+      "lib/types/client/locales-ja.d.ts",
+      9
+     ],
+     [
+      "lib/types/client/locales-zh-HK.d.ts",
+      35
+     ],
+     [
+      "lib/types/client/locales-zh-MO.d.ts",
+      35
+     ],
+     [
+      "lib/types/client/locales-zh-TW.d.ts",
+      35
+     ],
+     [
+      "lib/types/client/markdown-navigation.d.ts",
+      6
+     ],
+     [
+      "lib/types/client/sidebar/dock-fallback.d.ts",
+      56
+     ],
+     [
+      "README_ZH.md",
+      3684
+     ],
+     [
+      "scripts/install.ps1",
+      1017
+     ],
+     [
+      "scripts/install.sh",
+      1063
+     ],
+     [
+      "src/archive-route.ts",
+      2
+     ],
+     [
+      "src/client/diff/rows.ts",
+      2
+     ],
+     [
+      "src/client/locales-ja.ts",
+      9
+     ],
+     [
+      "src/client/locales-nl.ts",
+      2
+     ],
+     [
+      "src/client/locales-th.ts",
+      2
+     ],
+     [
+      "src/client/locales-zh-HK.ts",
+      35
+     ],
+     [
+      "src/client/locales-zh-MO.ts",
+      35
+     ],
+     [
+      "src/client/locales-zh-TW.ts",
+      143
+     ],
+     [
+      "src/client/locales.ts",
+      17
+     ],
+     [
+      "src/client/markdown-navigation.ts",
+      6
+     ],
+     [
+      "src/client/sidebar/dock-fallback.tsx",
+      81
+     ],
+     [
+      "src/client/sidebar/right-panel-open.ts",
+      96
+     ],
+     [
+      "src/client/sidebar.module.css",
+      45
+     ]
+    ]
+   },
+   "dsh-chat-import": {
+    "files": 210,
+    "cjkFiles": 91,
+    "cjkChars": 67457,
+    "byKind": {
+     "docs": {
+      "files": 14,
+      "cjkChars": 60413
+     },
+     "code": {
+      "files": 77,
+      "cjkChars": 7044
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "docs/IMPORT-GUIDE.zh-CN.md",
+     "docs/INTERCHANGE-GUIDE.zh-CN.md",
+     "docs/SETTINGS-MIGRATION.zh-CN.md",
+     "docs/USAGE.zh-CN.md",
+     "README.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "CHANGELOG.md",
+      22569
+     ],
+     [
+      "docs/architecture.md",
+      16951
+     ],
+     [
+      "docs/CONTRIBUTING.md",
+      18
+     ],
+     [
+      "docs/IMPORT-GUIDE.md",
+      4
+     ],
+     [
+      "docs/IMPORT-GUIDE.zh-CN.md",
+      1619
+     ],
+     [
+      "docs/INTERCHANGE-GUIDE.md",
+      4
+     ],
+     [
+      "docs/INTERCHANGE-GUIDE.zh-CN.md",
+      1829
+     ],
+     [
+      "docs/INTERCHANGE.md",
+      2617
+     ],
+     [
+      "docs/ROADMAP.md",
+      277
+     ],
+     [
+      "docs/SETTINGS-MIGRATION.md",
+      2
+     ],
+     [
+      "docs/SETTINGS-MIGRATION.zh-CN.md",
+      1340
+     ],
+     [
+      "docs/USAGE.md",
+      28
+     ],
+     [
+      "docs/USAGE.zh-CN.md",
+      11607
+     ],
+     [
+      "lib/attachments.mjs",
+      87
+     ],
+     [
+      "lib/budget.mjs",
+      18
+     ],
+     [
+      "lib/client.js",
+      1078
+     ],
+     [
+      "lib/command.mjs",
+      124
+     ],
+     [
+      "lib/context-bridge.mjs",
+      53
+     ],
+     [
+      "lib/convert/antigravity.mjs",
+      96
+     ],
+     [
+      "lib/convert/chatgpt.mjs",
+      111
+     ],
+     [
+      "lib/convert/claude.mjs",
+      239
+     ],
+     [
+      "lib/convert/cline.mjs",
+      104
+     ],
+     [
+      "lib/convert/codex-external-agent.mjs",
+      139
+     ],
+     [
+      "lib/convert/codex.mjs",
+      59
+     ],
+     [
+      "lib/convert/continue.mjs",
+      19
+     ],
+     [
+      "lib/convert/copilot-cli.mjs",
+      22
+     ],
+     [
+      "lib/convert/core.mjs",
+      158
+     ],
+     [
+      "lib/convert/crush.mjs",
+      34
+     ],
+     [
+      "lib/convert/cursor.mjs",
+      46
+     ],
+     [
+      "lib/convert/dsh.mjs",
+      30
+     ],
+     [
+      "lib/convert/events.mjs",
+      21
+     ],
+     [
+      "lib/convert/gemini.mjs",
+      21
+     ],
+     [
+      "lib/convert/grokbuild.mjs",
+      149
+     ],
+     [
+      "lib/convert/hermes.mjs",
+      104
+     ],
+     [
+      "lib/convert/image.mjs",
+      108
+     ],
+     [
+      "lib/convert/ir.mjs",
+      28
+     ],
+     [
+      "lib/convert/kimi.mjs",
+      192
+     ],
+     [
+      "lib/convert/local-jsonl.mjs",
+      120
+     ],
+     [
+      "lib/convert/pi-family.mjs",
+      141
+     ],
+     [
+      "lib/convert/reasonix.mjs",
+      10
+     ],
+     [
+      "lib/convert/shape.mjs",
+      89
+     ],
+     [
+      "lib/convert/validate.mjs",
+      129
+     ],
+     [
+      "lib/convert/workbuddy.mjs",
+      38
+     ],
+     [
+      "lib/convert/zcode.mjs",
+      12
+     ],
+     [
+      "lib/convert/zed.mjs",
+      14
+     ],
+     [
+      "lib/cwd-map.mjs",
+      132
+     ],
+     [
+      "lib/discovery/common.mjs",
+      72
+     ],
+     [
+      "lib/discovery/copilot-cli.mjs",
+      46
+     ],
+     [
+      "lib/discovery/discover.mjs",
+      130
+     ],
+     [
+      "lib/discovery/documents.mjs",
+      33
+     ],
+     [
+      "lib/discovery/dsh.mjs",
+      53
+     ],
+     [
+      "lib/discovery/gemini.mjs",
+      8
+     ],
+     [
+      "lib/discovery/git-status.mjs",
+      28
+     ],
+     [
+      "lib/discovery/import-status.mjs",
+      48
+     ],
+     [
+      "lib/discovery/indexeddb.mjs",
+      28
+     ],
+     [
+      "lib/discovery/jsonl.mjs",
+      80
+     ],
+     [
+      "lib/discovery/session-dirs.mjs",
+      67
+     ],
+     [
+      "lib/discovery/sqlite.mjs",
+      40
+     ],
+     [
+      "lib/discovery-host.mjs",
+      167
+     ],
+     [
+      "lib/discovery.mjs",
+      26
+     ],
+     [
+      "lib/footer-layout.mjs",
+      204
+     ],
+     [
+      "lib/host-session.mjs",
+      94
+     ],
+     [
+      "lib/import-core.mjs",
+      229
+     ],
+     [
+      "lib/import-prefs.mjs",
+      25
+     ],
+     [
+      "lib/import-state.mjs",
+      78
+     ],
+     [
+      "lib/import-variants.mjs",
+      77
+     ],
+     [
+      "lib/index.d.ts",
+      31
+     ],
+     [
+      "lib/panel.mjs",
+      69
+     ],
+     [
+      "lib/prompt-hint.mjs",
+      21
+     ],
+     [
+      "lib/sourced-title.mjs",
+      29
+     ],
+     [
+      "lib/sources/chromium-indexeddb.mjs",
+      123
+     ],
+     [
+      "lib/sources/cline.mjs",
+      58
+     ],
+     [
+      "lib/sources/codex.mjs",
+      3
+     ],
+     [
+      "lib/sources/doubao.mjs",
+      50
+     ],
+     [
+      "lib/sources/dsh.mjs",
+      58
+     ],
+     [
+      "lib/sources/goose.mjs",
+      85
+     ],
+     [
+      "lib/sources/hermes.mjs",
+      85
+     ],
+     [
+      "lib/sources/mimocode.mjs",
+      85
+     ],
+     [
+      "lib/sources/opencode.mjs",
+      102
+     ],
+     [
+      "lib/sources/sqlite.mjs",
+      76
+     ],
+     [
+      "lib/sources/teleagent.mjs",
+      64
+     ],
+     [
+      "lib/sources/trae.mjs",
+      27
+     ],
+     [
+      "lib/toolkit.mjs",
+      27
+     ],
+     [
+      "lib/tools/admin-tools.mjs",
+      38
+     ],
+     [
+      "lib/tools/import-render.mjs",
+      9
+     ],
+     [
+      "lib/tools/scan-tool.mjs",
+      1
+     ],
+     [
+      "lib/tools/schema.mjs",
+      332
+     ],
+     [
+      "lib/tools/session-tools.mjs",
+      19
+     ],
+     [
+      "lib/tools.mjs",
+      16
+     ],
+     [
+      "lib/verify.mjs",
+      378
+     ],
+     [
+      "README.zh-CN.md",
+      1548
+     ]
+    ]
+   },
+   "dsh-client-auto-continue": {
+    "files": 87,
+    "cjkFiles": 9,
+    "cjkChars": 18850,
+    "byKind": {
+     "markup": {
+      "files": 6,
+      "cjkChars": 6513
+     },
+     "docs": {
+      "files": 2,
+      "cjkChars": 7956
+     },
+     "sourcemap": {
+      "files": 1,
+      "cjkChars": 4381
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "docs/auto-continue-workflow.archify.json",
+     "docs/auto-continue-workflow.html",
+     "docs/auto-continue-workflow.svg",
+     "docs/banner-zh-dark.svg",
+     "docs/banner-zh.svg",
+     "docs/demo-zh-static.svg",
+     "docs/demo-zh.svg",
+     "docs/screenshots/01-settings-section.zh.png",
+     "docs/screenshots/02-settings-card.zh.png",
+     "docs/screenshots/07-card-panels.zh.png",
+     "docs/screenshots/08-composer-toggle.zh.png",
+     "lib/client.js.map",
+     "locale/zh.json",
+     "README.zh.md"
+    ],
+    "cjkFileList": [
+     [
+      "docs/auto-continue-workflow.html",
+      5112
+     ],
+     [
+      "docs/auto-continue-workflow.svg",
+      815
+     ],
+     [
+      "docs/banner-zh-dark.svg",
+      51
+     ],
+     [
+      "docs/banner-zh.svg",
+      51
+     ],
+     [
+      "docs/demo-zh-static.svg",
+      242
+     ],
+     [
+      "docs/demo-zh.svg",
+      242
+     ],
+     [
+      "docs/releases/v0.17.0.md",
+      4
+     ],
+     [
+      "lib/client.js.map",
+      4381
+     ],
+     [
+      "README.zh.md",
+      7952
+     ]
+    ]
+   },
+   "dsh-context": {
+    "files": 11,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "locale/zh.json"
+    ],
+    "cjkFileList": []
+   },
+   "dsh-vision-router": {
+    "files": 285,
+    "cjkFiles": 52,
+    "cjkChars": 46232,
+    "byKind": {
+     "markup": {
+      "files": 3,
+      "cjkChars": 297
+     },
+     "config": {
+      "files": 1,
+      "cjkChars": 966
+     },
+     "docs": {
+      "files": 14,
+      "cjkChars": 21932
+     },
+     "code": {
+      "files": 34,
+      "cjkChars": 23037
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "assets/hero-zh.svg",
+     "assets/how-it-works-zh.svg",
+     "assets/pixel-loop-zh.png",
+     "assets/vision-tools-zh.svg",
+     "docs/free-models.zh-CN.md",
+     "docs/handover-178.zh-CN.md",
+     "docs/update-check.zh-CN.md",
+     "README.zh.md"
+    ],
+    "cjkFileList": [
+     [
+      "assets/hero-zh.svg",
+      81
+     ],
+     [
+      "assets/how-it-works-zh.svg",
+      112
+     ],
+     [
+      "assets/vision-tools-zh.svg",
+      104
+     ],
+     [
+      "cordis.patch.yml",
+      966
+     ],
+     [
+      "docs/architecture/3.0-r11-adversarial-review.md",
+      31
+     ],
+     [
+      "docs/architecture/model-catalog-ownership.md",
+      1243
+     ],
+     [
+      "docs/free-models.zh-CN.md",
+      242
+     ],
+     [
+      "docs/handover-178.zh-CN.md",
+      1896
+     ],
+     [
+      "docs/http-provider-compatibility.md",
+      11
+     ],
+     [
+      "docs/progressive-tools-cache.md",
+      328
+     ],
+     [
+      "docs/releases/v2.0.0.md",
+      3812
+     ],
+     [
+      "docs/releases/v2.0.1.md",
+      220
+     ],
+     [
+      "docs/releases/v2.1.0-support-window.md",
+      106
+     ],
+     [
+      "docs/releases/v2.1.0.md",
+      1318
+     ],
+     [
+      "docs/releases/v2.2.5.md",
+      5
+     ],
+     [
+      "docs/releases/v3.1.0.md",
+      757
+     ],
+     [
+      "docs/update-check.zh-CN.md",
+      1075
+     ],
+     [
+      "index.js",
+      3450
+     ],
+     [
+      "lib/client-host-compat-prelude.js",
+      44
+     ],
+     [
+      "lib/client-maintenance-actions.js",
+      1
+     ],
+     [
+      "lib/client-presentation-boundary-main.js",
+      409
+     ],
+     [
+      "lib/client.js",
+      5459
+     ],
+     [
+      "lib/core-primitives.js",
+      1868
+     ],
+     [
+      "lib/depth-guidance.js",
+      1034
+     ],
+     [
+      "lib/guide-vision-toggle-highlight.js",
+      4
+     ],
+     [
+      "lib/http-compat.js",
+      53
+     ],
+     [
+      "lib/legacy-session-repair.js",
+      105
+     ],
+     [
+      "lib/live-model-client-prelude.js",
+      125
+     ],
+     [
+      "lib/mixed-router.js",
+      449
+     ],
+     [
+      "lib/remote-settings-risk-client-boundary.js",
+      113
+     ],
+     [
+      "lib/runtime-i18n-boundary.js",
+      2319
+     ],
+     [
+      "lib/runtime-i18n-core.js",
+      7
+     ],
+     [
+      "lib/runtime-i18n.js",
+      1449
+     ],
+     [
+      "lib/settings-ia-client-prelude.js",
+      2838
+     ],
+     [
+      "lib/settings-limit-client-prelude.js",
+      286
+     ],
+     [
+      "lib/settings-native-card-layout.js",
+      347
+     ],
+     [
+      "lib/structured-bootstrap.js",
+      108
+     ],
+     [
+      "lib/structured-flow-hardening.js",
+      215
+     ],
+     [
+      "lib/twin-image-capability-fallback.js",
+      34
+     ],
+     [
+      "lib/v2-settings-ia-integration.js",
+      386
+     ],
+     [
+      "lib/vision-capability-benchmark-client.js",
+      762
+     ],
+     [
+      "lib/vision-capability-benchmark-hardening.js",
+      1
+     ],
+     [
+      "lib/vision-capability-benchmark.js",
+      199
+     ],
+     [
+      "lib/vision-capability-reference.js",
+      89
+     ],
+     [
+      "lib/vision-capability-router.js",
+      14
+     ],
+     [
+      "lib/vision-evidence-guidance.js",
+      56
+     ],
+     [
+      "lib/vision-exact-check-client.js",
+      313
+     ],
+     [
+      "lib/vision-limit-diagnostics.js",
+      101
+     ],
+     [
+      "lib/vision-resilience.js",
+      3
+     ],
+     [
+      "lib/vision-routing-settings-prelude.js",
+      322
+     ],
+     [
+      "lib/vision-turn-budget-client-prelude.js",
+      74
+     ],
+     [
+      "README.zh.md",
+      10888
+     ]
+    ]
+   },
+   "superpowers-dsh": {
+    "files": 92,
+    "cjkFiles": 1,
+    "cjkChars": 4,
+    "byKind": {
+     "docs": {
+      "files": 1,
+      "cjkChars": 4
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": [
+     [
+      "README.en.md",
+      4
+     ]
+    ]
+   }
+  },
+  "desktop": {
+   "@anysearch/anysearch-dsh": {
+    "files": 35,
+    "cjkFiles": 3,
+    "cjkChars": 6345,
+    "byKind": {
+     "docs": {
+      "files": 3,
+      "cjkChars": 6345
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "docs/integration-options.zh-CN.md",
+     "docs/user-guide.zh-CN.md",
+     "README.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "docs/integration-options.zh-CN.md",
+      2655
+     ],
+     [
+      "docs/user-guide.zh-CN.md",
+      2538
+     ],
+     [
+      "README.zh-CN.md",
+      1152
+     ]
+    ]
+   },
+   "@ayanehana/dsh-reasoning-effort": {
+    "files": 36,
+    "cjkFiles": 4,
+    "cjkChars": 1581,
+    "byKind": {
+     "docs": {
+      "files": 4,
+      "cjkChars": 1581
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "locale/zh.json",
+     "README.zh.md",
+     "src/client/agent-tutorial.zh.md"
+    ],
+    "cjkFileList": [
+     [
+      "CHANGELOG.md",
+      2
+     ],
+     [
+      "README.en.md",
+      4
+     ],
+     [
+      "README.zh.md",
+      16
+     ],
+     [
+      "src/client/agent-tutorial.zh.md",
+      1559
+     ]
+    ]
+   },
+   "@liustack/modlens": {
+    "files": 37,
+    "cjkFiles": 14,
+    "cjkChars": 17137,
+    "byKind": {
+     "docs": {
+      "files": 13,
+      "cjkChars": 17133
+     },
+     "code": {
+      "files": 1,
+      "cjkChars": 4
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "docs/cli.zh-CN.md",
+     "docs/harness-setup.zh-CN.md",
+     "docs/output-schema.zh-CN.md",
+     "docs/security.zh-CN.md",
+     "docs/troubleshooting.zh-CN.md",
+     "README.zh-CN.md",
+     "skills/modlens/references/configure.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "docs/cli.md",
+      2
+     ],
+     [
+      "docs/cli.zh-CN.md",
+      1111
+     ],
+     [
+      "docs/harness-setup.md",
+      2
+     ],
+     [
+      "docs/harness-setup.zh-CN.md",
+      3263
+     ],
+     [
+      "docs/output-schema.md",
+      2
+     ],
+     [
+      "docs/output-schema.zh-CN.md",
+      493
+     ],
+     [
+      "docs/security.md",
+      2
+     ],
+     [
+      "docs/security.zh-CN.md",
+      1465
+     ],
+     [
+      "docs/troubleshooting.md",
+      2
+     ],
+     [
+      "docs/troubleshooting.zh-CN.md",
+      3343
+     ],
+     [
+      "dsh/client.js",
+      4
+     ],
+     [
+      "README.zh-CN.md",
+      3218
+     ],
+     [
+      "skills/modlens/references/configure.md",
+      2
+     ],
+     [
+      "skills/modlens/references/configure.zh-CN.md",
+      4228
+     ]
+    ]
+   },
+   "@liustack/modsearch": {
+    "files": 39,
+    "cjkFiles": 20,
+    "cjkChars": 17685,
+    "byKind": {
+     "docs": {
+      "files": 19,
+      "cjkChars": 17651
+     },
+     "code": {
+      "files": 1,
+      "cjkChars": 34
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "docs/dsh.zh-CN.md",
+     "docs/harness-setup.zh-CN.md",
+     "docs/security.zh-CN.md",
+     "docs/troubleshooting.zh-CN.md",
+     "README.zh-CN.md",
+     "skills/modsearch/references/cli.zh-CN.md",
+     "skills/modsearch/references/configure.zh-CN.md",
+     "skills/modsearch/references/output-schema.zh-CN.md",
+     "skills/modsearch/references/runtime.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "CHANGELOG.md",
+      6
+     ],
+     [
+      "dist/main.js",
+      34
+     ],
+     [
+      "docs/dsh.md",
+      4
+     ],
+     [
+      "docs/dsh.zh-CN.md",
+      2640
+     ],
+     [
+      "docs/harness-setup.md",
+      4
+     ],
+     [
+      "docs/harness-setup.zh-CN.md",
+      1244
+     ],
+     [
+      "docs/security.md",
+      4
+     ],
+     [
+      "docs/security.zh-CN.md",
+      1504
+     ],
+     [
+      "docs/troubleshooting.md",
+      8
+     ],
+     [
+      "docs/troubleshooting.zh-CN.md",
+      2703
+     ],
+     [
+      "README.zh-CN.md",
+      2166
+     ],
+     [
+      "skills/modsearch/references/cli.md",
+      4
+     ],
+     [
+      "skills/modsearch/references/cli.zh-CN.md",
+      986
+     ],
+     [
+      "skills/modsearch/references/configure.md",
+      4
+     ],
+     [
+      "skills/modsearch/references/configure.zh-CN.md",
+      4143
+     ],
+     [
+      "skills/modsearch/references/output-schema.md",
+      4
+     ],
+     [
+      "skills/modsearch/references/output-schema.zh-CN.md",
+      1204
+     ],
+     [
+      "skills/modsearch/references/runtime.md",
+      4
+     ],
+     [
+      "skills/modsearch/references/runtime.zh-CN.md",
+      1011
+     ],
+     [
+      "skills/modsearch/SKILL.md",
+      8
+     ]
+    ]
+   },
+   "@michengai/dsh-archive-manager": {
+    "files": 43,
+    "cjkFiles": 6,
+    "cjkChars": 20349,
+    "byKind": {
+     "docs": {
+      "files": 5,
+      "cjkChars": 20337
+     },
+     "code": {
+      "files": 1,
+      "cjkChars": 12
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "CHANGELOG.zh-CN.md",
+     "locale/ru.json",
+     "locale/zh.json",
+     "README.ru.md",
+     "README.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "assets/branding/banner.txt",
+      83
+     ],
+     [
+      "CHANGELOG.md",
+      28
+     ],
+     [
+      "CHANGELOG.zh-CN.md",
+      13888
+     ],
+     [
+      "lib/client.js",
+      12
+     ],
+     [
+      "README.ru.md",
+      4
+     ],
+     [
+      "README.zh-CN.md",
+      6334
+     ]
+    ]
+   },
+   "@michengai/dsh-skills-manager": {
+    "files": 52,
+    "cjkFiles": 3,
+    "cjkChars": 11174,
+    "byKind": {
+     "docs": {
+      "files": 3,
+      "cjkChars": 11174
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "assets/branding/dsh-banner-zh-CN.webp",
+     "CHANGELOG.zh-CN.md",
+     "locale/zh.json",
+     "README.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "CHANGELOG.md",
+      4
+     ],
+     [
+      "CHANGELOG.zh-CN.md",
+      7421
+     ],
+     [
+      "README.zh-CN.md",
+      3749
+     ]
+    ]
+   },
+   "@nagi-ovo/dsh-visualize": {
+    "files": 50,
+    "cjkFiles": 5,
+    "cjkChars": 21,
+    "byKind": {
+     "docs": {
+      "files": 5,
+      "cjkChars": 21
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": [
+     [
+      "assets/references/charts.md",
+      4
+     ],
+     [
+      "assets/styles/editorial.md",
+      11
+     ],
+     [
+      "assets/styles/paper.md",
+      1
+     ],
+     [
+      "assets/styles/sketch.md",
+      1
+     ],
+     [
+      "README.en.md",
+      4
+     ]
+    ]
+   },
+   "aegis": {
+    "files": 573,
+    "cjkFiles": 30,
+    "cjkChars": 27818,
+    "byKind": {
+     "docs": {
+      "files": 19,
+      "cjkChars": 26471
+     },
+     "scripts": {
+      "files": 11,
+      "cjkChars": 1347
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "benchmarks/results/gpt-5-6-sol-xhigh-extended-20260731.zh-CN.md",
+     "benchmarks/results/gpt-5-6-sol-xhigh-extended-20260811-v2-7-6.zh-CN.md",
+     "benchmarks/results/gpt-5-6-sol-xhigh-extended-20260811.zh-CN.md",
+     "benchmarks/results/gpt-5-6-sol-xhigh-standard-20260913-v2-10-1.zh-CN.md",
+     "benchmarks/results/gpt-5-6-sol-xhigh-standard-20260925-v2-10-8.zh-CN.md",
+     "benchmarks/results/gpt-5-6-sol-xhigh-standard-20261011-v2-13-0.zh-CN.md",
+     "docs/current/AEGIS_FAST_TRACK_PLAYBOOK_ZH.md",
+     "docs/current/AEGIS_WORKFLOW_GUIDE_ZH.md",
+     "GLOBAL_USER_RULES_TEMPLATE.zh-CN.md",
+     "README.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "benchmarks/results/gpt-5-6-sol-xhigh-extended-20260731.zh-CN.md",
+      245
+     ],
+     [
+      "benchmarks/results/gpt-5-6-sol-xhigh-extended-20260811-v2-7-6.zh-CN.md",
+      245
+     ],
+     [
+      "benchmarks/results/gpt-5-6-sol-xhigh-extended-20260811.zh-CN.md",
+      245
+     ],
+     [
+      "benchmarks/results/gpt-5-6-sol-xhigh-standard-20260913-v2-10-1.zh-CN.md",
+      254
+     ],
+     [
+      "benchmarks/results/gpt-5-6-sol-xhigh-standard-20260925-v2-10-8.zh-CN.md",
+      254
+     ],
+     [
+      "benchmarks/results/gpt-5-6-sol-xhigh-standard-20261011-v2-13-0.zh-CN.md",
+      254
+     ],
+     [
+      "docs/adr/ADR-0001-aegis-method-pack-is-not-runtime-core.md",
+      902
+     ],
+     [
+      "docs/adr/ADR-0002-kimi-native-plugin-is-the-automatic-entry.md",
+      815
+     ],
+     [
+      "docs/adr/ADR-0003-current-branch-first-git-lifecycle.md",
+      5297
+     ],
+     [
+      "docs/current/AEGIS_ACTIVATION_MODE.md",
+      3
+     ],
+     [
+      "docs/current/AEGIS_FAST_TRACK_PLAYBOOK.md",
+      8
+     ],
+     [
+      "docs/current/AEGIS_FAST_TRACK_PLAYBOOK_ZH.md",
+      4384
+     ],
+     [
+      "docs/current/AEGIS_WORKFLOW_GUIDE.md",
+      9
+     ],
+     [
+      "docs/current/AEGIS_WORKFLOW_GUIDE_ZH.md",
+      3923
+     ],
+     [
+      "GLOBAL_USER_RULES_TEMPLATE.zh-CN.md",
+      368
+     ],
+     [
+      "README.zh-CN.md",
+      2670
+     ],
+     [
+      "RELEASE-NOTES.md",
+      6486
+     ],
+     [
+      "scripts/aegis-doctor.py",
+      120
+     ],
+     [
+      "skills/brainstorming/SKILL.md",
+      100
+     ],
+     [
+      "skills/using-aegis/SKILL.md",
+      9
+     ],
+     [
+      "tests/e2e/aegis-doctor-check.sh",
+      20
+     ],
+     [
+      "tests/e2e/agentic-benchmark-render-check.sh",
+      76
+     ],
+     [
+      "tests/e2e/analyze-transcript.sh",
+      621
+     ],
+     [
+      "tests/e2e/install-verification-policy-check.sh",
+      27
+     ],
+     [
+      "tests/e2e/kimi-code-host-boundary-check.sh",
+      11
+     ],
+     [
+      "tests/e2e/trigger-health-check.sh",
+      9
+     ],
+     [
+      "tests/e2e/workflow-quality-check.sh",
+      102
+     ],
+     [
+      "tests/helpers/render_agentic_benchmark.py",
+      351
+     ],
+     [
+      "tests/helpers/score_agentic_benchmark_outcome.py",
+      2
+     ],
+     [
+      "tests/helpers/test_aegis_doctor.py",
+      8
+     ]
+    ]
+   },
+   "ds-harness-remote": {
+    "files": 516,
+    "cjkFiles": 4,
+    "cjkChars": 160,
+    "byKind": {
+     "code": {
+      "files": 4,
+      "cjkChars": 160
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "locale/zh.json"
+    ],
+    "cjkFileList": [
+     [
+      "dist/client/header.js",
+      12
+     ],
+     [
+      "dist/client.github.js",
+      12
+     ],
+     [
+      "dist/client.js",
+      12
+     ],
+     [
+      "dist/index.js",
+      124
+     ]
+    ]
+   },
+   "dsh-auto-review": {
+    "files": 212,
+    "cjkFiles": 6,
+    "cjkChars": 7447,
+    "byKind": {
+     "docs": {
+      "files": 5,
+      "cjkChars": 7293
+     },
+     "sourcemap": {
+      "files": 1,
+      "cjkChars": 154
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "lib/client.js.map",
+     "README-es.md",
+     "README-hi.md",
+     "README-pt.md",
+     "README-zh.md"
+    ],
+    "cjkFileList": [
+     [
+      "CHANGELOG.md",
+      15
+     ],
+     [
+      "lib/client.js.map",
+      154
+     ],
+     [
+      "README-es.md",
+      13
+     ],
+     [
+      "README-hi.md",
+      13
+     ],
+     [
+      "README-pt.md",
+      13
+     ],
+     [
+      "README-zh.md",
+      7239
+     ]
+    ]
+   },
+   "dsh-better-sidebar": {
+    "files": 478,
+    "cjkFiles": 31,
+    "cjkChars": 20080,
+    "byKind": {
+     "code": {
+      "files": 27,
+      "cjkChars": 14271
+     },
+     "docs": {
+      "files": 1,
+      "cjkChars": 3684
+     },
+     "scripts": {
+      "files": 2,
+      "cjkChars": 2080
+     },
+     "markup": {
+      "files": 1,
+      "cjkChars": 45
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "locale/zh.json",
+     "README_ZH.md"
+    ],
+    "cjkFileList": [
+     [
+      "lib/client-editor.js",
+      6529
+     ],
+     [
+      "lib/client-locale.js",
+      226
+     ],
+     [
+      "lib/client-mermaid.js",
+      6483
+     ],
+     [
+      "lib/client-registry.js",
+      202
+     ],
+     [
+      "lib/client-terminal.js",
+      17
+     ],
+     [
+      "lib/client.js",
+      202
+     ],
+     [
+      "lib/index.js",
+      2
+     ],
+     [
+      "lib/types/archive-route.d.ts",
+      2
+     ],
+     [
+      "lib/types/client/diff/rows.d.ts",
+      2
+     ],
+     [
+      "lib/types/client/locales-ja.d.ts",
+      9
+     ],
+     [
+      "lib/types/client/locales-zh-HK.d.ts",
+      35
+     ],
+     [
+      "lib/types/client/locales-zh-MO.d.ts",
+      35
+     ],
+     [
+      "lib/types/client/locales-zh-TW.d.ts",
+      35
+     ],
+     [
+      "lib/types/client/markdown-navigation.d.ts",
+      6
+     ],
+     [
+      "lib/types/client/sidebar/dock-fallback.d.ts",
+      56
+     ],
+     [
+      "README_ZH.md",
+      3684
+     ],
+     [
+      "scripts/install.ps1",
+      1017
+     ],
+     [
+      "scripts/install.sh",
+      1063
+     ],
+     [
+      "src/archive-route.ts",
+      2
+     ],
+     [
+      "src/client/diff/rows.ts",
+      2
+     ],
+     [
+      "src/client/locales-ja.ts",
+      9
+     ],
+     [
+      "src/client/locales-nl.ts",
+      2
+     ],
+     [
+      "src/client/locales-th.ts",
+      2
+     ],
+     [
+      "src/client/locales-zh-HK.ts",
+      35
+     ],
+     [
+      "src/client/locales-zh-MO.ts",
+      35
+     ],
+     [
+      "src/client/locales-zh-TW.ts",
+      143
+     ],
+     [
+      "src/client/locales.ts",
+      17
+     ],
+     [
+      "src/client/markdown-navigation.ts",
+      6
+     ],
+     [
+      "src/client/sidebar/dock-fallback.tsx",
+      81
+     ],
+     [
+      "src/client/sidebar/right-panel-open.ts",
+      96
+     ],
+     [
+      "src/client/sidebar.module.css",
+      45
+     ]
+    ]
+   },
+   "dsh-chat-import": {
+    "files": 210,
+    "cjkFiles": 91,
+    "cjkChars": 67457,
+    "byKind": {
+     "docs": {
+      "files": 14,
+      "cjkChars": 60413
+     },
+     "code": {
+      "files": 77,
+      "cjkChars": 7044
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "docs/IMPORT-GUIDE.zh-CN.md",
+     "docs/INTERCHANGE-GUIDE.zh-CN.md",
+     "docs/SETTINGS-MIGRATION.zh-CN.md",
+     "docs/USAGE.zh-CN.md",
+     "README.zh-CN.md"
+    ],
+    "cjkFileList": [
+     [
+      "CHANGELOG.md",
+      22569
+     ],
+     [
+      "docs/architecture.md",
+      16951
+     ],
+     [
+      "docs/CONTRIBUTING.md",
+      18
+     ],
+     [
+      "docs/IMPORT-GUIDE.md",
+      4
+     ],
+     [
+      "docs/IMPORT-GUIDE.zh-CN.md",
+      1619
+     ],
+     [
+      "docs/INTERCHANGE-GUIDE.md",
+      4
+     ],
+     [
+      "docs/INTERCHANGE-GUIDE.zh-CN.md",
+      1829
+     ],
+     [
+      "docs/INTERCHANGE.md",
+      2617
+     ],
+     [
+      "docs/ROADMAP.md",
+      277
+     ],
+     [
+      "docs/SETTINGS-MIGRATION.md",
+      2
+     ],
+     [
+      "docs/SETTINGS-MIGRATION.zh-CN.md",
+      1340
+     ],
+     [
+      "docs/USAGE.md",
+      28
+     ],
+     [
+      "docs/USAGE.zh-CN.md",
+      11607
+     ],
+     [
+      "lib/attachments.mjs",
+      87
+     ],
+     [
+      "lib/budget.mjs",
+      18
+     ],
+     [
+      "lib/client.js",
+      1078
+     ],
+     [
+      "lib/command.mjs",
+      124
+     ],
+     [
+      "lib/context-bridge.mjs",
+      53
+     ],
+     [
+      "lib/convert/antigravity.mjs",
+      96
+     ],
+     [
+      "lib/convert/chatgpt.mjs",
+      111
+     ],
+     [
+      "lib/convert/claude.mjs",
+      239
+     ],
+     [
+      "lib/convert/cline.mjs",
+      104
+     ],
+     [
+      "lib/convert/codex-external-agent.mjs",
+      139
+     ],
+     [
+      "lib/convert/codex.mjs",
+      59
+     ],
+     [
+      "lib/convert/continue.mjs",
+      19
+     ],
+     [
+      "lib/convert/copilot-cli.mjs",
+      22
+     ],
+     [
+      "lib/convert/core.mjs",
+      158
+     ],
+     [
+      "lib/convert/crush.mjs",
+      34
+     ],
+     [
+      "lib/convert/cursor.mjs",
+      46
+     ],
+     [
+      "lib/convert/dsh.mjs",
+      30
+     ],
+     [
+      "lib/convert/events.mjs",
+      21
+     ],
+     [
+      "lib/convert/gemini.mjs",
+      21
+     ],
+     [
+      "lib/convert/grokbuild.mjs",
+      149
+     ],
+     [
+      "lib/convert/hermes.mjs",
+      104
+     ],
+     [
+      "lib/convert/image.mjs",
+      108
+     ],
+     [
+      "lib/convert/ir.mjs",
+      28
+     ],
+     [
+      "lib/convert/kimi.mjs",
+      192
+     ],
+     [
+      "lib/convert/local-jsonl.mjs",
+      120
+     ],
+     [
+      "lib/convert/pi-family.mjs",
+      141
+     ],
+     [
+      "lib/convert/reasonix.mjs",
+      10
+     ],
+     [
+      "lib/convert/shape.mjs",
+      89
+     ],
+     [
+      "lib/convert/validate.mjs",
+      129
+     ],
+     [
+      "lib/convert/workbuddy.mjs",
+      38
+     ],
+     [
+      "lib/convert/zcode.mjs",
+      12
+     ],
+     [
+      "lib/convert/zed.mjs",
+      14
+     ],
+     [
+      "lib/cwd-map.mjs",
+      132
+     ],
+     [
+      "lib/discovery/common.mjs",
+      72
+     ],
+     [
+      "lib/discovery/copilot-cli.mjs",
+      46
+     ],
+     [
+      "lib/discovery/discover.mjs",
+      130
+     ],
+     [
+      "lib/discovery/documents.mjs",
+      33
+     ],
+     [
+      "lib/discovery/dsh.mjs",
+      53
+     ],
+     [
+      "lib/discovery/gemini.mjs",
+      8
+     ],
+     [
+      "lib/discovery/git-status.mjs",
+      28
+     ],
+     [
+      "lib/discovery/import-status.mjs",
+      48
+     ],
+     [
+      "lib/discovery/indexeddb.mjs",
+      28
+     ],
+     [
+      "lib/discovery/jsonl.mjs",
+      80
+     ],
+     [
+      "lib/discovery/session-dirs.mjs",
+      67
+     ],
+     [
+      "lib/discovery/sqlite.mjs",
+      40
+     ],
+     [
+      "lib/discovery-host.mjs",
+      167
+     ],
+     [
+      "lib/discovery.mjs",
+      26
+     ],
+     [
+      "lib/footer-layout.mjs",
+      204
+     ],
+     [
+      "lib/host-session.mjs",
+      94
+     ],
+     [
+      "lib/import-core.mjs",
+      229
+     ],
+     [
+      "lib/import-prefs.mjs",
+      25
+     ],
+     [
+      "lib/import-state.mjs",
+      78
+     ],
+     [
+      "lib/import-variants.mjs",
+      77
+     ],
+     [
+      "lib/index.d.ts",
+      31
+     ],
+     [
+      "lib/panel.mjs",
+      69
+     ],
+     [
+      "lib/prompt-hint.mjs",
+      21
+     ],
+     [
+      "lib/sourced-title.mjs",
+      29
+     ],
+     [
+      "lib/sources/chromium-indexeddb.mjs",
+      123
+     ],
+     [
+      "lib/sources/cline.mjs",
+      58
+     ],
+     [
+      "lib/sources/codex.mjs",
+      3
+     ],
+     [
+      "lib/sources/doubao.mjs",
+      50
+     ],
+     [
+      "lib/sources/dsh.mjs",
+      58
+     ],
+     [
+      "lib/sources/goose.mjs",
+      85
+     ],
+     [
+      "lib/sources/hermes.mjs",
+      85
+     ],
+     [
+      "lib/sources/mimocode.mjs",
+      85
+     ],
+     [
+      "lib/sources/opencode.mjs",
+      102
+     ],
+     [
+      "lib/sources/sqlite.mjs",
+      76
+     ],
+     [
+      "lib/sources/teleagent.mjs",
+      64
+     ],
+     [
+      "lib/sources/trae.mjs",
+      27
+     ],
+     [
+      "lib/toolkit.mjs",
+      27
+     ],
+     [
+      "lib/tools/admin-tools.mjs",
+      38
+     ],
+     [
+      "lib/tools/import-render.mjs",
+      9
+     ],
+     [
+      "lib/tools/scan-tool.mjs",
+      1
+     ],
+     [
+      "lib/tools/schema.mjs",
+      332
+     ],
+     [
+      "lib/tools/session-tools.mjs",
+      19
+     ],
+     [
+      "lib/tools.mjs",
+      16
+     ],
+     [
+      "lib/verify.mjs",
+      378
+     ],
+     [
+      "README.zh-CN.md",
+      1548
+     ]
+    ]
+   },
+   "dsh-client-auto-continue": {
+    "files": 87,
+    "cjkFiles": 9,
+    "cjkChars": 18850,
+    "byKind": {
+     "markup": {
+      "files": 6,
+      "cjkChars": 6513
+     },
+     "docs": {
+      "files": 2,
+      "cjkChars": 7956
+     },
+     "sourcemap": {
+      "files": 1,
+      "cjkChars": 4381
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "docs/auto-continue-workflow.archify.json",
+     "docs/auto-continue-workflow.html",
+     "docs/auto-continue-workflow.svg",
+     "docs/banner-zh-dark.svg",
+     "docs/banner-zh.svg",
+     "docs/demo-zh-static.svg",
+     "docs/demo-zh.svg",
+     "docs/screenshots/01-settings-section.zh.png",
+     "docs/screenshots/02-settings-card.zh.png",
+     "docs/screenshots/07-card-panels.zh.png",
+     "docs/screenshots/08-composer-toggle.zh.png",
+     "lib/client.js.map",
+     "locale/zh.json",
+     "README.zh.md"
+    ],
+    "cjkFileList": [
+     [
+      "docs/auto-continue-workflow.html",
+      5112
+     ],
+     [
+      "docs/auto-continue-workflow.svg",
+      815
+     ],
+     [
+      "docs/banner-zh-dark.svg",
+      51
+     ],
+     [
+      "docs/banner-zh.svg",
+      51
+     ],
+     [
+      "docs/demo-zh-static.svg",
+      242
+     ],
+     [
+      "docs/demo-zh.svg",
+      242
+     ],
+     [
+      "docs/releases/v0.17.0.md",
+      4
+     ],
+     [
+      "lib/client.js.map",
+      4381
+     ],
+     [
+      "README.zh.md",
+      7952
+     ]
+    ]
+   },
+   "dsh-context": {
+    "files": 11,
+    "cjkFiles": 0,
+    "cjkChars": 0,
+    "byKind": {},
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "locale/zh.json"
+    ],
+    "cjkFileList": []
+   },
+   "dsh-vision-router": {
+    "files": 285,
+    "cjkFiles": 52,
+    "cjkChars": 46232,
+    "byKind": {
+     "markup": {
+      "files": 3,
+      "cjkChars": 297
+     },
+     "config": {
+      "files": 1,
+      "cjkChars": 966
+     },
+     "docs": {
+      "files": 14,
+      "cjkChars": 21932
+     },
+     "code": {
+      "files": 34,
+      "cjkChars": 23037
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [
+     "assets/hero-zh.svg",
+     "assets/how-it-works-zh.svg",
+     "assets/pixel-loop-zh.png",
+     "assets/vision-tools-zh.svg",
+     "docs/free-models.zh-CN.md",
+     "docs/handover-178.zh-CN.md",
+     "docs/update-check.zh-CN.md",
+     "README.zh.md"
+    ],
+    "cjkFileList": [
+     [
+      "assets/hero-zh.svg",
+      81
+     ],
+     [
+      "assets/how-it-works-zh.svg",
+      112
+     ],
+     [
+      "assets/vision-tools-zh.svg",
+      104
+     ],
+     [
+      "cordis.patch.yml",
+      966
+     ],
+     [
+      "docs/architecture/3.0-r11-adversarial-review.md",
+      31
+     ],
+     [
+      "docs/architecture/model-catalog-ownership.md",
+      1243
+     ],
+     [
+      "docs/free-models.zh-CN.md",
+      242
+     ],
+     [
+      "docs/handover-178.zh-CN.md",
+      1896
+     ],
+     [
+      "docs/http-provider-compatibility.md",
+      11
+     ],
+     [
+      "docs/progressive-tools-cache.md",
+      328
+     ],
+     [
+      "docs/releases/v2.0.0.md",
+      3812
+     ],
+     [
+      "docs/releases/v2.0.1.md",
+      220
+     ],
+     [
+      "docs/releases/v2.1.0-support-window.md",
+      106
+     ],
+     [
+      "docs/releases/v2.1.0.md",
+      1318
+     ],
+     [
+      "docs/releases/v2.2.5.md",
+      5
+     ],
+     [
+      "docs/releases/v3.1.0.md",
+      757
+     ],
+     [
+      "docs/update-check.zh-CN.md",
+      1075
+     ],
+     [
+      "index.js",
+      3450
+     ],
+     [
+      "lib/client-host-compat-prelude.js",
+      44
+     ],
+     [
+      "lib/client-maintenance-actions.js",
+      1
+     ],
+     [
+      "lib/client-presentation-boundary-main.js",
+      409
+     ],
+     [
+      "lib/client.js",
+      5459
+     ],
+     [
+      "lib/core-primitives.js",
+      1868
+     ],
+     [
+      "lib/depth-guidance.js",
+      1034
+     ],
+     [
+      "lib/guide-vision-toggle-highlight.js",
+      4
+     ],
+     [
+      "lib/http-compat.js",
+      53
+     ],
+     [
+      "lib/legacy-session-repair.js",
+      105
+     ],
+     [
+      "lib/live-model-client-prelude.js",
+      125
+     ],
+     [
+      "lib/mixed-router.js",
+      449
+     ],
+     [
+      "lib/remote-settings-risk-client-boundary.js",
+      113
+     ],
+     [
+      "lib/runtime-i18n-boundary.js",
+      2319
+     ],
+     [
+      "lib/runtime-i18n-core.js",
+      7
+     ],
+     [
+      "lib/runtime-i18n.js",
+      1449
+     ],
+     [
+      "lib/settings-ia-client-prelude.js",
+      2838
+     ],
+     [
+      "lib/settings-limit-client-prelude.js",
+      286
+     ],
+     [
+      "lib/settings-native-card-layout.js",
+      347
+     ],
+     [
+      "lib/structured-bootstrap.js",
+      108
+     ],
+     [
+      "lib/structured-flow-hardening.js",
+      215
+     ],
+     [
+      "lib/twin-image-capability-fallback.js",
+      34
+     ],
+     [
+      "lib/v2-settings-ia-integration.js",
+      386
+     ],
+     [
+      "lib/vision-capability-benchmark-client.js",
+      762
+     ],
+     [
+      "lib/vision-capability-benchmark-hardening.js",
+      1
+     ],
+     [
+      "lib/vision-capability-benchmark.js",
+      199
+     ],
+     [
+      "lib/vision-capability-reference.js",
+      89
+     ],
+     [
+      "lib/vision-capability-router.js",
+      14
+     ],
+     [
+      "lib/vision-evidence-guidance.js",
+      56
+     ],
+     [
+      "lib/vision-exact-check-client.js",
+      313
+     ],
+     [
+      "lib/vision-limit-diagnostics.js",
+      101
+     ],
+     [
+      "lib/vision-resilience.js",
+      3
+     ],
+     [
+      "lib/vision-routing-settings-prelude.js",
+      322
+     ],
+     [
+      "lib/vision-turn-budget-client-prelude.js",
+      74
+     ],
+     [
+      "README.zh.md",
+      10888
+     ]
+    ]
+   },
+   "superpowers-dsh": {
+    "files": 92,
+    "cjkFiles": 1,
+    "cjkChars": 4,
+    "byKind": {
+     "docs": {
+      "files": 1,
+      "cjkChars": 4
+     }
+    },
+    "ownedByOtherWorker": {
+     "files": 0,
+     "cjkChars": 0
+    },
+    "nonEnglishVariantFiles": [],
+    "cjkFileList": [
+     [
+      "README.en.md",
+      4
+     ]
+    ]
+   }
+  }
+ },
+ "totals": {
+  "files": 5512,
+  "cjkFiles": 558,
+  "cjkChars": 524680,
+  "note": "README.md, docs/policy.md and locale/en.json are owned by another worker and counted separately per package"
+ }
+}

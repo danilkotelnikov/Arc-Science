@@ -1,0 +1,6 @@
+provider: generic
+url: https://download.deepseek.com/dsh-desk/feeds/win-x64/
+channel: nightly
+updaterCacheDirName: '@deepseek-aidsh-desktop-updater'
+publisherName:
+  - CN=Hangzhou\20DeepSeek\20Artificial\20Intelligence\20Co.\2c\20Ltd.,O=Hangzhou\20DeepSeek\20Artificial\20Intelligence\20Co.\2c\20Ltd.,C=CN

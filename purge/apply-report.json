@@ -1,0 +1,546 @@
+{
+ "date": "2026-10-31T22:08:32.529Z",
+ "written": 0,
+ "removed": 0,
+ "writeFail": [],
+ "shebangFixed": 0,
+ "archivedOriginals": 0,
+ "archivedRemoved": 0,
+ "syntaxFail": [],
+ "badUnits": [],
+ "missing": [],
+ "manual": [
+  {
+   "profile": "web",
+   "pkg": "@liustack/modlens",
+   "rel": "dsh/client.js",
+   "status": "already",
+   "note": "host label matcher: drop Chinese alternative, English one stays"
+  },
+  {
+   "profile": "web",
+   "pkg": "@liustack/modsearch",
+   "rel": "dist/main.js",
+   "status": "already",
+   "note": "Chinese query detectors for X/Twitter routing removed; English detectors stay"
+  },
+  {
+   "profile": "web",
+   "pkg": "@michengai/dsh-archive-manager",
+   "rel": "lib/client.js",
+   "status": "already",
+   "note": "host button matcher: drop Chinese alternative"
+  },
+  {
+   "profile": "web",
+   "pkg": "@michengai/dsh-archive-manager",
+   "rel": "lib/client.js",
+   "status": "already",
+   "note": "host button matcher: drop Chinese alternatives"
+  },
+  {
+   "profile": "web",
+   "pkg": "@michengai/dsh-archive-manager",
+   "rel": "lib/client.js",
+   "status": "already",
+   "note": "host button matcher: drop Chinese alternatives"
+  },
+  {
+   "profile": "web",
+   "pkg": "aegis",
+   "rel": "benchmarks/README.md",
+   "status": "already",
+   "note": "link to a removed Chinese table"
+  },
+  {
+   "profile": "web",
+   "pkg": "aegis",
+   "rel": "benchmarks/README.md",
+   "status": "already",
+   "note": "link to a removed Chinese table"
+  },
+  {
+   "profile": "web",
+   "pkg": "aegis",
+   "rel": "benchmarks/README.md",
+   "status": "already",
+   "note": "link to a removed Chinese table"
+  },
+  {
+   "profile": "web",
+   "pkg": "aegis",
+   "rel": "benchmarks/README.md",
+   "status": "already",
+   "note": "link to a removed Chinese table"
+  },
+  {
+   "profile": "web",
+   "pkg": "aegis",
+   "rel": "docs/adr/ADR-0002-kimi-native-plugin-is-the-automatic-entry.md",
+   "status": "already",
+   "note": "reference to the removed Chinese playbook"
+  },
+  {
+   "profile": "web",
+   "pkg": "aegis",
+   "rel": "docs/current/AEGIS_RULE_LAYERING.md",
+   "status": "already",
+   "note": "the Chinese mirror template was removed"
+  },
+  {
+   "profile": "web",
+   "pkg": "aegis",
+   "rel": "docs/current/README.md",
+   "status": "already",
+   "note": "reference to the removed Chinese playbook"
+  },
+  {
+   "profile": "web",
+   "pkg": "aegis",
+   "rel": "docs/current/README.md",
+   "status": "already",
+   "note": "reference to the removed Chinese workflow guide"
+  },
+  {
+   "profile": "web",
+   "pkg": "aegis",
+   "rel": "README.en.md",
+   "status": "already",
+   "note": "link to the removed Chinese README"
+  },
+  {
+   "profile": "web",
+   "pkg": "ds-harness-remote",
+   "rel": "dist/client/header.js",
+   "status": "already",
+   "note": "host label matcher: drop Chinese alternatives"
+  },
+  {
+   "profile": "web",
+   "pkg": "ds-harness-remote",
+   "rel": "dist/client.github.js",
+   "status": "already",
+   "note": "host label matcher: drop Chinese alternatives"
+  },
+  {
+   "profile": "web",
+   "pkg": "ds-harness-remote",
+   "rel": "dist/client.js",
+   "status": "already",
+   "note": "host label matcher: drop Chinese alternatives"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-better-sidebar",
+   "rel": "lib/client-mermaid.js",
+   "status": "already",
+   "note": "ideographic space as escape in whitespace table; behavior identical"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-better-sidebar",
+   "rel": "lib/client-mermaid.js",
+   "status": "already",
+   "note": "ideographic space as escape in whitespace table; behavior identical"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-chat-import",
+   "rel": "CHANGELOG.md",
+   "status": "already",
+   "note": "bilingual changelog: Chinese sections dropped, the English sections of the same releases stay"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-chat-import",
+   "rel": "docs/architecture.md",
+   "status": "already",
+   "note": "link to the English guide"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-chat-import",
+   "rel": "lib/client.js",
+   "status": "already",
+   "note": "guide URL points to the English guide"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-client-auto-continue",
+   "rel": "docs/screenshots/README.md",
+   "status": "already",
+   "note": "Chinese screenshot column removed"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-client-auto-continue",
+   "rel": "docs/screenshots/README.md",
+   "status": "already",
+   "note": "Chinese screenshot column removed"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-client-auto-continue",
+   "rel": "docs/screenshots/README.md",
+   "status": "already",
+   "note": "Chinese screenshot column removed"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-client-auto-continue",
+   "rel": "docs/screenshots/README.md",
+   "status": "already",
+   "note": "Chinese screenshot column removed"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-client-auto-continue",
+   "rel": "docs/screenshots/README.md",
+   "status": "already",
+   "note": "Chinese screenshot column removed"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-client-auto-continue",
+   "rel": "docs/screenshots/README.md",
+   "status": "already",
+   "note": "Chinese screenshot column removed"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/client.js",
+   "status": "already",
+   "note": "host menu label: Chinese alternative dropped"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/client.js",
+   "status": "already",
+   "note": "row title matcher: Chinese alternative dropped"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/settings-limit-client-prelude.js",
+   "status": "already",
+   "note": "label matcher uses the English label that the same plugin renders"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/settings-limit-client-prelude.js",
+   "status": "already",
+   "note": "Chinese alternative dropped"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/twin-image-capability-fallback.js",
+   "status": "already",
+   "note": "fullwidth sentence end marks written as escapes; behavior identical"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/v2-settings-ia-integration.js",
+   "status": "already",
+   "note": "Chinese label prefixes dropped"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/vision-capability-benchmark-hardening.js",
+   "status": "already",
+   "note": "fullwidth colon written as an escape; behavior identical"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/vision-capability-router.js",
+   "status": "already",
+   "note": "Chinese question detector dropped; English detector stays"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/vision-limit-diagnostics.js",
+   "status": "already",
+   "note": "matches the English text that lib/structured-flow-hardening.js now emits (same cached translation)"
+  },
+  {
+   "profile": "web",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/vision-resilience.js",
+   "status": "already",
+   "note": "fullwidth sentence end marks written as escapes; behavior identical"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "@liustack/modlens",
+   "rel": "dsh/client.js",
+   "status": "already",
+   "note": "host label matcher: drop Chinese alternative, English one stays"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "@liustack/modsearch",
+   "rel": "dist/main.js",
+   "status": "already",
+   "note": "Chinese query detectors for X/Twitter routing removed; English detectors stay"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "@michengai/dsh-archive-manager",
+   "rel": "lib/client.js",
+   "status": "already",
+   "note": "host button matcher: drop Chinese alternative"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "@michengai/dsh-archive-manager",
+   "rel": "lib/client.js",
+   "status": "already",
+   "note": "host button matcher: drop Chinese alternatives"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "@michengai/dsh-archive-manager",
+   "rel": "lib/client.js",
+   "status": "already",
+   "note": "host button matcher: drop Chinese alternatives"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "aegis",
+   "rel": "benchmarks/README.md",
+   "status": "already",
+   "note": "link to a removed Chinese table"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "aegis",
+   "rel": "benchmarks/README.md",
+   "status": "already",
+   "note": "link to a removed Chinese table"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "aegis",
+   "rel": "benchmarks/README.md",
+   "status": "already",
+   "note": "link to a removed Chinese table"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "aegis",
+   "rel": "benchmarks/README.md",
+   "status": "already",
+   "note": "link to a removed Chinese table"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "aegis",
+   "rel": "docs/adr/ADR-0002-kimi-native-plugin-is-the-automatic-entry.md",
+   "status": "already",
+   "note": "reference to the removed Chinese playbook"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "aegis",
+   "rel": "docs/current/AEGIS_RULE_LAYERING.md",
+   "status": "already",
+   "note": "the Chinese mirror template was removed"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "aegis",
+   "rel": "docs/current/README.md",
+   "status": "already",
+   "note": "reference to the removed Chinese playbook"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "aegis",
+   "rel": "docs/current/README.md",
+   "status": "already",
+   "note": "reference to the removed Chinese workflow guide"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "aegis",
+   "rel": "README.en.md",
+   "status": "already",
+   "note": "link to the removed Chinese README"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "ds-harness-remote",
+   "rel": "dist/client/header.js",
+   "status": "already",
+   "note": "host label matcher: drop Chinese alternatives"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "ds-harness-remote",
+   "rel": "dist/client.github.js",
+   "status": "already",
+   "note": "host label matcher: drop Chinese alternatives"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "ds-harness-remote",
+   "rel": "dist/client.js",
+   "status": "already",
+   "note": "host label matcher: drop Chinese alternatives"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-better-sidebar",
+   "rel": "lib/client-mermaid.js",
+   "status": "already",
+   "note": "ideographic space as escape in whitespace table; behavior identical"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-better-sidebar",
+   "rel": "lib/client-mermaid.js",
+   "status": "already",
+   "note": "ideographic space as escape in whitespace table; behavior identical"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-chat-import",
+   "rel": "CHANGELOG.md",
+   "status": "already",
+   "note": "bilingual changelog: Chinese sections dropped, the English sections of the same releases stay"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-chat-import",
+   "rel": "docs/architecture.md",
+   "status": "already",
+   "note": "link to the English guide"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-chat-import",
+   "rel": "lib/client.js",
+   "status": "already",
+   "note": "guide URL points to the English guide"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-client-auto-continue",
+   "rel": "docs/screenshots/README.md",
+   "status": "already",
+   "note": "Chinese screenshot column removed"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-client-auto-continue",
+   "rel": "docs/screenshots/README.md",
+   "status": "already",
+   "note": "Chinese screenshot column removed"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-client-auto-continue",
+   "rel": "docs/screenshots/README.md",
+   "status": "already",
+   "note": "Chinese screenshot column removed"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-client-auto-continue",
+   "rel": "docs/screenshots/README.md",
+   "status": "already",
+   "note": "Chinese screenshot column removed"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-client-auto-continue",
+   "rel": "docs/screenshots/README.md",
+   "status": "already",
+   "note": "Chinese screenshot column removed"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-client-auto-continue",
+   "rel": "docs/screenshots/README.md",
+   "status": "already",
+   "note": "Chinese screenshot column removed"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/client.js",
+   "status": "already",
+   "note": "host menu label: Chinese alternative dropped"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/client.js",
+   "status": "already",
+   "note": "row title matcher: Chinese alternative dropped"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/settings-limit-client-prelude.js",
+   "status": "already",
+   "note": "label matcher uses the English label that the same plugin renders"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/settings-limit-client-prelude.js",
+   "status": "already",
+   "note": "Chinese alternative dropped"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/twin-image-capability-fallback.js",
+   "status": "already",
+   "note": "fullwidth sentence end marks written as escapes; behavior identical"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/v2-settings-ia-integration.js",
+   "status": "already",
+   "note": "Chinese label prefixes dropped"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/vision-capability-benchmark-hardening.js",
+   "status": "already",
+   "note": "fullwidth colon written as an escape; behavior identical"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/vision-capability-router.js",
+   "status": "already",
+   "note": "Chinese question detector dropped; English detector stays"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/vision-limit-diagnostics.js",
+   "status": "already",
+   "note": "matches the English text that lib/structured-flow-hardening.js now emits (same cached translation)"
+  },
+  {
+   "profile": "desktop",
+   "pkg": "dsh-vision-router",
+   "rel": "lib/vision-resilience.js",
+   "status": "already",
+   "note": "fullwidth sentence end marks written as escapes; behavior identical"
+  }
+ ]
+}

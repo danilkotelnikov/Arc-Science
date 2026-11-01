@@ -1,0 +1,953 @@
+[
+  {
+    "id": "dsh-hoh",
+    "title": "Harness of Harness",
+    "description": "Keeps every task honest with a proposal step, a frozen candidate, an independent accept gate and a hash-chained ledger.",
+    "icon": "icons/harness-of-harness.svg",
+    "purpose": "Harness of Harness makes the agent plan, test and prove its work in a fixed cycle. No agent accepts its own output. An independent reviewer calls a deterministic gate, and the gate writes each verdict to a tamper-evident ledger.",
+    "policy": [
+      "Every system prompt carries the operating contract. It covers the shared-memory rules, the Propose, Probe and Compose method, and a ten-step cycle.",
+      "Use the cycle for any task with more than three steps. Smaller tasks skip it.",
+      "The agent records a proposal before it builds. The freeze tool refuses a goal that has no proposal.",
+      "The reviewer calls the accept gate. The agent that froze the candidate may not call it. The gate compares the agent ids that the runtime reports.",
+      "The gate accepts only when a proposal and a freeze exist and the files still match the freeze.",
+      "The gate also needs every check to exit 0 with an output excerpt, every probe to pass, and the preservation list to hold.",
+      "The gate also needs every requirement verified and no blocking or major finding open.",
+      "Missing evidence counts as unmet. A skipped check never turns into a pass.",
+      "Cycle 4 or later is blocked. The agent stops and asks the user.",
+      "Each verdict goes to the ledger and to shared memory."
+    ],
+    "workflow": [
+      "Recall notes from shared memory.",
+      "Write a plan of at most seven steps. Give each step one acceptance check.",
+      "Call hoh_propose with the goal, hypothesis, boundary, checks and probes.",
+      "Record the plan in shared memory.",
+      "Build the change test-first.",
+      "Call hoh_freeze with the absolute paths of the files.",
+      "Start a fresh subagent that did not build the work.",
+      "Let the reviewer run the checks and the probes.",
+      "Let the reviewer call hoh_gate with the evidence.",
+      "Weigh each finding against evidence. Fix the real ones and freeze again.",
+      "Record the evidence in shared memory.",
+      "Read the record back.",
+      "Accept the work only when hoh_gate returns accepted.",
+      "After the third cycle, stop and ask the user."
+    ],
+    "settings": [
+      "DSH_HOH_BRIEF set to 0 switches off the shared-memory brief in the prompt.",
+      "DSH_HOH_RETAIN set to 0 stops the gate from writing verdicts to shared memory.",
+      "DSH_HOME moves the ledger folder. The default is the .dsh folder in your home folder.",
+      "Fixed limits: three cycles, files up to 20 MB, six brief notes of 220 characters, a brief refresh every 20 minutes."
+    ],
+    "data": [
+      "Reads the files that hoh_freeze names. They must be regular files with absolute paths.",
+      "Reads notes from shared memory through the local gateway on loopback port 7424.",
+      "Writes the ledger to hoh/ledger.jsonl in the data folder. Each line holds the hash of the line before it.",
+      "Writes each gate verdict to shared memory through the same gateway. Secret-shaped text is redacted first."
+    ],
+    "failure": [
+      "When shared memory does not answer, the brief stays empty and the gate still returns its verdict.",
+      "When the files change after the freeze, the gate returns unmet.",
+      "When the runtime reports no agent ids, the gate cannot prove independence and returns unmet.",
+      "When the ledger chain breaks, hoh_verify_ledger names the first bad entry.",
+      "The gate checks the evidence it receives. A caller can still report a false exit code, so read the excerpts."
+    ],
+    "verify": [
+      "Open the Plugins page and find Harness of Harness.",
+      "Start a session and ask the agent to call hoh_verify_ledger.",
+      "Check that the answer reads Ledger intact with an entry count.",
+      "In the plugin source folder, run node --test test/hoh.test.mjs and check that every test passes."
+    ]
+  },
+  {
+    "id": "dsh-theme-pair",
+    "title": "Arc Science Theme",
+    "description": "Gives the interface the Arc Science paper look, with cream surfaces, a brown primary button, Geist type and rounded corners.",
+    "icon": "icons/interface-skins.svg",
+    "purpose": "Arc Science Theme restyles the web interface in the Arc Science paper look. It follows the system light or dark mode.",
+    "policy": [
+      "The light theme uses cream paper, white cards and ink text.",
+      "Primary buttons are dark brown on paper. The dark theme uses warm near-black surfaces.",
+      "Cards use 10 pixel corners and controls use 8 pixel corners.",
+      "Text uses Geist and code uses Geist Mono. Both fonts ship inside the plugin under the SIL Open Font License.",
+      "No blue is left. Links, buttons, code colors and icons use greys and browns.",
+      "A stylesheet check rewrites every blue color in every rule to a grey of the same lightness. It covers hover, focus, gradients, shadows, keyframes and icons in data addresses.",
+      "A picture check draws any picture or inline-styled element that is still blue in grey. It re-checks marks, so a dot that turns green loses its mark.",
+      "A delimiter check replaces the middle dot and bullets that separate items in interface text with commas. After a number, it writes a period.",
+      "Chat messages, code and formulas keep their text."
+    ],
+    "workflow": [
+      "Install or enable the plugin.",
+      "Open Arc Harness.",
+      "The page applies the theme at once.",
+      "The theme follows the system light or dark mode."
+    ],
+    "settings": [
+      "The theme has no setting.",
+      "Geist and Geist Mono are embedded, so no font install is needed."
+    ],
+    "data": [
+      "Reads the stylesheet rules and the elements of the open page.",
+      "Writes a style element and a theme attribute on the root element of the page.",
+      "Writes no local-storage entry.",
+      "Makes no network calls."
+    ],
+    "failure": [
+      "When the plugin unloads, it removes the theme attribute and the style element.",
+      "When an embedded font fails to load, the system font shows."
+    ],
+    "verify": [
+      "Open the Plugins page and find Arc Science Theme.",
+      "Check that the page is cream in light mode and warm near-black in dark mode.",
+      "Check that no blue remains, in light and in dark mode.",
+      "Check that cards have rounded corners and that the text is Geist.",
+      "In the plugin source folder, run node test/theme.test.mjs and check that every test passes."
+    ]
+  },
+  {
+    "id": "aegis",
+    "title": "Delivery Assurance",
+    "description": "Makes the agent plan against your project baseline before it edits, and show fresh evidence before it says a task is done.",
+    "icon": "icons/delivery-assurance.svg",
+    "purpose": "Delivery Assurance is a method pack of 23 skills. It makes the agent work like a disciplined engineer: align with the real baseline, change safely and prove completion.",
+    "policy": [
+      "The agent plans against the real project baseline before it edits. The baseline covers owners, contracts and boundaries.",
+      "A completion claim carries fresh verification evidence, the covered scope and the residual risk.",
+      "Retired fallbacks and old paths are tracked or removed with a retirement trigger.",
+      "Simple tasks stay on the fast path. Extra steps appear only when the task needs them.",
+      "User instructions and project rules outrank this guidance.",
+      "The pack is advisory. It is never the final authority on completion.",
+      "A short router message enters the session at lifecycle start. It tells the agent when to load each skill.",
+      "The skills cover goal framing, project context, planning, test-driven work, debugging, code review, architecture decisions, interface governance and verification."
+    ],
+    "workflow": [
+      "The plugin registers its skills and injects the router at lifecycle start.",
+      "The agent matches your request to a skill.",
+      "The agent frames the goal.",
+      "The agent establishes the project context: owners, contracts and boundaries.",
+      "The agent writes a plan.",
+      "The agent makes the change.",
+      "The agent runs verification and collects fresh evidence.",
+      "The agent reports the claim with evidence, covered scope and residual risk."
+    ],
+    "settings": [
+      "Activation mode is auto by default. The explicit mode loads skills only on request.",
+      "TDD mode is off by default. The auto mode picks strict, light or no test-first work by task risk.",
+      "Set the modes with the AEGIS_ACTIVATION_MODE and AEGIS_TDD_MODE variables.",
+      "You can also set activation_mode and tdd_mode in the config.toml file in the .config/aegis folder of your home folder.",
+      "Restart after you change a mode.",
+      "A request that says strict TDD or test-first forces strict test-first work for that task."
+    ],
+    "data": [
+      "Reads the skills folder of the package and the config file.",
+      "Writes nothing while the app runs.",
+      "The doctor and update scripts write only when you or the agent start them. No update runs in the background."
+    ],
+    "failure": [
+      "When the entry skill file is missing, start-up reports its path.",
+      "When a config value is missing or invalid, the defaults apply: auto activation and TDD off.",
+      "A trivial request skips the heavy steps on purpose."
+    ],
+    "verify": [
+      "Open the Plugins page and find Delivery Assurance.",
+      "Ask the agent to list its skills and check that using-aegis appears.",
+      "Give a small change request and check that the agent shows verification evidence before it reports done.",
+      "From the installed package folder, run the doctor script and check for ok true, workspaceSupport available and configStatus configured."
+    ]
+  },
+  {
+    "id": "@anysearch/anysearch-dsh",
+    "title": "Vertical Search",
+    "description": "Gives the agent live web search, page extraction and domain-specific searches, with up to five searches run at once.",
+    "icon": "icons/vertical-search.svg",
+    "purpose": "Vertical Search gives the agent live web search, clean page extraction and searches in specialist domains. One search service replaces the default search and fetch providers.",
+    "policy": [
+      "Ordinary web_search calls return titles, snippets and URLs from the search service.",
+      "Ordinary web_fetch calls return cleaned text for one public HTTP or HTTPS page.",
+      "The agent lists the searchable domains, tags and parameters with anysearch_capabilities before a specialist search.",
+      "anysearch_search runs one structured search. anysearch_batch_search runs one to five searches at once.",
+      "A failed search in a batch does not change the other results.",
+      "Results without a source URL keep their structured fields. Page-backed results can return cleaned content on request.",
+      "By default at most 12000 characters of result content reach the model for each advanced call.",
+      "Requests use the anonymous quota until you add an API key."
+    ],
+    "workflow": [
+      "The agent decides that it needs current information.",
+      "The agent calls web_search with a focused query.",
+      "The service returns titles, snippets and URLs.",
+      "The agent calls web_fetch on the best URL.",
+      "The service returns the cleaned page text.",
+      "For a specialist source, the agent calls anysearch_capabilities.",
+      "The agent picks a domain, tags and parameters from the answer.",
+      "The agent calls anysearch_search, or anysearch_batch_search for several searches.",
+      "The agent cites the URLs in its answer."
+    ],
+    "settings": [
+      "apiKeyEnv names the credential that holds the API key. The default is ANYSEARCH_API_KEY.",
+      "baseURL sets the address of the search service. The default is the public service address.",
+      "maxRenderedContentChars limits result characters per advanced call. The default is 12000.",
+      "The config entry id is web-search-anysearch. Keep the id and replace the whole config block.",
+      "Store the key in the managed credential file in the data folder, or set the environment variable. The environment variable wins."
+    ],
+    "data": [
+      "Sends search queries and the URLs to fetch to the search service.",
+      "Reads the API key from the credential file or the environment. The key is never printed.",
+      "Writes no files of its own."
+    ],
+    "failure": [
+      "With no key, requests use the anonymous quota.",
+      "When one search in a batch fails, the other searches still return.",
+      "A changed credential takes effect on the next request without a restart."
+    ],
+    "verify": [
+      "Open the Plugins page and find Vertical Search.",
+      "Ask the agent for a recent fact and check that the answer cites URLs.",
+      "Ask the agent to run anysearch_capabilities and check that it lists domains.",
+      "Dump the profile configuration and check that the web-search-anysearch entry is present."
+    ]
+  },
+  {
+    "id": "@liustack/modsearch",
+    "title": "Web Search Failover",
+    "description": "Gives the agent web search, X search and page fetch with no account, and moves to the next engine when one fails.",
+    "icon": "icons/web-search-failover.svg",
+    "purpose": "Web Search Failover gives the agent web search, X search and page fetch without an account. When one engine fails or runs out of quota, the next engine answers.",
+    "policy": [
+      "Web search routes through this plugin.",
+      "Three engines work with no key and no sign-up. The default engine has a free monthly quota.",
+      "An API key or a local agent sign-in adds more engines to the chain.",
+      "Every configured engine takes part in failover by default. You can exclude any engine.",
+      "Authentication, rate-limit and quota failures move to the next key of the same engine first. Then the next engine answers.",
+      "Page fetch blocks private network targets unless you allow them. It also checks DNS answers against rebinding.",
+      "Fetched page content is untrusted input.",
+      "Each result lists every attempt and warning, so a fallback is never silent."
+    ],
+    "workflow": [
+      "The agent calls search, X search or page fetch.",
+      "The plugin picks the preferred engine, or the first healthy engine.",
+      "The engine runs the request.",
+      "On an authentication, rate-limit or quota failure, the plugin tries the next key.",
+      "When the keys are used up or the engine fails, the plugin tries the next engine.",
+      "The first good result returns with its sources.",
+      "The result records every attempt and warning.",
+      "The agent cites the sources."
+    ],
+    "settings": [
+      "Open Plugins and pick Web Search Failover to choose the preferred engine, enter keys or endpoints, and tick the engines that join failover.",
+      "Keys live in the config.json file in the .modsearch folder of your home folder. The file has owner-only permissions.",
+      "The TAVILY_API_KEY, EXA_API_KEY, FIRECRAWL_API_KEY and KEENABLE_API_KEY variables work in place of the file.",
+      "Set the enabled value of an engine to false to exclude it. Set its baseURL to use a compatible endpoint.",
+      "Several keys for one engine go in one comma-separated value."
+    ],
+    "data": [
+      "Sends queries and fetch targets to the host of the chosen engine.",
+      "Stores API keys in the config file. The file is protected by permissions and is not encrypted.",
+      "Writes engine cooldown state to a state file. Error text passes through a redactor first.",
+      "Environment variables are never written to disk."
+    ],
+    "failure": [
+      "When every engine fails, the result lists each attempt and its reason.",
+      "A target in a private network range is blocked. Turn allowPrivateNetwork on to allow it.",
+      "A failed key rotates to the next key before the engine chain moves on."
+    ],
+    "verify": [
+      "Open the Plugins page and find Web Search Failover.",
+      "Ask the agent for today's news and check that the answer cites sources.",
+      "Read the attempts field of a result to see which engine answered.",
+      "Exclude the first engine and repeat the search to see the next engine answer."
+    ]
+  },
+  {
+    "id": "@ayanehana/dsh-reasoning-effort",
+    "title": "Reasoning Effort Control",
+    "description": "Adds a slider to the model menu that sets how hard the model reasons, using the levels each model declares.",
+    "icon": "icons/reasoning-effort-control.svg",
+    "purpose": "Reasoning Effort Control adds a slider to the native model menu. The slider sets the reasoning effort level for the next requests. The model decides which levels exist.",
+    "policy": [
+      "The slider appears under Effort in the model menu when the current model declares at least two levels.",
+      "The model and the route decide the count, the names and the order of the levels.",
+      "The host validates and dispatches the selected level. The plugin cannot exceed model or deployment limits.",
+      "A failed update rolls back to the previous level.",
+      "Selections stay in sync with the /model command.",
+      "A model with no declared levels shows a notice in place of the slider.",
+      "A custom model needs declared reasoning levels in Settings before the slider can appear."
+    ],
+    "workflow": [
+      "Open the model control below the composer.",
+      "Choose Effort.",
+      "Drag or click the track.",
+      "Release. The thumb snaps to the nearest level.",
+      "Read the level name below the track. The menu stays open.",
+      "Press Esc to go back, or click outside to close."
+    ],
+    "settings": [
+      "The reasoning effort selector switch in Settings, General turns the enhancement off. The built-in model selector returns at once.",
+      "The runner animation switch under Appearance in Settings, General selects the animated thumb or a plain thumb.",
+      "The reduced-motion setting freezes the animation on one frame.",
+      "Both switches are stored in the current browser.",
+      "Declare the levels of a custom model under Settings, Models, Edit provider, Customized settings, Model options, Reasoning levels."
+    ],
+    "data": [
+      "Reads the reasoning levels of the current model from the host model directory.",
+      "Writes the chosen level through the host model selection.",
+      "Stores the two switches in the browser."
+    ],
+    "failure": [
+      "With fewer than two levels, the menu shows a notice and no slider.",
+      "A rejected change returns the slider to the earlier level.",
+      "With the selector switch off, the built-in model menu shows."
+    ],
+    "verify": [
+      "Open the Plugins page and find Reasoning Effort Control.",
+      "Open the model control below the composer and choose Effort.",
+      "Drag the slider to another level and release.",
+      "Run /model and check that it shows the same level.",
+      "Select a model with no levels and check that a notice appears."
+    ]
+  },
+  {
+    "id": "@liustack/modlens",
+    "title": "Image Evidence Reader",
+    "description": "Lets a text-only model read pasted images by sending them to a vision engine and returning transcribed evidence.",
+    "icon": "icons/image-evidence-reader.svg",
+    "purpose": "Image Evidence Reader lets a text-only model work with pasted images. A vision engine reads each image and returns structured evidence to the model.",
+    "policy": [
+      "On a text-only model, a pasted image reaches the model as a file path, and the modlens_read_image tool reads it.",
+      "A model entry marked as vision reads the image at request time and keeps the thumbnail in the message.",
+      "The evidence holds a full transcription, layout regions in reading order, and lists of entities and relations. The model quotes specifics.",
+      "A model that already sees images keeps its native paste.",
+      "The engines form one failover chain. The first good result wins, and the result records each attempt.",
+      "Reuse of a local agent login needs one explicit grant for each tool.",
+      "Several keys for one engine rotate on authentication, rate-limit and quota failures.",
+      "Image content counts as untrusted data."
+    ],
+    "workflow": [
+      "Paste an image into the chat.",
+      "On a text-only model, the plugin saves the image to a private temporary file.",
+      "The plugin puts the file path in the composer.",
+      "The agent calls modlens_read_image.",
+      "The plugin sends the image to the preferred vision engine.",
+      "A failure moves the request to the next engine.",
+      "The engine returns structured evidence.",
+      "The plugin keeps the evidence text for that image.",
+      "The agent answers from the evidence.",
+      "A later question about the same image needs no new read."
+    ],
+    "settings": [
+      "Open Plugins and pick Image Evidence Reader to switch the engine and to tick which local tools the auto mode may reuse.",
+      "Engines, grants and guard rules live in the config.json file in the .modlens folder of your home folder.",
+      "Six built-in engines exist: gemini-api, openai, anthropic, antigravity-cli, claude-cli and kimi-cli.",
+      "A preferred provider is a preference, and the chain still backs it up. A pinned provider has no fallback.",
+      "Set a proxy with the proxy setting or the HTTPS_PROXY variable."
+    ],
+    "data": [
+      "Sends the image and the question to the chosen engine.",
+      "Writes pasted images to a private temporary folder with owner-only permissions.",
+      "Keeps evidence text in the dsh-evidence folder inside the .modlens folder. An entry expires after 30 days unread, and the folder is capped at 64 MB.",
+      "Local agent engines run in a throwaway folder that holds one copy of the image. This narrows exposure. It does not sandbox the process.",
+      "The antigravity-cli engine runs with permission prompts skipped. The prompt limits it to the one image."
+    ],
+    "failure": [
+      "When an engine fails, the next engine tries. The result lists each attempt.",
+      "The kimi-cli engine runs only when you name it.",
+      "Deleting the evidence folder is safe. The next read runs the engine again.",
+      "Switching engines reads the images again, because entries are tied to the engine."
+    ],
+    "verify": [
+      "Open the Plugins page and find Image Evidence Reader.",
+      "Paste a screenshot with text on a text-only model.",
+      "Check that modlens_read_image runs and that the answer quotes the text.",
+      "Ask a second question about the same image and check that no new read starts."
+    ]
+  },
+  {
+    "id": "dsh-vision-router",
+    "title": "Visual Inspection",
+    "description": "Gives the agent image tools to describe, locate, crop, read, trace and pixel-diff, with a failover chain and a local-only mode.",
+    "icon": "icons/visual-inspection.svg",
+    "purpose": "Visual Inspection gives the agent image tools. The chat model keeps the lead. Vision models and local tools act as its eyes.",
+    "policy": [
+      "The chat model reasons and decides. A vision model only reads pixels.",
+      "Fourteen tools register at session start, so the tool list stays stable. Progressive mode is a boot-time option.",
+      "The tools describe, locate, detect, crop, compare pixels, extract colors, read text and trace vectors.",
+      "They also cut out foregrounds, screenshot HTML, read long screenshots, materialize files and present images.",
+      "A fifteenth tool, vision_screenshot, stays off until you enable it.",
+      "Vision models run in order: your models, the local backends you enable, custom HTTP endpoints, and a built-in anonymous fallback chain.",
+      "A rate-limit answer moves the call to the next backend at once and starts a cooldown.",
+      "Vision answers are cached by the content hash of the attachment. Later turns reuse the description as untrusted evidence.",
+      "Local-only mode stops every remote vision call. Only loopback endpoints can run.",
+      "Local pixel tools never call a vision model."
+    ],
+    "workflow": [
+      "Turn on the Vision control beside the composer.",
+      "Paste or upload an image and state the task.",
+      "The chat model chooses a tool, for example vision_describe or vision_ground.",
+      "The plugin sends the image to the first vision model in the chain, or runs a local tool.",
+      "The tool returns text, a box, a crop or a report.",
+      "To check a rebuilt page, render it with vision_html_screenshot.",
+      "Run vision_pixel_diff against the reference.",
+      "Repeat until the difference ratio stops falling."
+    ],
+    "settings": [
+      "The Vision settings page has General, Vision Strategy, Local and Device, Advanced and Diagnostics sections.",
+      "Local-only vision is a switch on the General section. Saved cloud rows stay stored and stop running.",
+      "Model selection keeps the configured order, or ranks models by measured capability when you enable Auto.",
+      "Local Ollama and LM Studio backends are off until you enable them.",
+      "Background capability profiling needs its own authorization."
+    ],
+    "data": [
+      "Sends the image or a crop, the prompt and the context to the selected vision provider.",
+      "The built-in fallback sends images anonymously to a third-party hosted endpoint, with no key.",
+      "Local tools process images on this machine.",
+      "Writes tool artifacts, such as crops and diff heatmaps, as files.",
+      "Only the configured vision provider hosts use your proxy."
+    ],
+    "failure": [
+      "Region blocks, quota, rate limits, context overflow and network errors are classified. The chain walks on and reports after every backend fails.",
+      "The final error carries advice.",
+      "Oversized images are downscaled before a call. The default budget is 4 megapixels.",
+      "With local-only mode on and no loopback backend configured, no vision model can run."
+    ],
+    "verify": [
+      "Open the Plugins page and find Visual Inspection.",
+      "Paste a screenshot and ask for the position of one button.",
+      "Check that the answer carries pixel coordinates.",
+      "Turn on local-only mode and repeat. Check that no remote vision call runs.",
+      "Run Test Vision on one model in the Vision settings page."
+    ]
+  },
+  {
+    "id": "@michengai/dsh-archive-manager",
+    "title": "Session Lifecycle",
+    "description": "Archives, restores, favorites and deletes sessions, searches their text, and cleans up idle chats and orphaned subagents.",
+    "icon": "icons/session-lifecycle.svg",
+    "purpose": "Session Lifecycle puts inactive conversations away and brings them back. It also searches text across sessions and removes data you no longer want.",
+    "policy": [
+      "Archiving keeps a session. Permanent deletion cannot be undone and may remove the attachments of that session.",
+      "Deletion always asks for confirmation. It never deletes the project working directory.",
+      "Idle cleanup protects favorites, the current chat, running sessions and pending interactions.",
+      "Cleanup runs only when you start it. There is no scheduled cleanup.",
+      "Batch actions report successes, skips and failures. One failure does not stop the rest.",
+      "Search covers titles and message text of archived and unarchived sessions. Tools, attachments, reasoning and system messages are excluded.",
+      "Orphaned subagents are detected, sized and removed on request.",
+      "A move to another workspace waits until the session is quiet and rewrites it in one step."
+    ],
+    "workflow": [
+      "Open the Archive entry in the sidebar, or open Settings and choose Archived sessions.",
+      "Choose the Unarchived tab.",
+      "Enter the idle threshold in whole days, from 1 to 36500.",
+      "Review the candidate list.",
+      "Deselect any session you want to keep.",
+      "Confirm the archive.",
+      "Read the progress and the counts of successes, skips and failures.",
+      "To reverse the batch, use Undo this archive while the page stays open.",
+      "To find a conversation later, open the Archived tab and search titles and text.",
+      "Restore the session, or choose Restore and open."
+    ],
+    "settings": [
+      "sidebarEntry is off by default. It adds an Archive entry that opens a centered workspace view.",
+      "onlineUpdate is on by default. It controls whether the plugin checks the package registry for updates.",
+      "A host lock, updater set to false in the plugin configuration, turns updates off and overrides the user choice."
+    ],
+    "data": [
+      "Reads session titles, headers and cached projections.",
+      "Search reads message text in batches of at most 20 sessions.",
+      "Writes favorites and archive state through the host session API.",
+      "Rebuilds a missing list cache by reading one full log at a time through a read-only handle.",
+      "Deletes transcripts, cache rows and indexes on permanent deletion.",
+      "Contacts the package registry only when you check for updates and the update switch is on."
+    ],
+    "failure": [
+      "A read failure during search stays visible and can be retried.",
+      "Failed batch items can be retried one by one.",
+      "A timeout while confirming persistence is reported as unknown.",
+      "With online updates off, the update route answers with an HTTP 403 status.",
+      "There is no persistent full-text index. Search over long sessions can be slow, so narrow the project, dates or favorites first."
+    ],
+    "verify": [
+      "Open the Plugins page and find Session Lifecycle.",
+      "Archive one test session and check that it appears on the Archived tab.",
+      "Search for a phrase from that session and check that a snippet appears.",
+      "Restore the session and check that it returns to the sidebar."
+    ]
+  },
+  {
+    "id": "@michengai/dsh-skills-manager",
+    "title": "Skill Library",
+    "description": "Finds, enables, organizes and installs agent skills from your machine, projects and public repositories, with trash and rollback.",
+    "icon": "icons/skill-library.svg",
+    "purpose": "Skill Library finds, enables, organizes and installs agent skills. It reads the skill folders of more than twenty tools and of your projects.",
+    "policy": [
+      "Skills appear in four views: Global Skills, Project Skills, Discover and Trash.",
+      "A project skill takes precedence over a global skill of the same name. Shadowed copies are marked.",
+      "A skill name uses lowercase ASCII letters, digits and hyphens. A skill without a valid English name is flagged and cannot be invoked.",
+      "External agent folders are read-only. The plugin never edits the files of another tool.",
+      "Writes go to the user skills folder, the shared agents folder or the project folder of a registered workspace.",
+      "A local edit to a skill needs your confirmation before an update overwrites it. Every update keeps a backup for rollback.",
+      "Deleting a skill moves it to Trash. Restore keeps its origin and update history.",
+      "Repository archives are limited to 32 MiB."
+    ],
+    "workflow": [
+      "Open the Skills entry in the sidebar, or open Settings and choose Skills.",
+      "Pick the Global Skills tab or the Project Skills tab.",
+      "Search or filter to find a skill.",
+      "Open View details to read the skill text and its diagnostics.",
+      "Use the switch on the skill row to enable or disable it.",
+      "To add skills, open Discover and subscribe to a repository, or choose Import skill.",
+      "Choose the destination and the path.",
+      "Review the file differences of an update.",
+      "Confirm the update. The plugin takes a backup first.",
+      "To roll back, choose Restore previous version."
+    ],
+    "settings": [
+      "sidebarEntry is off by default. It adds a Skills entry to the sidebar.",
+      "onlineUpdate is on by default. It controls the plugin's own update check.",
+      "Source folders: point an external agent source at another folder in the panel. The overrides live in roots.json in the skills-manager data folder.",
+      "Variables such as DSH_HOME and DSH_AGENTS_HOME move the host skill folders."
+    ],
+    "data": [
+      "Reads the global and project skill folders of the supported agents.",
+      "Writes installed skills, category metadata, backups, trash and source overrides. Category metadata does not move files.",
+      "Reaches public skill catalogs and repositories when you use Discover or refresh a repository."
+    ],
+    "failure": [
+      "A skill without an English name is flagged with a diagnostic. You can disable it or clean it up.",
+      "A missing custom source folder stays listed, so you can restore the default.",
+      "Unsafe paths and the roots of other agent tools are locked against writes."
+    ],
+    "verify": [
+      "Open the Plugins page and find Skill Library.",
+      "Open the Skills view and check that your global skills are listed.",
+      "Toggle one skill off and on again.",
+      "Delete a test skill and restore it from Trash."
+    ]
+  },
+  {
+    "id": "@nagi-ovo/dsh-visualize",
+    "title": "Inline Visualization",
+    "description": "Lets the model draw interactive charts, simulators and mockups as sandboxed cards inside the conversation.",
+    "icon": "icons/inline-visualization.svg",
+    "purpose": "Inline Visualization lets the model answer with an interactive card in place of text alone. Each card runs in a sandbox inside the conversation.",
+    "policy": [
+      "The model calls visualize with an HTML fragment. The card starts to render while the model still writes.",
+      "A card runs in a sandboxed iframe with an opaque origin. It cannot read the host page, its cookies, its storage or its login token.",
+      "The card policy blocks network requests, nested pages and form submissions. It allows static assets from a fixed set of CDNs.",
+      "Fragments are limited to 1000000 bytes by default.",
+      "To fix a card, the model calls the update action with one exact replacement. It does not resend the markup.",
+      "A larger tool becomes a standalone page. The conversation shows a launcher card that opens the page in a new tab.",
+      "Five styles exist: whale, editorial, paper, sketch and terminal. The default is whale.",
+      "Your style notes in a Markdown file guide how the model writes cards. Only the first 4 KB of each file is read."
+    ],
+    "workflow": [
+      "Describe what you want to explore.",
+      "The model calls visualize with the fragment, a title and a mode.",
+      "The card renders in the conversation.",
+      "Use Open in new window when the chat column is too narrow.",
+      "Ask for a change. The model calls update with the card path and one replacement.",
+      "For a dashboard or a full mockup, the model uses page mode.",
+      "Click Open page to see the page at full size."
+    ],
+    "settings": [
+      "Settings, Visualize shows the five styles with live previews. One click saves the choice and the next card uses it.",
+      "The style value in the profile configuration stores the choice.",
+      "maxFragmentBytes changes the size limit.",
+      "Global style notes live in style.md in the visualize data folder. Workspace notes live in visualize-style.md in the .dsh folder of the workspace.",
+      "Edits apply when the model next loads the visualize skill."
+    ],
+    "data": [
+      "Writes a copy of each card fragment to the visualize data folder, in one folder per conversation. Nothing goes into your project.",
+      "The plugin never cleans these files. You can delete the folder, and existing conversations still replay their cards.",
+      "Four styles load fonts from a public font service. The paper style loads a math library only when a card has formulas."
+    ],
+    "failure": [
+      "Interactive cards render only in the web interface. Other clients show the plain tool result.",
+      "A button inside a card cannot send a follow-up message to the conversation.",
+      "A tab opened earlier keeps the old version after an update. Click Open page again.",
+      "When the browser blocks the new tab, Show here displays the page in the conversation."
+    ],
+    "verify": [
+      "Open the Plugins page and find Inline Visualization.",
+      "Ask the model for an adjustable visualization of a sorting algorithm.",
+      "Check that an interactive card renders in the conversation.",
+      "Choose another style in Settings, Visualize and check that the next card uses it."
+    ]
+  },
+  {
+    "id": "ds-harness-remote",
+    "title": "Encrypted Remote Access",
+    "description": "Lets you continue sessions from another device over an end-to-end encrypted link, and lets agents drive remote hosts.",
+    "icon": "icons/encrypted-remote-access.svg",
+    "purpose": "Encrypted Remote Access lets you continue sessions from another computer, the web or a phone. It also lets an agent list and drive sessions on remote hosts.",
+    "policy": [
+      "The harness keeps running on your work computer with its own workspaces, tools and permissions. Remote adds another window onto it.",
+      "Session traffic is encrypted on the client and decrypted only by the selected host.",
+      "A connection needs account membership and the locally pinned device identity of the host.",
+      "The host makes outbound connections only. It opens no public port.",
+      "Remote exposes no general tool RPC, no remote desktop and no file-mutation API.",
+      "Interactive terminals are on by default and can be switched off in the host-local Remote settings. They run as the host user, outside agent approvals.",
+      "Agent tools exist for hosts, workspaces, sessions, history, messages, waiting, interruption, upload, download and receipts. Their names start with remote_.",
+      "Create, send and interrupt calls need a unique operationId. The same key with the same parameters returns the same receipt.",
+      "Waiting never approves or interrupts work.",
+      "Uploads are limited to 1 GiB on direct links and 20 MiB elsewhere. Downloads are limited to 50 MiB and never overwrite files."
+    ],
+    "workflow": [
+      "Open the Remote panel and sign in.",
+      "Pair the host and the other device.",
+      "On the other device, open the remote workspace.",
+      "Continue the session, answer questions and handle permission requests.",
+      "To let an agent use Remote, ask it to list hosts with remote_list_hosts.",
+      "The agent lists workspaces with remote_list_workspaces.",
+      "The agent creates a session and sends a task with a unique operationId.",
+      "The agent waits with remote_wait_sessions and reads the history.",
+      "Check an idle status against the history. Idle does not prove success."
+    ],
+    "settings": [
+      "serverUrl sets the account and relay server. The default is a public server run by the plugin author. Set your own server to self-host.",
+      "enabled and role: the plugin runs as a host by default.",
+      "codex.enabled and codex.binary control the optional experimental Codex support.",
+      "Switch off the interactive terminal in the Remote settings if you do not want it."
+    ],
+    "data": [
+      "Sends encrypted session traffic through the account server and relay, or directly on a local network or peer link.",
+      "Host names, workspace paths and requested session history enter the tool context of the calling agent.",
+      "Credentials are never returned to the agent.",
+      "Downloads go to a fresh dsh-remote folder in your Downloads folder.",
+      "Operation receipts live in memory and vanish on restart, logout or reset."
+    ],
+    "failure": [
+      "A backend catalog that fails appears in an unavailable list.",
+      "After an unknown result, inspect the receipt and the session. Do not retry with a new key.",
+      "An accepted send receipt means that the task is queued. Check the session for completion.",
+      "A not_found receipt does not prove that an earlier operation never ran.",
+      "Terminal-only profiles lack the local client that these tools need."
+    ],
+    "verify": [
+      "Open the Plugins page and find Encrypted Remote Access.",
+      "Sign in on the Remote panel and check that the host shows as online.",
+      "Ask an agent to list remote hosts and check the result.",
+      "On the other device, open a workspace and check that its sessions load."
+    ]
+  },
+  {
+    "id": "dsh-auto-review",
+    "title": "Approval Review",
+    "description": "Has a second, read-only reviewer decide approval requests, and rejects the action when the reviewer fails.",
+    "icon": "icons/approval-review.svg",
+    "purpose": "Approval Review puts a second, read-only model on the approval chain. It decides allow or deny for the requests that you route to it.",
+    "policy": [
+      "A request is reviewed only when its policy is ai. A tool policy is ai, human or never. Unlisted tools default to human.",
+      "Risk rules match first. A rule holds a pattern, a policy and a field: reason, toolName or arguments.",
+      "The reviewer is a one-shot subagent with read, glob and grep tools only. It cannot write, run shell commands, use the network or delegate.",
+      "Every failure resolves through the fallback policy. The default is rejected, so the system fails closed.",
+      "A deny reason goes back to the calling model, so the agent learns why.",
+      "A never policy rejects at once and tells the model that the action is disabled.",
+      "Sensitive argument values are redacted before the reviewer sees them. This is a best-effort step.",
+      "A circuit breaker trips after 3 consecutive denials, or 6 of the last 10 verdicts, in one turn.",
+      "The reviewer is a model. Use human or never rules for irreversible actions.",
+      "Every verdict is logged in the session log for audit."
+    ],
+    "workflow": [
+      "A tool call asks for approval.",
+      "The answerer checks that auto review is on for the session.",
+      "Risk rules, then the tool policy, pick human, ai or never.",
+      "For ai, the plugin starts the reviewer with the redacted call and a short transcript.",
+      "The reviewer reads the workspace with read-only tools.",
+      "The reviewer returns a decision, a reason and a risk level.",
+      "An allow runs the call once. A deny returns the reason to the model.",
+      "On a failure or a timeout, the fallback policy applies.",
+      "The plugin writes the verdict to the session log."
+    ],
+    "settings": [
+      "enableByDefault is true. The /auto-review on and off command overrides it for one session.",
+      "toolsPolicy.default is human. toolsPolicy.overrides sets ai, human or never for each tool.",
+      "riskRules is a list of pattern, policy and field.",
+      "reviewerModel unset uses the model of the session agent.",
+      "reviewerBackend is agent or phocinae, a local non-generative decision model. The default is agent.",
+      "reviewerTimeoutMs is 60000 by default.",
+      "fallbackPolicy is rejected by default. The other values are delegate and allow-once.",
+      "maxReviewsPerTurn is 10. contextBudget is 2 turns and 4000 characters.",
+      "The /auto-review command takes on, off, status or approve."
+    ],
+    "data": [
+      "Reads the redacted call arguments, the request reason, a short transcript and the workspace files that the reviewer opens.",
+      "Writes verdict, rejection, state and circuit events to the session log. Nothing else is stored on disk.",
+      "With another reviewer model, the transcript goes to the provider of that model.",
+      "The local decision model runs on loopback only, unless you allow a remote endpoint."
+    ],
+    "failure": [
+      "A crash, a timeout, a missing route or a malformed verdict resolves through the fallback policy.",
+      "The allow-once fallback grants without review. Use it only for unattended setups that accept the risk.",
+      "Without a working model route, every review falls back. A silent grant never happens.",
+      "On hosts that drop the log-only marker, the audit stays in memory and the session stays loadable."
+    ],
+    "verify": [
+      "Open the Plugins page and find Approval Review.",
+      "Run /auto-review status in a session and check the state and the budgets.",
+      "Trigger a request on a tool whose policy is ai.",
+      "Check that a verdict appears in the AI Review panel.",
+      "Set a never rule on a test tool and check that the agent is told that the action is disabled."
+    ]
+  },
+  {
+    "id": "dsh-better-sidebar",
+    "title": "Project Workbench",
+    "description": "Puts a file tree, editor, git changes, tasks, side chat and terminal panel beside every conversation.",
+    "icon": "icons/project-workbench.svg",
+    "purpose": "Project Workbench puts file work, git changes, tasks and side chat beside every conversation. Each conversation keeps its own layout.",
+    "policy": [
+      "Files: a lazy tree with git status colors, a live directory watch, global search, drag-and-drop upload and multi-select actions.",
+      "Editor: an editable code editor, Markdown with Mermaid diagrams, a sandboxed HTML preview and a paged preview for huge files.",
+      "Git: source control with merge, staged and changes groups, a lens on the changes of this session, and a read-only commit graph.",
+      "The commit graph never checks out or fetches. Reads are bounded to 200 commits per page, offset 10000 and 1000 branches.",
+      "Tasks: a live subagent topology and a background task list with exit codes, live output and force-kill.",
+      "Side chat (beta): side threads inherit the parent context and run independently, with a revocable queue.",
+      "Bottom workbench: split panes and several terminal tabs, with the layout saved for each session.",
+      "HTML previews run in a sandbox with an opaque origin. Turning the sandbox off is a per-feature setting and is off by default.",
+      "The sidebar_open tool lets the model open the sidebar. Other plugins register tabs and viewers through the betterSidebar service."
+    ],
+    "workflow": [
+      "Open the right sidebar in a conversation.",
+      "Pick a tab: Files, Git, Tasks or Side chat.",
+      "Open a file from the tree.",
+      "Edit and save it in the editor.",
+      "Open the Git tab to review changes.",
+      "Switch to Git Graph to read history.",
+      "Open the Tasks tab to see subagents and background jobs.",
+      "Start a side thread for a question that should not disturb the main chat.",
+      "Open the bottom panel for terminals."
+    ],
+    "settings": [
+      "Preferences live on the plugin mount row in the profile. The entry id is better-sidebar.",
+      "Old settings values migrate once at the first start.",
+      "The layout of each session is stored in the browser.",
+      "A second mount of the same package under another id yields to the first, so that two sidebars never appear."
+    ],
+    "data": [
+      "Reads the workspace files and the git metadata that you open.",
+      "Writes the files that you save in the editor and the files that you upload.",
+      "Serves its own JSON API and two WebSocket routes on the host.",
+      "Stores the layout of each session in the browser."
+    ],
+    "failure": [
+      "A git read past a limit returns an explicit error.",
+      "A reference change during pagination prompts a refresh.",
+      "Without the context plugin, the diagnostics jump entries do not appear.",
+      "Mounting the package twice fails the plugin tree at start with a duplicate prefix route error. The mount guard prevents this when the other mount comes first."
+    ],
+    "verify": [
+      "Open the Plugins page and find Project Workbench.",
+      "Open a conversation and check that the right sidebar shows Files, Git and Tasks.",
+      "Open a file, edit it and save it.",
+      "Switch to Git Graph and check that commits and branches appear."
+    ]
+  },
+  {
+    "id": "dsh-chat-import",
+    "title": "Conversation Import",
+    "description": "Imports conversation history from more than 25 coding agents as resumable sessions and exports sessions back out.",
+    "icon": "icons/conversation-import.svg",
+    "purpose": "Conversation Import brings conversation history from other coding agents into the harness as sessions that you can resume. It can also export sessions back out.",
+    "policy": [
+      "More than 25 agents are supported as sources, plus local JSONL files.",
+      "Import keeps reasoning, tool calls and tool results. System prompts are optional.",
+      "A compaction in the source becomes a native compaction checkpoint, and the log keeps the full history. Set fullHistory to true to import everything without checkpoints.",
+      "Imported history is never rewritten. A re-import skips unchanged sources, appends to untouched sessions and makes a new copy when you already chatted in the imported session.",
+      "Archiving, deleting or removing a workspace records an ignore entry, so rescans skip that source.",
+      "A session lands in the existing workspace of its directory, in a new workspace, or in the dedicated import workspace.",
+      "The panel writes nothing by itself. Writes happen only when you import, hide or delete.",
+      "An export never overwrites an existing file. It lists lossy items in a degradations field.",
+      "The resume commands treat an external transcript as untrusted static history."
+    ],
+    "workflow": [
+      "Click Import sessions at the bottom of the left sidebar.",
+      "Pick the source, or choose Import from file and type a path.",
+      "Double-click a row to preview the conversation.",
+      "Select the sessions to import.",
+      "Choose Import, or drag a row onto a workspace in the sidebar.",
+      "Open the imported session and continue the conversation.",
+      "To undo an import, open the History tab and delete the sessions that the plugin created.",
+      "To export, ask the agent to call export_chat with a format and a sessionId."
+    ],
+    "settings": [
+      "Settings control how much of the tool set enters the context: all, part or none.",
+      "workspaceMode is auto by default. The other values are per-project and dedicated. workspaceDir sets the dedicated folder.",
+      "DSH_IMPORT_SESSION_HINT set to 0 turns off the migration hint.",
+      "Commands: /import, /import-all, /ignores, /ignore, /unignore, /resume-claude and /resume-codex."
+    ],
+    "data": [
+      "Reads the session files of other agents in their default folders, or at a path that you give.",
+      "Writes imported sessions to the session store, plus an imports.json registry and a scan cache in the dsh-chat-import data folder.",
+      "Writes exports to the exports folder in the data folder, or to the folder that you name. Claude exports go to the Claude projects folder by default.",
+      "Moves a single-session source file to the Recycle Bin only when you ask."
+    ],
+    "failure": [
+      "When detection fails, the panel lists why each parser gave up.",
+      "Per-session failures are named and the batch continues.",
+      "An ignore entry stops an import, and the panel offers Import anyway.",
+      "A timestamp inside a truncated record can be missed. The file modification time is the fallback."
+    ],
+    "verify": [
+      "Open the Plugins page and find Conversation Import.",
+      "Open the import panel and check that sessions from other agents are listed.",
+      "Import one session and check that it opens and can continue.",
+      "Open the History tab and check that the import is listed."
+    ]
+  },
+  {
+    "id": "dsh-client-auto-continue",
+    "title": "Interruption Recovery",
+    "description": "Resumes a conversation automatically after a network or model failure, and breaks loops where the agent repeats itself.",
+    "icon": "icons/interruption-recovery.svg",
+    "purpose": "Interruption Recovery resumes a conversation when a request fails for a reason that you did not cause. It also stops runs that repeat themselves.",
+    "policy": [
+      "Recoverable failures resume automatically: network, timeout, 5xx and 429 errors.",
+      "Permanent failures are skipped and reported: 401 and 403 statuses, credential, balance, quota, unknown model and context length errors.",
+      "The wait grows with each consecutive failure: 20 s, 40 s, 80 s, up to a cap.",
+      "A grace period of 3 s lets the host start its own new turn first.",
+      "At most 3 recovery sends happen in a row by default.",
+      "Before it resumes, the plugin checks the last tool call. When the result is unconfirmed, the resume text tells the model to check state first and not to rerun the call.",
+      "Recovery stops for manual Stop, policy rejection, paused sessions, subagent sessions and the attempt cap.",
+      "The loop guard cancels and restarts a run that repeats itself.",
+      "It watches for one repeated message, near-duplicate paragraphs, short messages without tool calls, and one tool called with the same arguments and results.",
+      "The autonomous loop continues after normal completion. It is off by default.",
+      "Session modes are Follow default, Off, Recovery only and Autonomous loop. The default mode is Recovery only."
+    ],
+    "workflow": [
+      "A turn ends with an error, a token limit, an interruption or no visible output.",
+      "The engine classifies the cause.",
+      "A permanent cause ends here with a notification.",
+      "The engine waits for the grace period.",
+      "When the host starts a new turn, the recovery is cancelled.",
+      "The engine checks the last tool call and builds the resume text.",
+      "The engine sends the text through the follow-up queue.",
+      "The agent continues with the tools and permissions of the session.",
+      "After a restart, the startup scan resumes sessions that ended within the last 15 minutes."
+    ],
+    "settings": [
+      "The Auto-continue switch beside the input applies to the current conversation. The mode menu next to it picks the session mode.",
+      "Open Plugins and pick Interruption Recovery to see the categories General, Retry strategy, Startup recovery, Continue text, Safety, and Status and logs.",
+      "Key values: graceMs 3000, cooldownMs 20000, paused false, showComposerToggle true, resumeCompletedTurns false.",
+      "Continue texts accept the placeholders code, message, status, tool, turn, errorCount and elapsed.",
+      "Save applies changes live without a restart."
+    ],
+    "data": [
+      "Reads session events and history through the host services.",
+      "Sends your continue text through the follow-up queue. The loop guard can cancel a looping turn first.",
+      "Writes the configuration to the active profile patch. Session modes and the global pause are saved there.",
+      "Retry counters, cooldown times and statistics stay in memory and reset when the engine restarts.",
+      "Browser notifications are optional and may ask for browser permission once."
+    ],
+    "failure": [
+      "A failure during cooldown is deferred and not discarded.",
+      "A manual user message cancels a queued continuation.",
+      "If the history of one session cannot be read, the startup scan skips that session and recovers the others.",
+      "Resume now ignores cooldown, the attempt cap and pauses for one send."
+    ],
+    "verify": [
+      "Open the Plugins page and find Interruption Recovery.",
+      "Check that the Auto-continue switch appears beside the input.",
+      "Read the Status and logs category for today's counts.",
+      "Interrupt a test request with a network error and check that a continue message follows after the grace period."
+    ]
+  },
+  {
+    "id": "dsh-context",
+    "title": "Context Insight",
+    "description": "Shows what fills the context window, how it grew, and which files, commands and subagents shaped it.",
+    "icon": "icons/context-insight.svg",
+    "purpose": "Context Insight shows what fills the model context window and how it changed. It also shows what the agent did to your files and which subagents ran.",
+    "policy": [
+      "The Context Insights page shows usage, estimated cost, cache hit rate and daily activity across sessions. Filter by range, day, group or search.",
+      "The Context tab of each session shows stats, composition, a per-request trend, events, file activity and command executions.",
+      "The Fleet tab shows the live agent network with its members, tasks and messages.",
+      "The /context command opens a dialog with the current composition and the context browser.",
+      "Composition and occupancy read the same official token-meter projections as the context ring of the composer.",
+      "Cost is an estimate from public list prices. Category figures are estimates, and the trend details show provider-reported actuals.",
+      "A system prompt prefix and suffix, set in the preferences, join the system prompt of every session. Subagents are included."
+    ],
+    "workflow": [
+      "Open Context Insights in the sidebar to see all sessions.",
+      "Pick a range, a day or a group.",
+      "Open one session and choose its Context tab.",
+      "Read the Current Context bar to see which part fills the window.",
+      "Read the Context Trend to see how it grew and where compaction cut it.",
+      "Open the Context Browser to see what any request held.",
+      "Open the Fleet tab to see the agent family.",
+      "Type /context for a quick view without leaving the chat."
+    ],
+    "settings": [
+      "The Context preferences card holds the panel entry: the Context tab, the right sidebar panel, both, or hidden.",
+      "It also holds the Fleet tab switch, the default Insights range, trend granularity and mode, and the duration curve.",
+      "It holds the diff baseline, the sort orders and the Insights switch as well.",
+      "The default Insights range is the last 30 days.",
+      "The system prompt prefix and suffix rows hold free text. Edits apply from the next turn. An empty row disables it.",
+      "The card lives on the Plugins page, in the Configuration section of this plugin."
+    ],
+    "data": [
+      "Reads session logs and the official session projections.",
+      "Writes only your preferences.",
+      "Cost figures come from a fixed pricing map of model list prices."
+    ],
+    "failure": [
+      "Category figures use a fixed-density estimate, so they differ slightly from provider actuals.",
+      "A hidden panel entry also hides the reply-row jump that goes with it.",
+      "The Fleet tab stays available when you hide the Context panel entry."
+    ],
+    "verify": [
+      "Open the Plugins page and find Context Insight.",
+      "Open Context Insights and check that sessions and usage appear.",
+      "Open the Context tab of a session and check that the composition bar appears.",
+      "Type /context and check that the dialog opens."
+    ]
+  },
+  {
+    "id": "superpowers-dsh",
+    "title": "Engineering Practices",
+    "description": "Adds fifteen skills for test-first work, root-cause debugging, planning, code review and verification before completion.",
+    "icon": "icons/engineering-practices.svg",
+    "purpose": "Engineering Practices adds fifteen process skills to every agent session. They cover test-first work, debugging, planning, review and verification.",
+    "policy": [
+      "Brainstorm before you build. Find out what you want and why.",
+      "Write the implementation plan from the spec before you code.",
+      "Work test-first in a red, green, refactor loop.",
+      "Debug from the root cause. Do not patch symptoms.",
+      "Show evidence before you claim success.",
+      "Dispatch a fresh subagent for each task, with review. Fan out independent work in parallel.",
+      "Request rigorous review before you merge. Verify feedback before you implement it.",
+      "Use isolated worktrees for feature work and integrate finished branches safely.",
+      "The entry skill, using-superpowers, tells the agent how to find and use the other skills.",
+      "The diagnosing skill reads session transcripts on disk and reports what went wrong with path and line evidence."
+    ],
+    "workflow": [
+      "The agent loads using-superpowers at the start of a task.",
+      "The agent brainstorms the goal with you.",
+      "The agent writes a plan.",
+      "The agent executes the plan inline, or with a fresh subagent for each task.",
+      "The agent writes a failing test first, then the code.",
+      "When a bug appears, the agent debugs from the root cause.",
+      "The agent runs verification and shows the evidence.",
+      "The agent requests code review.",
+      "The agent finishes the branch."
+    ],
+    "settings": [
+      "The plugin has no settings. It registers one skill provider row.",
+      "A later configuration layer can address the row by its id, superpowers-dsh.",
+      "To add a skill, add a folder with a SKILL.md file under the skills folder of the package."
+    ],
+    "data": [
+      "Reads the skill folders of the package. A skill body loads only when the agent asks for it.",
+      "Writes nothing.",
+      "Uses no network and no runtime dependencies beyond the built-in Node modules."
+    ],
+    "failure": [
+      "When the host skill registry changes shape, the plugin names the exact break and does not drop skills silently.",
+      "The skills are guidance for the agent. They do not enforce anything on their own."
+    ],
+    "verify": [
+      "Open the Plugins page and find Engineering Practices.",
+      "Ask the agent to list its skills and check for fifteen entries.",
+      "Ask for a small feature and check that the agent plans and writes a test first.",
+      "Check that the agent shows verification evidence before it reports done."
+    ]
+  }
+]

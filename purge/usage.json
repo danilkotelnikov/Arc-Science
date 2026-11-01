@@ -1,0 +1,10 @@
+{
+ "calls": 241,
+ "promptTokens": 372576,
+ "outputTokens": 246124,
+ "byModel": {
+  "gemini-3.8-flash": 241
+ },
+ "retries": 2,
+ "thoughtTokens": 619
+}

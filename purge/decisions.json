@@ -1,0 +1,34 @@
+{
+ "leave": [],
+ "translate": [
+  {
+   "pkg": "dsh-vision-router",
+   "file": "lib/legacy-session-repair.js",
+   "ctx": "pairkey"
+  },
+  {
+   "pkg": "dsh-vision-router",
+   "file": "lib/settings-limit-client-prelude.js",
+   "ctx": "pairkey"
+  },
+  {
+   "pkg": "dsh-vision-router",
+   "file": "lib/vision-capability-benchmark-client.js",
+   "ctx": "pairkey"
+  },
+  {
+   "pkg": "dsh-vision-router",
+   "file": "lib/vision-routing-settings-prelude.js",
+   "ctx": "pairkey"
+  }
+ ],
+ "copyFrom": [
+  {
+   "pkg": "@ayanehana/dsh-reasoning-effort",
+   "file": "src/client/agent-tutorial.zh.md",
+   "from": "src/client/agent-tutorial.en.md"
+  }
+ ],
+ "keepFiles": [],
+ "jsonEdits": []
+}
