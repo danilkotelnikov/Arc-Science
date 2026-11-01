@@ -21,6 +21,10 @@
     "/(?:test|tests|__tests__)/",
     "\\.test\\.m?js$",
     "\\.min\\.js$",
-    "/node_modules/(?:@types|typescript|zod|d3|cytoscape|dompurify|dayjs|file-type|fflate|jimp|pdfjs-dist|highlight\\.js|marked|katex|mermaid)/"
-  ]
+    "/node_modules/(?:@types|typescript|zod|d3|cytoscape|dompurify|dayjs|file-type|fflate|jimp|pdfjs-dist|highlight\\.js|marked|katex|mermaid)/",
+    "/local-plugins/dsh-english/"
+  ],
+  "skipReasons": {
+    "/local-plugins/dsh-english/": "A translation tool of this kit with its working cache (Chinese text and the English answer, old product name included) and old file copies. No profile loads it and no page shows it. It leaves with the rename slices (ARC-RENAME-2)."
+  }
 }

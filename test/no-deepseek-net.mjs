@@ -30,7 +30,7 @@ const ENV = /\bDEEPSEEK_(?:[A-Z0-9]+_)*BASE_URL\b|\bDSH_PLATFORM_ORIGIN\b/g;
 // DeepSeek-run addresses that do not carry the brand in their name (found by review of the archive)
 const KNOWN = /\btrtgsjkv6r\.feishu\.cn\b/gi;
 const RES = [HOST, REPO, ENV, KNOWN];
-const isLocalHost = (h) => /^(127.0.0.1|localhost|::1|[::1]|0.0.0.0)$/i.test(h);
+const isLocalHost = (h) => /^(127\.0\.0\.1|localhost|::1|\[::1\]|0\.0\.0\.0)$/i.test(h);
 const isDeepseekHost = (h) => /(^|\.)deepseek(?:svc|cdn)?\.(?:com|ai|cn|net|org|io|dev|app|co)$/i.test(h) || /(^|\.)deepseek-ai\.github\.io$/i.test(h) || /(^|\.)trtgsjkv6r\.feishu\.cn$/i.test(h);
 
 const TEXT = /\.(?:[cm]?jsx?|tsx?|json|jsonc|ya?ml|html?|css|md|markdown|txt|map|svg|toml|xml|sh|ps1|cmd|bat|ini|cfg|conf)$/i;
