@@ -19,6 +19,9 @@ gone('hsl with commas', 'x:hsl(220,70%,50%)', /220/);
 gone('hsl with spaces and alpha', 'x:hsl(250 60% 40% / .5)', /250 60%/);
 gone('oklch', '--c:oklch(62.3% .214 259.8)', /259\.8/);
 gone('oklch with alpha', '--c:oklch(60.6% .25 292.7 / 40%)', /292\.7/);
+gone('oklch at the chroma limit (slate)', '--c:oklch(70.4% .04 255)', /255/);
+gone('oklch just above the chroma limit', '--c:oklch(70.4% .036 255)', /255/);
+same('oklch just below the chroma limit', 'x:oklch(70.4% .034 255)');
 gone('uppercase function name', 'x:RGB(10,20,250)', /10,\s*20/);
 
 // meaning and non-colours stay

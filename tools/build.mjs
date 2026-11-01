@@ -363,13 +363,16 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
 }
 
 // ---- patch 8d: the spreadsheet viewer (a FortuneSheet bundle) paints its own interface in blue and violet: the cell selection box,
-// the copy range, the resize handle, the filter buttons and the option tabs. These become the Arc Harness primary. The chart
-// palettes inside the bundle are colours of the user's own data and stay.
+// the copy range, the resize handle, the filter buttons, the option tabs, the primary button hover, the link hover. These become the
+// Arc Harness primary; the toolbar icon fill (a dark blue-grey) becomes ink. The chart palettes and colour pickers inside the
+// bundle are colours of the user's own data and stay; test/build-check.mjs lists them and fails on any other blue.
 {
   const p = DS + 'dsh-client-ui-sidebar-documentpreview/lib/client.excel.js';
   const before = text(p);
-  const after = before.replace(/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe|#726ef[0-9a-f]/gi, '#54453c');
-  must(after !== before && !/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe/i.test(after), 'spreadsheet viewer interface colours were not found');
+  const after = before
+    .replace(/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe|#726ef[0-9a-f]|#5391ff|#2674fb/gi, '#54453c')
+    .replace(/#394259/gi, '#26231f');
+  must(after !== before && !/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe|#726ef[0-9a-f]|#5391ff|#2674fb|#394259/i.test(after), 'spreadsheet viewer interface colours were not found');
   put(p, after);
   report.push('spreadsheet viewer: its blue and violet interface colours (selection box, handles, filter buttons) are the Arc Harness primary');
 }

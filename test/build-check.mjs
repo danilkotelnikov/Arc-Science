@@ -183,7 +183,23 @@ check(svgCount > 100 && svgBad.length === 0, `no DeepSeek, DSH or Whale text in 
 
 // (i) the spreadsheet viewer paints no blue or violet interface (selection box, handles, filter buttons)
 const excel = get(built, DS + 'dsh-client-ui-sidebar-documentpreview/lib/client.excel.js');
-check(excel !== null && !/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe/i.test(excel) && /#54453c/i.test(excel), 'spreadsheet viewer: none of its nine blue and violet interface colours is left, the interface uses the Arc Harness primary');
+// The viewer keeps its chart palettes and colour pickers (colours of the user's own data), the near-white toolbar background and the
+// hyperlink cell colour. Every other blue-hue hex colour in the file is an interface colour: the set below is the reviewed set, so a
+// new interface blue fails here and so does a lost swap (the old colours are listed by name as well).
+const EXCEL_KEEP = new Set(['5ab1ef', 'fafafc', '60c0dd', '0098d9', '005eaa', '3fb1e3', 'a0a7e6', 'cfe2f3', 'd9d2e9', '9fc5e8', 'b4a7d6', '76a5af', '6fa8dc',
+  '8e7cc3', '45818e', '3d85c6', '674ea7', '134f5c', '0b5394', '351c75', '0c343d', '073763', '20124d', '0f00f0']);
+const excelBlue = new Set();
+for (const m of (excel ?? '').matchAll(/(?<![\w&])#([0-9a-fA-F]{6})(?:[0-9a-fA-F]{2})?(?![0-9a-zA-Z])/g)) {
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16) / 255);
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn, l = (mx + mn) / 2;
+  if (!d) continue;
+  const s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+  const h = 60 * (mx === r ? ((g - b) / d + (g < b ? 6 : 0)) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4);
+  if (s > 0.2 && h >= 190 && h <= 300) excelBlue.add(m[1].toLowerCase());
+}
+const excelExtra = [...excelBlue].filter((c) => !EXCEL_KEEP.has(c));
+check(excel !== null && excelExtra.length === 0 && !/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe|#726ef[0-9a-f]|#5391ff|#2674fb|#394259/i.test(excel) && /#54453c/i.test(excel),
+  `spreadsheet viewer: all eleven blue and violet interface colours and the icon fill are gone, the interface uses the Arc Harness primary, no other blue outside the reviewed palette set (${excelBlue.size} blue colours kept)${excelExtra.length ? ': ' + excelExtra.join(', ') : ''}`);
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(bad ? 'FAILED' : 'ALL PASS');

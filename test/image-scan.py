@@ -66,19 +66,24 @@ NAMED_RE = re.compile(rb'(?:\b(?:color|background(?:-color)?|border(?:-[a-z]+)?-
 # a named colour as a value inside any CSS declaration (borders, shadows, gradients), not as a class or id name
 NAMED_CSS_RE = re.compile(rb':\s*[^;{}]*?(?<![.#\w-])(?:' + NAMED_BLUE + rb')(?![\w-])', re.I)
 # a named colour as a colour property or canvas style in script
-NAMED_JS_RE = re.compile(rb'(?:fillStyle|strokeStyle|shadowColor|backgroundColor|borderColor|\.color|\bfill|\bstroke|\bcolor)\s*[:=]\s*["\'`](?:' + NAMED_BLUE + rb')["\'`]', re.I)
-# the three-digit shorthand, where it is a colour: inside a CSS declaration, or an SVG colour attribute
-SHORT_CSS_RE = re.compile(rb':\s*(?:[^;{}]*\s)?#([0-9a-fA-F]{3})(?![0-9a-zA-Z-])')
-SHORT_SVG_RE = re.compile(rb'(?:fill|stroke|stop-color|color)=["\']#([0-9a-fA-F]{3})["\']', re.I)
+NAMED_JS_RE = re.compile(rb'(?:fillStyle|strokeStyle|shadowColor|backgroundColor|borderColor|\.color|\bfill|\bstroke|\bcolor)["\']?\s*[:=]\s*["\'`](?:' + NAMED_BLUE + rb')["\'`]', re.I)
+# the three- and four-digit shorthand, where it is a colour: inside a CSS declaration, or an SVG colour attribute
+SHORT_DECL = re.compile(rb':([^;{}]*)')   # the value of a declaration, up to the next ; { or }
+SHORT_CSS_RE = re.compile(rb'(?<![\w&#-])(?<!url\()#([0-9a-fA-F]{3,4})(?![0-9a-zA-Z-])')
+SHORT_SVG_RE = re.compile(rb'(?:fill|stroke|stop-color|color)=["\']#([0-9a-fA-F]{3,4})["\']', re.I)
+# a style file without its comments; strings and url(...) are kept whole, so a comment mark inside one does not start a comment
+CSS_TOKEN = re.compile(rb'("(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|url\([^)]*\))|/\*.*?\*/', re.S)
 HUE_LAB = re.compile(rb'\b(ok)?lab\(\s*[\d.]+%?\s+(-?[\d.]+)\s+(-?[\d.]+)', re.I)   # oklab and lab: lightness a b
 HUE_ALLOW = [
     (re.compile(r'[\\/]lib[\\/]devtools[\\/]|[\\/]debug[\\/]src[\\/]'), 'DevTools frontend and the debug library (third party)'),
     (re.compile(r'dsh-client-ui-sidebar-terminal'), 'terminal palette: ANSI blue is a terminal colour'),
     (re.compile(r'dsh-client-ui-sidebar-documentpreview[\\/]lib[\\/]client\.(?:excel|pdf)\.js$'),
-     'spreadsheet and PDF viewers: chart palettes of the user\'s own data and PDF highlight colour choices; the spreadsheet interface colours are replaced by build patch 8d and checked by test/build-check.mjs'),
+     'spreadsheet and PDF viewers: chart palettes and colour pickers of the user\'s own data, the hyperlink cell colour (rgb(0, 0, 255)) and PDF highlight colour choices; the spreadsheet interface colours are replaced by build patch 8d, and test/build-check.mjs lists every blue hex colour the file may keep'),
     (re.compile(r'[\\/]vendor-[^\\/]*\.js$'), 'vendor bundle of libraries'),
-    (re.compile(r'[\\/](?:mermaid|khroma|cytoscape[\w-]*|tinycolor2|@upsetjs|react-icons|katex|@codemirror|@xterm|jimp|qrcode|es-toolkit|ds-harness-remote)[\\/]'),
-     'third-party libraries (diagrams, colour maths, graphs, icons, math, editor, terminal, images, utility code with colour names in its examples) and the switched-off remote plugin'),
+    (re.compile(r'[\\/](?:mermaid|khroma|cytoscape[\w-]*|tinycolor2|@upsetjs|react-icons|katex|@codemirror|@xterm|jimp|qrcode|ds-harness-remote)[\\/]'),
+     'third-party libraries (diagrams, colour maths, graphs, icons, math, editor, terminal, images) and the switched-off remote plugin'),
+    (re.compile(r'[\\/]node_modules[\\/]es-toolkit[\\/]'),
+     'es-toolkit, a utility library whose code examples name colours (color: \'purple\'); only the installed package folder'),
     (re.compile(r'[\\/]dsh-better-sidebar[\\/]lib[\\/]client-(?:terminal|editor|mermaid)\.'),
      'bundled terminal, code editor and diagram libraries (ANSI colours, syntax categories and diagram themes keep their colours)'),
     (re.compile(r'[\\/]@nagi-ovo[\\/]dsh-visualize[\\/]'),
@@ -104,7 +109,7 @@ def blue_hue_hit(buf: bytes, ext: str = '.js') -> str | None:
     oklch(), lch(), oklab() and lab(); by file type also named colours (styles: any declaration value; SVG: colour attributes;
     script: colour properties and canvas styles) and the three-digit shorthand (styles and SVG). Comments of a style file are not read."""
     if ext == '.css':
-        buf = re.sub(rb'/\*.*?\*/', b'', buf, flags=re.S)
+        buf = CSS_TOKEN.sub(lambda m: m.group(1) or b'', buf)
     for m in HUE_HEX.finditer(buf):
         h = m.group(1)
         hh, s, _ = _hsl(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
@@ -132,19 +137,23 @@ def blue_hue_hit(buf: bytes, ext: str = '.js') -> str | None:
         chroma = math.hypot(a, b) * (1 if m.group(1) else 1 / 150)
         if chroma >= 0.035 and 215 <= math.degrees(math.atan2(b, a)) % 360 <= 335:
             return m.group(0).decode()
-    if ext == '.css':
-        for rx in (NAMED_RE, NAMED_CSS_RE, SHORT_CSS_RE):
+    if ext in {'.css', '.html', '.htm'}:   # a page holds style blocks and style attributes
+        for rx in (NAMED_RE, NAMED_CSS_RE):
             n = rx.search(buf)
-            if n and (rx is not SHORT_CSS_RE or _short_blue(n.group(1))):
+            if n:
                 return n.group(0).decode()
+        for d in SHORT_DECL.finditer(buf):
+            for n in SHORT_CSS_RE.finditer(d.group(1)):
+                if _short_blue(n.group(1)):
+                    return n.group(0).decode()
     elif ext == '.svg':
         n = NAMED_RE.search(buf)
         if n:
             return n.group(0).decode()
-        n = SHORT_SVG_RE.search(buf)
-        if n and _short_blue(n.group(1)):
-            return n.group(0).decode()
-    elif ext in {'.js', '.mjs', '.cjs', '.html', '.htm', '.json'}:
+        for n in SHORT_SVG_RE.finditer(buf):
+            if _short_blue(n.group(1)):
+                return n.group(0).decode()
+    if ext in {'.js', '.mjs', '.cjs', '.html', '.htm', '.json'}:
         n = NAMED_JS_RE.search(buf)
         if n:
             return n.group(0).decode()
@@ -152,7 +161,7 @@ def blue_hue_hit(buf: bytes, ext: str = '.js') -> str | None:
 
 
 def _short_blue(h: bytes) -> bool:
-    r, g, b = (int(c * 2, 16) for c in h.decode())
+    r, g, b = (int(c * 2, 16) for c in h.decode()[:3])   # #rgba: the alpha digit is ignored
     hh, s, _ = _hsl(r, g, b)
     return s > 0.2 and 190 <= hh <= 300
 # an svg data URI that is not base64, as written in CSS or script: it ends at a closing quote and bracket (quotes may sit inside it)
@@ -344,11 +353,21 @@ def self_check(cat: Catalog) -> list[str]:
     for text, ext in ((b'a{color: royalblue}', '.css'), (b'a{border:1px solid blue}', '.css'), (b'a{background:linear-gradient(to right, blue, red)}', '.css'),
                       (b'a{box-shadow:0 0 4px 1px Navy}', '.css'), (b'a{color:#36f}', '.css'), (b'<rect fill="blue"/>', '.svg'), (b'<rect fill="#36f"/>', '.svg'),
                       (b'ctx.fillStyle="royalblue"', '.js'), (b'el.style.color = \'blue\'', '.js'), (b'x:lab(50 20 -80)', '.css'), (b'x:oklab(62% -0.03 -0.2)', '.css'),
-                      (b'{"accent":"oklch(62% .2 260)"}', '.json'), (b'{"accent":"#4d6bfe"}', '.json')):
+                      (b'{"accent":"oklch(62% .2 260)"}', '.json'), (b'{"accent":"#4d6bfe"}', '.json'),
+                      # a blue shorthand after an earlier white one, minified and with a gradient, four digits, SVG with two attributes
+                      (b'a{color:#fff}b{color:#36f}', '.css'), (b'a{color:#fff;background:#36f}', '.css'), (b'a{background:linear-gradient(#fff,#36f)}', '.css'),
+                      (b'a{color:#36fa}', '.css'), (b'<rect fill="#fff"/><rect fill="#36f"/>', '.svg'),
+                      # a comment mark inside a string or url() does not start a comment that would hide the colour after it
+                      (b'a{background:url(data:image/svg+xml;utf8,<svg>/*</svg>)} b{color:royalblue} /* end */', '.css'),
+                      (b'a{content:"/*"} b{color:#4040ff} c{content:"*/"}', '.css'), (b'a{content:"/*";color:#3366ff} /* x */', '.css'),
+                      # style blocks and attributes in a page, a quoted key in JSON
+                      (b'<div style="color:blue">', '.html'), (b'<div style="color:#36f">', '.html'), (b'<style>a{color:navy}</style>', '.html'),
+                      (b'{"color":"blue"}', '.json')):
         if not blue_hue_hit(text, ext=ext):
             errs.append(f'blue not detected in {ext}: {text!r}')
     for text, ext in ((b'/* the shell\'s :is(button, a) rule keeps a navy tone */ a{margin:0}', '.css'), (b'.blue{margin:0} a:hover .indigo{margin:0} #violet{x:1}', '.css'), (b'a{color:#fab;border:1px solid #f60}', '.css'), (b'<rect fill="#fa0"/>', '.svg'),
-                      (b'x:oklab(70% 0.1 0.05)', '.css'), (b'var blue = 3; var purple = "name"', '.js')):
+                      (b'x:oklab(70% 0.1 0.05)', '.css'), (b'var blue = 3; var purple = "name"', '.js'),
+                      (b'/* a navy note */ a{color:#fff} /* #36f is gone */', '.css'), (b'<a href="#add">x</a>', '.html'), (b'a{content:"&#123;"}', '.css')):
         if blue_hue_hit(text, ext=ext):
             errs.append(f'class name, warm shorthand or non-colour flagged in {ext}: {text!r}')
     for fine in (b'color:#22c55e;background:#f59e0b;border:1px solid rgb(239,68,68)', b'fill:#54ECE7', b'color:#26231f;background:#faf9f6',
