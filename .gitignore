@@ -8,3 +8,4 @@
 node_modules/
 /brandtext/_unpacked-originals/
 /brandtext/_stage/
+__pycache__/

@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { openAsar, writeAsar } from '../lib/asar.mjs';
 import { allow, rewriteFile, rewriteHosts } from '../lib/brandrules.mjs';
-import { recolorSvg, recolorBlueAttrsInScript, recolorBlueTokens, replaceVendorBlue } from '../lib/iconcolor.mjs';
+import { recolorSvg, recolorBlueAttrsInScript, recolorBlueTokens, replaceVendorBlue, recolorBlueHues, HUE_ARCHIVE } from '../lib/iconcolor.mjs';
 import { swapPicture } from '../lib/whaleimg.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -345,6 +345,21 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
     n++;
   }
   report.push(`brand blue: ${n} files had the vendor's blue as a literal; it is now the Arc Harness primary`);
+}
+
+// ---- patch 8c: every blue and violet colour (hex, rgb, rgba) in the code of the app's own screens, by hue (lib/iconcolor.mjs)
+{
+  let n = 0;
+  for (const f of src.files) {
+    if (f.entry.unpacked || f.entry.size > 6e6 || !HUE_ARCHIVE.test(f.path)) continue;
+    if (overrides.has(f.path) && overrides.get(f.path) === null) continue;
+    if (!/\.(c|m)?js$|\.css$|\.html?$/i.test(f.path)) continue;
+    const before = text(f.path);
+    const after = recolorBlueHues(before);
+    if (after !== before) { put(f.path, after); n++; }
+  }
+  must(n >= 4, `blue hue recolor touched too few files: ${n}`);
+  report.push(`blue hues: ${n} files of the app's own screens lose their blue and violet colours by hue`);
 }
 
 // ---- patch 8b: PNG files that hold the whale (found by their bytes, brand/pictures.json). Pictures inside scripts (data URIs, inline

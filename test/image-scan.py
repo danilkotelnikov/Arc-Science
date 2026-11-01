@@ -48,7 +48,54 @@ FINGERPRINTS = ('c-.254-.124-.364.113', 'M22.9168 1.43018', '11.365 11.365 0 00-
 BLUE = {'#4d6bfe', '#4a5699', '#6277ba', '#324de2', '#69b9ff', '#658eff', '#a23ae7'}   # the vendor blue, two plugin blues, the blues and the purple of the plugin artwork
 BLUE_TEXT = re.compile('|'.join(sorted(re.escape(c) for c in BLUE)) + r'|rgb\(\s*101\s*,\s*142\s*,\s*255\s*\)', re.I)   # in scripts, styles and pages as well
 BLUE_TEXT_B = re.compile(BLUE_TEXT.pattern.encode(), re.I)
-DATA_SVG_PLAIN = re.compile(rb"""data:image\\?/svg\+xml(?:;charset=[\w-]+)?,([^"'`)\s]{20,})""")   # an svg data URI that is not base64
+# Any blue or violet colour by hue (190 to 300 degrees, saturation above 0.25): hex, #rrggbbaa, rgb() and rgba() in scripts, styles,
+# pages and SVG files. The same test lib/iconcolor.mjs recolorBlueHues applies. Third-party code and palettes that must keep their
+# colours are listed here, each with its reason; a hit anywhere else fails.
+HUE_EXT = {'.js', '.mjs', '.cjs', '.css', '.html', '.htm', '.svg'}
+HUE_HEX = re.compile(rb'#([0-9a-fA-F]{6})(?:[0-9a-fA-F]{2})?(?![0-9a-zA-Z])')
+HUE_RGB = re.compile(rb'rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})')
+HUE_ALLOW = [
+    (re.compile(r'[\\/]lib[\\/]devtools[\\/]|[\\/]debug[\\/]src[\\/]'), 'DevTools frontend and the debug library (third party)'),
+    (re.compile(r'dsh-client-ui-sidebar-terminal'), 'terminal palette: ANSI blue is a terminal colour'),
+    (re.compile(r'dsh-client-ui-sidebar-documentpreview[\\/]lib[\\/]client\.(?:excel|pdf)\.js$'),
+     'spreadsheet and PDF viewers: they draw the colours of the user\'s own documents and the PDF highlight colour choices'),
+    (re.compile(r'[\\/]vendor-[^\\/]*\.js$'), 'vendor bundle of libraries'),
+    (re.compile(r'[\\/](?:mermaid|khroma|cytoscape[\w-]*|tinycolor2|@upsetjs|react-icons|katex|@codemirror|@xterm|jimp|qrcode|ds-harness-remote)[\\/]'),
+     'third-party libraries (diagrams, colour maths, graphs, icons, math, editor, terminal, images) and the switched-off remote plugin'),
+    (re.compile(r'[\\/]@nagi-ovo[\\/]dsh-visualize[\\/]'), 'Visualize chart palettes (charts keep their colours)'),
+    (re.compile(r'[\\/]node_modules[\\/](?:@[^\\/]+[\\/])?[^\\/]+[\\/]node_modules[\\/]'), 'nested third-party packages'),
+]
+
+
+def _hsl(r: int, g: int, b: int) -> tuple[float, float, float]:
+    rf, gf, bf = r / 255, g / 255, b / 255
+    mx, mn = max(rf, gf, bf), min(rf, gf, bf)
+    l = (mx + mn) / 2
+    if mx == mn:
+        return 0.0, 0.0, l
+    d = mx - mn
+    s = d / (2 - mx - mn) if l > 0.5 else d / (mx + mn)
+    h = ((gf - bf) / d + (6 if gf < bf else 0)) if mx == rf else ((bf - rf) / d + 2) if mx == gf else ((rf - gf) / d + 4)
+    return h * 60, s, l
+
+
+def blue_hue_hit(buf: bytes) -> str | None:
+    """First blue or violet colour in the text, or None."""
+    for m in HUE_HEX.finditer(buf):
+        h = m.group(1)
+        hh, s, _ = _hsl(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+        if s > 0.25 and 190 <= hh <= 300:
+            return m.group(0).decode()
+    for m in HUE_RGB.finditer(buf):
+        r, g, b = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if max(r, g, b) > 255:
+            continue
+        hh, s, _ = _hsl(r, g, b)
+        if s > 0.25 and 190 <= hh <= 300:
+            return m.group(0).decode()
+    return None
+# an svg data URI that is not base64, as written in CSS or script: it ends at a closing quote and bracket (quotes may sit inside it)
+DATA_SVG_PLAIN = re.compile(rb"""data:image\\?/svg\+xml(?:;charset=[\w-]+|;utf8)?,(.{20,4000}?)(?=\"\)|'\)|\"[;}\s,]|`)""", re.S)
 
 
 def asar_files(path: Path) -> Iterator[tuple[str, bytes]]:
@@ -119,7 +166,7 @@ def classify_raster(digest: str, name: str, cat: Catalog) -> dict[str, str] | No
 
 
 def scan(sources: Iterator[tuple[str, bytes]], cat: Catalog, survey: bool = False) -> tuple[dict[str, int], list[dict[str, Any]]]:
-    stats = {'skipped files': 0, 'files': 0, 'raster files': 0, 'svg files': 0, 'raster data uris': 0, 'svg data uris': 0, 'text files read': 0, 'fixture pictures': 0}
+    stats = {'skipped files': 0, 'files': 0, 'raster files': 0, 'svg files': 0, 'raster data uris': 0, 'svg data uris': 0, 'text files read': 0, 'fixture pictures': 0, 'blue-hue files not judged': 0}
     found: list[dict[str, Any]] = []
     seen: dict[str, str | None] = {}
 
@@ -161,13 +208,25 @@ def scan(sources: Iterator[tuple[str, bytes]], cat: Catalog, survey: bool = Fals
                 bm = BLUE_TEXT_B.search(buf)   # the artwork colours of the vendor in script, style and page text (gradient stops, rgb() in gradients)
                 if bm:
                     found.append({'where': name, 'how': 'text', 'kind': 'blue', 'why': f'colour {bm.group(0).decode()}'})
+            if not survey and ext in HUE_EXT:
+                allowed = next((why for rx, why in HUE_ALLOW if rx.search(name)), None) or ('third-party test, fixture or demo file' if FIXTURE_DIR.search(name) else None)
+                if allowed:
+                    stats['blue-hue files not judged'] += 1
+                else:
+                    hit = blue_hue_hit(buf)
+                    if hit:
+                        found.append({'where': name, 'how': 'hue', 'kind': 'blue', 'why': f'blue or violet colour {hit}'})
             if b'data:image' not in buf:
                 continue
             for m in DATA_SVG_PLAIN.finditer(buf):
                 stats['svg data uris'] += 1
                 if survey:
                     continue
-                res = classify_svg(urllib.parse.unquote(m.group(1).decode('utf-8', 'replace')), sha(m.group(1)), cat)
+                decoded = urllib.parse.unquote(m.group(1).decode('utf-8', 'replace'))
+                res = classify_svg(decoded, sha(m.group(1)), cat)
+                if not res and not FIXTURE_DIR.search(name) and not any(rx.search(name) for rx, _why in HUE_ALLOW):
+                    hue = blue_hue_hit(decoded.encode('utf-8', 'replace'))   # also rgb() and hues that are not on the vendor list
+                    res = {'kind': 'blue', 'why': f'svg colour {hue}'} if hue else None
                 if res:
                     found.append({'where': name, 'how': 'svg data uri (not base64)', 'sha256': sha(m.group(1)), **res})
             for m in DATA_URI.finditer(buf):
@@ -215,10 +274,19 @@ def self_check(cat: Catalog) -> list[str]:
         errs.append('vendor blue in script text not detected')
     if BLUE_TEXT_B.search(b'stopColor:"#E2E2E2"'):
         errs.append('plain grey flagged as blue')
+    for good in (b'linear-gradient(100deg,#03040a 0%,#101d4c 45%,#5d35a0 100%)', b'box-shadow:0 0 7px rgba(82,130,255,.12)', b'color:#1c00cf'):
+        if not blue_hue_hit(good):
+            errs.append(f'blue by hue not detected: {good!r}')
+    for fine in (b'color:#22c55e;background:#f59e0b;border:1px solid rgb(239,68,68)', b'fill:#54ECE7', b'color:#26231f;background:#faf9f6'):
+        if blue_hue_hit(fine):
+            errs.append(f'status or neutral colour flagged as blue: {fine!r}')
     if (classify_svg('<rect fill="#4D6BFEcc"/>', sha(b'x'), probe) or {}).get('kind') != 'blue':
         errs.append('blue with alpha (#rrggbbaa) not detected')
-    if '.avif' not in RASTER_EXT or not DATA_SVG_PLAIN.search(b'x="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%22%3E%3C%2Fsvg%3E"'):
+    if '.avif' not in RASTER_EXT or not DATA_SVG_PLAIN.search(b'x=url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%22%3E%3C%2Fsvg%3E")'):
         errs.append('avif files or plain svg data URIs not read')
+    quoted = DATA_SVG_PLAIN.search(b'''a{background:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><rect fill='%234d6bfe'/></svg>")}''')
+    if not quoted or '%234d6bfe' not in quoted.group(1).decode():
+        errs.append('plain svg data URI with quotes inside not read to its end')
     return errs
 
 
