@@ -6,3 +6,5 @@
 /_scratch/
 *.tar.xz
 node_modules/
+/brandtext/_unpacked-originals/
+/brandtext/_stage/

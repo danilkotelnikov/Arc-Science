@@ -6,6 +6,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { openAsar, writeAsar } from '../lib/asar.mjs';
+import { allow, rewriteFile, rewriteHosts } from '../lib/brandrules.mjs';
+import { recolorSvg, recolorBlueAttrsInScript } from '../lib/iconcolor.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.resolve(process.argv[2] || path.join(root, 'build', 'app.asar'));
@@ -261,6 +263,114 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
   report.push(`Chinese: ${folded} dictionary values folded into English in ${filesFolded} files; ${localeFiles} zh locale files replaced; ${docFiles} zh documents removed; leftover Chinese runs: ${residualRuns} in ${residualFiles} files (code comments or one-sided keys)`);
 }
 
+// ---- patch 6: brand text in every user-facing string
+// lib/brandrules.mjs holds the rules and test/ui-strings.mjs reads the same surfaces. Real model names and the
+// third-party provider catalog stay (test/ui-strings.allow.json). Module names, ids and paths do not change.
+{
+  const skip = new RegExp(allow.archiveSkip.join('|'));
+  let files = 0;
+  for (const f of src.files) {
+    if (f.entry.unpacked || f.entry.size > 6e6 || /\.map$/.test(f.path) || skip.test(f.path)) continue;
+    if (overrides.has(f.path) && overrides.get(f.path) === null) continue;
+    if (!/\.(c|m)?js$|\.json$|\.md$|\.html?$|\.txt$|\.ya?ml$|\.(c|m)?tsx?$/i.test(f.path)) continue;
+    const before = text(f.path);
+    const after = rewriteFile(f.path, before);
+    if (after !== before) { put(f.path, after); files++; }
+  }
+  must(files > 100, 'brand text rewrite touched too few files: ' + files);
+  report.push(`brand text: ${files} files rewritten (DeepSeek, DSH and Whale wording in prose and strings)`);
+}
+
+// ---- patch 8: icons in ink and warm grey, no blue or purple (plugin icons, inline icon sets, upload illustration)
+{
+  const skip = new RegExp(allow.archiveSkip.join('|'));
+  let svgs = 0, scripts = 0;
+  for (const f of src.files) {
+    if (f.entry.unpacked || f.entry.size > 6e6 || skip.test(f.path)) continue;
+    if (overrides.has(f.path) && overrides.get(f.path) === null) continue;
+    const isSvg = /\.svg$/i.test(f.path);
+    const isJs = /\.(c|m)?js$/i.test(f.path) && (f.path.startsWith(DS) || f.path.startsWith('lib/'));
+    if (!isSvg && !isJs) continue;
+    const before = text(f.path);
+    const after = isSvg ? recolorSvg(before) : recolorBlueAttrsInScript(before);
+    if (after === before) continue;
+    put(f.path, after);
+    if (isSvg) svgs++; else scripts++;
+  }
+  must(svgs > 5 && scripts >= 2, `icon recolor touched svg ${svgs} and script ${scripts} files`);
+  report.push(`icons: ${svgs} SVG files and ${scripts} scripts lose their blue and purple fills`);
+}
+
+// ---- patch 9: no connection to DeepSeek services
+// Patch 6 already turns every DeepSeek address into an address that cannot resolve. This patch removes the rest of the paths:
+// the provider catalog entry, the telemetry and analytics rows, and the names of the dormant DeepSeek-only plugins.
+{
+  // (a) the third-party catalog no longer registers the direct DeepSeek provider
+  const ALL = 'dsh/node_modules/@earendil-works/pi-ai/dist/providers/all.js';
+  const allJs = text(ALL);
+  const imp = 'import { deepseekProvider } from "./deepseek.js";\n';
+  const call = '        deepseekProvider(),\n';
+  must(allJs.split(imp).length === 2 && allJs.split(call).length === 2, 'pi-ai registers the DeepSeek provider once');
+  put(ALL, allJs.replace(imp, '').replace(call, ''));
+  // (b) addresses inside the catalog files too (model and provider names there stay)
+  let catalog = 0;
+  for (const f of src.files) {
+    if (f.entry.unpacked || f.entry.size > 6e6 || !f.path.includes('/@earendil-works/pi-ai/') || !/\.(c|m)?js$|\.json$/.test(f.path)) continue;
+    const before = text(f.path);
+    const after = rewriteHosts(before);
+    if (after !== before) { put(f.path, after); catalog++; }
+  }
+  // (c) telemetry and analytics rows are off: the feedback exporter, the desktop product analytics and its browser half
+  const disableRow = (yml, id) => {
+    const start = yml.indexOf(`- id: ${id}\n`);
+    must(start >= 0, 'row not found: ' + id);
+    const next = yml.indexOf('\n    - id:', start + 1);
+    const end = next < 0 ? yml.length : next;
+    let block = yml.slice(start, end);
+    if (/^\s+disabled:.*$/m.test(block)) block = block.replace(/^(\s+)disabled:.*$/m, '$1disabled: true');
+    else block = block.replace(/(\n\s+name:.*)/, '$1\n      disabled: true');
+    return yml.slice(0, start) + block + yml.slice(end);
+  };
+  const BASE = DS + 'dsh-base/cordis.patch.yml', WEB = DS + 'dsh-web-app/cordis.patch.yml';
+  put(BASE, disableRow(text(BASE), 'session-telemetry-otel'));
+  let web = text(WEB);
+  web = disableRow(web, 'desktop-product-telemetry');
+  web = disableRow(web, 'product-analytics');
+  put(WEB, web);
+  // (d) plain names for the dormant DeepSeek-only plugins on the Plugins page
+  const TITLES = {
+    'dsh-llm-deepseek-api-key': 'Direct API-key route', 'dsh-llm-deepseek-account': 'Account route', 'dsh-deepseek-account-platform': 'Account platform',
+    'dsh-deepseek-llm-api-extensions': 'Model API extensions', 'dsh-session-log-deepseek': 'Session log add-on', 'dsh-plugin-package-inventory-deepseek': 'Package inventory add-on',
+    'dsh-web-search-deepseek': 'Provider web search', 'dsh-web-deepseek-api': 'Search and fetch API', 'dsh-client-ui-settings-account': 'Account settings',
+    'dsh-client-ui-settings-session-log': 'Session log settings', 'dsh-client-ui-settings-web-search': 'Web search settings',
+  };
+  for (const [pkg, title] of Object.entries(TITLES)) {
+    const p = `${DS}${pkg}/locale/en.json`;
+    const j = JSON.parse(text(p));
+    j.meta = { ...(j.meta || {}), title };
+    put(p, JSON.stringify(j, null, 2) + '\n');
+  }
+  // the 1017 label plugin has no locale file: add one so the Plugins page does not show its package name
+  put(`${DS}dsh-client-ui-deepseek-model-label-1017/locale/en.json`, JSON.stringify({ meta: { title: 'Model label badge' } }, null, 2) + '\n');
+  report.push(`DeepSeek services: provider unregistered, ${catalog} catalog files with dead addresses, 3 telemetry rows off, ${Object.keys(TITLES).length + 1} plugin names plain`);
+}
+
+// ---- patch 7: the first-run appearance is Light, the cream look of the Cammut console; Dark and System stay selectable
+{
+  let n = 0;
+  for (const f of ['lib/client.js', 'lib/index.js']) {
+    const p = DS + 'dsh-client-ui-theme/' + f;
+    const s = text(p);
+    const from = 'const DEFAULT_PREFERENCE = "system";';
+    if (!s.includes(from)) continue;
+    must(s.split(from).length === 2, 'theme default appears once in ' + f);
+    put(p, s.replace(from, 'const DEFAULT_PREFERENCE = "light";'));
+    n++;
+  }
+  must(n === 2, 'theme default found in client and index: ' + n);
+  report.push('appearance: first-run default is Light (Dark and System stay selectable)');
+}
+
 // ---- keep the runtime manifest honest: new size and hash for every changed file under dsh/
 {
   const mp = 'dsh/desktop-runtime.json';
@@ -271,7 +381,11 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
   for (const [p, buf] of overrides) {
     if (!p.startsWith('dsh/') || p === mp) continue;
     const e = byPath.get(p.slice(4));
-    if (!e) continue;
+    if (!e) {
+      // a file this build adds: it gets its own manifest entry
+      if (buf !== null) { const ne = { path: p.slice(4), bytes: buf.length, sha256: crypto.createHash('sha256').update(buf).digest('hex'), executable: false }; m.files.push(ne); byPath.set(ne.path, ne); n++; }
+      continue;
+    }
     if (buf === null) { removed.add(e.path); gone++; continue; }
     e.bytes = buf.length; e.sha256 = crypto.createHash('sha256').update(buf).digest('hex'); n++;
   }

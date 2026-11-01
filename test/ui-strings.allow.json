@@ -1,0 +1,24 @@
+{
+  "_note": "Real DeepSeek model names and the third-party provider catalog stay visible (Danil, 2026-11-01). Every pattern names a model or a catalog entry. Everything else is a reference to rewrite.",
+  "modelNames": [
+    "DeepSeek[ -]?(?:AI[ -])?(?:V\\d(?:\\.\\d+)?|R\\d(?:\\.\\d+)?)(?:[ -](?:Chat|Coder|Flash|Pro|Terminus|Exp|Reasoner|Lite|Preview|Distill[\\w. -]*))?(?: ?\\(\\d+\\))?",
+    "DeepSeek[ -](?:Chat|Coder(?:[ -]?V\\d)?|Reasoner|Prover(?:[ -]V\\d)?|Math|OCR|VL\\d?|LLM|Flash|Pro)\\b(?: ?\\(\\d+\\))?",
+    "deepseek[/-](?!ai(?!\\w))[\\w.:-]+"
+  ],
+  "archiveSkip": [
+    "/node_modules/@earendil-works/pi-ai/",
+    "/node_modules/bowser/",
+    "/node_modules/(?:@types|typescript|zod|ajv|highlight\\.js|marked|katex|mermaid|monaco-editor|pdfjs-dist|xlsx|exceljs)/",
+    "/CHANGELOG",
+    "/(?:test|tests|__tests__)/",
+    "\\.test\\.m?js$",
+    "\\.min\\.js$"
+  ],
+  "profileSkip": [
+    "/node_modules/(?:@types|typescript|vitest|zod|d3|cytoscape|dompurify|dayjs|file-type|fflate|jimp|pdfjs-dist)/",
+    "/CHANGELOG",
+    "/(?:test|tests|__tests__)/",
+    "\\.test\\.m?js$",
+    "\\.min\\.js$"
+  ]
+}

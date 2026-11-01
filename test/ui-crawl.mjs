@@ -1,0 +1,278 @@
+// Opens the web profile of an Arc Harness archive in a headless browser and reads every main screen.
+//   node test/ui-crawl.mjs [--asar build/app.asar] [--out <folder>] [--exe <electron exe>] [--keep]
+// Checks, in light and in dark:
+//   no DeepSeek, DSH or Whale wording in text, labels, tooltips and placeholders (real model names allowed)
+//   no blue, text contrast of at least 3 (4.5 is reported as a warning), the first-run look is Light, Dark is selectable
+// Each phase runs on its own server and its own throwaway home (first-run, dark, light), so one phase cannot change another.
+//   --phase first-run|dark|light   runs one phase only; without it all three run one after another
+// Writes one PNG per screen and report.json to the output folder. Exit 0 only when every check passes.
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { classify } from '../lib/brandrules.mjs';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(here, '..');
+const argv = process.argv.slice(2);
+const opt = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : dflt; };
+const asar = path.resolve(opt('--asar', path.join(root, 'build', 'app.asar')));
+const outDir = path.resolve(opt('--out', path.join(root, '_scratch', 'crawl')));
+const EXE = opt('--exe', 'C:/Users/danil/AppData/Local/Programs/DeepSeek Harness/DeepSeek Harness.exe');
+const phase = opt('--phase', null);
+if (!phase) {
+  const reports = [];
+  let bad = 0;
+  fs.mkdirSync(outDir, { recursive: true });
+  for (const ph of ['first-run', 'dark', 'light']) {
+    const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...argv, '--phase', ph], { stdio: 'inherit' });
+    if (r.status) bad++;
+    try { reports.push(JSON.parse(fs.readFileSync(path.join(outDir, `report-${ph}.json`), 'utf8'))); } catch { bad++; }
+  }
+  const merged = { asar, failures: reports.flatMap((r) => r.failures), warnings: reports.flatMap((r) => r.warnings), phases: reports.map((r) => r.scheme) };
+  fs.writeFileSync(path.join(outDir, 'report.json'), JSON.stringify(merged, null, 1));
+  console.log(`all phases: failures ${merged.failures.length}, warnings ${merged.warnings.length}; report ${path.join(outDir, 'report.json')}`);
+  process.exit(bad || merged.failures.length ? 1 : 0);
+}
+const EDGE = ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', 'C:/Program Files/Microsoft/Edge/Application/msedge.exe', 'C:/Program Files/Google/Chrome/Application/chrome.exe'].find((p) => fs.existsSync(p));
+if (!EDGE) { console.error('no Edge or Chrome found'); process.exit(2); }
+fs.mkdirSync(outDir, { recursive: true });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const killTree = (pid) => { try { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* gone */ } };
+
+// ---- the server: the web profile served from the archive under test
+const unpacked = asar + '.unpacked';
+if (!fs.existsSync(unpacked)) fs.symlinkSync('C:/Users/danil/AppData/Local/Programs/DeepSeek Harness/resources/app.asar.unpacked', unpacked, 'junction');
+const serverLog = path.join(outDir, 'server.log');
+// a throwaway home keeps the settings, sessions and storages of the test apart from Danil's data;
+// only the plugin profiles are shared (read for plugins and config)
+// The profile is a copy of its small config files plus a junction to its plugin packages: the app writes settings
+// (for example the theme choice) into cordis.patch.yml, and that must never reach the real profile.
+const realProfile = path.join(os.homedir(), '.dsh', 'profiles', 'web');
+const hashOf = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+const realConfigs = fs.readdirSync(realProfile).filter((f) => f !== 'node_modules' && fs.statSync(path.join(realProfile, f)).isFile());
+const realBefore = new Map(realConfigs.map((f) => [f, hashOf(path.join(realProfile, f))]));
+const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-home-'));
+fs.mkdirSync(path.join(testHome, 'profiles', 'web'), { recursive: true });
+for (const f of realConfigs) fs.copyFileSync(path.join(realProfile, f), path.join(testHome, 'profiles', 'web', f));
+if (phase === 'dark' || phase === 'light') {
+  const cfg = path.join(testHome, 'profiles', 'web', 'cordis.patch.yml');
+  fs.appendFileSync(cfg, `\n- id: ui-theme\n  name: "@deepseek-ai/dsh-client-ui-theme"\n  config:\n    preference: ${phase}\n`);
+}
+fs.symlinkSync(path.join(realProfile, 'node_modules'), path.join(testHome, 'profiles', 'web', 'node_modules'), 'junction');
+const server = spawn(EXE, ['--expose-internals', `${asar}/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js`, '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', '0'],
+  { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: testHome }, stdio: ['ignore', fs.openSync(serverLog, 'w'), fs.openSync(serverLog, 'a')], windowsHide: true });
+let url = null;
+for (let i = 0; i < 90 && !url; i++) {
+  await sleep(1000);
+  const m = /http:\/\/127\.0\.0\.1:\d+\/\?token=\S+/.exec(fs.readFileSync(serverLog, 'utf8'));
+  if (m) url = m[0];
+}
+if (!url) { killTree(server.pid); console.error('server did not start; see ' + serverLog); process.exit(2); }
+
+// ---- the browser (Chrome DevTools protocol over a plain WebSocket)
+const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-crawl-'));
+const browser = spawn(EDGE, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profileDir}`, '--no-first-run', '--disable-gpu', '--hide-scrollbars', 'about:blank'], { stdio: 'ignore', windowsHide: true });
+let port = 0;
+for (let i = 0; i < 60 && !port; i++) {
+  await sleep(500);
+  try { port = +fs.readFileSync(path.join(profileDir, 'DevToolsActivePort'), 'utf8').split('\n')[0]; } catch { /* not yet */ }
+}
+if (!port) { killTree(server.pid); killTree(browser.pid); console.error('browser did not start'); process.exit(2); }
+
+function connect(wsUrl) {
+  const ws = new WebSocket(wsUrl);
+  let id = 0;
+  const waiting = new Map();
+  const opened = new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && waiting.has(m.id)) { const { res, rej } = waiting.get(m.id); waiting.delete(m.id); m.error ? rej(new Error(m.error.message)) : res(m.result); } };
+  const send = (method, params = {}) => new Promise((res, rej) => { const i = ++id; waiting.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params })); });
+  return { opened, send, close: () => ws.close() };
+}
+
+const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json();
+const cdp = connect(target.webSocketDebuggerUrl);
+await cdp.opened;
+await cdp.send('Page.enable');
+await cdp.send('Runtime.enable');
+const evalIn = async (expr) => {
+  const r = await cdp.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
+  if (r.exceptionDetails) throw new Error('page error: ' + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
+  return r.result.value;
+};
+const shot = async (name) => {
+  const r = await cdp.send('Page.captureScreenshot', { format: 'png' });
+  fs.writeFileSync(path.join(outDir, name + '.png'), Buffer.from(r.data, 'base64'));
+};
+const emulate = async (scheme) => {
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+  await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: scheme }] });
+};
+
+// ---- helpers that run inside the page
+const PAGE = `(() => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const lab = (b) => (b.getAttribute('aria-label') || b.textContent || '').trim();
+  const find = (starts) => [...document.querySelectorAll('button,[role=tab],[role=menuitem],[role=option],a')].find((b) => lab(b).startsWith(starts));
+  const toRgb = (s) => { const m = s && s.match(/rgba?\\(([\\d.]+)[ ,]+([\\d.]+)[ ,]+([\\d.]+)(?:[ ,/]+([\\d.]+))?/); return m ? [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]] : null; };
+  const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+  const hsl = ([r, g, b]) => { r /= 255; g /= 255; b /= 255; const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2; let h = 0, s = 0; if (mx !== mn) { const d = mx - mn; s = l > .5 ? d / (2 - mx - mn) : d / (mx + mn); h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; } return { h, s, l }; };
+  const blend = (top, under) => { const a = top[3]; return [top[0] * a + under[0] * (1 - a), top[1] * a + under[1] * (1 - a), top[2] * a + under[2] * (1 - a), 1]; };
+  const bgOf = (el) => { const chain = []; for (let e = el; e; e = e.parentElement) { const c = toRgb(getComputedStyle(e).backgroundColor); if (c && c[3] > 0) chain.push(c); if (c && c[3] >= 0.99) break; } let acc = [255, 255, 255, 1]; for (const c of chain.reverse()) acc = blend(c, acc); return acc; };
+  const texts = () => {
+    const out = [];
+    out.push(document.title);
+    out.push(...document.body.innerText.split('\\n'));
+    for (const e of document.querySelectorAll('[aria-label],[title],[placeholder],[alt]')) { for (const a of ['aria-label', 'title', 'placeholder', 'alt']) { const v = e.getAttribute(a); if (v) out.push(v); } }
+    return [...new Set(out.map((s) => s.trim()).filter(Boolean))];
+  };
+  const colours = () => {
+    const blue = [], contrast = [];
+    const seen = new Set();
+    for (const el of document.querySelectorAll('body *')) {
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || +cs.opacity === 0) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) continue;
+      for (const p of ['color', 'backgroundColor', 'borderTopColor', 'fill', 'stroke']) {
+        const c = toRgb(cs[p]);
+        if (!c || c[3] < 0.3) continue;
+        const x = hsl(c);
+        if (x.h >= 195 && x.h <= 265 && x.s >= 0.2 && x.l > 0.08 && x.l < 0.97) { const k = cs[p] + p; if (!seen.has(k)) { seen.add(k); blue.push(p + ' ' + cs[p] + ' on ' + el.tagName + '.' + String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className).slice(0, 40)); } }
+      }
+      const own = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim().length > 1);
+      if (own) {
+        const fg = toRgb(cs.color); if (!fg) continue;
+        const bg = bgOf(el); const fgc = fg[3] < 1 ? blend(fg, bg) : fg;
+        const l1 = lum(fgc), l2 = lum(bg); const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+        const big = parseFloat(cs.fontSize) >= 24 || (parseFloat(cs.fontSize) >= 18.66 && +cs.fontWeight >= 700);
+        if (ratio < (big ? 3 : 4.5)) contrast.push({ ratio: +ratio.toFixed(2), text: el.textContent.trim().slice(0, 40), color: cs.color });
+      }
+    }
+    return { blue, contrast };
+  };
+  const clickAndWait = async (starts, ms = 1300) => { const b = find(starts); if (!b) return false; b.click(); await sleep(ms); return true; };
+  const dialogOpen = () => !!document.querySelector('[role=dialog]');
+  const closeDialog = async () => { const c = [...document.querySelectorAll('[role=dialog] button')].find((b) => lab(b) === 'Close'); if (c) c.click(); await sleep(500); };
+  const openSettings = async (section) => {
+    if (!dialogOpen()) { const b = find('Settings'); if (!b) return false; b.click(); await sleep(1500); }
+    if (!dialogOpen()) return false;
+    const nav = [...document.querySelectorAll('[role=dialog] button')].find((b) => b.textContent.trim().startsWith(section));
+    if (!nav) return false;
+    nav.click(); await sleep(1100); return true;
+  };
+  const chooseAppearance = async (name) => {
+    if (!(await openSettings('General'))) return false;
+    const b = [...document.querySelectorAll('[role=dialog] button')].find((x) => x.textContent.trim() === name);
+    if (!b) return false;
+    b.click(); await sleep(1200); return true;
+  };
+  const bodyBg = () => getComputedStyle(document.body).backgroundColor;
+  window.__arc = { sleep, find, texts, colours, clickAndWait, dialogOpen, closeDialog, openSettings, chooseAppearance, bodyBg };
+  return 'ready';
+})()`;
+
+// Escape as a real key press (a synthetic event does not close every popup), then the dialog's own Close button
+const pressEscape = async () => {
+  for (const type of ['keyDown', 'keyUp']) await cdp.send('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+};
+async function closeAll() {
+  for (let i = 0; i < 3; i++) {
+    await pressEscape();
+    await sleep(300);
+    if (await evalIn('__arc.dialogOpen()')) await evalIn('__arc.closeDialog()');
+  }
+  return !(await evalIn('__arc.dialogOpen()'));
+}
+
+// ---- the screens
+const SCREENS = [
+  { name: 'home', required: true, run: async () => true },
+  { name: 'model-menu', run: async () => evalIn(`__arc.clickAndWait('Select model')`) },
+  { name: 'plugins', required: true, run: async () => evalIn(`__arc.clickAndWait('Plugins')`) },
+  { name: 'automation', run: async () => evalIn(`__arc.clickAndWait('Automation tasks')`) },
+  { name: 'context-insights', run: async () => evalIn(`__arc.clickAndWait('Context Insights', 2500)`) },
+  { name: 'more', run: async () => evalIn(`__arc.clickAndWait('More')`) },
+  { name: 'search-sessions', run: async () => evalIn(`__arc.clickAndWait('Search sessions')`) },
+  { name: 'plus-menu', run: async () => evalIn(`__arc.clickAndWait('Add files or run commands')`) },
+  { name: 'access-mode', run: async () => evalIn(`__arc.clickAndWait('Access mode')`) },
+  { name: 'right-sidebar', run: async () => evalIn(`__arc.clickAndWait('Open right sidebar')`) },
+  ...['General', 'Models', 'Built-in plugins', 'Agent presets', 'Skills', 'Archived sessions', 'Visualize', 'Side card', 'Vision Router'].map((n) => ({
+    name: 'settings-' + n.toLowerCase().replace(/[^a-z]+/g, '-'),
+    required: n === 'General' || n === 'Models',
+    run: async () => evalIn(`__arc.openSettings(${JSON.stringify(n)})`),
+  })),
+];
+
+const report = { asar, scheme: {}, failures: [], warnings: [] };
+const fail = (m) => { report.failures.push(m); console.log('FAIL ' + m); };
+const warn = (m) => { report.warnings.push(m); };
+
+async function crawl(scheme, tag) {
+  await emulate(scheme);
+  await cdp.send('Page.navigate', { url });
+  await sleep(6000);
+  await evalIn(PAGE);
+  const res = { bodyBg: await evalIn('__arc.bodyBg()'), screens: {} };
+  for (const s of SCREENS) {
+    if (!(await closeAll())) warn(`${tag}: a dialog stayed open`);
+    let ok = false;
+    try { ok = await s.run(); } catch (e) { warn(`${tag}/${s.name}: ${e.message}`); }
+    if (!ok) { if (s.required) fail(`${tag}/${s.name}: screen could not be opened`); else warn(`${tag}/${s.name}: not found`); continue; }
+    await sleep(500);
+    const lines = await evalIn('__arc.texts()');
+    const col = await evalIn('__arc.colours()');
+    await shot(`${tag}-${s.name}`);
+    const dirty = lines.map((l) => [l, classify(l)]).filter(([, c]) => c);
+    for (const [l, c] of dirty) fail(`${tag}/${s.name}: [${c}] ${l.slice(0, 100)}`);
+    for (const b of col.blue) fail(`${tag}/${s.name}: blue ${b}`);
+    const bad = col.contrast.filter((c) => c.ratio < 3);
+    for (const c of bad.slice(0, 6)) fail(`${tag}/${s.name}: contrast ${c.ratio} for "${c.text}" (${c.color})`);
+    if (col.contrast.length > bad.length) warn(`${tag}/${s.name}: ${col.contrast.length - bad.length} texts between 3 and 4.5 contrast`);
+    res.screens[s.name] = { lines: lines.length, dirty: dirty.length, blue: col.blue.length, lowContrast: col.contrast.length };
+  }
+  if (!(await closeAll())) warn(`${tag}: a dialog stayed open`);
+  return res;
+}
+
+const lum = (rgb) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]); };
+const parse = (s) => (s.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+
+try {
+  const near = (c, r, g, bl) => Math.abs(c[0] - r) <= 3 && Math.abs(c[1] - g) <= 3 && Math.abs(c[2] - bl) <= 3;
+  if (phase === 'first-run') {
+    // the first-run look: Light even when the system asks for dark (cream paper, #faf9f6)
+    report.scheme.firstRun = await crawl('dark', 'first-run');
+    if (!near(parse(report.scheme.firstRun.bodyBg), 250, 249, 246)) fail(`first-run paper is not #faf9f6 (body ${report.scheme.firstRun.bodyBg})`);
+    // choosing Dark in Settings gives the dark set (#171614), and Light brings the paper back
+    if (!(await evalIn("__arc.chooseAppearance('Dark')"))) fail('could not choose Dark in Settings');
+    await closeAll();
+    if (!near(parse(await evalIn('__arc.bodyBg()')), 23, 22, 20)) fail('choosing Dark in Settings does not give the dark set #171614');
+    if (!(await evalIn("__arc.chooseAppearance('Light')"))) fail('could not choose Light in Settings');
+    await closeAll();
+    if (!near(parse(await evalIn('__arc.bodyBg()')), 250, 249, 246)) fail('choosing Light in Settings does not give the paper #faf9f6');
+  } else if (phase === 'dark') {
+    report.scheme.dark = await crawl('dark', 'dark');
+    if (!near(parse(report.scheme.dark.bodyBg), 23, 22, 20)) fail(`dark set is not #171614 (body ${report.scheme.dark.bodyBg})`);
+  } else {
+    report.scheme.light = await crawl('light', 'light');
+    if (!near(parse(report.scheme.light.bodyBg), 250, 249, 246)) fail(`light paper is not #faf9f6 (body ${report.scheme.light.bodyBg})`);
+  }
+} catch (e) {
+  fail('crawl stopped: ' + e.message);
+} finally {
+  try { cdp.close(); } catch { /* closed */ }
+  killTree(browser.pid);
+  if (!argv.includes('--keep')) killTree(server.pid);
+  try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch { /* in use */ }
+  await sleep(1500);
+  const link = path.join(testHome, 'profiles', 'web', 'node_modules');
+  try { fs.rmdirSync(link); } catch { /* in use */ }
+  if (!fs.existsSync(link)) { try { fs.rmSync(testHome, { recursive: true, force: true }); } catch { /* in use */ } } // never descend into the junction
+  for (const [f, h] of realBefore) if (hashOf(path.join(realProfile, f)) !== h) fail(`the test changed the real profile file ${f}`);
+  fs.writeFileSync(path.join(outDir, `report-${phase}.json`), JSON.stringify(report, null, 1));
+}
+console.log(`phase ${phase}: failures ${report.failures.length}, warnings ${report.warnings.length}`);
+process.exit(report.failures.length ? 1 : 0);

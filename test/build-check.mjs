@@ -24,7 +24,10 @@ for (const f of pristine.files) {
   if (f.entry.size === g.entry.size && pristine.read(f).equals(built.read(g))) identical++; else changed.push({ path: f.path, buf: built.read(g) });
 }
 const removedCount = changed.filter((c) => c.removed).length;
-check(built.files.length === pristine.files.length - removedCount, `file count = pristine ${pristine.files.length} minus ${removedCount} removed documents`);
+const pristinePaths = new Set(pristine.files.map((f) => f.path));
+const addedPaths = built.files.filter((f) => !pristinePaths.has(f.path)).map((f) => f.path);
+check(built.files.length === pristine.files.length - removedCount + addedPaths.length, `file count = pristine ${pristine.files.length} minus ${removedCount} removed documents plus ${addedPaths.length} added`);
+check(addedPaths.every((p) => /\/locale\/en\.json$/.test(p)), 'the only added files are plugin-name locale files');
 check(changed.filter((c) => c.removed).every((c) => /\.zh[^/]*\.md$|README\.i18n\.yaml$/.test(c.path)), 'only Chinese documents were removed');
 check(changed.length > 0 && changed.length < 2000, `${changed.length} files changed or removed, ${identical} identical`);
 

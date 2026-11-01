@@ -19,7 +19,11 @@ This folder rebuilds the app archive from the pristine one, so every change is a
 | `tools/build.mjs` | Applies the patches to the pristine archive and writes `build/app.asar`. Each patch checks how many places it changed. |
 | `tools/install.mjs` | `install`, `rollback` and `status` for the app folder. `install.cmd` wraps it. |
 | `tools/asar-cat.mjs` | Prints or lists files inside an archive. |
-| `test/` | `asar-roundtrip.mjs` proves the writer. `build-check.mjs` checks the built archive. |
+| `lib/brandrules.mjs` | One rule set for brand text: DeepSeek, DSH and Whale wording becomes Arc Harness, and DeepSeek addresses become `arc-harness.invalid`. Real model names stay. The build rewrites with it and the tests check with it. |
+| `lib/iconcolor.mjs` | Recolors blue and purple icon fills to ink and warm grey. |
+| `brandtext/apply-profiles.mjs` | Applies the same rules and icon colors to the plugin packages of both profiles. `--restore` puts the originals back. |
+| `theme/tune-arc-skin.mjs` | Second pass on the skin: paper canvas, white cards, sidebar `#f4f2ed`, readable captions, hidden update badge. |
+| `test/` | `asar-roundtrip.mjs` proves the writer. `build-check.mjs` checks the built archive. `ui-strings.mjs` finds DeepSeek, DSH and Whale wording in text a person reads (archive and profiles). `ui-crawl.mjs` opens every main screen in a headless browser in light and dark and checks words, blue, contrast and the first-run look. `no-deepseek-net.mjs` and `net-trace.cjs` find and trace connections to DeepSeek services. |
 | `policies/` | Plugin names, descriptions, icons and documents. `apply.mjs` writes them; `test.mjs` checks them. |
 | `purge/` | Non-English files removed and Chinese text translated in the plugin packages. |
 | `linkstrip/` | Outside links and source fields removed from plugin documents and package metadata. |
