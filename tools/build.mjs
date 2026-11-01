@@ -371,8 +371,9 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
   const before = text(p);
   const after = before
     .replace(/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe|#726ef[0-9a-f]|#5391ff|#2674fb/gi, '#54453c')
+    .replace(/#00f(?![0-9a-fA-F])/gi, '#54453c')   // the underlined "All - Clear - Inverse" links of the filter menu
     .replace(/#394259/gi, '#26231f');
-  must(after !== before && !/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe|#726ef[0-9a-f]|#5391ff|#2674fb|#394259/i.test(after), 'spreadsheet viewer interface colours were not found');
+  must(after !== before && !/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe|#726ef[0-9a-f]|#5391ff|#2674fb|#394259|#00f(?![0-9a-fA-F])/i.test(after), 'spreadsheet viewer interface colours were not found');
   put(p, after);
   report.push('spreadsheet viewer: its blue and violet interface colours (selection box, handles, filter buttons) are the Arc Harness primary');
 }

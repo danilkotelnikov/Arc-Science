@@ -183,23 +183,39 @@ check(svgCount > 100 && svgBad.length === 0, `no DeepSeek, DSH or Whale text in 
 
 // (i) the spreadsheet viewer paints no blue or violet interface (selection box, handles, filter buttons)
 const excel = get(built, DS + 'dsh-client-ui-sidebar-documentpreview/lib/client.excel.js');
-// The viewer keeps its chart palettes and colour pickers (colours of the user's own data), the near-white toolbar background and the
-// hyperlink cell colour. Every other blue-hue hex colour in the file is an interface colour: the set below is the reviewed set, so a
-// new interface blue fails here and so does a lost swap (the old colours are listed by name as well).
-const EXCEL_KEEP = new Set(['5ab1ef', 'fafafc', '60c0dd', '0098d9', '005eaa', '3fb1e3', 'a0a7e6', 'cfe2f3', 'd9d2e9', '9fc5e8', 'b4a7d6', '76a5af', '6fa8dc',
-  '8e7cc3', '45818e', '3d85c6', '674ea7', '134f5c', '0b5394', '351c75', '0c343d', '073763', '20124d', '0f00f0']);
-const excelBlue = new Set();
-for (const m of (excel ?? '').matchAll(/(?<![\w&])#([0-9a-fA-F]{6})(?:[0-9a-fA-F]{2})?(?![0-9a-zA-Z])/g)) {
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16) / 255);
+// The viewer keeps the blue of its chart palettes and colour pickers (colours of the user's own data), a near-white toolbar background
+// (#fafafc) and the hyperlink cell colour rgb(0, 0, 255) (a colour inside the user's sheet). Every other blue-hue colour in the file is
+// an interface colour. EXCEL_BLUE is the reviewed fingerprint: every blue-hue colour in any written form (#rgb, #rgba, #rrggbb,
+// #rrggbbaa, rgb(), rgba(), hsl(), hsla(), with commas or spaces, also straight after a letter) with its number of occurrences. A new
+// interface blue, a second use of a palette value, a lost swap or a colour in another form changes the fingerprint and fails here.
+const EXCEL_BLUE = {
+  '#005eaa': 1, '#0098d9': 1, '#073763': 1, '#0b5394': 1, '#0c343d': 1, '#0f00f0': 1, '#134f5c': 1, '#20124d': 1, '#351c75': 1, '#3d85c6': 1,
+  '#3fb1e3': 1, '#45818e': 1, '#5ab1ef': 12, '#60c0dd': 1, '#674ea7': 1, '#6fa8dc': 1, '#76a5af': 1, '#8e7cc3': 1, '#9fc5e8': 1, '#a0a7e6': 1,
+  '#b4a7d6': 1, '#cfe2f3': 1, '#d9d2e9': 1, '#fafafc': 4, 'rgb(0, 0, 255': 1,
+};
+const blueHue = (r, g, b) => {
+  [r, g, b] = [r, g, b].map((v) => v / 255);
   const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn, l = (mx + mn) / 2;
-  if (!d) continue;
+  if (!d) return false;
   const s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
   const h = 60 * (mx === r ? ((g - b) / d + (g < b ? 6 : 0)) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4);
-  if (s > 0.2 && h >= 190 && h <= 300) excelBlue.add(m[1].toLowerCase());
+  return s > 0.2 && h >= 190 && h <= 300;
+};
+const excelFound = {};
+const tally = (k) => { excelFound[k] = (excelFound[k] ?? 0) + 1; };
+for (const m of (excel ?? '').matchAll(/(?<!&)#([0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})(?![0-9a-zA-Z])/g)) {
+  const h = m[1].length <= 4 ? [...m[1].slice(0, 3)].map((c) => c + c).join('') : m[1];
+  if (blueHue(...[0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)))) tally('#' + m[1].toLowerCase());
 }
-const excelExtra = [...excelBlue].filter((c) => !EXCEL_KEEP.has(c));
-check(excel !== null && excelExtra.length === 0 && !/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe|#726ef[0-9a-f]|#5391ff|#2674fb|#394259/i.test(excel) && /#54453c/i.test(excel),
-  `spreadsheet viewer: all eleven blue and violet interface colours and the icon fill are gone, the interface uses the Arc Harness primary, no other blue outside the reviewed palette set (${excelBlue.size} blue colours kept)${excelExtra.length ? ': ' + excelExtra.join(', ') : ''}`);
+for (const m of (excel ?? '').matchAll(/\brgba?\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})/gi)) if (blueHue(+m[1], +m[2], +m[3])) tally(m[0].toLowerCase());
+for (const m of (excel ?? '').matchAll(/\bhsla?\(\s*(-?[\d.]+)(?:deg)?\s*[, ]\s*([\d.]+)%/gi)) {
+  const hue = ((+m[1] % 360) + 360) % 360;
+  if (+m[2] > 20 && hue >= 190 && hue <= 300) tally(m[0].toLowerCase());
+}
+const excelDiff = [...new Set([...Object.keys(EXCEL_BLUE), ...Object.keys(excelFound)])].filter((k) => EXCEL_BLUE[k] !== excelFound[k])
+  .map((k) => `${k} x${excelFound[k] ?? 0} (reviewed x${EXCEL_BLUE[k] ?? 0})`);
+check(excel !== null && excelDiff.length === 0 && !/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe|#726ef[0-9a-f]|#5391ff|#2674fb|#394259|#00f(?![0-9a-fA-F])/i.test(excel) && /#54453c/i.test(excel),
+  `spreadsheet viewer: all twelve blue and violet interface colours and the icon fill are gone, the interface uses the Arc Harness primary, and its blue colours in every written form are exactly the reviewed set (${Object.keys(excelFound).length} colours)${excelDiff.length ? ': ' + excelDiff.join(', ') : ''}`);
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(bad ? 'FAILED' : 'ALL PASS');

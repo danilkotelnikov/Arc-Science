@@ -62,17 +62,22 @@ HUE_LCH = re.compile(rb'\b(ok)?lch\(\s*[\d.]+%?\s+([\d.]+%?)\s+([\d.]+)', re.I) 
 NAMED_BLUE = (b'blue|mediumblue|darkblue|navy|midnightblue|royalblue|dodgerblue|deepskyblue|cornflowerblue|steelblue|slateblue|'
               b'darkslateblue|mediumslateblue|indigo|blueviolet|darkviolet|darkorchid|mediumorchid|violet|purple|mediumpurple|rebeccapurple|'
               b'lightskyblue|skyblue|lightsteelblue|lightblue|aliceblue|cadetblue')
-NAMED_RE = re.compile(rb'(?:\b(?:color|background(?:-color)?|border(?:-[a-z]+)?-color|outline(?:-color)?|fill|stroke|stop-color)\s*[:=]\s*["\']?(?:' + NAMED_BLUE + rb')\b)', re.I)
+NAMED_RE = re.compile(rb'(?:\b(?:color|bgcolor|background(?:-color)?|border(?:-[a-z]+)?-color|outline(?:-color)?|fill|stroke|stop-color)\s*[:=]\s*["\']?(?:' + NAMED_BLUE + rb')\b)', re.I)
+# the same as an attribute of markup in a page (color="blue", bgcolor="navy"); prose such as "color: blue" does not count
+NAMED_ATTR = re.compile(rb'\b(?:color|bgcolor|fill|stroke|stop-color)\s*=\s*["\']?(?:' + NAMED_BLUE + rb')\b', re.I)
 # a named colour as a value inside any CSS declaration (borders, shadows, gradients), not as a class or id name
 NAMED_CSS_RE = re.compile(rb':\s*[^;{}]*?(?<![.#\w-])(?:' + NAMED_BLUE + rb')(?![\w-])', re.I)
 # a named colour as a colour property or canvas style in script
 NAMED_JS_RE = re.compile(rb'(?:fillStyle|strokeStyle|shadowColor|backgroundColor|borderColor|\.color|\bfill|\bstroke|\bcolor)["\']?\s*[:=]\s*["\'`](?:' + NAMED_BLUE + rb')["\'`]', re.I)
 # the three- and four-digit shorthand, where it is a colour: inside a CSS declaration, or an SVG colour attribute
-SHORT_DECL = re.compile(rb':([^;{}]*)')   # the value of a declaration, up to the next ; { or }
+SHORT_DECL = re.compile(rb':([^;{}]*)(?=[;}]|$)')   # the value of a declaration: it ends at ; or } (a { means it was a selector)
 SHORT_CSS_RE = re.compile(rb'(?<![\w&#-])(?<!url\()#([0-9a-fA-F]{3,4})(?![0-9a-zA-Z-])')
-SHORT_SVG_RE = re.compile(rb'(?:fill|stroke|stop-color|color)=["\']#([0-9a-fA-F]{3,4})["\']', re.I)
+SHORT_SVG_RE = re.compile(rb'(?:fill|stroke|stop-color|color|bgcolor)=["\']#([0-9a-fA-F]{3,4})["\']', re.I)
 # a style file without its comments; strings and url(...) are kept whole, so a comment mark inside one does not start a comment
-CSS_TOKEN = re.compile(rb'("(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|url\([^)]*\))|/\*.*?\*/', re.S)
+# (a string that is not closed before the line ends is kept to the end of the line, so its text stays visible)
+CSS_TOKEN = re.compile(rb'("(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|url\([^)]*\)|"[^"\n]*|\'[^\'\n]*)|/\*.*?\*/', re.S)
+# style blocks and style attributes of a page: the only places where a page holds style declarations
+HTML_STYLE = re.compile(rb'<style\b[^>]*>(.*?)</style>|\bstyle\s*=\s*"([^"]*)"|\bstyle\s*=\s*\'([^\']*)\'', re.S | re.I)
 HUE_LAB = re.compile(rb'\b(ok)?lab\(\s*[\d.]+%?\s+(-?[\d.]+)\s+(-?[\d.]+)', re.I)   # oklab and lab: lightness a b
 HUE_ALLOW = [
     (re.compile(r'[\\/]lib[\\/]devtools[\\/]|[\\/]debug[\\/]src[\\/]'), 'DevTools frontend and the debug library (third party)'),
@@ -137,17 +142,19 @@ def blue_hue_hit(buf: bytes, ext: str = '.js') -> str | None:
         chroma = math.hypot(a, b) * (1 if m.group(1) else 1 / 150)
         if chroma >= 0.035 and 215 <= math.degrees(math.atan2(b, a)) % 360 <= 335:
             return m.group(0).decode()
-    if ext in {'.css', '.html', '.htm'}:   # a page holds style blocks and style attributes
+    if ext in {'.css', '.html', '.htm'}:
+        # a style file is all declarations; a page holds them in style blocks and style attributes only (prose is not a declaration)
+        css = buf if ext == '.css' else CSS_TOKEN.sub(lambda m: m.group(1) or b'', b';'.join(m.group(1) or m.group(2) or m.group(3) or b'' for m in HTML_STYLE.finditer(buf)))
         for rx in (NAMED_RE, NAMED_CSS_RE):
-            n = rx.search(buf)
+            n = rx.search(css)
             if n:
                 return n.group(0).decode()
-        for d in SHORT_DECL.finditer(buf):
+        for d in SHORT_DECL.finditer(css):
             for n in SHORT_CSS_RE.finditer(d.group(1)):
                 if _short_blue(n.group(1)):
                     return n.group(0).decode()
-    elif ext == '.svg':
-        n = NAMED_RE.search(buf)
+    if ext in {'.svg', '.html', '.htm'}:   # colour attributes of SVG and of old-style markup (fill, stroke, color, bgcolor)
+        n = (NAMED_RE if ext == '.svg' else NAMED_ATTR).search(buf)
         if n:
             return n.group(0).decode()
         for n in SHORT_SVG_RE.finditer(buf):
@@ -296,7 +303,7 @@ def scan(sources: Iterator[tuple[str, bytes]], cat: Catalog, survey: bool = Fals
                 decoded = urllib.parse.unquote(m.group(1).decode('utf-8', 'replace'))
                 res = classify_svg(decoded, sha(m.group(1)), cat)
                 if not res and not FIXTURE_DIR.search(name) and not any(rx.search(name) for rx, _why in HUE_ALLOW):
-                    hue = blue_hue_hit(decoded.encode('utf-8', 'replace'))   # also rgb() and hues that are not on the vendor list
+                    hue = blue_hue_hit(decoded.encode('utf-8', 'replace'), ext='.svg')   # also rgb(), the shorthand and hues that are not on the vendor list
                     res = {'kind': 'blue', 'why': f'svg colour {hue}'} if hue else None
                 if res:
                     found.append({'where': name, 'how': 'svg data uri (not base64)', 'sha256': sha(m.group(1)), **res})
@@ -362,12 +369,16 @@ def self_check(cat: Catalog) -> list[str]:
                       (b'a{content:"/*"} b{color:#4040ff} c{content:"*/"}', '.css'), (b'a{content:"/*";color:#3366ff} /* x */', '.css'),
                       # style blocks and attributes in a page, a quoted key in JSON
                       (b'<div style="color:blue">', '.html'), (b'<div style="color:#36f">', '.html'), (b'<style>a{color:navy}</style>', '.html'),
-                      (b'{"color":"blue"}', '.json')):
+                      (b'{"color":"blue"}', '.json'),
+                      # a string that is never closed must not swallow the colour after it; old-style markup colours; a selector then a declaration
+                      (b"a{x:'oops /* c\n} b{color:#4040ff}\n/* d */", '.css'), (b'<font color="#36f">x</font>', '.html'), (b'<td bgcolor="navy">', '.html'),
+                      (b'<svg><rect fill="#36f"/></svg>', '.html'), (b'a:hover #bad{margin:0}b{color:#36f}', '.css'), (b'<p style="margin:0;color:#36f">x</p>', '.html')):
         if not blue_hue_hit(text, ext=ext):
             errs.append(f'blue not detected in {ext}: {text!r}')
     for text, ext in ((b'/* the shell\'s :is(button, a) rule keeps a navy tone */ a{margin:0}', '.css'), (b'.blue{margin:0} a:hover .indigo{margin:0} #violet{x:1}', '.css'), (b'a{color:#fab;border:1px solid #f60}', '.css'), (b'<rect fill="#fa0"/>', '.svg'),
                       (b'x:oklab(70% 0.1 0.05)', '.css'), (b'var blue = 3; var purple = "name"', '.js'),
-                      (b'/* a navy note */ a{color:#fff} /* #36f is gone */', '.css'), (b'<a href="#add">x</a>', '.html'), (b'a{content:"&#123;"}', '.css')):
+                      (b'/* a navy note */ a{color:#fff} /* #36f is gone */', '.css'), (b'<a href="#add">x</a>', '.html'), (b'a{content:"&#123;"}', '.css'),
+                      (b'a:hover #bad{margin:0}', '.css'), (b'a:not(.x) #abd{margin:0}', '.css'), (b'<p>Note: item #bad</p>', '.html'), (b'<p>issue: #123 and #abc, color: blue is a name</p>', '.html')):
         if blue_hue_hit(text, ext=ext):
             errs.append(f'class name, warm shorthand or non-colour flagged in {ext}: {text!r}')
     for fine in (b'color:#22c55e;background:#f59e0b;border:1px solid rgb(239,68,68)', b'fill:#54ECE7', b'color:#26231f;background:#faf9f6',
