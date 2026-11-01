@@ -368,8 +368,8 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
 {
   const p = DS + 'dsh-client-ui-sidebar-documentpreview/lib/client.excel.js';
   const before = text(p);
-  const after = before.replace(/#0188fb|#897bff|#8c89fe|#726ef[0-9a-f]/gi, '#54453c');
-  must(after !== before && !/#0188fb|#897bff|#8c89fe/i.test(after), 'spreadsheet viewer interface colours were not found');
+  const after = before.replace(/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe|#726ef[0-9a-f]/gi, '#54453c');
+  must(after !== before && !/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe/i.test(after), 'spreadsheet viewer interface colours were not found');
   put(p, after);
   report.push('spreadsheet viewer: its blue and violet interface colours (selection box, handles, filter buttons) are the Arc Harness primary');
 }

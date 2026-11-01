@@ -183,7 +183,7 @@ check(svgCount > 100 && svgBad.length === 0, `no DeepSeek, DSH or Whale text in 
 
 // (i) the spreadsheet viewer paints no blue or violet interface (selection box, handles, filter buttons)
 const excel = get(built, DS + 'dsh-client-ui-sidebar-documentpreview/lib/client.excel.js');
-check(excel !== null && !/#0188fb|#897bff|#8c89fe/i.test(excel) && /#54453c/i.test(excel), 'spreadsheet viewer: no #0188fb, #897bff or #8c89fe left, the interface uses the Arc Harness primary');
+check(excel !== null && !/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe/i.test(excel) && /#54453c/i.test(excel), 'spreadsheet viewer: none of its nine blue and violet interface colours is left, the interface uses the Arc Harness primary');
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(bad ? 'FAILED' : 'ALL PASS');

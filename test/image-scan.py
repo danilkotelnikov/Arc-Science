@@ -23,6 +23,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 import re
 import struct
@@ -51,7 +52,7 @@ BLUE_TEXT_B = re.compile(BLUE_TEXT.pattern.encode(), re.I)
 # Any blue or violet colour by hue (190 to 300 degrees, saturation above 0.25): hex, #rrggbbaa, rgb() and rgba() in scripts, styles,
 # pages and SVG files. The same test lib/iconcolor.mjs recolorBlueHues applies. Third-party code and palettes that must keep their
 # colours are listed here, each with its reason; a hit anywhere else fails.
-HUE_EXT = {'.js', '.mjs', '.cjs', '.css', '.html', '.htm', '.svg'}
+HUE_EXT = {'.js', '.mjs', '.cjs', '.css', '.html', '.htm', '.svg', '.json'}
 HUE_HEX = re.compile(rb'(?<![\w&])(?<!url\()#([0-9a-fA-F]{6})(?:[0-9a-fA-F]{2})?(?![0-9a-zA-Z])')
 HUE_RGB = re.compile(rb'\brgba?\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})', re.I)   # commas or spaces
 HUE_HSL = re.compile(rb'\bhsla?\(\s*(-?[\d.]+)(?:deg)?\s*[, ]\s*([\d.]+)%', re.I)
@@ -62,14 +63,22 @@ NAMED_BLUE = (b'blue|mediumblue|darkblue|navy|midnightblue|royalblue|dodgerblue|
               b'darkslateblue|mediumslateblue|indigo|blueviolet|darkviolet|darkorchid|mediumorchid|violet|purple|mediumpurple|rebeccapurple|'
               b'lightskyblue|skyblue|lightsteelblue|lightblue|aliceblue|cadetblue')
 NAMED_RE = re.compile(rb'(?:\b(?:color|background(?:-color)?|border(?:-[a-z]+)?-color|outline(?:-color)?|fill|stroke|stop-color)\s*[:=]\s*["\']?(?:' + NAMED_BLUE + rb')\b)', re.I)
+# a named colour as a value inside any CSS declaration (borders, shadows, gradients), not as a class or id name
+NAMED_CSS_RE = re.compile(rb':\s*[^;{}]*?(?<![.#\w-])(?:' + NAMED_BLUE + rb')(?![\w-])', re.I)
+# a named colour as a colour property or canvas style in script
+NAMED_JS_RE = re.compile(rb'(?:fillStyle|strokeStyle|shadowColor|backgroundColor|borderColor|\.color|\bfill|\bstroke|\bcolor)\s*[:=]\s*["\'`](?:' + NAMED_BLUE + rb')["\'`]', re.I)
+# the three-digit shorthand, where it is a colour: inside a CSS declaration, or an SVG colour attribute
+SHORT_CSS_RE = re.compile(rb':\s*(?:[^;{}]*\s)?#([0-9a-fA-F]{3})(?![0-9a-zA-Z-])')
+SHORT_SVG_RE = re.compile(rb'(?:fill|stroke|stop-color|color)=["\']#([0-9a-fA-F]{3})["\']', re.I)
+HUE_LAB = re.compile(rb'\b(ok)?lab\(\s*[\d.]+%?\s+(-?[\d.]+)\s+(-?[\d.]+)', re.I)   # oklab and lab: lightness a b
 HUE_ALLOW = [
     (re.compile(r'[\\/]lib[\\/]devtools[\\/]|[\\/]debug[\\/]src[\\/]'), 'DevTools frontend and the debug library (third party)'),
     (re.compile(r'dsh-client-ui-sidebar-terminal'), 'terminal palette: ANSI blue is a terminal colour'),
     (re.compile(r'dsh-client-ui-sidebar-documentpreview[\\/]lib[\\/]client\.(?:excel|pdf)\.js$'),
      'spreadsheet and PDF viewers: chart palettes of the user\'s own data and PDF highlight colour choices; the spreadsheet interface colours are replaced by build patch 8d and checked by test/build-check.mjs'),
     (re.compile(r'[\\/]vendor-[^\\/]*\.js$'), 'vendor bundle of libraries'),
-    (re.compile(r'[\\/](?:mermaid|khroma|cytoscape[\w-]*|tinycolor2|@upsetjs|react-icons|katex|@codemirror|@xterm|jimp|qrcode|ds-harness-remote)[\\/]'),
-     'third-party libraries (diagrams, colour maths, graphs, icons, math, editor, terminal, images) and the switched-off remote plugin'),
+    (re.compile(r'[\\/](?:mermaid|khroma|cytoscape[\w-]*|tinycolor2|@upsetjs|react-icons|katex|@codemirror|@xterm|jimp|qrcode|es-toolkit|ds-harness-remote)[\\/]'),
+     'third-party libraries (diagrams, colour maths, graphs, icons, math, editor, terminal, images, utility code with colour names in its examples) and the switched-off remote plugin'),
     (re.compile(r'[\\/]dsh-better-sidebar[\\/]lib[\\/]client-(?:terminal|editor|mermaid)\.'),
      'bundled terminal, code editor and diagram libraries (ANSI colours, syntax categories and diagram themes keep their colours)'),
     (re.compile(r'[\\/]@nagi-ovo[\\/]dsh-visualize[\\/]'),
@@ -90,9 +99,12 @@ def _hsl(r: int, g: int, b: int) -> tuple[float, float, float]:
     return h * 60, s, l
 
 
-def blue_hue_hit(buf: bytes, named: bool = False) -> str | None:
+def blue_hue_hit(buf: bytes, ext: str = '.js') -> str | None:
     """First blue or violet colour in the text, or None. Forms: #rrggbb(aa), rgb()/rgba() with commas or spaces, hsl(), hwb(),
-    oklch() and lch(); with named=True also named colours written as a colour property or an SVG colour attribute."""
+    oklch(), lch(), oklab() and lab(); by file type also named colours (styles: any declaration value; SVG: colour attributes;
+    script: colour properties and canvas styles) and the three-digit shorthand (styles and SVG). Comments of a style file are not read."""
+    if ext == '.css':
+        buf = re.sub(rb'/\*.*?\*/', b'', buf, flags=re.S)
     for m in HUE_HEX.finditer(buf):
         h = m.group(1)
         hh, s, _ = _hsl(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
@@ -113,13 +125,36 @@ def blue_hue_hit(buf: bytes, named: bool = False) -> str | None:
             return m.group(0).decode()
     for m in HUE_LCH.finditer(buf):
         chroma = float(m.group(2).rstrip(b'%')) / (100 if m.group(2).endswith(b'%') else 1) * (1 if m.group(1) else 1 / 150)
-        if chroma > 0.04 and (215 <= float(m.group(3)) <= 335):
+        if chroma >= 0.035 and (215 <= float(m.group(3)) <= 335):
             return m.group(0).decode()
-    if named:
+    for m in HUE_LAB.finditer(buf):
+        a, b = float(m.group(2)), float(m.group(3))
+        chroma = math.hypot(a, b) * (1 if m.group(1) else 1 / 150)
+        if chroma >= 0.035 and 215 <= math.degrees(math.atan2(b, a)) % 360 <= 335:
+            return m.group(0).decode()
+    if ext == '.css':
+        for rx in (NAMED_RE, NAMED_CSS_RE, SHORT_CSS_RE):
+            n = rx.search(buf)
+            if n and (rx is not SHORT_CSS_RE or _short_blue(n.group(1))):
+                return n.group(0).decode()
+    elif ext == '.svg':
         n = NAMED_RE.search(buf)
         if n:
             return n.group(0).decode()
+        n = SHORT_SVG_RE.search(buf)
+        if n and _short_blue(n.group(1)):
+            return n.group(0).decode()
+    elif ext in {'.js', '.mjs', '.cjs', '.html', '.htm', '.json'}:
+        n = NAMED_JS_RE.search(buf)
+        if n:
+            return n.group(0).decode()
     return None
+
+
+def _short_blue(h: bytes) -> bool:
+    r, g, b = (int(c * 2, 16) for c in h.decode())
+    hh, s, _ = _hsl(r, g, b)
+    return s > 0.2 and 190 <= hh <= 300
 # an svg data URI that is not base64, as written in CSS or script: it ends at a closing quote and bracket (quotes may sit inside it)
 DATA_SVG_PLAIN = re.compile(rb"""data:image\\?/svg\+xml(?:;charset=[\w-]+|;utf8)?,(.{20,4000}?)(?=\"\)|'\)|\"[;}\s,]|`)""", re.S)
 
@@ -240,7 +275,7 @@ def scan(sources: Iterator[tuple[str, bytes]], cat: Catalog, survey: bool = Fals
                     stats['blue-hue files not judged'] += 1
                 else:
                     stats['blue-hue files judged'] += 1
-                    hit = blue_hue_hit(buf, named=ext in {'.css', '.svg'})
+                    hit = blue_hue_hit(buf, ext=ext)
                     if hit:
                         found.append({'where': name, 'how': 'hue', 'kind': 'blue', 'why': f'blue or violet colour {hit}'})
             if b'data:image' not in buf:
@@ -306,11 +341,19 @@ def self_check(cat: Catalog) -> list[str]:
                  b'color:rgb(60 80 250)', b'color:rgb(60 80 250 / 40%)', b'COLOR:RGB(10,20,250)', b'x:lch(50% 80 290)', b'x:hwb(230 10% 10%)'):
         if not blue_hue_hit(good):
             errs.append(f'blue by hue not detected: {good!r}')
-    if not blue_hue_hit(b'a{color: royalblue}', named=True) or not blue_hue_hit(b'<rect fill="blue"/>', named=True):
-        errs.append('named blue in a colour property or an SVG attribute not detected')
+    for text, ext in ((b'a{color: royalblue}', '.css'), (b'a{border:1px solid blue}', '.css'), (b'a{background:linear-gradient(to right, blue, red)}', '.css'),
+                      (b'a{box-shadow:0 0 4px 1px Navy}', '.css'), (b'a{color:#36f}', '.css'), (b'<rect fill="blue"/>', '.svg'), (b'<rect fill="#36f"/>', '.svg'),
+                      (b'ctx.fillStyle="royalblue"', '.js'), (b'el.style.color = \'blue\'', '.js'), (b'x:lab(50 20 -80)', '.css'), (b'x:oklab(62% -0.03 -0.2)', '.css'),
+                      (b'{"accent":"oklch(62% .2 260)"}', '.json'), (b'{"accent":"#4d6bfe"}', '.json')):
+        if not blue_hue_hit(text, ext=ext):
+            errs.append(f'blue not detected in {ext}: {text!r}')
+    for text, ext in ((b'/* the shell\'s :is(button, a) rule keeps a navy tone */ a{margin:0}', '.css'), (b'.blue{margin:0} a:hover .indigo{margin:0} #violet{x:1}', '.css'), (b'a{color:#fab;border:1px solid #f60}', '.css'), (b'<rect fill="#fa0"/>', '.svg'),
+                      (b'x:oklab(70% 0.1 0.05)', '.css'), (b'var blue = 3; var purple = "name"', '.js')):
+        if blue_hue_hit(text, ext=ext):
+            errs.append(f'class name, warm shorthand or non-colour flagged in {ext}: {text!r}')
     for fine in (b'color:#22c55e;background:#f59e0b;border:1px solid rgb(239,68,68)', b'fill:#54ECE7', b'color:#26231f;background:#faf9f6',
                  b'x:oklch(65.6% .241 354.3)', b'x:oklch(70% .15 145)', b'x:hsl(30,60%,50%)', b'&#128199; url(#3366ff) a#3366ff', b'.blue{margin:0} --color-blue-500:var(--x)'):
-        if blue_hue_hit(fine, named=True):
+        if blue_hue_hit(fine, ext='.css'):
             errs.append(f'status, neutral or non-colour text flagged as blue: {fine!r}')
     if (classify_svg('<rect fill="#4D6BFEcc"/>', sha(b'x'), probe) or {}).get('kind') != 'blue':
         errs.append('blue with alpha (#rrggbbaa) not detected')

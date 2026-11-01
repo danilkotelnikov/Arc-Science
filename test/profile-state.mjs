@@ -99,10 +99,13 @@ for (const prof of ['web', 'desktop']) {
 for (const prof of ['web', 'desktop']) {
   const nm = path.join(dsh, 'profiles', prof, 'node_modules');
   const ctx = fs.readFileSync(path.join(nm, 'dsh-context', 'lib', 'client.js'), 'utf8');
-  const blueTokens = ['blue', 'indigo', 'violet', 'purple'].filter((c) => new RegExp(`--color-${c}-500:oklch\\([^)]*\\s(?:2[3-9]\\d|3[0-2]\\d)(?:\\.\\d+)?\\)`).test(ctx));
-  check(blueTokens.length === 0 && !ctx.includes('%360} 58% 52%'), `${prof}: Context Insights chart colours have no blue, indigo, violet or purple token and no full-wheel hue${blueTokens.length ? ' (' + blueTokens.join(', ') + ')' : ''}`);
+  // every oklch colour token of the file whose hue is blue or violet (215 to 335) with some chroma
+  const blueTokens = [...ctx.matchAll(/--color-([a-z]+-\d+):oklch\(\s*[\d.]+%?\s+([\d.]+)\s+([\d.]+)/g)].filter((m) => +m[2] >= 0.035 && +m[3] >= 215 && +m[3] <= 335).map((m) => m[1]);
+  check(blueTokens.length === 0, `${prof}: Context Insights has no oklch colour token in blue or violet${blueTokens.length ? ' (' + blueTokens.join(', ') + ')' : ''}`);
+  // the member colour: the golden-angle spread scaled into the warm range, with a lightness step (distinct neighbours, no blue)
+  check(ctx.includes('(Math.round(e*137.508)%360)*0.4+8') && ctx.includes('${42+(e%3)*7}%') && !ctx.includes('%360} 58% 52%'), `${prof}: Context Insights member colours use the warm scaled spread with a lightness step`);
   const viz = fs.readFileSync(path.join(nm, '@nagi-ovo', 'dsh-visualize', 'lib', 'client.js'), 'utf8');
-  check(!/#2f6fed/i.test(viz) && !/"primary": ld\("#(?:0072b2|2d71b7)"/.test(viz), `${prof}: Visualize interface colours (selected option, focus outline, primary colour) are not blue`);
+  check(!/#2f6fed/i.test(viz) && !/"primary": ld\("#(?:0072b2|2d71b7)"/.test(viz) && !viz.includes('rgb(65 118 230)') && !viz.includes('rgb(110 150 240)'), `${prof}: Visualize interface colours (selected option, focus outline, primary colour and its fallbacks) are not blue`);
   const term = fs.readFileSync(path.join(nm, 'dsh-better-sidebar', 'lib', 'client-terminal.js'), 'utf8');
   check(/#3465a4/i.test(term), `${prof}: the bundled terminal keeps its ANSI blue (vendored libraries are not recolored)`);
 }

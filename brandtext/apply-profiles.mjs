@@ -130,16 +130,22 @@ const FIXES = [
   // the whole colour wheel. They become four distinct warm colours and a warm-only hue range, so categories stay apart without blue.
   [/dsh-context[\\/]lib[\\/]client\.js$/, [
     ['--color-blue-500:oklch(62.3% .214 259.815)', '--color-blue-500:oklch(62% .11 78)'],
-    ['--color-indigo-500:oklch(58.5% .233 277.117)', '--color-indigo-500:oklch(55% .12 42)'],
+    ['--color-indigo-500:oklch(58.5% .233 277.117)', '--color-indigo-500:oklch(52% .12 55)'],
     ['--color-violet-500:oklch(60.6% .25 292.717)', '--color-violet-500:oklch(58% .09 128)'],
-    ['--color-purple-500:oklch(62.7% .265 303.9)', '--color-purple-500:oklch(50% .10 18)'],
-    ['hsl(${Math.round(e*137.508)%360} 58% 52%)', 'hsl(${Math.round(e*137.508)%150+8} 42% 46%)'],
+    ['--color-purple-500:oklch(62.7% .265 303.9)', '--color-purple-500:oklch(58% .13 8)'],
+    ['--color-slate-400:oklch(70.4% .04 256.788)', '--color-slate-400:oklch(70.4% .02 80)'],
+    // member and subagent colours: the golden-angle spread is kept (neighbours stay apart) and scaled into the warm range 8 to 152
+    // degrees; the lightness also steps with the index so that three members never share one colour
+    ['hsl(${Math.round(e*137.508)%360} 58% 52%)', 'hsl(${(Math.round(e*137.508)%360)*0.4+8} 42% ${42+(e%3)*7}%)'],
   ]],
   // Visualize: the selected-option border, the focus outline and the primary theme colour were blue (the chart series palettes stay)
   [/@nagi-ovo[\\/]dsh-visualize[\\/]lib[\\/]client\.js$/, [
     ['#2f6fed', '#54453c'],
     ['"primary": ld("#0072b2", "#58b6ed")', '"primary": ld("#54453c", "#d8d3c8")'],
     ['"primary": ld("#2d71b7", "#74c0fc")', '"primary": ld("#54453c", "#d8d3c8")'],
+    // the fallbacks of the primary colour (used when the host token is empty)
+    ['rgb(65 118 230)', 'rgb(84 69 60)'],
+    ['rgb(110 150 240)', 'rgb(216 211 200)'],
   ]],
   // the command shown for a manual plugin update named the public npm registry
   [/@michengai[\\/]dsh-archive-manager[\\/]lib[\\/]client\.js$/, [['add ${r}@${i} --registry=https://registry.npmjs.org/', 'add ${r}@${i}']]],
