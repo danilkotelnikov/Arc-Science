@@ -3,7 +3,8 @@
   "modelNames": [
     "DeepSeek[ -]?(?:AI[ -])?(?:V\\d(?:\\.\\d+)?|R\\d(?:\\.\\d+)?)(?:[ -](?:Chat|Coder|Flash|Pro|Terminus|Exp|Reasoner|Lite|Preview|Distill[\\w. -]*))?(?: ?\\(\\d+\\))?",
     "DeepSeek[ -](?:Chat|Coder(?:[ -]?V\\d)?|Reasoner|Prover(?:[ -]V\\d)?|Math|OCR|VL\\d?|LLM|Flash|Pro)\\b(?: ?\\(\\d+\\))?",
-    "deepseek[/-](?!ai(?!\\w))[\\w.:-]+"
+    "deepseek/deepseek-[\\w.:-]+",
+    "(?<![\\w-])deepseek-(?:chat|reasoner|coder|prover|math|ocr|vl|llm|flash|pro|terminus|exp|lite|distill|r\\d|v\\d)(?![A-Za-z])[\\w.:-]*"
   ],
   "archiveSkip": [
     "/node_modules/@earendil-works/pi-ai/",

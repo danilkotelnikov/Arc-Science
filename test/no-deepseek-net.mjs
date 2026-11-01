@@ -4,7 +4,8 @@
 //   node test/no-deepseek-net.mjs --trace <file>  judge an existing trace file (no server is started)
 // Options: --archive <asar>  --install <dir>  --wait <seconds, default 60>  --list (every hit)  --strict (count docs and tests too)  --json <file>
 // Exit 0 only when no DeepSeek address is found. Allowed: test/net.allow.json (pi-ai catalog, model names).
-// Read-only except for the temporary trace file; the server it starts is stopped again (only the processes it started).
+// The live part starts a server from the archive under test on a throwaway data home and stops it again (only the processes it started).
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,6 +30,7 @@ const ENV = /\bDEEPSEEK_(?:[A-Z0-9]+_)*BASE_URL\b|\bDSH_PLATFORM_ORIGIN\b/g;
 // DeepSeek-run addresses that do not carry the brand in their name (found by review of the archive)
 const KNOWN = /\btrtgsjkv6r\.feishu\.cn\b/gi;
 const RES = [HOST, REPO, ENV, KNOWN];
+const isLocalHost = (h) => /^(127.0.0.1|localhost|::1|[::1]|0.0.0.0)$/i.test(h);
 const isDeepseekHost = (h) => /(^|\.)deepseek(?:svc|cdn)?\.(?:com|ai|cn|net|org|io|dev|app|co)$/i.test(h) || /(^|\.)deepseek-ai\.github\.io$/i.test(h) || /(^|\.)trtgsjkv6r\.feishu\.cn$/i.test(h);
 
 const TEXT = /\.(?:[cm]?jsx?|tsx?|json|jsonc|ya?ml|html?|css|md|markdown|txt|map|svg|toml|xml|sh|ps1|cmd|bat|ini|cfg|conf)$/i;
@@ -164,22 +166,38 @@ function readTrace(file) {
   for (const l of fs.readFileSync(file, 'utf8').split('\n')) { if (l.trim()) { try { rows.push(JSON.parse(l)); } catch { /* partial line */ } } }
   return rows;
 }
+// The live run starts the web profile from the archive under test (--archive), with the installed Electron only as the runtime,
+// on a throwaway data home: the profile config files are copied, the plugin packages are linked, and the test fails if a real
+// profile file changed. It traces the Node host only; the desktop shell and the browser half are not exercised.
 async function liveRun(traceFile, waitSec) {
   const exe = path.join(installDir, 'DeepSeek Harness.exe');
-  const cli = path.join(installDir, 'resources', 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js');
+  const cli = path.join(archive, 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js');
+  const unpacked = archive + '.unpacked';
+  if (!fs.existsSync(unpacked)) fs.symlinkSync(path.join(installDir, 'resources', 'app.asar.unpacked'), unpacked, 'junction');
+  const sha = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
+  console.log(`live: tracing the archive ${path.relative(root, archive)} (sha256 ${sha.slice(0, 16)})`);
+  const realProfile = path.join(home, '.dsh', 'profiles', 'web');
+  const configs = fs.readdirSync(realProfile).filter((f) => f !== 'node_modules' && fs.statSync(path.join(realProfile, f)).isFile());
+  const hashOf = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+  const before = new Map(configs.map((f) => [f, hashOf(path.join(realProfile, f))]));
+  const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-home-'));
+  fs.mkdirSync(path.join(testHome, 'profiles', 'web'), { recursive: true });
+  for (const f of configs) fs.copyFileSync(path.join(realProfile, f), path.join(testHome, 'profiles', 'web', f));
+  const link = path.join(testHome, 'profiles', 'web', 'node_modules');
+  fs.symlinkSync(path.join(realProfile, 'node_modules'), link, 'junction');
   fs.rmSync(traceFile, { force: true });
   const log = traceFile + '.server.log';
   const out = fs.openSync(log, 'w');
   const tracer = path.join(here, 'net-trace.cjs').replace(/\\/g, '/');
   const child = spawn(exe, ['--expose-internals', cli, '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', '0'], {
     cwd: installDir, stdio: ['ignore', out, out], windowsHide: true,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ARC_NET_TRACE: traceFile, NODE_OPTIONS: `--require=${tracer}` },
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: testHome, ARC_NET_TRACE: traceFile, NODE_OPTIONS: `--require=${tracer}` },
   });
   try {
     let url = null;
     for (let i = 0; i < 90 && !url; i++) { // wait for the printed URL
       await new Promise((r) => setTimeout(r, 1000));
-      url = fs.readFileSync(log, 'utf8').match(/dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=\S+)/)?.[1];
+      url = fs.readFileSync(log, 'utf8').match(/(http:\/\/127\.0\.0\.1:\d+\/\?token=\S+)/)?.[1];
     }
     if (!url) throw new Error('the web server did not print its URL (see ' + log + ')');
     const r1 = await fetch(url, { redirect: 'manual' });
@@ -193,6 +211,10 @@ async function liveRun(traceFile, waitSec) {
     // stop only what this run started: the server process and its own children (never another app window)
     spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
     fs.closeSync(out);
+    await new Promise((r) => setTimeout(r, 1500));
+    try { fs.rmdirSync(link); } catch { /* in use */ }
+    if (!fs.existsSync(link)) { try { fs.rmSync(testHome, { recursive: true, force: true }); } catch { /* in use */ } } // never descend into the junction
+    for (const [f, h] of before) if (hashOf(path.join(realProfile, f)) !== h) { console.log(`FAIL the live run changed the real profile file ${f}`); process.exitCode = 1; }
   }
 }
 
@@ -243,10 +265,11 @@ if (flag('--live') || traceArg) {
     e.n++; e.kinds.add(r.kind); if (r.port) e.ports.add(r.port); byHost.set(h, e);
   }
   console.log(`\nLIVE HOSTS (${rowsT.length} trace lines, ${new Set(rowsT.map((r) => r.pid)).size} processes)`);
-  for (const [h, e] of [...byHost].sort((x, y) => y[1].n - x[1].n)) console.log(`${String(e.n).padStart(4)}  ${h.padEnd(34)} ${[...e.kinds].join('/').padEnd(18)} ${[...e.ports].join(',')}  ${isDeepseekHost(h) ? '<-- DEEPSEEK' : ''}`);
-  liveBad = [...byHost.keys()].filter(isDeepseekHost);
+  for (const [h, e] of [...byHost].sort((x, y) => y[1].n - x[1].n)) console.log(`${String(e.n).padStart(4)}  ${h.padEnd(34)} ${[...e.kinds].join('/').padEnd(18)} ${[...e.ports].join(',')}  ${isDeepseekHost(h) ? '<-- DEEPSEEK' : isLocalHost(h) ? '' : '<-- NOT LOCAL'}`);
+  // a startup that reaches any host other than this machine is a finding: the update checks and the service calls are meant to be off
+  liveBad = [...byHost.keys()].filter((h) => !isLocalHost(h));
 }
 
 const fail = bad.length > 0 || liveBad.length > 0;
-console.log(`\n${fail ? 'FAIL' : 'PASS'}: ${bad.length} static findings${flag('--live') || traceArg ? `, ${liveBad.length} DeepSeek hosts in the live trace` : ' (live part not run; add --live)'}`);
+console.log(`\n${fail ? 'FAIL' : 'PASS'}: ${bad.length} static findings${flag('--live') || traceArg ? `, ${liveBad.length} hosts other than this machine in the live trace` : ' (live part not run; add --live)'}`);
 process.exit(fail ? 1 : 0);

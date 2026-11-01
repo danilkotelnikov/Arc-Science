@@ -345,14 +345,55 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
     'dsh-client-ui-settings-session-log': 'Session log settings', 'dsh-client-ui-settings-web-search': 'Web search settings',
   };
   for (const [pkg, title] of Object.entries(TITLES)) {
-    const p = `${DS}${pkg}/locale/en.json`;
-    const j = JSON.parse(text(p));
-    j.meta = { ...(j.meta || {}), title };
-    put(p, JSON.stringify(j, null, 2) + '\n');
+    for (const loc of ['en', 'zh']) {
+      const p = `${DS}${pkg}/locale/${loc}.json`;
+      if (!src.byPath.has(p) || overrides.get(p) === null) { must(loc !== 'en', 'locale file missing: ' + p); continue; }
+      const j = JSON.parse(text(p));
+      j.meta = { ...(j.meta || {}), title };
+      put(p, JSON.stringify(j, null, 2) + '\n');
+    }
   }
   // the 1017 label plugin has no locale file: add one so the Plugins page does not show its package name
   put(`${DS}dsh-client-ui-deepseek-model-label-1017/locale/en.json`, JSON.stringify({ meta: { title: 'Model label badge' } }, null, 2) + '\n');
   report.push(`DeepSeek services: provider unregistered, ${catalog} catalog files with dead addresses, 3 telemetry rows off, ${Object.keys(TITLES).length + 1} plugin names plain`);
+}
+
+// ---- patch 10: the welcome window
+// The welcome window is the old vendor's sign-in and API-key entry (whale wordmark, cool blue-grey palette, a Sign in button that
+// leads to the account flow). Arc Harness takes its models from the providers in the profile, so startup goes straight to the
+// workspace. The window assets also get the cube mark and the C2 palette, in case a build brings the window back.
+{
+  const MAIN = 'lib/main.js';
+  const gate = 'return !authentication.loggedIn && !authentication.hasApiKey;';
+  const mainJs = text(MAIN);
+  must(mainJs.split(gate).length === 2, 'the welcome gate appears once in lib/main.js');
+  put(MAIN, mainJs.replace(gate, 'return false; // Arc Harness has no vendor sign-in; models come from the profile providers'));
+  // the wordmark: the plain cube and the live name, same layout box (472 x 40) as the old image
+  const cube = `<g transform="translate(0 2) scale(0.1406)" class="ink" fill-rule="evenodd"><path d="${brand.top}"/><path d="${brand.leftPlain}"/><path d="${brand.right}"/></g>`;
+  const svg = `<svg width="472" height="40" viewBox="0 0 472 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+<style>
+  :root { --dsw-alias-label-primary: #26231f; }
+  @media (prefers-color-scheme: dark) { :root { --dsw-alias-label-primary: #faf9f6; } }
+  .ink { fill: var(--dsw-alias-label-primary); }
+</style>
+${cube}
+<text x="44" y="29" font-family="Geist, 'Segoe UI', system-ui, sans-serif" font-size="26" font-weight="600" letter-spacing="-0.3" class="ink">Arc Harness</text>
+</svg>
+`;
+  put('renderer/assets/welcome-brand.svg', svg);
+  // the palette: cool blue-grey values become the warm C2 values
+  const PALETTE = [['#0f1115', '#26231f'], ['#61666b', '#645e55'], ['#81858c', '#75736c'], ['#43454a', '#6a574b'], ['#f1f3f5', '#f5f3ee'], ['#adb2b8', '#8a8478'],
+    ['#f9fafb', '#faf9f6'], ['#cfd3d6', '#d5d1c8'], ['#353638', '#2f2c28'], ['#ebeef2', '#ece9e2']];
+  let sheets = 0;
+  for (const f of ['renderer/welcome.css', 'lib/welcome/welcome.css']) {
+    let css = text(f);
+    for (const [from, to] of PALETTE) css = css.split(from).join(to);
+    css = css.replace('--dsw-alias-brand-primary: var(--dsw-alias-label-primary);', '--dsw-alias-brand-primary: #54453c;');
+    css = css.replace(/@media \(prefers-color-scheme: dark\)\s*\{\s*body\s*\{/, (m) => m + '\n    --dsw-alias-brand-primary: #ede6d8;');
+    css = recolorSvg(css);
+    put(f, css); sheets++;
+  }
+  report.push(`welcome window: startup skips it, ${sheets} stylesheets in the C2 palette, the whale wordmark replaced by the cube and the live name`);
 }
 
 // ---- patch 7: the first-run appearance is Light, the cream look of the Cammut console; Dark and System stay selectable

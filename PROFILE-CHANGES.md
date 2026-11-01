@@ -1,14 +1,20 @@
 # Changes outside this folder (2026-11-01, slice S022)
 
-These files belong to the Arc Harness data home (`C:\Users\danil\.dsh`). They are not in git. Each change has an archive or a script.
+These files belong to the Arc Harness data home (`C:\Users\danil\.dsh`) and to the installed app. They are not in git. Each change has an archive or a script.
 
 | Where | Change | How to undo |
 |---|---|---|
-| `profiles\web\cordis.patch.yml` | Default model is Radium HAL 1.0 (was a DeepSeek model through the Merge gateway). | Copy `.dsh\_archive-web-patch-20261101b.yml` back. |
-| `profiles\desktop\cordis.patch.yml` | The two `deepseek-official` entries leave the subagent model list. | Copy `.dsh\_archive-desktop-patch-20261101b.yml` back. |
+| `profiles\web\cordis.patch.yml` | Default model is Radium HAL 1.0 (was a DeepSeek model through the Merge gateway). The `skill-badge` row is `disabled: true` (the badge skill put a whale image and a `logo=deepseek` link into the agent's documents). | Copy `.dsh\_archive-web-patch-20261101b.yml` (model) or `_archive-web-patch-20261101c.yml` (badge) back. |
+| `profiles\desktop\cordis.patch.yml` | The two `deepseek-official` entries leave the subagent model list. The `skill-badge` row is `disabled: true`. | Copy `.dsh\_archive-desktop-patch-20261101b.yml` or `_archive-desktop-patch-20261101c.yml` back. |
 | `profiles\web\cordis.patch.yml` | A `ui-theme: preference: dark` block that an early version of `test/ui-crawl.mjs` wrote by mistake was removed again. The crawl now works on a copy and fails if a real profile file changes. | Not needed. |
-| Plugin packages in both profiles and `local-plugins` | Brand text, dead DeepSeek addresses, ink-colored icons, no npm registry check in `dsh-context` and `dsh-vision-router`. | `node brandtext/apply-profiles.mjs --restore` (originals in `brandtext/_originals.tar.xz`). |
+| `profiles\desktop\cordis.patch.yml` | A `ui-theme: preference: dark` block was written at 12:25 on 2026-11-01. The writer is unknown (no kit script writes this file; it may be the running app after a click on Dark). It is left alone because it is a saved Appearance choice. It overrides the Light first-run default. | Choose Light in Settings, General, Appearance. |
+| Plugin packages in both profiles, `local-plugins` and `local-gateway.mjs` | Brand text, dead DeepSeek addresses, ink-colored icons, no npm registry or GitHub check in `dsh-context` and `dsh-vision-router`. | `node brandtext/apply-profiles.mjs --restore` (originals in `brandtext/_originals.tar.xz`). |
 | `local-plugins\dsh-theme-pair` and its copies in both profiles | Skin layers (paper canvas, white cards, sidebar `#f4f2ed`), readable captions, hidden update badge. | `theme/make-arc-skin.mjs` keeps `_legacy-skins-20261101.tar.xz`. |
-| The installed app | `tools/install.mjs install` swaps `app.asar`, `icon.png`, `tray.ico` and removes `app-update.yml`. `rollback` undoes it. | `node tools/install.mjs rollback` |
+| `Programs\DeepSeek Harness\resources\app.asar.unpacked` (installed app) | `brandtext/apply-unpacked.mjs` removes repository and homepage links of the old vendor from the `package.json` files of the unpacked packages (2 files today). | `node brandtext/apply-unpacked.mjs --restore` (originals in `brandtext/_unpacked-originals/`, not in git). |
+| The installed app | `tools/install.mjs install` swaps `app.asar`, `icon.png`, `tray.ico` and removes `app-update.yml`. `rollback` undoes it. | `node tools/install.mjs rollback` (it does not undo the unpacked package files above). |
 
-Not changed (needs Danil's decision): the home folder name `.dsh`, the Documents folder `deepseek-harness`, the Electron settings folder, the `dsh` command, the exe and installer names, and the internal module names `@deepseek-ai/*` and `dsh-*`.
+## Boundary of this slice
+
+Done here: wording, addresses, icons, look, welcome window, connections. Not done here (decided for the rename slices ARC-RENAME-1 to -3): the lowercase command name `dsh` in help texts, the home folder `.dsh`, the Documents folder `deepseek-harness`, the Electron settings folder, the `dsh` command, the exe and installer names, and the internal names `@deepseek-ai/*`, `dsh-*`, `DSH_HOME`, `$DSH_...`, `dsh.keybindings`, the manifest key `dsh`. `test/independent-scan.mjs` counts the lowercase names so the rename slices have a number to bring to zero.
+
+Known limits: the Visualize plugin keeps its style id `whale` (the id is also a property name in its code); its label says Arc Harness and the id shows as a small tag until the plugin is renamed in ARC-RENAME-2. The plugin manager still shows a "Use mainland China mirror" button in one error dialog; it now selects the same public registry. The desktop shell was not started by any test: starting a packaged copy registers the `dsh://` link handler on the machine, so it is checked by hand after the install. the live network trace covers the Node host of the web profile only; the desktop shell (Electron main process, updater, menus) and the browser half are read from the code, not run. The screen test cannot open the desktop window.

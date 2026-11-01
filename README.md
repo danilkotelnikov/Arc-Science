@@ -21,9 +21,10 @@ This folder rebuilds the app archive from the pristine one, so every change is a
 | `tools/asar-cat.mjs` | Prints or lists files inside an archive. |
 | `lib/brandrules.mjs` | One rule set for brand text: DeepSeek, DSH and Whale wording becomes Arc Harness, and DeepSeek addresses become `arc-harness.invalid`. Real model names stay. The build rewrites with it and the tests check with it. |
 | `lib/iconcolor.mjs` | Recolors blue and purple icon fills to ink and warm grey. |
-| `brandtext/apply-profiles.mjs` | Applies the same rules and icon colors to the plugin packages of both profiles. `--restore` puts the originals back. |
+| `brandtext/apply-profiles.mjs` | Applies the same rules and icon colors to the plugin packages of both profiles, the local plugins and `local-gateway.mjs`. `--restore` puts the originals back. |
+| `brandtext/apply-unpacked.mjs` | Removes the old vendor's repository and homepage links from the `package.json` files in the installed app's unpacked folder. `--restore` puts the originals back. |
 | `theme/tune-arc-skin.mjs` | Second pass on the skin: paper canvas, white cards, sidebar `#f4f2ed`, readable captions, hidden update badge. |
-| `test/` | `asar-roundtrip.mjs` proves the writer. `build-check.mjs` checks the built archive. `ui-strings.mjs` finds DeepSeek, DSH and Whale wording in text a person reads (archive and profiles). `ui-crawl.mjs` opens every main screen in a headless browser in light and dark and checks words, blue, contrast and the first-run look. `no-deepseek-net.mjs` and `net-trace.cjs` find and trace connections to DeepSeek services. |
+| `test/` | `asar-roundtrip.mjs` proves the writer (run it with the pristine archive and a scratch folder). `build-check.mjs` checks the built archive, hashes included. `ui-strings.mjs` finds DeepSeek, DSH and Whale wording with the build rules; `independent-scan.mjs` does it again with its own patterns and counts the lowercase command and provider names that the rename slices will remove. `ui-crawl.mjs` opens every main screen in a headless browser in three separate phases (first run, Dark, Light), each on its own throwaway data home, and checks words, blue, contrast and the first-run look; a screen may be skipped only with a stated reason. `no-deepseek-net.mjs` and `net-trace.cjs` find and trace connections to DeepSeek services; `--live` starts the archive under test and fails on any host other than this machine. `profile-state.mjs` ties a test run to one state of the data home: it checks the hash list in `brandtext/profile-state.json` and the profile settings. |
 | `policies/` | Plugin names, descriptions, icons and documents. `apply.mjs` writes them; `test.mjs` checks them. |
 | `purge/` | Non-English files removed and Chinese text translated in the plugin packages. |
 | `linkstrip/` | Outside links and source fields removed from plugin documents and package metadata. |
@@ -41,3 +42,6 @@ node tools/install.mjs install      (close the app first)
 ## Licence
 
 The upstream code is MIT. Keep the licence and notice files inside the archive and the plugin folders. Geist is under the SIL Open Font License 1.1 (`brand/dist/GEIST-OFL.txt`).
+
+
+See `PROFILE-CHANGES.md` for every change made outside this folder and how to undo it.

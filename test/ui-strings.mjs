@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { allow, classify, dirtyMarkdownLines, literalRanges } from '../lib/brandrules.mjs';
+import { allow, classify, dirtyMarkdownLines, literalRanges, markEscapes } from '../lib/brandrules.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -41,7 +41,7 @@ export function surfaceOf(file, text) {
     }
   } else if (/\.(c|m)?js$/i.test(file)) {
     for (const { start, end } of literalRanges(text)) {
-      if (end - start > 2 && end - start < 4000) out.push(text.slice(start, end));
+      if (end - start > 2 && end - start < 4000) out.push(markEscapes(text.slice(start, end)));
     }
   }
   return out;
@@ -122,7 +122,13 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
   if (args.includes('--profiles')) {
     const home = path.join(os.homedir(), '.dsh');
     const dirs = [path.join(home, 'local-plugins'), path.join(home, 'profiles', 'web', 'node_modules'), path.join(home, 'profiles', 'desktop', 'node_modules')];
-    bad += report('profiles', scanDirs(dirs), args);
+    const res = scanDirs(dirs);
+    // scripts of the data home that serve a page or open a dialog
+    for (const f of [path.join(home, 'local-gateway.mjs')]) {
+      try { res.files++; res.hits.push(...scanFile(f, fs.readFileSync(f, 'utf8'))); } catch { /* absent */ }
+    }
+    if (res.files < 1000) { console.error(`profiles: only ${res.files} files scanned; the data home is not where it should be`); process.exit(2); }
+    bad += report('profiles', res, args);
   } else {
     const asar = args.find((a) => a.endsWith('.asar')) || path.join(root, 'build', 'app.asar');
     bad += report('archive ' + path.basename(asar), await scanArchive(asar), args);

@@ -1,6 +1,7 @@
 // Checks the built archive against the pristine one: every changed JS file still parses, no whale outline or old
 // product name is left in the changed code, and every file that did not change is byte-identical.
 // Run: node test/build-check.mjs [build/app.asar] <scratch dir>
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -56,6 +57,16 @@ for (const c of changed) {
   if (e && e.bytes !== c.buf.length) stale++;
 }
 check(stale === 0, 'runtime manifest sizes match the changed files');
+// every packed file under dsh/ that the manifest lists must match its listed hash (a same-length edit would show here)
+let hashBad = 0, listed = 0;
+for (const f of built.files) {
+  if (f.entry.unpacked || !f.path.startsWith('dsh/') || f.path === 'dsh/desktop-runtime.json') continue;
+  const e = byPath.get(f.path.slice(4));
+  if (!e) continue;
+  listed++;
+  if (crypto.createHash('sha256').update(built.read(f)).digest('hex') !== e.sha256) hashBad++;
+}
+check(listed > 10000 && hashBad === 0, `runtime manifest hashes match the packed files (${listed} files compared, ${hashBad} differ)`);
 const pj = JSON.parse(built.read(built.byPath.get('package.json')).toString('utf8'));
 check(!('dshMandatoryUpdatePolicy' in pj), 'no remote update policy in the app manifest');
 fs.rmSync(tmp, { recursive: true, force: true });

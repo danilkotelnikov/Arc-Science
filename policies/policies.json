@@ -535,7 +535,7 @@
       "Fragments are limited to 1000000 bytes by default.",
       "To fix a card, the model calls the update action with one exact replacement. It does not resend the markup.",
       "A larger tool becomes a standalone page. The conversation shows a launcher card that opens the page in a new tab.",
-      "Five styles exist: whale, editorial, paper, sketch and terminal. The default is whale.",
+      "Five styles exist: Arc Harness, editorial, paper, sketch and terminal. The default is Arc Harness.",
       "Your style notes in a Markdown file guide how the model writes cards. Only the first 4 KB of each file is read."
     ],
     "workflow": [

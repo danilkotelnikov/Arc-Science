@@ -13,6 +13,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { classify } from '../lib/brandrules.mjs';
+import { findIn } from './independent-scan.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -32,7 +33,11 @@ if (!phase) {
     try { reports.push(JSON.parse(fs.readFileSync(path.join(outDir, `report-${ph}.json`), 'utf8'))); } catch { bad++; }
   }
   const merged = { asar, failures: reports.flatMap((r) => r.failures), warnings: reports.flatMap((r) => r.warnings), phases: reports.map((r) => r.scheme) };
+  const lines = {};
+  for (const r of reports) for (const sc of Object.values(r.scheme)) for (const [n, v] of Object.entries(sc.screens || {})) (lines[n] ||= []).push(v.lines);
+  for (const [n, arr] of Object.entries(lines)) if (arr.length > 1 && Math.min(...arr) < 0.4 * Math.max(...arr)) merged.failures.push(`screen ${n}: the text read differs a lot between phases (${arr.join(', ')} lines)`);
   fs.writeFileSync(path.join(outDir, 'report.json'), JSON.stringify(merged, null, 1));
+  for (const f of merged.failures.filter((x) => x.startsWith('screen '))) console.log('FAIL ' + f);
   console.log(`all phases: failures ${merged.failures.length}, warnings ${merged.warnings.length}; report ${path.join(outDir, 'report.json')}`);
   process.exit(bad || merged.failures.length ? 1 : 0);
 }
@@ -44,7 +49,8 @@ const killTree = (pid) => { try { spawnSync('taskkill', ['/PID', String(pid), '/
 
 // ---- the server: the web profile served from the archive under test
 const unpacked = asar + '.unpacked';
-if (!fs.existsSync(unpacked)) fs.symlinkSync('C:/Users/danil/AppData/Local/Programs/DeepSeek Harness/resources/app.asar.unpacked', unpacked, 'junction');
+let madeUnpacked = false;
+if (!fs.existsSync(unpacked)) { fs.symlinkSync('C:/Users/danil/AppData/Local/Programs/DeepSeek Harness/resources/app.asar.unpacked', unpacked, 'junction'); madeUnpacked = true; }
 const serverLog = path.join(outDir, 'server.log');
 // a throwaway home keeps the settings, sessions and storages of the test apart from Danil's data;
 // only the plugin profiles are shared (read for plugins and config)
@@ -62,6 +68,15 @@ if (phase === 'dark' || phase === 'light') {
   fs.appendFileSync(cfg, `\n- id: ui-theme\n  name: "@deepseek-ai/dsh-client-ui-theme"\n  config:\n    preference: ${phase}\n`);
 }
 fs.symlinkSync(path.join(realProfile, 'node_modules'), path.join(testHome, 'profiles', 'web', 'node_modules'), 'junction');
+// Junctions are unlinked first and nothing is removed recursively while one is left (a recursive delete that follows a junction
+// would erase the real plugin packages). Every exit, early ones included, goes through here.
+async function cleanupHome() {
+  await new Promise((r) => setTimeout(r, 1200));
+  const link = path.join(testHome, 'profiles', 'web', 'node_modules');
+  try { fs.rmdirSync(link); } catch { /* absent or in use */ }
+  if (!fs.existsSync(link)) { try { fs.rmSync(testHome, { recursive: true, force: true }); } catch { /* in use */ } }
+  if (madeUnpacked) { try { fs.rmdirSync(unpacked); } catch { /* in use */ } }
+}
 const server = spawn(EXE, ['--expose-internals', `${asar}/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js`, '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', '0'],
   { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: testHome }, stdio: ['ignore', fs.openSync(serverLog, 'w'), fs.openSync(serverLog, 'a')], windowsHide: true });
 let url = null;
@@ -70,7 +85,7 @@ for (let i = 0; i < 90 && !url; i++) {
   const m = /http:\/\/127\.0\.0\.1:\d+\/\?token=\S+/.exec(fs.readFileSync(serverLog, 'utf8'));
   if (m) url = m[0];
 }
-if (!url) { killTree(server.pid); console.error('server did not start; see ' + serverLog); process.exit(2); }
+if (!url) { killTree(server.pid); await cleanupHome(); console.error('server did not start; see ' + serverLog); process.exit(2); }
 
 // ---- the browser (Chrome DevTools protocol over a plain WebSocket)
 const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-crawl-'));
@@ -80,7 +95,7 @@ for (let i = 0; i < 60 && !port; i++) {
   await sleep(500);
   try { port = +fs.readFileSync(path.join(profileDir, 'DevToolsActivePort'), 'utf8').split('\n')[0]; } catch { /* not yet */ }
 }
-if (!port) { killTree(server.pid); killTree(browser.pid); console.error('browser did not start'); process.exit(2); }
+if (!port) { killTree(server.pid); killTree(browser.pid); await cleanupHome(); console.error('browser did not start'); process.exit(2); }
 
 function connect(wsUrl) {
   const ws = new WebSocket(wsUrl);
@@ -153,7 +168,13 @@ const PAGE = `(() => {
     }
     return { blue, contrast };
   };
-  const clickAndWait = async (starts, ms = 1300) => { const b = find(starts); if (!b) return false; b.click(); await sleep(ms); return true; };
+  // wait while a loading skeleton is on the page (up to 15 s), then until the text stops changing
+  const settle = async () => {
+    for (let i = 0; i < 30 && document.querySelector('[class*="keleton"],[aria-busy="true"]'); i++) await sleep(500);
+    let last = -1;
+    for (let i = 0; i < 12; i++) { const n = document.body.innerText.length; if (n === last) return; last = n; await sleep(500); }
+  };
+  const clickAndWait = async (starts, ms = 1300) => { const b = find(starts); if (!b) return false; b.click(); await sleep(ms); await settle(); return true; };
   const dialogOpen = () => !!document.querySelector('[role=dialog]');
   const closeDialog = async () => { const c = [...document.querySelectorAll('[role=dialog] button')].find((b) => lab(b) === 'Close'); if (c) c.click(); await sleep(500); };
   const openSettings = async (section) => {
@@ -170,7 +191,7 @@ const PAGE = `(() => {
     b.click(); await sleep(1200); return true;
   };
   const bodyBg = () => getComputedStyle(document.body).backgroundColor;
-  window.__arc = { sleep, find, texts, colours, clickAndWait, dialogOpen, closeDialog, openSettings, chooseAppearance, bodyBg };
+  window.__arc = { settle, sleep, find, texts, colours, clickAndWait, dialogOpen, closeDialog, openSettings, chooseAppearance, bodyBg };
   return 'ready';
 })()`;
 
@@ -188,20 +209,24 @@ async function closeAll() {
 }
 
 // ---- the screens
+// Every screen must open. A screen may be marked optional only with a reason (it is absent on a fresh data home).
+// The screens that sit on the composer start from the home page (the Plugins page replaces it).
+const HOME = "__arc.clickAndWait('New session', 900)";
+const OPT_SETTINGS = 'the settings page appears only when the data home holds data of that plugin; a fresh test home has none';
 const SCREENS = [
-  { name: 'home', required: true, run: async () => true },
-  { name: 'model-menu', run: async () => evalIn(`__arc.clickAndWait('Select model')`) },
-  { name: 'plugins', required: true, run: async () => evalIn(`__arc.clickAndWait('Plugins')`) },
-  { name: 'automation', run: async () => evalIn(`__arc.clickAndWait('Automation tasks')`) },
-  { name: 'context-insights', run: async () => evalIn(`__arc.clickAndWait('Context Insights', 2500)`) },
-  { name: 'more', run: async () => evalIn(`__arc.clickAndWait('More')`) },
-  { name: 'search-sessions', run: async () => evalIn(`__arc.clickAndWait('Search sessions')`) },
-  { name: 'plus-menu', run: async () => evalIn(`__arc.clickAndWait('Add files or run commands')`) },
-  { name: 'access-mode', run: async () => evalIn(`__arc.clickAndWait('Access mode')`) },
-  { name: 'right-sidebar', run: async () => evalIn(`__arc.clickAndWait('Open right sidebar')`) },
+  { name: 'home', run: async () => true },
+  { name: 'model-menu', pre: HOME, run: async () => evalIn("__arc.clickAndWait('Select model')") },
+  { name: 'plugins', run: async () => evalIn("__arc.clickAndWait('Plugins')") },
+  { name: 'automation', run: async () => evalIn("__arc.clickAndWait('Automation tasks')") },
+  { name: 'context-insights', optional: 'the button appears only when the data home holds session history', run: async () => evalIn("__arc.clickAndWait('Context Insights', 2500)") },
+  { name: 'more', run: async () => evalIn("__arc.clickAndWait('More')") },
+  { name: 'search-sessions', run: async () => evalIn("__arc.clickAndWait('Search sessions')") },
+  { name: 'plus-menu', pre: HOME, run: async () => evalIn("__arc.clickAndWait('Add files or run commands')") },
+  { name: 'access-mode', pre: HOME, run: async () => evalIn("__arc.clickAndWait('Access mode')") },
+  { name: 'right-sidebar', pre: HOME, run: async () => evalIn("__arc.clickAndWait('Open right sidebar')") },
   ...['General', 'Models', 'Built-in plugins', 'Agent presets', 'Skills', 'Archived sessions', 'Visualize', 'Side card', 'Vision Router'].map((n) => ({
     name: 'settings-' + n.toLowerCase().replace(/[^a-z]+/g, '-'),
-    required: n === 'General' || n === 'Models',
+    optional: ['Archived sessions', 'Visualize', 'Side card'].includes(n) ? OPT_SETTINGS : undefined,
     run: async () => evalIn(`__arc.openSettings(${JSON.stringify(n)})`),
   })),
 ];
@@ -219,13 +244,14 @@ async function crawl(scheme, tag) {
   for (const s of SCREENS) {
     if (!(await closeAll())) warn(`${tag}: a dialog stayed open`);
     let ok = false;
-    try { ok = await s.run(); } catch (e) { warn(`${tag}/${s.name}: ${e.message}`); }
-    if (!ok) { if (s.required) fail(`${tag}/${s.name}: screen could not be opened`); else warn(`${tag}/${s.name}: not found`); continue; }
+    try { if (s.pre) await evalIn(s.pre); ok = await s.run(); } catch (e) { warn(`${tag}/${s.name}: ${e.message}`); }
+    if (!ok) { if (s.optional) warn(`${tag}/${s.name}: not present (${s.optional})`); else fail(`${tag}/${s.name}: screen could not be opened`); continue; }
     await sleep(500);
     const lines = await evalIn('__arc.texts()');
     const col = await evalIn('__arc.colours()');
     await shot(`${tag}-${s.name}`);
-    const dirty = lines.map((l) => [l, classify(l)]).filter(([, c]) => c);
+    // two word finders: the build rules and the independent scan (lower case command and provider names are the rename slices' work)
+    const dirty = lines.flatMap((l) => { const ids = [classify(l), ...findIn(l).filter((id) => id !== 'dsh word' && id !== 'deepseek word')].filter(Boolean); return ids.length ? [[l, ids[0]]] : []; });
     for (const [l, c] of dirty) fail(`${tag}/${s.name}: [${c}] ${l.slice(0, 100)}`);
     for (const b of col.blue) fail(`${tag}/${s.name}: blue ${b}`);
     const bad = col.contrast.filter((c) => c.ratio < 3);
@@ -267,10 +293,7 @@ try {
   killTree(browser.pid);
   if (!argv.includes('--keep')) killTree(server.pid);
   try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch { /* in use */ }
-  await sleep(1500);
-  const link = path.join(testHome, 'profiles', 'web', 'node_modules');
-  try { fs.rmdirSync(link); } catch { /* in use */ }
-  if (!fs.existsSync(link)) { try { fs.rmSync(testHome, { recursive: true, force: true }); } catch { /* in use */ } } // never descend into the junction
+  await cleanupHome();
   for (const [f, h] of realBefore) if (hashOf(path.join(realProfile, f)) !== h) fail(`the test changed the real profile file ${f}`);
   fs.writeFileSync(path.join(outDir, `report-${phase}.json`), JSON.stringify(report, null, 1));
 }
