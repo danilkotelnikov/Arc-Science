@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { openAsar, writeAsar } from '../lib/asar.mjs';
 import { allow, rewriteFile, rewriteHosts } from '../lib/brandrules.mjs';
-import { recolorSvg, recolorBlueAttrsInScript, recolorBlueTokens } from '../lib/iconcolor.mjs';
+import { recolorSvg, recolorBlueAttrsInScript, recolorBlueTokens, replaceVendorBlue } from '../lib/iconcolor.mjs';
 import { swapPicture } from '../lib/whaleimg.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -329,6 +329,22 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
   }
   must(svgs > 5 && scripts >= 2, `icon recolor touched svg ${svgs} and script ${scripts} files`);
   report.push(`icons: ${svgs} SVG files and ${scripts} scripts lose their blue and purple fills`);
+}
+
+// ---- patch 8a: the vendor's brand blue written as a literal (CSS fallbacks, outlines, link colours) becomes the Arc Harness primary
+{
+  const skip = new RegExp(allow.archiveSkip.join('|'));
+  let n = 0;
+  for (const f of src.files) {
+    if (f.entry.unpacked || f.entry.size > 6e6 || skip.test(f.path)) continue;
+    if (overrides.has(f.path) && overrides.get(f.path) === null) continue;
+    if (!/\.(c|m)?js$|\.css$|\.html?$|\.json$/i.test(f.path)) continue;
+    const before = text(f.path);
+    if (!/#4d6bfe/i.test(before)) continue;
+    put(f.path, replaceVendorBlue(before));
+    n++;
+  }
+  report.push(`brand blue: ${n} files had the vendor's blue as a literal; it is now the Arc Harness primary`);
 }
 
 // ---- patch 8b: PNG files that hold the whale (found by their bytes, brand/pictures.json). Pictures inside scripts (data URIs, inline

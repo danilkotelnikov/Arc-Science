@@ -97,10 +97,7 @@ def main() -> int:
     for px in (512, 64, 32):
         icon.resize((px, px), Image.Resampling.LANCZOS).save(tiles / f'tile-{px}.png', optimize=True)
     # a 28 px glyph: the cube alone in ink on a clear background (the old picture was a one-colour mark)
-    glyph = Image.new('RGBA', (28, 28), (0, 0, 0, 0))
-    small = Image.open(OUT / 'icon.png').convert('RGBA').crop((100, 100, 924, 924)).resize((28, 28), Image.Resampling.LANCZOS)
-    glyph.alpha_composite(small)
-    glyph.save(tiles / 'glyph-28.png', optimize=True)
+    subprocess.run([str(RASTERISER), str(OUT / 'cube-as.svg'), str(tiles / 'glyph-28.png'), '28'], check=True)   # transparent background
     # the 726x120 badge: cube and the product name on paper
     from PIL import ImageDraw, ImageFont
     badge = Image.new('RGBA', (726, 120), PAPER)

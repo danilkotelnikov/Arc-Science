@@ -27,6 +27,7 @@ import os
 import re
 import struct
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -34,16 +35,20 @@ HERE = Path(__file__).resolve().parent
 KIT = HERE.parent
 CATALOG = KIT / 'brand' / 'pictures.json'
 DIST = KIT / 'brand' / 'dist'
-RASTER_EXT = {'.png', '.webp', '.ico', '.gif', '.jpg', '.jpeg', '.bmp'}
+RASTER_EXT = {'.png', '.webp', '.ico', '.gif', '.jpg', '.jpeg', '.bmp', '.avif'}
 TEXT_EXT = {'.js', '.mjs', '.cjs', '.css', '.html', '.htm', '.json', '.svg', '.md', '.yml', '.yaml', '.txt', '.ts'}
 MAX_IMAGE, MAX_TEXT = 24 * 2**20, 14 * 2**20
 DATA_URI = re.compile(rb'data:image\\?/(png|webp|gif|jpe?g|x-icon|vnd\.microsoft\.icon|svg\+xml)(?:;charset=[\w-]+)?;base64,([A-Za-z0-9+/=]+)')
 # skipped on purpose: the translation tool of this kit keeps old copies of plugin files; no profile loads it and it leaves with the rename slices
 SKIP = re.compile(r'[\\/]local-plugins[\\/]dsh-english[\\/]')
-FIXTURE_DIR = re.compile(r'[\\/](test|tests|__tests__|fixtures|fonts|demo|examples?)[\\/]', re.I)
+# (the DevTools icon folder of the inspector package is third-party artwork: generic icons, never the whale; the whale list is still checked first)
+FIXTURE_DIR = re.compile(r'[\\/](test|tests|__tests__|fixtures|fonts|demo|examples?)[\\/]|[\\/]lib[\\/]devtools[\\/]', re.I)
 # path fragments of the whale drawn as vector art (the mark as used in the original app and in its plugins)
 FINGERPRINTS = ('c-.254-.124-.364.113', 'M22.9168 1.43018', '11.365 11.365 0 00-.689-.471')
-BLUE = {'#4d6bfe', '#4a5699', '#6277ba', '#324de2', '#69b9ff'}   # the vendor blue, two plugin blues and the blue of the subagent icons
+BLUE = {'#4d6bfe', '#4a5699', '#6277ba', '#324de2', '#69b9ff', '#658eff', '#a23ae7'}   # the vendor blue, two plugin blues, the blues and the purple of the plugin artwork
+BLUE_TEXT = re.compile('|'.join(sorted(re.escape(c) for c in BLUE)) + r'|rgb\(\s*101\s*,\s*142\s*,\s*255\s*\)', re.I)   # in scripts, styles and pages as well
+BLUE_TEXT_B = re.compile(BLUE_TEXT.pattern.encode(), re.I)
+DATA_SVG_PLAIN = re.compile(rb"""data:image\\?/svg\+xml(?:;charset=[\w-]+)?,([^"'`)\s]{20,})""")   # an svg data URI that is not base64
 
 
 def asar_files(path: Path) -> Iterator[tuple[str, bytes]]:
@@ -97,8 +102,8 @@ def classify_svg(text: str, digest: str, cat: Catalog) -> dict[str, str] | None:
     for fp in FINGERPRINTS:
         if fp in text:
             return {'kind': 'whale', 'why': f'svg path {fp!r}'}
-    for m in re.finditer(r'#[0-9a-fA-F]{6}\b', text):
-        if m.group(0).lower() in BLUE:
+    for m in re.finditer(r'#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?\b', text):   # also #rrggbbaa
+        if m.group(0).lower()[:7] in BLUE:
             return {'kind': 'blue', 'why': f'svg colour {m.group(0)}'}
     return None
 
@@ -153,8 +158,18 @@ def scan(sources: Iterator[tuple[str, bytes]], cat: Catalog, survey: bool = Fals
                     if fp.encode() in buf:
                         found.append({'where': name, 'how': 'inline svg', 'kind': 'whale', 'why': f'svg path {fp!r}'})
                         break
+                bm = BLUE_TEXT_B.search(buf)   # the artwork colours of the vendor in script, style and page text (gradient stops, rgb() in gradients)
+                if bm:
+                    found.append({'where': name, 'how': 'text', 'kind': 'blue', 'why': f'colour {bm.group(0).decode()}'})
             if b'data:image' not in buf:
                 continue
+            for m in DATA_SVG_PLAIN.finditer(buf):
+                stats['svg data uris'] += 1
+                if survey:
+                    continue
+                res = classify_svg(urllib.parse.unquote(m.group(1).decode('utf-8', 'replace')), sha(m.group(1)), cat)
+                if res:
+                    found.append({'where': name, 'how': 'svg data uri (not base64)', 'sha256': sha(m.group(1)), **res})
             for m in DATA_URI.finditer(buf):
                 kind = m.group(1).decode()
                 try:
@@ -196,6 +211,14 @@ def self_check(cat: Catalog) -> list[str]:
             errs.append(f'svg sample {text!r}: expected {kind}, got {res}')
     if (classify_svg('<svg/>', sha(b'preview'), probe) or {}).get('kind') != 'preview':
         errs.append('known preview not recognised')
+    if not BLUE_TEXT_B.search(b'd.jsx("stop",{stopColor:"#69B9FF"})') or not BLUE_TEXT_B.search(b'conic-gradient(from 90deg, rgb(101, 142, 255) 62deg)'):
+        errs.append('vendor blue in script text not detected')
+    if BLUE_TEXT_B.search(b'stopColor:"#E2E2E2"'):
+        errs.append('plain grey flagged as blue')
+    if (classify_svg('<rect fill="#4D6BFEcc"/>', sha(b'x'), probe) or {}).get('kind') != 'blue':
+        errs.append('blue with alpha (#rrggbbaa) not detected')
+    if '.avif' not in RASTER_EXT or not DATA_SVG_PLAIN.search(b'x="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%22%3E%3C%2Fsvg%3E"'):
+        errs.append('avif files or plain svg data URIs not read')
     return errs
 
 
@@ -206,8 +229,8 @@ def main() -> int:
     ap.add_argument('--survey', action='store_true')
     ap.add_argument('--self-check', action='store_true')
     ap.add_argument('--json')
-    ap.add_argument('--floor-raster', type=int, default=0, help='fail (2) when fewer raster pictures were read')
-    ap.add_argument('--floor-text', type=int, default=0, help='fail (2) when fewer text files were read')
+    ap.add_argument('--floor-raster', type=int, default=1, help='fail (2) when fewer raster pictures were read (default 1: a scan that read nothing never passes)')
+    ap.add_argument('--floor-text', type=int, default=1, help='fail (2) when fewer text files were read (default 1)')
     ap.add_argument('--expect-findings', type=int, default=0, help='positive control: fail (2) unless at least this many findings')
     a = ap.parse_args()
     cat = Catalog()

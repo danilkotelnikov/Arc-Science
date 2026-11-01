@@ -11,7 +11,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { allow, rewriteFile, DEAD_HOST } from '../lib/brandrules.mjs';
-import { recolorSvg, recolorBlueAttrsInScript } from '../lib/iconcolor.mjs';
+import { recolorSvg, recolorBlueAttrsInScript, replaceVendorBlue } from '../lib/iconcolor.mjs';
 import { swapPicture } from '../lib/whaleimg.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -139,7 +139,7 @@ const consider = (p) => {
     if (rep) changed.push({ p, after: rep });
     return;
   }
-  if (skip.test(norm(p)) || KEEP.test(p) || !/\.(c|m)?js$|\.json$|\.md$|\.html?$|\.txt$|\.svg$|\.ya?ml$|\.ps1$|\.(c|m)?tsx?$/i.test(p)) return;
+  if (skip.test(norm(p)) || KEEP.test(p) || !/\.(c|m)?js$|\.json$|\.md$|\.html?$|\.css$|\.txt$|\.svg$|\.ya?ml$|\.ps1$|\.(c|m)?tsx?$/i.test(p)) return;
   let st; try { st = fs.statSync(p); } catch { return; }
   if (st.size > 12e6) return;   // (profile packages carry bundled libraries of 7 MB that also hold the plugin's own descriptions)
   scanned++;
@@ -148,6 +148,8 @@ const consider = (p) => {
   if (VISUALIZE_FILES.test(p)) after = renameStyleId(after);
   // inline SVG icons in plugin scripts: blue and purple fills become ink, as in the app archive
   if (/\.(c|m)?js$/i.test(p)) after = recolorBlueAttrsInScript(after);
+  // the vendor's brand blue as a literal (CSS fallbacks, outlines) becomes the Arc Harness primary
+  if (/\.(c|m)?js$|\.css$|\.html?$|\.json$/i.test(p)) after = replaceVendorBlue(after);
   for (const [re, pairs] of FIXES) if (re.test(p)) for (const [from, to] of pairs) { if (!after.includes(from)) { if (after.includes(to)) continue; console.error(`FIX not found in ${p}: ${from}`); process.exit(1); } after = after.split(from).join(to); }
   // plugins that look for a newer version at the public npm registry and at GitHub (the two helper plugins, and every plugin-updater or
   // update-check script): those checks are off. Installing a plugin by name stays a user action.
