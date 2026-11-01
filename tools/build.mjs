@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { openAsar, writeAsar } from '../lib/asar.mjs';
 import { allow, rewriteFile, rewriteHosts } from '../lib/brandrules.mjs';
 import { recolorSvg, recolorBlueAttrsInScript, recolorBlueTokens } from '../lib/iconcolor.mjs';
+import { swapPicture } from '../lib/whaleimg.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.resolve(process.argv[2] || path.join(root, 'build', 'app.asar'));
@@ -328,6 +329,20 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
   }
   must(svgs > 5 && scripts >= 2, `icon recolor touched svg ${svgs} and script ${scripts} files`);
   report.push(`icons: ${svgs} SVG files and ${scripts} scripts lose their blue and purple fills`);
+}
+
+// ---- patch 8b: PNG files that hold the whale (found by their bytes, brand/pictures.json). Pictures inside scripts (data URIs, inline
+// SVG marks, the plugin manager's previews, the blue subagent icons) are swapped by patch 6 through lib/brandrules.mjs.
+{
+  let png = 0;
+  for (const f of src.files) {
+    if (f.entry.unpacked || !/\.png$/i.test(f.path)) continue;
+    if (overrides.has(f.path) && overrides.get(f.path) === null) continue;
+    const rep = swapPicture(overrides.get(f.path) ?? src.read(f));
+    if (rep) { put(f.path, rep); png++; }
+  }
+  must(png >= 1, 'no whale PNG file found in the archive: the picture list and the archive disagree');
+  report.push(`pictures: ${png} PNG file(s) with the whale replaced by cube pictures`);
 }
 
 // ---- patch 9: no connection to DeepSeek services

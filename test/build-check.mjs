@@ -138,6 +138,12 @@ const bundle = get(built, DS + 'dsh-web-frontend/dist/assets/index-BXV-oxvX.js')
 const gA = bundle.slice(bundle.indexOf('function gA('), bundle.indexOf('function vA('));
 check(gA.length > 20 && gA.includes(JSON.stringify(brand.leftAS)) && !/e>32/.test(gA), 'logo mark gA returns the AS cube at every size (no size switch)');
 for (const f of ['favicon.svg', 'favicon-dark.svg']) check(get(built, DS + 'dsh-web-frontend/dist/' + f).includes(`d="${brand.leftAS}"`), `${f} carries the AS left face`);
+// the raster logo files (app icon, tray icon) and the SVG files of brand/dist match the committed hash list, so a plain-cube tile cannot slip in
+{
+  const sums = fs.readFileSync(path.join(root, 'brand', 'dist', 'SHA256SUMS.txt'), 'utf8').split(/\r?\n/).filter(Boolean).map((l) => l.split(/\s+/));
+  const off = sums.filter(([h, f]) => crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'brand', 'dist', f))).digest('hex') !== h).map(([, f]) => f);
+  check(sums.length >= 7 && off.length === 0, `brand/dist files match brand/dist/SHA256SUMS.txt (${sums.length} files${off.length ? ', differ: ' + off.join(', ') : ''}); icon.png and tray.ico carry the AS cube`);
+}
 
 // (e) PowerShell help text of the sandbox ACL script says Arc Harness, not DSH
 const ps1 = get(built, DS + 'dsh-sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/scripts/diagnose-windows-sandbox-acl.ps1');

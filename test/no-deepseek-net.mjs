@@ -246,6 +246,10 @@ for (const p of ['web', 'desktop']) counts['profile ' + p] = scanDir('profile ' 
 counts['local plugins'] = scanDir('local plugin', path.join(home, '.dsh', 'local-plugins'), hits, /^(?:backups|node_modules|\.git)$/);
 const installed = path.join(installDir, 'resources', 'runtime');
 if (fs.existsSync(installed)) counts['installed runtime'] = scanDir('installed', installed, hits);
+// floors (about 65 % of what was read on 2026-11-01): a source that was not read must not pass as "0 findings"
+const FLOORS = { archive: 10000, 'profile web': 12000, 'profile desktop': 12000, 'local plugins': 30 };
+const lowSources = Object.entries(FLOORS).filter(([k, v]) => (counts[k] ?? 0) < v).map(([k]) => k);
+if (lowSources.length) { console.error('FAIL: too few files read from ' + lowSources.join(', ') + ' (floors ' + JSON.stringify(FLOORS) + ')'); process.exitCode = 1; }
 
 const strict = flag('--strict');
 const bad = hits.filter((h) => !h.allowed && (strict || h.cls !== 'docs'));

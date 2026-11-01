@@ -90,6 +90,82 @@ def main() -> int:
     (OUT / 'geist.css').write_text('\n'.join(faces) + '\n', encoding='utf-8')
     lic = re.search(r'<!--\s*(Fonts embedded in this file.*?)-->', html, re.S)
     (OUT / 'GEIST-OFL.txt').write_text(lic.group(1).strip() + '\n' if lic else 'Geist: SIL Open Font License 1.1\n', encoding='utf-8')
+    # pictures that take the place of the old vendor's mark where an app or plugin file holds it as a PNG (lib/whaleimg.mjs picks by size)
+    tiles = OUT / 'tiles'
+    tiles.mkdir(exist_ok=True)
+    icon = Image.open(OUT / 'icon.png').convert('RGBA')
+    for px in (512, 64, 32):
+        icon.resize((px, px), Image.Resampling.LANCZOS).save(tiles / f'tile-{px}.png', optimize=True)
+    # a 28 px glyph: the cube alone in ink on a clear background (the old picture was a one-colour mark)
+    glyph = Image.new('RGBA', (28, 28), (0, 0, 0, 0))
+    small = Image.open(OUT / 'icon.png').convert('RGBA').crop((100, 100, 924, 924)).resize((28, 28), Image.Resampling.LANCZOS)
+    glyph.alpha_composite(small)
+    glyph.save(tiles / 'glyph-28.png', optimize=True)
+    # the 726x120 badge: cube and the product name on paper
+    from PIL import ImageDraw, ImageFont
+    badge = Image.new('RGBA', (726, 120), PAPER)
+    badge.alpha_composite(icon.resize((92, 92), Image.Resampling.LANCZOS), (24, 14))
+    font = next((ImageFont.truetype(f, 46) for f in (r'C:/Windows/Fonts/segoeuib.ttf', r'C:/Windows/Fonts/arialbd.ttf') if Path(f).exists()), ImageFont.load_default())
+    ImageDraw.Draw(badge).text((132, 60), 'Arc Harness', font=font, fill=INK, anchor='lm')
+    badge.save(tiles / 'badge-726x120.png', optimize=True)
+    # the plugin manager shows one preview picture per bundled plugin; the originals carry the old vendor's mark and blue, so two
+    # replacements are drawn here (640x300, live text, ink and warm grey). The Chinese copies of the originals map to the same files.
+    previews = OUT / 'previews'
+    previews.mkdir(exist_ok=True)
+
+    def cube_at(x: float, y: float, size: float, fill: str) -> str:
+        paths = ''.join(f'<path d="{d}" fill="{fill}" fill-rule="evenodd"/>' for d in (as_top, as_left, as_right))
+        return f'<svg x="{x}" y="{y}" width="{size}" height="{size}" viewBox="{VIEW}">{paths}</svg>'
+
+    def pill(x: float, y: float, k: float) -> str:
+        w, h = 168 * k, 26 * k
+        return (f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{4 * k}" fill="#54453c"/>'
+                f'<rect x="{x + 3 * k}" y="{y + 3 * k}" width="{20 * k}" height="{20 * k}" rx="{4 * k}" fill="{PAPER}"/>'
+                + cube_at(x + 4.5 * k, y + 4.5 * k, 17 * k, INK)
+                + f'<text x="{x + 30 * k}" y="{y + 17 * k}" font-family="system-ui,Segoe UI,sans-serif" font-size="{11 * k}" fill="#ffffff">powered by <tspan font-weight="700">Arc Harness</tspan></text>')
+
+    sans, serif = 'system-ui,Segoe UI,sans-serif', 'Georgia,Times New Roman,serif'
+
+    def card(x: float, y: float, w: float, h: float) -> str:
+        return f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="10" fill="#ffffff" stroke="#e4e0d6"/>'
+
+    badge = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 300"><title>Arc Harness badge</title>'
+             f'<rect width="640" height="300" fill="#f4f2ed"/>'
+             f'<text x="24" y="84" font-family="{serif}" font-size="20" fill="#26231f">A signature for your work</text>'
+             f'<text x="24" y="104" font-family="{sans}" font-size="10" fill="#75736c">Docs, projects, pull requests</text>'
+             + card(24, 138, 262, 64) + pill(52, 157, 1.0)
+             + card(340, 26, 272, 248)
+             + f'<text x="364" y="62" font-family="{sans}" font-size="9" fill="#75736c">README.md</text>'
+             f'<text x="364" y="96" font-family="{serif}" font-size="20" fill="#26231f">Project notes</text>'
+             f'<text x="364" y="122" font-family="{sans}" font-size="10" fill="#54453c">Plan, build, and document</text>'
+             f'<text x="364" y="137" font-family="{sans}" font-size="10" fill="#54453c">with Arc Harness.</text>'
+             f'<line x1="364" y1="154" x2="588" y2="154" stroke="#e4e0d6"/>'
+             + pill(364, 172, 0.9) + '</svg>\n')
+    (previews / 'badge.svg').write_text(badge, encoding='utf-8')
+
+    bars = [10, 18, 28, 14, 36, 24, 44, 30, 50, 34, 56, 40, 52, 36, 46, 28, 40, 22, 32, 16, 24, 12, 18, 10]
+    wave = ''.join(f'<rect x="{48 + i * 9}" y="{175 - h / 2}" width="4" height="{h}" rx="2" fill="#54453c"/>' for i, h in enumerate(bars))
+    voice = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 300"><title>Voice input</title>'
+             f'<rect width="640" height="300" fill="#f4f2ed"/>'
+             f'<text x="24" y="60" font-family="{serif}" font-size="22" fill="#26231f">Speak your thoughts.</text>'
+             f'<text x="24" y="80" font-family="{sans}" font-size="10" fill="#75736c">Local voice transcription</text>'
+             + card(24, 118, 268, 120).replace('#ffffff', '#ece9e2')
+             + f'<text x="40" y="140" font-family="{sans}" font-size="9" fill="#75736c">Speech</text>' + wave
+             + f'<path d="M304 178h22m-7-6 7 6-7 6" fill="none" stroke="#a89f94" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
+             + card(344, 104, 268, 150)
+             + f'<text x="362" y="128" font-family="{sans}" font-size="9" fill="#75736c">Transcript</text>'
+             f'<text x="362" y="160" font-family="{serif}" font-size="18" fill="#26231f">Project notes</text>'
+             f'<text x="362" y="184" font-family="{sans}" font-size="10" fill="#54453c">Capture the week’s progress</text>'
+             f'<text x="362" y="199" font-family="{sans}" font-size="10" fill="#54453c">and keep the next steps.</text>'
+             f'<line x1="362" y1="214" x2="594" y2="214" stroke="#e4e0d6"/></svg>\n')
+    (previews / 'voice.svg').write_text(voice, encoding='utf-8')
+
+    # hash list of the logo files: test/build-check.mjs compares against it, so a replaced icon is noticed
+    import hashlib
+    names = ('icon.png', 'tray.ico', 'cube-as.svg', 'cube-mark.svg', 'favicon.svg', 'favicon-dark.svg', 'brand.json',
+             'tiles/tile-512.png', 'tiles/tile-64.png', 'tiles/tile-32.png', 'tiles/glyph-28.png', 'tiles/badge-726x120.png',
+             'previews/badge.svg', 'previews/voice.svg')
+    (OUT / 'SHA256SUMS.txt').write_text(''.join(f'{hashlib.sha256((OUT / n).read_bytes()).hexdigest()}  {n}\n' for n in names), encoding='utf-8')
     print(f'wrote {len(list(OUT.iterdir()))} files to {OUT}')
     return 0
 

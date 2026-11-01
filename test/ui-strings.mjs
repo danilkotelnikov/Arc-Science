@@ -147,6 +147,6 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
     if (res.files < FLOOR_FILES) { console.error(`archive: only ${res.files} files scanned (floor ${FLOOR_FILES}); the scan did not read what it should`); process.exit(2); }
     bad += report('archive ' + path.basename(asar), res, args);
   }
-  console.log('skipped by pattern: ' + (Object.entries(SKIP_COUNT).map(([s, n]) => `${n} x ${s}`).join(' | ') || 'none'));
+  console.log('skipped by pattern: ' + (Object.entries(SKIP_COUNT).map(([s, n]) => `${n} x ${s} (${String(reasons[s] || '').slice(0, 70)})`).join(' | ') || 'none'));
   process.exit(bad ? 1 : 0);
 }

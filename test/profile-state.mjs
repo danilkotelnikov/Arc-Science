@@ -57,15 +57,40 @@ for (const prof of ['web', 'desktop']) {
   check(!ids.some((id) => /whale|deepseek|dsh/i.test(id)), `${prof} Visualize: no style id carries an old brand word (${ids.join(', ')})`);
 }
 
-// 4. no update check at the public registry or at GitHub in the two helper plugins
+// 4. no update check at the public registry or at GitHub: the two helper plugins (every script of their lib folder) and every
+//    plugin-updater or update-check script of any package in the profile (the two @michengai plugins carry such scripts)
+const REGISTRY = /registry\.npm(?:js\.org|mirror\.com)|api\.github\.com/;
 for (const prof of ['web', 'desktop']) {
-  let found = [];
-  for (const pkg of ['dsh-context', 'dsh-vision-router']) {
-    const dir = path.join(dsh, 'profiles', prof, 'node_modules', pkg, 'lib');
-    const walk = (d) => { let e; try { e = fs.readdirSync(d, { withFileTypes: true }); } catch { return; } for (const x of e) { const p = path.join(d, x.name); if (x.isDirectory()) walk(p); else if (/\.(c|m)?js$/.test(x.name)) { const t = fs.readFileSync(p, 'utf8'); if (/registry\.npm(?:js\.org|mirror\.com)|api\.github\.com/.test(t)) found.push(path.relative(dsh, p)); } } };
-    walk(dir);
-  }
-  check(found.length === 0, `${prof}: the helper plugins name neither the public registry nor GitHub${found.length ? ' (' + found.slice(0, 3).join(', ') + ')' : ''}`);
+  const found = [];
+  let updaters = 0;
+  const walk = (d, depth, every) => {
+    let e; try { e = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const x of e) {
+      const p = path.join(d, x.name);
+      if (x.isDirectory()) { if (x.name === '.pnpm' || depth > 12) continue; walk(p, depth + 1, every); continue; }
+      const isUpdater = /^(?:plugin-updater|update-check)\.(?:c|m)?js$/.test(x.name);
+      if (!(isUpdater || (every && /\.(c|m)?js$/.test(x.name)))) continue;
+      if (isUpdater) updaters++;
+      if (REGISTRY.test(fs.readFileSync(p, 'utf8'))) found.push(path.relative(dsh, p));
+    }
+  };
+  const nm = path.join(dsh, 'profiles', prof, 'node_modules');
+  walk(nm, 0, false);
+  for (const pkg of ['dsh-context', 'dsh-vision-router']) walk(path.join(nm, pkg, 'lib'), 0, true);
+  check(found.length === 0 && updaters >= 3, `${prof}: no update script and no helper plugin script names the public registry or GitHub (${updaters} updater scripts read)${found.length ? ': ' + found.slice(0, 3).join(', ') : ''}`);
+}
+
+// 4b. sentences a person reads: the manager plugins show no registry address in their update command, and the Vision Router
+//     settings text names no provider id of the old vendor (the ids stay in the plugin code)
+for (const prof of ['web', 'desktop']) {
+  const nm = path.join(dsh, 'profiles', prof, 'node_modules');
+  const managers = ['dsh-archive-manager', 'dsh-skills-manager'].map((n) => path.join(nm, '@michengai', n, 'lib', 'client.js'));
+  const withRegistry = managers.filter((f) => /--registry=https?:\/\/registry\.npmjs\.org/.test(fs.readFileSync(f, 'utf8')));
+  check(withRegistry.length === 0, `${prof}: the manager plugins' update command names no registry address${withRegistry.length ? ': ' + withRegistry.map((f) => path.basename(path.dirname(path.dirname(f)))).join(', ') : ''}`);
+  const vr = fs.readFileSync(path.join(nm, 'dsh-vision-router', 'lib', 'client.js'), 'utf8');
+  // sentences only: the code keeps ids such as 'deepseek-official' as plain strings (a route name, a provider group id)
+  const ids = [/llm-deepseek/, /deepseek-official\/deepseek/, /(?:over|rebuilds|reconstructs) deepseek-official/].filter((re) => re.test(vr)).map(String);
+  check(ids.length === 0, `${prof}: the Vision Router settings text names no provider id of the old vendor${ids.length ? ' (found ' + ids.join(', ') + ')' : ''}`);
 }
 
 // 5. the theme plugin copies equal the tested copy

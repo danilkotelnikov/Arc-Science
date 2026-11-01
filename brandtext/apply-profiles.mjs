@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { allow, rewriteFile, DEAD_HOST } from '../lib/brandrules.mjs';
 import { recolorSvg, recolorBlueAttrsInScript } from '../lib/iconcolor.mjs';
+import { swapPicture } from '../lib/whaleimg.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const home = path.join(os.homedir(), '.dsh');
@@ -111,9 +112,33 @@ const FIXES = [
   // the version badge on the side card shows the package name in capitals; the package id stays
   [/dsh-better-sidebar[\\/]lib[\\/]client\.js$/, [['children: "DSH-better-sidebar"', 'children: "better-sidebar"']]],
   [/dsh-vision-router[\\/]lib[\\/]official-deepseek-catalog\.js$/, [['the official Arc Harness catalog', 'the official DeepSeek model catalog']]],
+  [/dsh-vision-router[\\/]index\.js$/, [['the official Arc Harness catalog is not available', 'the official DeepSeek model catalog is not available']]],
   [/@nagi-ovo[\\/]dsh-visualize[\\/]lib[\\/](?:index|client)\.js$/, [['"Arc Harness · Arc Harness (default)"', '"Arc Harness (default)"']]],
+  // Vision Router settings text named the vendor's provider ids in sentences a person reads; the ids stay in the code (QA round 3)
+  [/dsh-vision-router[\\/]lib[\\/]client\.js$/, [
+    ['for example deepseek-official/deepseek-v4-pro', 'for example my-provider/my-model'],
+    ['e.g. deepseek-official/deepseek-v4-pro', 'e.g. my-provider/my-model'],
+    ['inputModalities: [text, image] in llm-deepseek and reload', 'inputModalities: [text, image] in the built-in model provider and reload'],
+    ['llm-deepseek inputModalities: [text, image]', 'the built-in model provider inputModalities: [text, image]'],
+    ['no longer takes over or rebuilds deepseek-official, nor does it require you to disable llm-deepseek.', 'no longer takes over or rebuilds the built-in model provider, nor does it require you to disable it.'],
+    ['Please re-enable llm-deepseek, then process', 'Please re-enable the built-in model provider, then process'],
+    ['never takes over or reconstructs deepseek-official, nor ', 'never takes over or reconstructs the built-in model provider, nor '],
+    ["'asks you to disable llm-deepseek. Custom routes", "'asks you to disable it. Custom routes"],
+    ['Re-enable llm-deepseek, then use', 'Re-enable the built-in model provider, then use'],
+  ]],
+  // the command shown for a manual plugin update named the public npm registry
+  [/@michengai[\\/]dsh-archive-manager[\\/]lib[\\/]client\.js$/, [['add ${r}@${i} --registry=https://registry.npmjs.org/', 'add ${r}@${i}']]],
+  [/@michengai[\\/]dsh-skills-manager[\\/]lib[\\/]client\.js$/, [['add ${t}@${d} --registry=https://registry.npmjs.org/', 'add ${t}@${d}']]],
 ];
 const consider = (p) => {
+  // PNG pictures that hold the whale are found by their bytes (brand/pictures.json) and replaced by cube pictures
+  if (/\.png$/i.test(p) && !skip.test(norm(p)) && !KEEP.test(p)) {
+    let st; try { st = fs.statSync(p); } catch { return; }
+    if (st.size > 12e6) return;
+    const rep = swapPicture(fs.readFileSync(p));
+    if (rep) changed.push({ p, after: rep });
+    return;
+  }
   if (skip.test(norm(p)) || KEEP.test(p) || !/\.(c|m)?js$|\.json$|\.md$|\.html?$|\.txt$|\.svg$|\.ya?ml$|\.ps1$|\.(c|m)?tsx?$/i.test(p)) return;
   let st; try { st = fs.statSync(p); } catch { return; }
   if (st.size > 12e6) return;   // (profile packages carry bundled libraries of 7 MB that also hold the plugin's own descriptions)

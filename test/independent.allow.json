@@ -9,7 +9,7 @@
   ],
   "commands": [
     "(?:pnpm|npx|npm|node|bun|sudo|run|then|use|exec|execute|launch|type) dsh(?= )",
-    "(?<![\\w-])dsh(?= (?:--|plugin\\b|serve\\b|profile (?:list|add|remove|new)|web --|web\\b[^:]))",
+    "(?<![\\w-])dsh(?= (?:--|plugin\\b|serve\\b|profile (?:list|add|remove|new)|web --|(?:web|tui|rescue|headless|desktop|acp|sdk|version)\\b[^:]))",
     "dsh plugin(?=\\$\\{)",
     "(?:Get-Command|command -v|which|where) dsh",
     "dsh (?:web|desktop): ",

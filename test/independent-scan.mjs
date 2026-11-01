@@ -28,8 +28,8 @@ const PATTERNS = [
   ['Whale', /(?<![A-Za-z0-9_])(?:Whales?|WHALES?)(?![A-Za-z0-9_])/], // a camel-case class name such as runningWhaleStill is not a word
   ['whale', /(?<![A-Za-z0-9_])whales?(?![A-Za-z0-9_])/],           // also "whale-blue"; an id such as dsh-plugin-whale-pet is rewritten by the build
   // lower case "dsh" in prose: spaces or plain punctuation around it. In code spans, quotes and command lines it is the command and waits for the rename slices.
-  ['dsh word', /(?<![\w@./:$`'"\\-])dsh(?![\w@/:.`'"\\-])/],
-  ['dsh code', /(?<![\w@./:$-])dsh(?![\w@/:.-])/],
+  ['dsh word', /(?<![\w@./:$`'"\\-])dsh(?![\w@/:?`'"\\-]|\.\w)/],   // a full stop after the word ends a sentence; ".cmd" or ".exe" does not
+  ['dsh code', /(?<![\w@./:$-])dsh(?![\w@/:?-]|\.\w)/],
   ['deepseek word', /(?<![\w@./:$-])deepseek(?![\w@/:.-])/],
   ['env name', /(?<![A-Za-z])DEEPSEEK_[A-Z0-9_]+/],
 ];
@@ -184,6 +184,10 @@ function selfCheck() {
   expect('js env name is tier', ids('a/x.js', 'const a = "Set DEEPSEEK_API_KEY first";'), ['env name']);
   expect('prose dsh fails', ids('a/x.js', 'const a = "Matches dsh interface";'), ['dsh word']);
   expect('prose dsh in a sentence fails', ids('a/x.js', 'const a = "Let agents add a powered by dsh badge";'), ['dsh word']);
+  expect('dsh at the end of a sentence fails', ids('a/x.js', 'const a = "Please retry or restart dsh.";'), ['dsh word']);
+  expect('dsh type member is code', ids('a/x.js', 'const a = "interface E { readonly dsh?: string }";'), []);
+  expect('dsh in a shell lookup is code', ids('a/x.js', 'const a = "printf x; command -v dsh; printf y";'), []);
+  expect('dsh help example is code', ids('a/x.js', 'const a = "  dsh rescue --from-default-profile web";'), []);
   expect('dsh in a code span is tier', ids('a/x.md', 'Run the `dsh` launcher'), ['dsh code']);
   expect('dsh command line is allowed', ids('a/x.md', 'Run dsh plugin add foo'), []);
   expect('whale-blue fails', ids('a/x.md', 'its whale-blue palette'), ['whale']);

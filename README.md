@@ -21,6 +21,7 @@ This folder rebuilds the app archive from the pristine one, so every change is a
 | `tools/asar-cat.mjs` | Prints or lists files inside an archive. |
 | `lib/brandrules.mjs` | One rule set for brand text: DeepSeek, DSH and Whale wording becomes Arc Harness, and DeepSeek addresses become `arc-harness.invalid`. Real model names stay. The build rewrites with it and the tests check with it. |
 | `lib/iconcolor.mjs` | Recolors blue and purple icon fills to ink and warm grey. |
+| `lib/whaleimg.mjs`, `brand/pictures.json` | Replaces pictures that hold the old vendor's whale or blue: PNG files and data URIs found by the sha256 of their bytes, inline SVG marks and icon path strings found by their path, and the plugin manager's preview pictures (`brand/dist/previews`). The list was made by looking at every distinct picture of the original app and its ten plugins. |
 | `brandtext/apply-profiles.mjs` | Applies the same rules and icon colors to the plugin packages of both profiles, the local plugins and `local-gateway.mjs`. `--restore` puts the originals back. |
 | `brandtext/apply-unpacked.mjs` | Removes the old vendor's repository and homepage links from the `package.json` files in the installed app's unpacked folder. `--restore` puts the originals back. |
 | `theme/tune-arc-skin.mjs` | Second pass on the skin: paper canvas, white cards, sidebar `#f4f2ed`, readable captions, hidden update badge. |
@@ -32,11 +33,14 @@ This folder rebuilds the app archive from the pristine one, so every change is a
 
 ## What the tests cover, and what they do not
 
-- The static scans read text files, JSON values, script strings, SVG text, YAML and PowerShell help in the archive and in both profiles. They do not read pictures (PNG, WebP), the binary files in `app.asar.unpacked` (the LibreOffice kit and its notices stay), or files over 12 MB.
+- The static text scans read text files, JSON values, script strings, SVG text, YAML and PowerShell help in the archive and in both profiles. They do not read pictures, the binary files in `app.asar.unpacked` (the LibreOffice kit and its notices stay), or files over 12 MB.
+- `test/image-scan.py` reads pictures by content: PNG, WebP, ICO, GIF and JPEG files and base64 data URIs, SVG files, inline SVG and SVG data URIs. It fails on a whale picture (exact sha256 list), on the vendor blue, on a known preview picture, and on any raster picture that nobody has reviewed (`brand/pictures.json`). It cannot tell what a new picture shows; a person has to look at it and add it. Screenshots and banners in plugin asset folders carry the old product name as picture text. They are reviewed and allowed, because no screen of the app shows them; they stay a known limit. Third-party test, fixture and font pictures are counted, not judged.
 - The live trace and the screen crawl run the **web profile** of the candidate archive on a throwaway data home, in Node and in headless Edge. The Electron main process, the desktop window, the menus, the welcome window and the installer were never started by any test. The welcome window is checked only by the build (`build-check.mjs`). They are checked by hand after an install.
 - The live trace sees Node connections only. A helper started by a plugin (Python, for example) and the local gateway's own relays are outside it. The test configuration switches the MCP client rows off, so the run does not touch Cammut or Composio.
 - Names that stay until the rename slices: the command `dsh`, the folder `.dsh`, the Documents folder `deepseek-harness`, `@deepseek-ai/*` and `dsh-*` package names, `DSH_HOME`, the exe and installer names, the `dsh-session-*.zip` export name. The independent scan reports them as "names that wait for the rename slices". A lower-case `dsh` in a sentence is not one of them: that fails.
-- Third-party plugin packages that are switched off (the remote plugin, the skill badge, the account plugin) are not shown, but the badge and account assets were rewritten anyway.
+- The remote plugin is third-party and switched off in both profiles. The skill badge and the account plugin are bundled with the app and switched off; the account plugin is still listed on the Plugins page. Their badge and onboarding assets were rewritten anyway.
+- The shared-rule scan of the archive skips files over 6 MB (third-party libraries). The independent scan reads whole files up to 12 MB, and checks bigger ones as one text.
+- The throwaway data home of the live trace and the crawl hard-links the plugin files. A plugin that writes into its own folder would change the real file; the real files are hashed before and after, and the run fails if one changed.
 
 ## Rebuild
 
