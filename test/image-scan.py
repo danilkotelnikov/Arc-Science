@@ -83,7 +83,7 @@ HUE_ALLOW = [
     (re.compile(r'[\\/]lib[\\/]devtools[\\/]|[\\/]debug[\\/]src[\\/]'), 'DevTools frontend and the debug library (third party)'),
     (re.compile(r'dsh-client-ui-sidebar-terminal'), 'terminal palette: ANSI blue is a terminal colour'),
     (re.compile(r'dsh-client-ui-sidebar-documentpreview[\\/]lib[\\/]client\.(?:excel|pdf)\.js$'),
-     'spreadsheet and PDF viewers: chart palettes and colour pickers of the user\'s own data, the hyperlink cell colour (rgb(0, 0, 255)) and PDF highlight colour choices; the spreadsheet interface colours are replaced by build patch 8d, and test/build-check.mjs lists every blue hex colour the file may keep'),
+     'spreadsheet and PDF viewers: chart palettes and colour pickers of the user\'s own data, the hyperlink cell colour (rgb(0, 0, 255)), example colours named in its help text, the near-white toolbar background (#fafafc) and PDF highlight colour choices; the spreadsheet interface colours are replaced by build patch 8d, and test/build-check.mjs pins every blue colour the spreadsheet file may keep (hex, rgb() and hsl() forms, with counts)'),
     (re.compile(r'[\\/]vendor-[^\\/]*\.js$'), 'vendor bundle of libraries'),
     (re.compile(r'[\\/](?:mermaid|khroma|cytoscape[\w-]*|tinycolor2|@upsetjs|react-icons|katex|@codemirror|@xterm|jimp|qrcode|ds-harness-remote)[\\/]'),
      'third-party libraries (diagrams, colour maths, graphs, icons, math, editor, terminal, images) and the switched-off remote plugin'),

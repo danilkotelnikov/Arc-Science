@@ -215,7 +215,7 @@ for (const m of (excel ?? '').matchAll(/\bhsla?\(\s*(-?[\d.]+)(?:deg)?\s*[, ]\s*
 const excelDiff = [...new Set([...Object.keys(EXCEL_BLUE), ...Object.keys(excelFound)])].filter((k) => EXCEL_BLUE[k] !== excelFound[k])
   .map((k) => `${k} x${excelFound[k] ?? 0} (reviewed x${EXCEL_BLUE[k] ?? 0})`);
 check(excel !== null && excelDiff.length === 0 && !/#0188fb|#018ffb|#12a5ff|#5292f7|#4d90fe|#0050d0|#897bff|#8c89fe|#726ef[0-9a-f]|#5391ff|#2674fb|#394259|#00f(?![0-9a-fA-F])/i.test(excel) && /#54453c/i.test(excel),
-  `spreadsheet viewer: all twelve blue and violet interface colours and the icon fill are gone, the interface uses the Arc Harness primary, and its blue colours in every written form are exactly the reviewed set (${Object.keys(excelFound).length} colours)${excelDiff.length ? ': ' + excelDiff.join(', ') : ''}`);
+  `spreadsheet viewer: all twelve blue and violet interface colours and the icon fill are gone, the interface uses the Arc Harness primary, and its blue colours written as hex, rgb() or hsl() are exactly the reviewed set (${Object.keys(excelFound).length} colours)${excelDiff.length ? ': ' + excelDiff.join(', ') : ''}`);
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(bad ? 'FAILED' : 'ALL PASS');
