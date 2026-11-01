@@ -181,6 +181,10 @@ for (const f of built.files) {
 }
 check(svgCount > 100 && svgBad.length === 0, `no DeepSeek, DSH or Whale text in ${svgCount} SVG files` + (svgBad.length ? ' :: ' + svgBad.slice(0, 5).join(' | ') : ''));
 
+// (i) the spreadsheet viewer paints no blue or violet interface (selection box, handles, filter buttons)
+const excel = get(built, DS + 'dsh-client-ui-sidebar-documentpreview/lib/client.excel.js');
+check(excel !== null && !/#0188fb|#897bff|#8c89fe/i.test(excel) && /#54453c/i.test(excel), 'spreadsheet viewer: no #0188fb, #897bff or #8c89fe left, the interface uses the Arc Harness primary');
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(bad ? 'FAILED' : 'ALL PASS');
 process.exit(bad ? 1 : 0);

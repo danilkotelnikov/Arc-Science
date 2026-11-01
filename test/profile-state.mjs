@@ -93,6 +93,20 @@ for (const prof of ['web', 'desktop']) {
   check(ids.length === 0, `${prof}: the Vision Router settings text names no provider id of the old vendor${ids.length ? ' (found ' + ids.join(', ') + ')' : ''}`);
 }
 
+// 4c. colours a person sees in two plugins that the hue recolor alone could not decide: the Context Insights chart categories (a
+//     Tailwind blue, indigo, violet and purple, and a hue that walks the whole wheel) and the Visualize interface colours; and the
+//     bundled terminal keeps its ANSI blue (the hue recolor must not touch vendored libraries)
+for (const prof of ['web', 'desktop']) {
+  const nm = path.join(dsh, 'profiles', prof, 'node_modules');
+  const ctx = fs.readFileSync(path.join(nm, 'dsh-context', 'lib', 'client.js'), 'utf8');
+  const blueTokens = ['blue', 'indigo', 'violet', 'purple'].filter((c) => new RegExp(`--color-${c}-500:oklch\\([^)]*\\s(?:2[3-9]\\d|3[0-2]\\d)(?:\\.\\d+)?\\)`).test(ctx));
+  check(blueTokens.length === 0 && !ctx.includes('%360} 58% 52%'), `${prof}: Context Insights chart colours have no blue, indigo, violet or purple token and no full-wheel hue${blueTokens.length ? ' (' + blueTokens.join(', ') + ')' : ''}`);
+  const viz = fs.readFileSync(path.join(nm, '@nagi-ovo', 'dsh-visualize', 'lib', 'client.js'), 'utf8');
+  check(!/#2f6fed/i.test(viz) && !/"primary": ld\("#(?:0072b2|2d71b7)"/.test(viz), `${prof}: Visualize interface colours (selected option, focus outline, primary colour) are not blue`);
+  const term = fs.readFileSync(path.join(nm, 'dsh-better-sidebar', 'lib', 'client-terminal.js'), 'utf8');
+  check(/#3465a4/i.test(term), `${prof}: the bundled terminal keeps its ANSI blue (vendored libraries are not recolored)`);
+}
+
 // 5. the theme plugin copies equal the tested copy
 {
   const src = path.join(dsh, 'local-plugins', 'dsh-theme-pair', 'lib');

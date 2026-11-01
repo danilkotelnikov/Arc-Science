@@ -126,6 +126,21 @@ const FIXES = [
     ["'asks you to disable llm-deepseek. Custom routes", "'asks you to disable it. Custom routes"],
     ['Re-enable llm-deepseek, then use', 'Re-enable the built-in model provider, then use'],
   ]],
+  // Context Insights: the chart categories used the blue, indigo, violet and purple of a Tailwind palette and a golden-angle hue over
+  // the whole colour wheel. They become four distinct warm colours and a warm-only hue range, so categories stay apart without blue.
+  [/dsh-context[\\/]lib[\\/]client\.js$/, [
+    ['--color-blue-500:oklch(62.3% .214 259.815)', '--color-blue-500:oklch(62% .11 78)'],
+    ['--color-indigo-500:oklch(58.5% .233 277.117)', '--color-indigo-500:oklch(55% .12 42)'],
+    ['--color-violet-500:oklch(60.6% .25 292.717)', '--color-violet-500:oklch(58% .09 128)'],
+    ['--color-purple-500:oklch(62.7% .265 303.9)', '--color-purple-500:oklch(50% .10 18)'],
+    ['hsl(${Math.round(e*137.508)%360} 58% 52%)', 'hsl(${Math.round(e*137.508)%150+8} 42% 46%)'],
+  ]],
+  // Visualize: the selected-option border, the focus outline and the primary theme colour were blue (the chart series palettes stay)
+  [/@nagi-ovo[\\/]dsh-visualize[\\/]lib[\\/]client\.js$/, [
+    ['#2f6fed', '#54453c'],
+    ['"primary": ld("#0072b2", "#58b6ed")', '"primary": ld("#54453c", "#d8d3c8")'],
+    ['"primary": ld("#2d71b7", "#74c0fc")', '"primary": ld("#54453c", "#d8d3c8")'],
+  ]],
   // the command shown for a manual plugin update named the public npm registry
   [/@michengai[\\/]dsh-archive-manager[\\/]lib[\\/]client\.js$/, [['add ${r}@${i} --registry=https://registry.npmjs.org/', 'add ${r}@${i}']]],
   [/@michengai[\\/]dsh-skills-manager[\\/]lib[\\/]client\.js$/, [['add ${t}@${d} --registry=https://registry.npmjs.org/', 'add ${t}@${d}']]],
@@ -150,9 +165,10 @@ const consider = (p) => {
   if (/\.(c|m)?js$/i.test(p)) after = recolorBlueAttrsInScript(after);
   // the vendor's brand blue as a literal (CSS fallbacks, outlines) becomes the Arc Harness primary
   if (/\.(c|m)?js$|\.css$|\.html?$|\.json$/i.test(p)) after = replaceVendorBlue(after);
+  // hand-written replacements first: they give chart categories distinct warm colours, which a grey recolor would merge
+  for (const [re, pairs] of FIXES) if (re.test(p)) for (const [from, to] of pairs) { if (!after.includes(from)) { if (after.includes(to)) continue; console.error(`FIX not found in ${p}: ${from}`); process.exit(1); } after = after.split(from).join(to); }
   // every other blue and violet colour in the code of the plugins that draw their own screens (by hue; libraries stay)
   if (HUE_PROFILE.test(p) && /\.(c|m)?js$|\.css$|\.html?$|\.svg$/i.test(p)) after = recolorBlueHues(after);
-  for (const [re, pairs] of FIXES) if (re.test(p)) for (const [from, to] of pairs) { if (!after.includes(from)) { if (after.includes(to)) continue; console.error(`FIX not found in ${p}: ${from}`); process.exit(1); } after = after.split(from).join(to); }
   // plugins that look for a newer version at the public npm registry and at GitHub (the two helper plugins, and every plugin-updater or
   // update-check script): those checks are off. Installing a plugin by name stays a user action.
   if (/dsh-(context|vision-router)[\\/]lib[\\/].*\.js$|[\\/](?:plugin-updater|update-check)\.js$/.test(p)) {

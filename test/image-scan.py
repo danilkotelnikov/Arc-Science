@@ -52,17 +52,28 @@ BLUE_TEXT_B = re.compile(BLUE_TEXT.pattern.encode(), re.I)
 # pages and SVG files. The same test lib/iconcolor.mjs recolorBlueHues applies. Third-party code and palettes that must keep their
 # colours are listed here, each with its reason; a hit anywhere else fails.
 HUE_EXT = {'.js', '.mjs', '.cjs', '.css', '.html', '.htm', '.svg'}
-HUE_HEX = re.compile(rb'#([0-9a-fA-F]{6})(?:[0-9a-fA-F]{2})?(?![0-9a-zA-Z])')
-HUE_RGB = re.compile(rb'rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})')
+HUE_HEX = re.compile(rb'(?<![\w&])(?<!url\()#([0-9a-fA-F]{6})(?:[0-9a-fA-F]{2})?(?![0-9a-zA-Z])')
+HUE_RGB = re.compile(rb'\brgba?\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})', re.I)   # commas or spaces
+HUE_HSL = re.compile(rb'\bhsla?\(\s*(-?[\d.]+)(?:deg)?\s*[, ]\s*([\d.]+)%', re.I)
+HUE_HWB = re.compile(rb'\bhwb\(\s*(-?[\d.]+)(?:deg)?\s', re.I)
+HUE_LCH = re.compile(rb'\b(ok)?lch\(\s*[\d.]+%?\s+([\d.]+%?)\s+([\d.]+)', re.I)   # oklch and lch: lightness chroma hue
+# named CSS colours in blue and violet: only where a colour is written (a colour property in a style, an SVG colour attribute)
+NAMED_BLUE = (b'blue|mediumblue|darkblue|navy|midnightblue|royalblue|dodgerblue|deepskyblue|cornflowerblue|steelblue|slateblue|'
+              b'darkslateblue|mediumslateblue|indigo|blueviolet|darkviolet|darkorchid|mediumorchid|violet|purple|mediumpurple|rebeccapurple|'
+              b'lightskyblue|skyblue|lightsteelblue|lightblue|aliceblue|cadetblue')
+NAMED_RE = re.compile(rb'(?:\b(?:color|background(?:-color)?|border(?:-[a-z]+)?-color|outline(?:-color)?|fill|stroke|stop-color)\s*[:=]\s*["\']?(?:' + NAMED_BLUE + rb')\b)', re.I)
 HUE_ALLOW = [
     (re.compile(r'[\\/]lib[\\/]devtools[\\/]|[\\/]debug[\\/]src[\\/]'), 'DevTools frontend and the debug library (third party)'),
     (re.compile(r'dsh-client-ui-sidebar-terminal'), 'terminal palette: ANSI blue is a terminal colour'),
     (re.compile(r'dsh-client-ui-sidebar-documentpreview[\\/]lib[\\/]client\.(?:excel|pdf)\.js$'),
-     'spreadsheet and PDF viewers: they draw the colours of the user\'s own documents and the PDF highlight colour choices'),
+     'spreadsheet and PDF viewers: chart palettes of the user\'s own data and PDF highlight colour choices; the spreadsheet interface colours are replaced by build patch 8d and checked by test/build-check.mjs'),
     (re.compile(r'[\\/]vendor-[^\\/]*\.js$'), 'vendor bundle of libraries'),
     (re.compile(r'[\\/](?:mermaid|khroma|cytoscape[\w-]*|tinycolor2|@upsetjs|react-icons|katex|@codemirror|@xterm|jimp|qrcode|ds-harness-remote)[\\/]'),
      'third-party libraries (diagrams, colour maths, graphs, icons, math, editor, terminal, images) and the switched-off remote plugin'),
-    (re.compile(r'[\\/]@nagi-ovo[\\/]dsh-visualize[\\/]'), 'Visualize chart palettes (charts keep their colours)'),
+    (re.compile(r'[\\/]dsh-better-sidebar[\\/]lib[\\/]client-(?:terminal|editor|mermaid)\.'),
+     'bundled terminal, code editor and diagram libraries (ANSI colours, syntax categories and diagram themes keep their colours)'),
+    (re.compile(r'[\\/]@nagi-ovo[\\/]dsh-visualize[\\/]'),
+     'Visualize chart series palettes (charts keep their colours); its interface colours are replaced by apply-profiles and checked by test/profile-state.mjs'),
     (re.compile(r'[\\/]node_modules[\\/](?:@[^\\/]+[\\/])?[^\\/]+[\\/]node_modules[\\/]'), 'nested third-party packages'),
 ]
 
@@ -79,20 +90,35 @@ def _hsl(r: int, g: int, b: int) -> tuple[float, float, float]:
     return h * 60, s, l
 
 
-def blue_hue_hit(buf: bytes) -> str | None:
-    """First blue or violet colour in the text, or None."""
+def blue_hue_hit(buf: bytes, named: bool = False) -> str | None:
+    """First blue or violet colour in the text, or None. Forms: #rrggbb(aa), rgb()/rgba() with commas or spaces, hsl(), hwb(),
+    oklch() and lch(); with named=True also named colours written as a colour property or an SVG colour attribute."""
     for m in HUE_HEX.finditer(buf):
         h = m.group(1)
         hh, s, _ = _hsl(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-        if s > 0.25 and 190 <= hh <= 300:
+        if s > 0.2 and 190 <= hh <= 300:
             return m.group(0).decode()
     for m in HUE_RGB.finditer(buf):
         r, g, b = int(m.group(1)), int(m.group(2)), int(m.group(3))
         if max(r, g, b) > 255:
             continue
         hh, s, _ = _hsl(r, g, b)
-        if s > 0.25 and 190 <= hh <= 300:
+        if s > 0.2 and 190 <= hh <= 300:
             return m.group(0).decode()
+    for m in HUE_HSL.finditer(buf):
+        if float(m.group(2)) > 20 and 190 <= float(m.group(1)) % 360 <= 300:
+            return m.group(0).decode()
+    for m in HUE_HWB.finditer(buf):
+        if 190 <= float(m.group(1)) % 360 <= 300:
+            return m.group(0).decode()
+    for m in HUE_LCH.finditer(buf):
+        chroma = float(m.group(2).rstrip(b'%')) / (100 if m.group(2).endswith(b'%') else 1) * (1 if m.group(1) else 1 / 150)
+        if chroma > 0.04 and (215 <= float(m.group(3)) <= 335):
+            return m.group(0).decode()
+    if named:
+        n = NAMED_RE.search(buf)
+        if n:
+            return n.group(0).decode()
     return None
 # an svg data URI that is not base64, as written in CSS or script: it ends at a closing quote and bracket (quotes may sit inside it)
 DATA_SVG_PLAIN = re.compile(rb"""data:image\\?/svg\+xml(?:;charset=[\w-]+|;utf8)?,(.{20,4000}?)(?=\"\)|'\)|\"[;}\s,]|`)""", re.S)
@@ -166,7 +192,7 @@ def classify_raster(digest: str, name: str, cat: Catalog) -> dict[str, str] | No
 
 
 def scan(sources: Iterator[tuple[str, bytes]], cat: Catalog, survey: bool = False) -> tuple[dict[str, int], list[dict[str, Any]]]:
-    stats = {'skipped files': 0, 'files': 0, 'raster files': 0, 'svg files': 0, 'raster data uris': 0, 'svg data uris': 0, 'text files read': 0, 'fixture pictures': 0, 'blue-hue files not judged': 0}
+    stats = {'skipped files': 0, 'files': 0, 'raster files': 0, 'svg files': 0, 'raster data uris': 0, 'svg data uris': 0, 'text files read': 0, 'fixture pictures': 0, 'blue-hue files judged': 0, 'blue-hue files not judged': 0}
     found: list[dict[str, Any]] = []
     seen: dict[str, str | None] = {}
 
@@ -213,7 +239,8 @@ def scan(sources: Iterator[tuple[str, bytes]], cat: Catalog, survey: bool = Fals
                 if allowed:
                     stats['blue-hue files not judged'] += 1
                 else:
-                    hit = blue_hue_hit(buf)
+                    stats['blue-hue files judged'] += 1
+                    hit = blue_hue_hit(buf, named=ext in {'.css', '.svg'})
                     if hit:
                         found.append({'where': name, 'how': 'hue', 'kind': 'blue', 'why': f'blue or violet colour {hit}'})
             if b'data:image' not in buf:
@@ -274,12 +301,17 @@ def self_check(cat: Catalog) -> list[str]:
         errs.append('vendor blue in script text not detected')
     if BLUE_TEXT_B.search(b'stopColor:"#E2E2E2"'):
         errs.append('plain grey flagged as blue')
-    for good in (b'linear-gradient(100deg,#03040a 0%,#101d4c 45%,#5d35a0 100%)', b'box-shadow:0 0 7px rgba(82,130,255,.12)', b'color:#1c00cf'):
+    for good in (b'linear-gradient(100deg,#03040a 0%,#101d4c 45%,#5d35a0 100%)', b'box-shadow:0 0 7px rgba(82,130,255,.12)', b'color:#1c00cf',
+                 b'--c:oklch(62.3% .214 259.8)', b'--c:oklch(60.6% .25 292.7 / 40%)', b'color:hsl(220,70%,50%)', b'color:hsl(220deg 70% 50% / .4)',
+                 b'color:rgb(60 80 250)', b'color:rgb(60 80 250 / 40%)', b'COLOR:RGB(10,20,250)', b'x:lch(50% 80 290)', b'x:hwb(230 10% 10%)'):
         if not blue_hue_hit(good):
             errs.append(f'blue by hue not detected: {good!r}')
-    for fine in (b'color:#22c55e;background:#f59e0b;border:1px solid rgb(239,68,68)', b'fill:#54ECE7', b'color:#26231f;background:#faf9f6'):
-        if blue_hue_hit(fine):
-            errs.append(f'status or neutral colour flagged as blue: {fine!r}')
+    if not blue_hue_hit(b'a{color: royalblue}', named=True) or not blue_hue_hit(b'<rect fill="blue"/>', named=True):
+        errs.append('named blue in a colour property or an SVG attribute not detected')
+    for fine in (b'color:#22c55e;background:#f59e0b;border:1px solid rgb(239,68,68)', b'fill:#54ECE7', b'color:#26231f;background:#faf9f6',
+                 b'x:oklch(65.6% .241 354.3)', b'x:oklch(70% .15 145)', b'x:hsl(30,60%,50%)', b'&#128199; url(#3366ff) a#3366ff', b'.blue{margin:0} --color-blue-500:var(--x)'):
+        if blue_hue_hit(fine, named=True):
+            errs.append(f'status, neutral or non-colour text flagged as blue: {fine!r}')
     if (classify_svg('<rect fill="#4D6BFEcc"/>', sha(b'x'), probe) or {}).get('kind') != 'blue':
         errs.append('blue with alpha (#rrggbbaa) not detected')
     if '.avif' not in RASTER_EXT or not DATA_SVG_PLAIN.search(b'x=url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%22%3E%3C%2Fsvg%3E")'):
@@ -299,6 +331,7 @@ def main() -> int:
     ap.add_argument('--json')
     ap.add_argument('--floor-raster', type=int, default=1, help='fail (2) when fewer raster pictures were read (default 1: a scan that read nothing never passes)')
     ap.add_argument('--floor-text', type=int, default=1, help='fail (2) when fewer text files were read (default 1)')
+    ap.add_argument('--floor-hue', type=int, default=0, help='fail (2) when fewer script, style, page and SVG files went through the blue-hue check')
     ap.add_argument('--expect-findings', type=int, default=0, help='positive control: fail (2) unless at least this many findings')
     a = ap.parse_args()
     cat = Catalog()
@@ -330,8 +363,8 @@ def main() -> int:
             print(f'  {f["kind"]:<5} {f["bytes"]:>8}B {f["sha256"]} {f["where"]}')
         return 0
     pics = stats['raster files'] + stats['raster data uris']
-    if pics < a.floor_raster or stats['text files read'] < a.floor_text:
-        print(f'  scan read too little ({pics} pictures, {stats["text files read"]} text files; floors {a.floor_raster}, {a.floor_text}): the result cannot be trusted')
+    if pics < a.floor_raster or stats['text files read'] < a.floor_text or stats['blue-hue files judged'] < a.floor_hue:
+        print(f'  scan read too little ({pics} pictures, {stats["text files read"]} text files, {stats["blue-hue files judged"]} hue-checked files; floors {a.floor_raster}, {a.floor_text}, {a.floor_hue}): the result cannot be trusted')
         return 2
     if a.expect_findings:
         print(f'positive control: {len(found)} findings (at least {a.expect_findings} expected)')
