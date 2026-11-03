@@ -1,0 +1,55 @@
+{
+  "_note": "Allow list of the independent scan. models: real model names. commands: command lines, console prefixes and example paths that name the real command or folder (they change with the rename slices). skipFiles: libraries, the third-party provider catalog, tests of upstream packages and a disabled plugin; every pattern needs a reason in skipReasons, and the scan prints how many files each pattern skipped (--skips). bigFiles: files over 6 MB that carry a stray match, with the reason.",
+  "models": [
+    "DeepSeek[ -]?(?:AI[ -])?(?:V\\d(?:\\.\\d+)?|R\\d(?:\\.\\d+)?)(?:[ -](?:Chat|Coder|Flash|Pro|Terminus|Exp|Reasoner|Lite|Preview))?(?: ?\\(\\d+\\))?",
+    "DeepSeek[ -](?:Chat|Coder|Reasoner|Prover|Math|OCR|VL\\d?)\\b",
+    "DeepSeek models?(?![\\w-])",
+    "deepseek/deepseek-[\\w.:-]+",
+    "(?<![\\w-])deepseek-(?:chat|reasoner|coder|prover|math|ocr|vl|llm|flash|pro|terminus|exp|lite|distill|r\\d|v\\d)(?![A-Za-z])[\\w.:-]*"
+  ],
+  "commands": [
+    "(?:pnpm|npx|npm|node|bun|sudo|run|then|use|exec|execute|launch|type) dsh(?= )",
+    "(?<![\\w-])dsh(?= (?:--|plugin\\b|serve\\b|profile (?:list|add|remove|new)|web --|(?:web|tui|rescue|headless|desktop|acp|sdk|version)\\b[^:]))",
+    "dsh plugin(?=\\$\\{)",
+    "(?:Get-Command|command -v|which|where) dsh",
+    "dsh (?:web|desktop): ",
+    "biome check src scripts dsh",
+    "^dsh web$",
+    "dsh> ",
+    "dsh\\.cmd",
+    "dsh version",
+    "dsh --"
+  ],
+  "skipFiles": [
+    "/node_modules/@earendil-works/pi-ai/",
+    "/node_modules/bowser/",
+    "/dist/assets/langs/",
+    "/CHANGELOG",
+    "/(?:test|tests|__tests__)/",
+    "\\.test\\.m?js$",
+    "\\.min\\.js$",
+    "/node_modules/(?:@types|typescript|zod|d3|cytoscape|dompurify|dayjs|file-type|fflate|jimp|pdfjs-dist|highlight\\.js|marked|katex|mermaid)/",
+    "/node_modules/ds-harness-remote/",
+    "/dsh-hoh/lib/index\\.js$",
+    "/local-plugins/dsh-english/"
+  ],
+  "skipReasons": {
+    "/node_modules/@earendil-works/pi-ai/": "Third-party model provider catalog (names of providers and labs). Its DeepSeek addresses are rewritten by the build and read by the network census.",
+    "/node_modules/bowser/": "Third-party browser-detection library; names browsers, not this product.",
+    "/dist/assets/langs/": "Syntax-highlighting grammars (third-party data). One grammar holds emoji short codes such as :whale:, which are data.",
+    "/CHANGELOG": "Release history of upstream packages; not shown in the app.",
+    "/(?:test|tests|__tests__)/": "Tests of upstream packages; not shown in the app. The skipped files are counted in the output.",
+    "\\.test\\.m?js$": "Tests of upstream packages.",
+    "\\.min\\.js$": "Minified third-party libraries.",
+    "/node_modules/(?:@types|typescript|zod|d3|cytoscape|dompurify|dayjs|file-type|fflate|jimp|pdfjs-dist|highlight\\.js|marked|katex|mermaid)/": "Third-party libraries that ship inside the packages.",
+    "/node_modules/ds-harness-remote/": "The third-party remote-control plugin. It is switched off in both profiles (profile-state checks that); its text names the old product and is never shown.",
+    "/dsh-hoh/lib/index\\.js$": "The owner's own HoH plugin. Its retrieval query to Cammut keeps the old wording, because the stored notes are ranked by it; apply-profiles leaves the file as it was.",
+    "/local-plugins/dsh-english/": "A translation tool of this kit with its working cache (Chinese text and the English answer, old product name included) and old file copies. No profile loads it and no page shows it. It leaves with the rename slices (ARC-RENAME-2)."
+  },
+  "bigFiles": [
+    "dsh-client-ui-sidebar-documentpreview/lib/client.pdf.js"
+  ],
+  "bigFileReasons": {
+    "dsh-client-ui-sidebar-documentpreview/lib/client.pdf.js": "Bundled PDF viewer library of 7 MB. The only matches are the letters Dsh inside base64 data (w1Dsh0U), not a word."
+  }
+}

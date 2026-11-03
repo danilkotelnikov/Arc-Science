@@ -1,4 +1,0 @@
--r requirements.lock
--r requirements-vector.lock
-pytest==9.0.2
-reportlab==4.4.9

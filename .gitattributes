@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.png binary
+*.ico binary
+*.asar binary
+# brand/dist is committed byte for byte: its files are listed with their SHA-256 in brand/dist/SHA256SUMS.txt
+brand/dist/** -text

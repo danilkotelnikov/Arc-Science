@@ -1,4 +1,0 @@
-services:
-  arc-science:
-    build:
-      dockerfile: Dockerfile.api

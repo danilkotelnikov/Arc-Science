@@ -1,0 +1,42 @@
+{
+  "_note": "Real DeepSeek model names and the third-party provider catalog stay visible (owner decision, 2026-11-01). Every pattern names a model or a catalog entry. Everything else is a reference to rewrite.",
+  "modelNames": [
+    "DeepSeek[ -]?(?:AI[ -])?(?:V\\d(?:\\.\\d+)?|R\\d(?:\\.\\d+)?)(?:[ -](?:Chat|Coder|Flash|Pro|Terminus|Exp|Reasoner|Lite|Preview|Distill[\\w. -]*))?(?: ?\\(\\d+\\))?",
+    "DeepSeek[ -](?:Chat|Coder(?:[ -]?V\\d)?|Reasoner|Prover(?:[ -]V\\d)?|Math|OCR|VL\\d?)\\b(?: ?\\(\\d+\\))?",
+    "DeepSeek models?(?![\\w-])",
+    "deepseek/deepseek-[\\w.:-]+",
+    "(?<![\\w-])deepseek-(?:chat|reasoner|coder|prover|math|ocr|vl|llm|flash|pro|terminus|exp|lite|distill|r\\d|v\\d)(?![A-Za-z])[\\w.:-]*"
+  ],
+  "archiveSkip": [
+    "/node_modules/@earendil-works/pi-ai/",
+    "/node_modules/bowser/",
+    "/dist/assets/langs/",
+    "/node_modules/(?:@types|typescript|zod|ajv|highlight\\.js|marked|katex|mermaid|monaco-editor|pdfjs-dist|xlsx|exceljs)/",
+    "/CHANGELOG",
+    "/(?:test|tests|__tests__)/",
+    "\\.test\\.m?js$",
+    "\\.min\\.js$"
+  ],
+  "skipReasons": {
+    "/node_modules/@earendil-works/pi-ai/": "Third-party model provider catalog (names of providers and labs). Its DeepSeek addresses are rewritten by the build (rewriteHosts); the census reads it.",
+    "/node_modules/bowser/": "Third-party browser-detection library; names browsers, not this product.",
+    "/dist/assets/langs/": "Syntax-highlighting grammars (third-party data). One grammar holds emoji short codes such as :whale:, which are data, not brand text.",
+    "/node_modules/(?:@types|typescript|zod|ajv|highlight\\.js|marked|katex|mermaid|monaco-editor|pdfjs-dist|xlsx|exceljs)/": "Third-party libraries that ship inside the archive.",
+    "/CHANGELOG": "Release history of upstream packages; not shown in the app.",
+    "/(?:test|tests|__tests__)/": "Tests of upstream packages; not shown in the app. The skipped files are counted in the output.",
+    "\\.test\\.m?js$": "Tests of upstream packages.",
+    "\\.min\\.js$": "Minified third-party libraries.",
+    "/local-plugins/dsh-english/": "A translation tool of this kit with its working cache (Chinese text and the English answer, old product name included) and old file copies. No profile loads it and no page shows it. It leaves with the rename slices (ARC-RENAME-2).",
+    "/dsh-hoh/lib/index\\.js$": "The owner's own HoH plugin. Its retrieval query to Cammut keeps the old wording, because the stored notes are ranked by it; brandtext/apply-profiles.mjs leaves the file as it was (KEEP).",
+    "/node_modules/(?:@types|typescript|vitest|zod|d3|cytoscape|dompurify|dayjs|file-type|fflate|jimp|pdfjs-dist)/": "Third-party libraries that ship inside the profile packages."
+  },
+  "profileSkip": [
+    "/local-plugins/dsh-english/",
+    "/dsh-hoh/lib/index\\.js$",
+    "/node_modules/(?:@types|typescript|vitest|zod|d3|cytoscape|dompurify|dayjs|file-type|fflate|jimp|pdfjs-dist)/",
+    "/CHANGELOG",
+    "/(?:test|tests|__tests__)/",
+    "\\.test\\.m?js$",
+    "\\.min\\.js$"
+  ]
+}

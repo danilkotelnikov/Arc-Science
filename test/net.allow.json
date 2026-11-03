@@ -1,0 +1,13 @@
+{
+  "_note": "Arc Harness must not connect to a DeepSeek-run service (owner decision, 2026-11-01). Real DeepSeek MODEL names and the third-party provider catalog in pi-ai stay. Everything else that names a DeepSeek address is a finding.",
+  "piAiCatalog": {
+    "file": "$^",
+    "why": "No exemption by path any more: the build rewrites every DeepSeek address in the catalog files as well. Model and provider names are matched by modelNames only."
+  },
+  "modelNames": [
+    "DeepSeek[ -]?(?:AI[ -])?(?:V\\d(?:\\.\\d+)?|R\\d(?:\\.\\d+)?)(?:[ -](?:Chat|Coder|Flash|Pro|Terminus|Exp|Reasoner|Lite|Preview|Distill[\\w. -]*))?(?: ?\\(\\d+\\))?",
+    "DeepSeek[ -](?:Chat|Coder(?:[ -]?V\\d)?|Reasoner|Prover(?:[ -]V\\d)?|Math|OCR|VL\\d?|LLM|Flash|Pro)\\b(?: ?\\(\\d+\\))?",
+    "deepseek/deepseek-[\\w.:-]+",
+    "(?<![\\w-])deepseek-(?:chat|reasoner|coder|prover|math|ocr|vl|llm|flash|pro|terminus|exp|lite|distill|r\\d|v\\d)(?![A-Za-z])[\\w.:-]*"
+  ]
+}
