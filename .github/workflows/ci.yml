@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Syntax of every .mjs and .cjs file
+        run: node scripts/check-syntax.mjs
+      - name: Colour recolor tests
+        run: node test/iconcolor.test.mjs
+      - name: Harness of Harness plugin tests
+        run: node --test plugins/dsh-hoh/test/hoh.test.mjs
+      - name: Theme plugin tests
+        run: node --test plugins/dsh-theme-pair/test/theme.test.mjs
+      - name: Privacy scan self-test
+        run: node scripts/privacy-scan.mjs --self-test
+      - name: Privacy scan, generic patterns
+        run: node scripts/privacy-scan.mjs

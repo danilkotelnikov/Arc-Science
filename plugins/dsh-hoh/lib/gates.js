@@ -1,0 +1,165 @@
+// dsh-hoh 0.2.0 (2026-10-31): deterministic gates for the Harness-of-Harness cycle.
+// Pure functions plus a hash-chained ledger. No network.
+import { createHash } from 'node:crypto';
+import { readFile, stat, mkdir, appendFile } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+
+export const sha256 = (data) => createHash('sha256').update(data).digest('hex');
+export const MAX_FILE_BYTES = 20 * 1024 * 1024;
+
+/** The ledger file. DSH_HOME wins; the default is ~/.dsh/hoh/ledger.jsonl. */
+export function ledgerFile(env = process.env) {
+  return path.join(env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'hoh', 'ledger.jsonl');
+}
+
+/** One candidate id for a set of files: sha256 over the sorted (path, content hash) pairs. */
+export async function hashFiles(files) {
+  if (!Array.isArray(files) || files.length === 0) throw new Error('hoh_freeze needs at least one file');
+  const sorted = [...new Set(files)].sort();
+  const parts = [];
+  for (const f of sorted) {
+    if (!path.isAbsolute(f)) throw new Error('hoh_freeze needs absolute paths, got: ' + f);
+    const st = await stat(f);
+    if (!st.isFile()) throw new Error('not a regular file: ' + f);
+    if (st.size > MAX_FILE_BYTES) throw new Error('file is larger than 20 MB: ' + f);
+    parts.push(f.replace(/\\/g, '/') + '\0' + sha256(await readFile(f)));
+  }
+  return { candidate: 'sha256:' + sha256(parts.join('\n')), files: sorted.length, paths: sorted };
+}
+
+async function readLines(file) {
+  try {
+    const text = await readFile(file, 'utf8');
+    return text.split('\n').filter(Boolean);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return [];
+    throw err;
+  }
+}
+
+// One writer at a time per ledger file inside this process. Two calls that run together would read
+// the same last line and fork the chain.
+const queues = new Map();
+function withLock(file, fn) {
+  const run = (queues.get(file) || Promise.resolve()).then(fn, fn);
+  queues.set(file, run.then(() => undefined, () => undefined));
+  return run;
+}
+
+async function appendUnlocked(file, event) {
+  const lines = await readLines(file);
+  const last = lines.length ? JSON.parse(lines[lines.length - 1]) : null;
+  const prev = last ? last.hash : 'genesis';
+  const body = { seq: lines.length + 1, ts: new Date().toISOString(), prev, ...event };
+  const hash = sha256(prev + '\n' + JSON.stringify(body));
+  await mkdir(path.dirname(file), { recursive: true });
+  await appendFile(file, JSON.stringify({ ...body, hash }) + '\n');
+  return { seq: body.seq, hash };
+}
+
+/** Append one event. Each line holds the hash of the line before it, so an edit breaks the chain. */
+export function appendLedger(file, event) {
+  return withLock(file, () => appendUnlocked(file, event));
+}
+
+/** Walk the chain. Returns { ok, entries, badAt } where badAt is the first broken sequence number. */
+export async function verifyLedger(file) {
+  const lines = await readLines(file);
+  let prev = 'genesis';
+  for (let i = 0; i < lines.length; i++) {
+    let row;
+    try { row = JSON.parse(lines[i]); } catch { return { ok: false, entries: lines.length, badAt: i + 1 }; }
+    const { hash, ...body } = row;
+    if (row.prev !== prev || sha256(prev + '\n' + JSON.stringify(body)) !== hash) return { ok: false, entries: lines.length, badAt: row.seq || i + 1 };
+    prev = hash;
+  }
+  return { ok: true, entries: lines.length, badAt: 0 };
+}
+
+/** The newest event of one type for a goal, or null. */
+export async function lastEvent(file, goal, type) {
+  const lines = await readLines(file);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const row = JSON.parse(lines[i]);
+      if (row.type === type && row.goal === goal) return row;
+    } catch { /* a broken line is reported by verifyLedger */ }
+  }
+  return null;
+}
+export const lastFreeze = (file, goal) => lastEvent(file, goal, 'freeze');
+
+const SEVERITIES = new Set(['blocking', 'major', 'minor']);
+const STATUSES = new Set(['open', 'fixed', 'rejected']);
+const REQUIREMENT_STATES = new Set(['verified', 'failed', 'unverified', 'blocked']);
+export const MAX_CYCLES = 3;
+
+/**
+ * The accept gate. Missing evidence is unmet. A claim that a different agent ran the checks is
+ * compared with the agent ids the runtime reports for the two calls (freeze and gate).
+ * input: { candidate, cycle, builder, reviewer, checks[{id,command,exit,excerpt}], probes[{id,description,result}],
+ *          preservation[{id,ok}], findings[{id,severity,status,reason}], requirements[{id,state}] }
+ * context: { freeze, propose, fileCheck: {ok, reason}, caller }
+ * Returns { verdict: 'accepted'|'unmet'|'blocked', reasons: string[] }.
+ */
+export function decideGate(input, context = {}) {
+  const { freeze = null, propose = null, fileCheck = null, caller = null } = context;
+  const reasons = [];
+  let blocked = false;
+  const block = (msg) => { blocked = true; reasons.push(msg); };
+  const unmet = (msg) => reasons.push(msg);
+
+  if (!propose) unmet('no proposal recorded for this goal: call hoh_propose first (Propose step)');
+  if (!freeze) unmet('no freeze recorded for this goal');
+  else if (input.candidate !== freeze.candidate) unmet('the candidate is not the frozen one (a later edit makes a new candidate)');
+  else if (!fileCheck || fileCheck.ok !== true) unmet('the files changed after the freeze' + (fileCheck && fileCheck.reason ? ': ' + fileCheck.reason : ''));
+
+  if (!Number.isInteger(input.cycle) || input.cycle < 1) unmet('cycle must be a whole number from 1');
+  else if (input.cycle > MAX_CYCLES) block(`cycle ${input.cycle} is past the limit of ${MAX_CYCLES}: stop and ask the user`);
+
+  const checks = Array.isArray(input.checks) ? input.checks : [];
+  if (checks.length === 0) unmet('no acceptance checks were reported');
+  for (const c of checks) {
+    if (!c || typeof c.id !== 'string' || c.id === '') { unmet('a check has no id'); continue; }
+    if (c.exit !== 0) unmet(`check ${c.id}: exit code ${c.exit} (needs 0)`);
+    if (typeof c.excerpt !== 'string' || c.excerpt.trim() === '') unmet(`check ${c.id}: no output excerpt`);
+    if (typeof c.command !== 'string' || c.command.trim() === '') unmet(`check ${c.id}: no command`);
+  }
+
+  const probes = Array.isArray(input.probes) ? input.probes : [];
+  if (probes.length === 0) unmet('no probes: test the candidate against edge cases and rival options (Probe step)');
+  for (const p of probes) {
+    if (!p || typeof p.id !== 'string' || p.id === '' || typeof p.description !== 'string' || p.description.trim() === '') unmet('a probe needs an id and a description');
+    else if (p.result !== 'pass') unmet(`probe ${p.id}: ${p.result === 'fail' ? 'failed' : 'no result'}`);
+  }
+
+  const builder = typeof input.builder === 'string' ? input.builder.trim() : '';
+  const reviewer = typeof input.reviewer === 'string' ? input.reviewer.trim() : '';
+  if (!builder || !reviewer) unmet('builder and reviewer ids are both needed');
+  else if (builder === reviewer) unmet('the builder and the reviewer are the same agent: an author never certifies its own work');
+  if (freeze && freeze.caller && caller) {
+    if (freeze.caller === caller) unmet('the agent that froze the candidate also asks for acceptance: the reviewer must call the gate');
+  } else if (freeze) unmet('the runtime did not report which agent made the freeze or the gate call, so independence cannot be proven');
+
+  const pres = Array.isArray(input.preservation) ? input.preservation : [];
+  if (pres.length === 0) unmet('no preservation list: say which earlier behaviour still holds');
+  for (const p of pres) if (!p || p.ok !== true) unmet(`preservation ${p && p.id}: not confirmed`);
+
+  for (const f of Array.isArray(input.findings) ? input.findings : []) {
+    if (!f || !SEVERITIES.has(f.severity) || !STATUSES.has(f.status)) { unmet(`finding ${f && f.id}: bad severity or status`); continue; }
+    if (f.status === 'rejected' && !(typeof f.reason === 'string' && f.reason.trim())) unmet(`finding ${f.id}: a rejected finding needs a reason`);
+    if (f.status === 'open' && f.severity === 'blocking') block(`finding ${f.id}: a blocking finding is still open`);
+    else if (f.status === 'open' && f.severity === 'major') unmet(`finding ${f.id}: a major finding is still open`);
+  }
+
+  const reqs = Array.isArray(input.requirements) ? input.requirements : [];
+  if (reqs.length === 0) unmet('no requirements listed: name each requirement and its state');
+  for (const r of reqs) {
+    if (!r || !REQUIREMENT_STATES.has(r.state)) unmet(`requirement ${r && r.id}: bad state`);
+    else if (r.state !== 'verified') unmet(`requirement ${r.id}: ${r.state}`);
+  }
+
+  if (reasons.length === 0) return { verdict: 'accepted', reasons: [] };
+  return { verdict: blocked ? 'blocked' : 'unmet', reasons };
+}

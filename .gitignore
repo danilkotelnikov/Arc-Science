@@ -1,0 +1,20 @@
+# large or generated files stay out of the history
+/pristine/app.asar
+/pristine/*.png
+/pristine/*.ico
+/build/
+/_scratch/
+*.tar.xz
+node_modules/
+/brandtext/_unpacked-originals/
+/brandtext/_stage/
+__pycache__/
+*.asar
+*.asar.unpacked
+.env
+.env.*
+.arc-harness-privacy-deny.txt
+*.pem
+*.key
+*.pfx
+*.log

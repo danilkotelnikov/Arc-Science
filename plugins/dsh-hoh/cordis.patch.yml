@@ -1,0 +1,4 @@
+# dsh-hoh bundle patch: mounts the plugin on the host.
+- insert:
+    - id: hoh
+      name: dsh-hoh
