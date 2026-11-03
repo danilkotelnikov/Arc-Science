@@ -17,17 +17,18 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 from PIL import Image
 
-DESK = Path(r'C:/Users/danil/OneDrive/Рабочий стол/Omniverso')
+# The brand sources and the rasteriser live outside this repository; set ARC_BRAND_SRC and ARC_SVG2PNG to rebuild brand/dist.
+DESK = Path(os.environ.get('ARC_BRAND_SRC', 'brand-src'))
 CUBE_DIR = DESK / 'Brand cube AS 2026-10-19'
 C2 = DESK / 'Cammut + Arc Science UI preview 2026-10-23' / 'UI-preview-C2.html'
-REPO = Path(r'C:/Users/danil/OneDrive/Рабочий стол/Arc Science/Arc-Science')
-RASTERISER = REPO / 'native' / 'arc-svg' / 'target' / 'release' / 'arc-svg2png.exe'
+RASTERISER = Path(os.environ.get('ARC_SVG2PNG', 'arc-svg2png.exe'))
 HERE = Path(__file__).resolve().parent
 OUT = HERE / 'dist'
 INK, WHITE, PAPER = '#0A0A0A', '#FFFFFF', '#FAF9F6'

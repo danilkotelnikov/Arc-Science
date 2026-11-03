@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const res = process.env.ARC_RESOURCES || 'C:/Users/danil/AppData/Local/Programs/DeepSeek Harness/resources';
+const res = process.env.ARC_RESOURCES || path.join(process.env.LOCALAPPDATA || '', 'Programs', 'DeepSeek Harness', 'resources');
 const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
 const pristineSums = Object.fromEntries(fs.readFileSync(path.join(root, 'pristine', 'SHA256SUMS.txt'), 'utf8').trim().split('\n').map((l) => { const [h, n] = l.split(/\s+\*?/); return [n, h]; }));
 const live = (n) => path.join(res, n);

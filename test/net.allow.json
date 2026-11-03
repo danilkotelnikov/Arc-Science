@@ -1,5 +1,5 @@
 {
-  "_note": "Arc Harness must not connect to a DeepSeek-run service (Danil, 2026-11-01). Real DeepSeek MODEL names and the third-party provider catalog in pi-ai stay. Everything else that names a DeepSeek address is a finding.",
+  "_note": "Arc Harness must not connect to a DeepSeek-run service (owner decision, 2026-11-01). Real DeepSeek MODEL names and the third-party provider catalog in pi-ai stay. Everything else that names a DeepSeek address is a finding.",
   "piAiCatalog": {
     "file": "$^",
     "why": "No exemption by path any more: the build rewrites every DeepSeek address in the catalog files as well. Model and provider names are matched by modelNames only."

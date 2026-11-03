@@ -23,7 +23,8 @@ const argv = process.argv.slice(2);
 const opt = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : dflt; };
 const asar = path.resolve(opt('--asar', path.join(root, 'build', 'app.asar')));
 const outDir = path.resolve(opt('--out', path.join(root, '_scratch', 'crawl')));
-const EXE = opt('--exe', 'C:/Users/danil/AppData/Local/Programs/DeepSeek Harness/DeepSeek Harness.exe');
+const APP_DIR = process.env.ARC_APP_DIR || path.join(process.env.LOCALAPPDATA || '', 'Programs', 'DeepSeek Harness');
+const EXE = opt('--exe', path.join(APP_DIR, 'DeepSeek Harness.exe'));
 const phase = opt('--phase', null);
 if (!phase) {
   const reports = [];
@@ -53,9 +54,9 @@ const killTree = (pid) => { try { spawnSync('taskkill', ['/PID', String(pid), '/
 // ---- the server: the web profile served from the archive under test
 const unpacked = asar + '.unpacked';
 let madeUnpacked = false;
-if (!fs.existsSync(unpacked)) { fs.symlinkSync('C:/Users/danil/AppData/Local/Programs/DeepSeek Harness/resources/app.asar.unpacked', unpacked, 'junction'); madeUnpacked = true; }
+if (!fs.existsSync(unpacked)) { fs.symlinkSync(path.join(APP_DIR, 'resources', 'app.asar.unpacked'), unpacked, 'junction'); madeUnpacked = true; }
 const serverLog = path.join(outDir, 'server.log');
-// a throwaway home keeps the settings, sessions and storages of the test apart from Danil's data;
+// a throwaway home keeps the settings, sessions and storages of the test apart from the user's data;
 // only the plugin profiles are shared (read for plugins and config)
 // The profile is a copy of its small config files plus a hard-linked copy of its plugin packages: the app writes settings
 // (for example the theme choice) into cordis.patch.yml, and that must never reach the real profile.

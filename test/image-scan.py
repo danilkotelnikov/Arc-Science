@@ -1,6 +1,6 @@
 """Find the old vendor's whale, and its blue, in pictures. The text scans cannot see pictures; this scan reads them by content.
 
-    python test/image-scan.py --asar build/app.asar --dir C:/Users/danil/.dsh/profiles/web [--dir ...] [--floor-raster N] [--floor-text N]
+    python test/image-scan.py --asar build/app.asar --dir ~/.dsh/profiles/web [--dir ...] [--floor-raster N] [--floor-text N]
     python test/image-scan.py --survey --asar pristine/app.asar --dir <folder>      (lists every distinct raster picture; no verdict)
     python test/image-scan.py --self-check
 

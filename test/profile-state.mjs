@@ -1,4 +1,4 @@
-// Ties the evidence of a test run to one state of the data home (C:\Users\danil\.dsh), which is outside git.
+// Ties the evidence of a test run to one state of the data home (~/.dsh), which is outside git.
 //   node test/profile-state.mjs
 // 1. every file that brandtext/apply-profiles.mjs rewrote has the hash in the committed list brandtext/profile-state.json
 // 2. the profile settings say what the slice decided (skill-badge off, the remote plugin off, no DeepSeek provider routes, Radium default model on the web profile)

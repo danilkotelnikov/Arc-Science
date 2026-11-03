@@ -3,13 +3,14 @@
 // Source of the values: Omniverso/Cammut + Arc Science UI preview 2026-10-23/UI-preview-C2.html (tokens, Geist).
 // The v0 and Radium skins, the Style picker and the square-corner rules are removed. The old plugin is archived first.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const plugin = 'C:/Users/danil/.dsh/local-plugins/dsh-theme-pair';
+const plugin = path.join(os.homedir(), '.dsh', 'local-plugins', 'dsh-theme-pair');
 const file = path.join(plugin, 'lib/client/index.js');
 const src = fs.readFileSync(file, 'utf8');
 const geist = fs.readFileSync(path.join(here, '..', 'brand', 'dist', 'geist.css'), 'utf8').trim();
@@ -19,7 +20,7 @@ if (!/var SKINS = \{\s*"v0"/.test(src)) { console.log('already converted: no v0 
 // 1. archive the old plugin once
 const archive = path.join(here, '_legacy-skins-20261101.tar.xz');
 if (!fs.existsSync(archive)) {
-  const r = spawnSync('tar', ['--force-local', '-cJf', archive, '-C', 'C:/Users/danil/.dsh/local-plugins', 'dsh-theme-pair'], { encoding: 'utf8' });
+  const r = spawnSync('tar', ['--force-local', '-cJf', archive, '-C', path.dirname(plugin), 'dsh-theme-pair'], { encoding: 'utf8' });
   if (r.status !== 0) throw new Error('archive failed: ' + r.stderr);
 }
 
@@ -80,7 +81,7 @@ swap(/      var en = \{ "row\.title": "Style" \};\n[\s\S]*?\n      ctx\.slots\.i
 swap(/ \* Client half:[\s\S]*?the font stacks fall back to system fonts when they are not installed\.\n/, ` * Client half: the Arc Science paper theme for the web UI (the C2 look of the Cammut and Arc Science console).
  * One token layer on the app's own theme service (ctx.theme.overrideTokens), so light, dark and system modes keep
  * working: cream paper #faf9f6, a dark-brown primary button #54453c, rounded corners (10 px cards, 8 px controls)
- * and Geist (embedded, SIL OFL 1.1). No blue is left (Danil, 2026-10-31). The v0 and Radium skins are gone.
+ * and Geist (embedded, SIL OFL 1.1). No blue is left (owner decision, 2026-10-31). The v0 and Radium skins are gone.
 `, 'header comment');
 swap(/dsh-theme-pair 0\.3\.2/g, 'dsh-theme-pair 0.4.0', 'version comment');
 fs.writeFileSync(file, out);
