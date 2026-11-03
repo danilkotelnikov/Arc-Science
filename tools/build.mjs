@@ -598,6 +598,55 @@ Use this image in Markdown:
   report.push('badge skill: cube tile image, Markdown, description and package texts say Arc Harness (no vendor logo, ink colour 26231F)');
 }
 
+// ---- patch 13: the running label. "Deep diving" was a DeepSeek Harness feature name; v0 and Vercel say "Thinking",
+// with the elapsed time after it. The three dots in the original are middle dots, which the product copy does not use.
+{
+  const p = DS + 'dsh-client-ui-chat/lib/client.js';
+  let s = text(p);
+  const a = '"chat.deepDiving": "Deep diving"', b = '"chat.deepDivingFor": "Deep diving for {duration} ···"';
+  must(s.split(a).length === 3, 'running label: expected 2 plain entries, found ' + (s.split(a).length - 1));
+  must(s.split(b).length === 3, 'running label: expected 2 timed entries, found ' + (s.split(b).length - 1));
+  s = s.split(a).join('"chat.deepDiving": "Thinking"').split(b).join('"chat.deepDivingFor": "Thinking for {duration}"');
+  mustParse(s, p);
+  put(p, s);
+  const rp = DS + 'dsh-client-ui-chat/README.md';
+  const r = text(rp);
+  must(r.split('“Deep diving”').length === 2, 'running label: README mention');
+  put(rp, r.replace('“Deep diving”', '“Thinking”'));
+  report.push('running label: "Thinking" and "Thinking for 2s" (was "Deep diving", with middle dots)');
+}
+
+// ---- patch 14: the lean core. The browser roster of the web bundle (which the desktop app serves as well) loses the screens that
+// have no place in a v0 style harness: the Plugins page and its Built-in plugins settings, Automation tasks, trajectories,
+// skills, accounts, the subagent settings, and the mode picker with its Agent presets page. The host halves stay, so the agent
+// still works. A row is switched off by one `disabled: true` line, so a screen comes back by deleting that line.
+{
+  const p = DS + 'dsh-web-app/cordis.patch.yml';
+  let s = text(p);
+  const OFF = ['ui-plugin-manager', 'ui-settings-plugin-inventory', 'ui-settings-plugins', 'ui-settings-account', 'ui-schedule', 'ui-trajectory', 'ui-skill', 'ui-settings-subagent', 'ui-agent-preset', 'entry-customization'];
+  for (const id of OFF) {
+    const re = new RegExp(`(\\n {4}- id: ${id}\\r?\\n {6}name: [^\\r\\n]+(\\r?\\n))(?! {6}disabled:)`);
+    must(re.test(s), `lean core: row ${id} not found, or it is disabled already`);
+    s = s.replace(re, (m, a, eol) => a + '      disabled: true' + eol);
+  }
+  put(p, s);
+  report.push(`lean core: ${OFF.length} browser rows switched off (${OFF.join(', ')})`);
+}
+
+// ---- patch 15: the "Show coding view" row of General settings. It switched on trajectories, code diffs and every Agent preset,
+// and the lean core has none of those screens. The row's slot registration goes; the setting itself keeps its default (off).
+{
+  const p = DS + 'dsh-client-ui-settings-general/lib/client.js';
+  const s = text(p);
+  const re = /ctx\.slots\.inject\("settings\.general\.item", \(\) => ctx\.slots\.register\(\{\s*name: "settings\.general\.item",\s*id: "developer-tools",[\s\S]*?\}, DeveloperToolsRow\)\);\s*/g;
+  const n = (s.match(re) || []).length;
+  must(n === 1, 'coding view row: expected 1 registration, found ' + n);
+  const out = s.replace(re, '');
+  mustParse(out, p);
+  put(p, out);
+  report.push('coding view row: removed from General settings');
+}
+
 // ---- keep the runtime manifest honest: new size and hash for every changed file under dsh/
 {
   const mp = 'dsh/desktop-runtime.json';

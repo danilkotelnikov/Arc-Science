@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { classify } from '../lib/brandrules.mjs';
 import { findIn, TIER } from './independent-scan.mjs';
 import { quietConfig, removeHome, linkTree, treeHash, treeDiff } from '../lib/testhome.mjs';
+import { lean } from '../tools/lean-profile.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -68,7 +69,9 @@ fs.mkdirSync(path.join(testHome, 'profiles', 'web'), { recursive: true });
 // the dark and light phases append their own theme row below, the first-run phase has none.
 for (const f of realConfigs) {
   const from = path.join(realProfile, f), to = path.join(testHome, 'profiles', 'web', f);
-  if (f === 'cordis.patch.yml') fs.writeFileSync(to, quietConfig(fs.readFileSync(from, 'utf8'))); else fs.copyFileSync(from, to);
+  if (f === 'cordis.patch.yml') fs.writeFileSync(to, quietConfig(fs.readFileSync(from, 'utf8')));
+  else if (f === 'package.json' && argv.includes('--lean')) fs.writeFileSync(to, lean(fs.readFileSync(from, 'utf8'))); // the lean bundle list of tools/lean-profile.mjs
+  else fs.copyFileSync(from, to);
 }
 if (phase === 'dark' || phase === 'light') {
   const cfg = path.join(testHome, 'profiles', 'web', 'cordis.patch.yml');
@@ -80,6 +83,16 @@ const nmReal = path.join(realProfile, 'node_modules');
 const nmBefore = treeHash(nmReal);
 const nmCounts = linkTree(nmReal, path.join(testHome, 'profiles', 'web', 'node_modules'));
 console.log(`plugin packages: ${nmCounts.linked} files hard-linked, ${nmCounts.copied} copied, ${nmCounts.skipped} links skipped, ${nmCounts.dirs} folders`);
+// --plugin <folder>: test a plugin from its source folder. Its links in the throwaway home are replaced by a copy (removing a hard link
+// leaves the real file), so the real profile keeps its installed version.
+for (let i = argv.indexOf('--plugin'); i >= 0; i = argv.indexOf('--plugin', i + 1)) {
+  const src = path.resolve(argv[i + 1]);
+  const name = JSON.parse(fs.readFileSync(path.join(src, 'package.json'), 'utf8')).name;
+  const dst = path.join(testHome, 'profiles', 'web', 'node_modules', name);
+  fs.rmSync(dst, { recursive: true, force: true });
+  fs.cpSync(src, dst, { recursive: true, filter: (f) => !/[\\/](node_modules|test)$/.test(f) });
+  console.log(`plugin ${name}: tested from ${src}`);
+}
 // Every exit, early ones included, goes through here. removeHome never enters a link.
 async function cleanupHome() {
   await new Promise((r) => setTimeout(r, 1200));
@@ -222,7 +235,19 @@ async function closeAll() {
 // The screens that sit on the composer start from the home page (the Plugins page replaces it).
 const HOME = "__arc.clickAndWait('New session', 900)";
 const OPT_SETTINGS = 'the settings page appears only when the data home holds data of that plugin; a fresh test home has none';
-const SCREENS = [
+const LEAN = argv.includes('--lean'); // the lean profile (tools/lean-profile.mjs) on the lean core (patch 14 of tools/build.mjs)
+const ABSENT_NAV = ['Plugins', 'Automation tasks', 'Context Insights', 'More', 'Import Sessions', 'Standard mode', 'Minimal mode', 'Creator mode', 'PTC mode'];
+const ABSENT_SETTINGS = ['Built-in plugins', 'Agent presets', 'Skills', 'Visualize', 'Side card', 'Vision Router', 'Archived sessions', 'Account'];
+const LEAN_SCREENS = [
+  { name: 'home', run: async () => true },
+  { name: 'model-menu', pre: HOME, run: async () => evalIn("__arc.clickAndWait('Select model')") },
+  { name: 'search-sessions', run: async () => evalIn("__arc.clickAndWait('Search sessions')") },
+  { name: 'plus-menu', pre: HOME, run: async () => evalIn("__arc.clickAndWait('Add files or run commands')") },
+  { name: 'access-mode', pre: HOME, run: async () => evalIn("__arc.clickAndWait('Access mode')") },
+  { name: 'right-sidebar', pre: HOME, run: async () => evalIn("__arc.clickAndWait('Open right sidebar')") },
+  ...['General', 'Models'].map((n) => ({ name: 'settings-' + n.toLowerCase(), run: async () => evalIn(`__arc.openSettings(${JSON.stringify(n)})`) })),
+];
+const SCREENS = LEAN ? LEAN_SCREENS : [
   { name: 'home', run: async () => true },
   { name: 'model-menu', pre: HOME, run: async () => evalIn("__arc.clickAndWait('Select model')") },
   { name: 'plugins', run: async () => evalIn("__arc.clickAndWait('Plugins')") },
@@ -272,6 +297,22 @@ async function crawl(scheme, tag) {
     for (const c of bad.slice(0, 6)) fail(`${tag}/${s.name}: contrast ${c.ratio} for "${c.text}" (${c.color})`);
     if (col.contrast.length > bad.length) warn(`${tag}/${s.name}: ${col.contrast.length - bad.length} texts between 3 and 4.5 contrast`);
     res.screens[s.name] = { lines: lines.length, dirty: dirty.length, blue: col.blue.length, lowContrast: col.contrast.length };
+  }
+  if (LEAN) {
+    // what the lean core removed must be gone, not hidden: no button with the label, and no settings page of that name
+    await evalIn(HOME);
+    for (const l of ABSENT_NAV) if (await evalIn(`!!__arc.find(${JSON.stringify(l)})`)) fail(`${tag}: the lean core still shows "${l}"`);
+    for (const n of ABSENT_SETTINGS) { if (await evalIn(`__arc.openSettings(${JSON.stringify(n)})`)) fail(`${tag}: the lean core still has the settings page "${n}"`); await closeAll(); }
+    // patch 15: no "Show coding view" row in General
+    if (!(await evalIn("__arc.openSettings('General')"))) fail(`${tag}: General settings could not be opened`);
+    else if ((await evalIn('__arc.texts()')).some((l) => l.includes('Show coding view'))) fail(`${tag}: General settings still show "Show coding view"`);
+    await closeAll();
+    // the Trace tab of dsh-hoh: the HoH ledger and the Cammut brief in the right sidebar
+    await evalIn(HOME);
+    if (!(await evalIn("!!__arc.find('Trace') || __arc.clickAndWait('Open right sidebar')"))) fail(`${tag}: the right sidebar could not be opened`); // an earlier screen may have left it open
+    else if (!(await evalIn("__arc.clickAndWait('Trace', 1200)"))) fail(`${tag}: the right sidebar has no Trace tab`);
+    else { await shot(`${tag}-trace`); if (!(await evalIn('__arc.texts()')).some((l) => l.includes('HoH ledger'))) fail(`${tag}: the Trace tab does not show the HoH ledger section`); }
+    await closeAll();
   }
   if (!(await closeAll())) warn(`${tag}: a dialog stayed open`);
   return res;
