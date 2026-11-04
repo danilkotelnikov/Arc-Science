@@ -27,7 +27,9 @@ export function migrateHome(home = process.env.ARC_HOME?.trim() || path.join(os.
   if (fs.existsSync(path.join(home, 'profiles')) || !fs.existsSync(old)) return console.log('data folder:', home, fs.existsSync(home) ? '(already there)' : '(new)');
   const tmp = home + '.arc-new';
   if (fs.existsSync(tmp)) throw new Error('an unfinished copy is in the way: ' + tmp + '; look at it, then remove it');
-  const st = makeArcCopy(old, tmp, { rewrite: homeRewrite(old), link: false });
+  let st;
+  try { st = makeArcCopy(old, tmp, { rewrite: homeRewrite(old), link: false }); }
+  catch (err) { fs.rmSync(tmp, { recursive: true, force: true }); throw err; } // ~/.dsh stays as it was, and the next install can try again
   if (fs.existsSync(home)) {
     for (const e of fs.readdirSync(home)) fs.cpSync(path.join(home, e), path.join(tmp, e), { recursive: true, force: true });
     fs.rmSync(home, { recursive: true });
@@ -69,10 +71,11 @@ function installRuntime() {
     if (!n && nn === rel) continue;
     fs.mkdirSync(path.dirname(pristine(rel)), { recursive: true });
     fs.copyFileSync(live(rel), pristine(rel));
+    plan.push({ rel, nn });
+    fs.writeFileSync(planFile, JSON.stringify(plan, null, 2)); // saved before the change, so a failed install can still roll back
     fs.mkdirSync(path.dirname(live(nn)), { recursive: true });
     fs.writeFileSync(live(nn), n ? t : buf);
     if (nn !== rel) fs.unlinkSync(live(rel));
-    plan.push({ rel, nn });
   }
   fs.writeFileSync(planFile, JSON.stringify(plan, null, 2));
   return plan.length;
@@ -111,6 +114,7 @@ if (cmd === 'status') {
   const prev = path.join(root, 'build', 'INSTALLED.sha');
   if (fs.existsSync(prev)) known.add(fs.readFileSync(prev, 'utf8').trim());
   if (!known.has(now)) throw new Error('the live app.asar is neither the original nor a known Arc build; stop and look');
+  migrateHome(); // first: a failed copy must not leave a new app without its data
   swap(built, live('app.asar'));
   swap(path.join(root, 'brand', 'dist', 'icon.png'), live('icon.png'));
   swap(path.join(root, 'brand', 'dist', 'tray.ico'), live('tray.ico'));
@@ -119,7 +123,6 @@ if (cmd === 'status') {
   const rt = installRuntime();
   fs.writeFileSync(prev, sha(live('app.asar')));
   console.log('installed Arc Harness build', sha(live('app.asar')).slice(0, 16), `(side folder with Arc names; ${rt} runtime files with Arc names)`);
-  migrateHome();
 } else if (cmd === 'rollback') {
   for (const n of Object.keys(pristineSums)) { swap(pristine(n), live(n)); }
   const u = rollbackUnpacked(), rt = rollbackRuntime();
