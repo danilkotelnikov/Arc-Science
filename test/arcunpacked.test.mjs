@@ -52,3 +52,15 @@ test('a copy into its own source stops before it writes anything', (t) => {
   assert.deepEqual(fs.readdirSync(src), ['a.bin'], 'nothing was written');
   assert.equal(makeArcCopy(src, path.join(dir, 'src-copy'), { link: false }).copied, 1, 'a sibling with a similar name is fine');
 });
+
+test('a file that cannot be linked is copied, as on another drive', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-copy-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const src = path.join(dir, 'src'), dst = path.join(dir, 'dst');
+  fs.mkdirSync(src);
+  fs.writeFileSync(path.join(src, 'a.bin'), 'data');
+  t.mock.method(fs, 'linkSync', () => { throw Object.assign(new Error('cross-device link not permitted'), { code: 'EXDEV' }); });
+  const st = makeArcCopy(src, dst);
+  assert.deepEqual([st.linked, st.copied], [0, 1]);
+  assert.equal(fs.readFileSync(path.join(dst, 'a.bin'), 'utf8'), 'data');
+});
