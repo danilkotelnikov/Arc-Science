@@ -625,7 +625,7 @@ Use this image in Markdown:
 {
   const p = DS + 'dsh-web-app/cordis.patch.yml';
   let s = text(p);
-  const OFF = ['ui-plugin-manager', 'ui-settings-plugin-inventory', 'ui-settings-plugins', 'ui-settings-account', 'ui-schedule', 'ui-trajectory', 'ui-skill', 'ui-settings-subagent', 'ui-agent-preset', 'entry-customization'];
+  const OFF = ['ui-plugin-manager', 'ui-settings-account', 'ui-schedule', 'ui-trajectory', 'ui-skill', 'ui-settings-subagent', 'ui-agent-preset', 'entry-customization'];
   for (const id of OFF) {
     const re = new RegExp(`(\\n {4}- id: ${id}\\r?\\n {6}name: [^\\r\\n]+(\\r?\\n))(?! {6}disabled:)`);
     must(re.test(s), `lean core: row ${id} not found, or it is disabled already`);
