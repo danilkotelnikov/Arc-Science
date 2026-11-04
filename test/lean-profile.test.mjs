@@ -141,3 +141,26 @@ test('an old flat undo file belongs to the legacy home only and moves under "hom
   assert.deepEqual(bundles(a, 'desktop'), A.desktop);
   assert.deepEqual(undoOf(opts), { homes: {} });
 });
+
+test('an old flat undo file serves ~/.arc and ~/.dsh, because ~/.arc began as a copy of ~/.dsh', (t) => {
+  const { makeHome, opts } = scratch(t);
+  const arc = makeHome('.arc', A), dsh = makeHome('.dsh', A);
+  const original = { web: ['@deepseek-ai/dsh-base', 'dsh-context'], desktop: ['@deepseek-ai/dsh-base'] };
+  for (const p of ['web', 'desktop']) fs.writeFileSync(path.join(dsh, 'profiles', p, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['lean'] } } }));
+  const both = { ...opts, legacyHome: [arc, dsh] };
+  fs.writeFileSync(opts.undoFile, JSON.stringify(original));
+
+  run('restore', dsh, both);
+  const dshList = JSON.parse(fs.readFileSync(path.join(dsh, 'profiles', 'web', 'package.json'), 'utf8')).dsh.profile.bundles;
+  assert.deepEqual(dshList, original.web, '~/.dsh gets the list with the original names');
+  run('restore', arc, both);
+  assert.deepEqual(bundles(arc, 'web'), ['@arc-harness/arc-base', 'arc-context'], '~/.arc gets the same list with Arc names');
+  assert.deepEqual(undoOf(opts), { homes: {} });
+});
+
+test('an old flat undo file with Arc names never goes to ~/.dsh', (t) => {
+  const { dir, opts } = scratch(t);
+  const arc = path.join(dir, '.arc'), dsh = path.join(dir, '.dsh');
+  fs.writeFileSync(opts.undoFile, JSON.stringify(A));
+  assert.deepEqual(Object.keys(readUndo(opts.undoFile, [arc, dsh])), [homeKey(arc)]);
+});

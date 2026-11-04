@@ -56,14 +56,16 @@ export function resolveHome(argv, env = process.env, userHome = os.homedir()) {
 }
 
 /** The undo list as { [homeKey]: { web?: [...], desktop?: [...] } }. The file is { "homes": { ... } }.
- *  An old file without "homes" holds the flat lists { web, desktop } of the one home it was written for: they move to legacyHome,
- *  without replacing a list that home already has under "homes". */
+ *  An old file without "homes" holds flat lists { web, desktop }: they move to each of legacyHome (one path or a list), without
+ *  replacing a list that home already has under "homes". The original data folder cannot load Arc names, so it never takes such a list. */
 export function readUndo(file, legacyHome) {
   const raw = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
   const homes = raw.homes && typeof raw.homes === 'object' && !Array.isArray(raw.homes) ? { ...raw.homes } : {};
   const old = Object.fromEntries(PROFILES.filter((p) => Array.isArray(raw[p])).map((p) => [p, raw[p]]));
-  if (Object.keys(old).length && legacyHome) {
-    const k = homeKey(legacyHome);
+  const arcNames = Object.values(old).flat().some((b) => b.startsWith('@arc-harness/'));
+  for (const h of Object.keys(old).length ? [legacyHome].flat() : []) {
+    if (!h || (arcNames && path.basename(h) === '.dsh')) continue;
+    const k = homeKey(h);
     homes[k] = { ...old, ...homes[k] };
   }
   return homes;
@@ -71,10 +73,10 @@ export function readUndo(file, legacyHome) {
 
 /** Runs status, apply or restore on the profiles of one data home. Only the undo entry of that home is read or changed.
  *  undoFile: where the undo list lives (default: the kit's brandtext/lean-profile.undo.json).
- *  legacyHome: the home an old flat undo file belongs to (default: the home without ARC_HOME, the one the old tool wrote for). */
+ *  legacyHome: the homes an old flat undo file belongs to (default: the home without ARC_HOME and ~/.dsh, because ~/.arc began as its copy). */
 export function run(cmd, home, { undoFile: file = undoFile, legacyHome, log = console.log } = {}) {
   if (!COMMANDS.includes(cmd)) throw new Error('usage: lean-profile.mjs status|apply|restore [--home <dir>]');
-  const undo = readUndo(file, legacyHome === undefined ? dataHome({}) : legacyHome);
+  const undo = readUndo(file, legacyHome === undefined ? [dataHome({}), path.join(os.homedir(), '.dsh')] : legacyHome);
   const key = homeKey(home);
   const saved = { ...undo[key] };
   const installed = (f) => (b) => fs.existsSync(path.join(path.dirname(f), 'node_modules', b));

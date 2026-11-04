@@ -40,3 +40,15 @@ test('a read-only source folder can still be copied into', posix, (t) => {
   makeArcCopy(src, dst, { link: false });
   assert.equal(fs.readFileSync(path.join(dst, 'a.bin'), 'utf8'), 'data');
 });
+
+test('a copy into its own source stops before it writes anything', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-copy-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const src = path.join(dir, 'src');
+  fs.mkdirSync(src);
+  fs.writeFileSync(path.join(src, 'a.bin'), 'data');
+  assert.throws(() => makeArcCopy(src, path.join(src, 'inner.arc-new'), { link: false }), /inside its source/);
+  assert.throws(() => makeArcCopy(src, path.join(src, 'x', 'y'), { link: false }), /inside its source/);
+  assert.deepEqual(fs.readdirSync(src), ['a.bin'], 'nothing was written');
+  assert.equal(makeArcCopy(src, path.join(dir, 'src-copy'), { link: false }).copied, 1, 'a sibling with a similar name is fine');
+});
