@@ -58,6 +58,12 @@ window.__ModuleLoader__.load({
           out.push(suffix.map(function (s) { return s + ":nth-child(n+9)"; }).join(",") + "{animation:none;will-change:auto}");
         }
       });
+      // running labels: the original shine slides a second copy of the text over the first, and the copies do not line up.
+      // One gradient painted on the text itself has no second layer to tear.
+      out.push("@supports (-webkit-background-clip:text){html body [data-shimmer=\"true\"] [class*=\"_decoration_\"]{display:none}");
+      out.push("@keyframes arcShine{from{background-position:130% 0}to{background-position:-30% 0}}");
+      out.push("html body [data-shimmer=\"true\"] [class*=\"_text_\"]{-webkit-text-fill-color:transparent;background:linear-gradient(105deg,currentColor 40%,var(--dsw-alias-label-shimmer,var(--dsw-alias-label-primary,currentColor)) 50%,currentColor 60%) 130% 0/250% 100%;-webkit-background-clip:text;background-clip:text;animation:arcShine 2s linear infinite}}");
+      out.push("@media (prefers-reduced-motion:reduce){html body [data-shimmer=\"true\"] [class*=\"_text_\"]{-webkit-text-fill-color:currentColor;background:none;animation:none}}");
       // button press feedback: the individual scale property composes with a transform the button already has
       out.push("html body button:not(:disabled):active{scale:.97;transition:scale 120ms " + EASE.p2 + "}");
       off.push("html body button:not(:disabled):active");
