@@ -1,4 +1,4 @@
-"""Build the Arc Harness brand files from the Arc Science AS cube.
+"""Build the Arc Harness brand files from the AS cube.
 
 Reads (never writes) the brand cube folder and the C2 UI preview:
   <ARC_BRAND_SRC>/Brand cube AS 2026-10-19     cube-as-left-black.svg, cube-mark-black.svg (the AS cube, one colour)

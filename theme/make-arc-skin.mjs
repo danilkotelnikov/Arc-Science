@@ -1,16 +1,16 @@
-// Turns dsh-theme-pair into the single Arc Science skin (the C2 look of the Cammut and Arc Science console).
+// Turns arc-theme into the single Arc Harness skin (the C2 look of the Cammut and Arc Harness console).
 //   node theme/make-arc-skin.mjs
-// Source of the values: the Cammut and Arc Science UI preview C2 of 2026-10-23 (tokens, Geist).
+// Source of the values: the Cammut and Arc Harness UI preview C2 of 2026-10-23 (tokens, Geist).
 // The v0 and Radium skins, the Style picker and the square-corner rules are removed. The old plugin is archived first.
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { dataHome } from '../lib/testhome.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const plugin = path.join(os.homedir(), '.dsh', 'local-plugins', 'dsh-theme-pair');
+const plugin = path.join(dataHome(), 'local-plugins', 'arc-theme');
 const file = path.join(plugin, 'lib/client/index.js');
 const src = fs.readFileSync(file, 'utf8');
 const geist = fs.readFileSync(path.join(here, '..', 'brand', 'dist', 'geist.css'), 'utf8').trim();
@@ -20,7 +20,7 @@ if (!/var SKINS = \{\s*"v0"/.test(src)) { console.log('already converted: no v0 
 // 1. archive the old plugin once
 const archive = path.join(here, '_legacy-skins-20261101.tar.xz');
 if (!fs.existsSync(archive)) {
-  const r = spawnSync('tar', ['--force-local', '-cJf', archive, '-C', path.dirname(plugin), 'dsh-theme-pair'], { encoding: 'utf8' });
+  const r = spawnSync('tar', ['--force-local', '-cJf', archive, '-C', path.dirname(plugin), 'arc-theme'], { encoding: 'utf8' });
   if (r.status !== 0) throw new Error('archive failed: ' + r.stderr);
 }
 
@@ -66,7 +66,7 @@ const extra = [
   'html body [class*="WOwLGG_titleGroup"]{font-size:32px !important;line-height:1.15 !important;font-weight:600 !important;letter-spacing:-.02em !important}',
   'html body [class*="WOwLGG_previewBadge"]{display:none !important}',
 ];
-const arc = { label: 'Arc Science', tokens: T, scoped: [...keep, ...extra] };
+const arc = { label: 'Arc Harness', tokens: T, scoped: [...keep, ...extra] };
 
 // 3. rewrite the plugin source
 const literalStart = src.indexOf('var SKINS = {');
@@ -78,18 +78,18 @@ swap(/function readSkin\(\) \{[\s\S]*?\n    \}\n    function writeSkin/, 'functi
 swap(/var current = "v0";/, 'var current = "arc";', 'current');
 swap(/    function StyleRow\(\) \{[\s\S]*?\n    \}\n\n    \/\/ Custom properties/, '    // Custom properties', 'StyleRow');
 swap(/      var en = \{ "row\.title": "Style" \};\n[\s\S]*?\n      ctx\.slots\.inject\("settings\.general\.item"[\s\S]*?\n      \}\);\n/, '', 'style row registration');
-swap(/ \* Client half:[\s\S]*?the font stacks fall back to system fonts when they are not installed\.\n/, ` * Client half: the Arc Science paper theme for the web UI (the C2 look of the Cammut and Arc Science console).
+swap(/ \* Client half:[\s\S]*?the font stacks fall back to system fonts when they are not installed\.\n/, ` * Client half: the Arc Harness paper theme for the web UI (the C2 look of the Cammut and Arc Harness console).
  * One token layer on the app's own theme service (ctx.theme.overrideTokens), so light, dark and system modes keep
  * working: cream paper #faf9f6, a dark-brown primary button #54453c, rounded corners (10 px cards, 8 px controls)
  * and Geist (embedded, SIL OFL 1.1). No blue is left (owner decision, 2026-10-31). The v0 and Radium skins are gone.
 `, 'header comment');
-swap(/dsh-theme-pair 0\.3\.2/g, 'dsh-theme-pair 0.4.0', 'version comment');
+swap(/arc-theme 0\.3\.2/g, 'arc-theme 0.4.0', 'version comment');
 fs.writeFileSync(file, out);
 
 // 4. version
 for (const f of ['lib/index.js', 'README.md', 'test/theme.test.mjs']) {
   const p = path.join(plugin, f);
-  fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace(/dsh-theme-pair 0\.3\.2/g, 'dsh-theme-pair 0.4.0'));
+  fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace(/arc-theme 0\.3\.2/g, 'arc-theme 0.4.0'));
 }
 // 5. the checks: one skin, the C2 values
 {
@@ -97,7 +97,7 @@ for (const f of ['lib/index.js', 'README.md', 'test/theme.test.mjs']) {
   let t = fs.readFileSync(tf, 'utf8');
   const rep = (from, to, what) => { if (!t.includes(from)) throw new Error('test text not found: ' + what); t = t.replace(from, () => to); };
   rep("check(exp.SKINS && exp.SKINS.v0 && exp.SKINS.radium, 'two skins exist: v0 and radium');",
-    "check(exp.SKINS && Object.keys(exp.SKINS).join() === 'arc' && exp.SKINS.arc.label === 'Arc Science', 'one skin exists: Arc Science (the v0 and Radium skins are gone)');", 'skins check');
+    "check(exp.SKINS && Object.keys(exp.SKINS).join() === 'arc' && exp.SKINS.arc.label === 'Arc Harness', 'one skin exists: Arc Harness (the v0 and Radium skins are gone)');", 'skins check');
   rep("check(arRules.length === 2 && arRules.every(", "check(arRules.length === 1 && arRules.every(", 'review rules count');
   rep("'AI Review panel: both skins set text, muted text, surface and border from the skin tokens'", "'AI Review panel: the skin sets text, muted text, surface and border from its tokens'", 'review label');
   rep("const MIN = { primary: 12, secondary: 7, tertiary: 4.5 };", "const MIN = { primary: 12, secondary: 6, tertiary: 4.5 }; // C2's own muted text #645e55 on white is 6.4:1", 'min contrast');
@@ -117,11 +117,11 @@ for (const f of ['lib/index.js', 'README.md', 'test/theme.test.mjs']) {
   const d = t.indexOf('  // grey ramp must keep its order');
   if (c < 0 || d < 0) throw new Error('v0 test block not found');
   t = t.slice(0, c) + t.slice(d);
-  t = t.replace('checks the two skins without a browser', 'checks the Arc Science skin without a browser');
+  t = t.replace('checks the two skins without a browser', 'checks the Arc Harness skin without a browser');
   fs.writeFileSync(tf, t);
 }
 const pj = JSON.parse(fs.readFileSync(path.join(plugin, 'package.json'), 'utf8'));
 pj.version = '0.4.0';
-pj.description = 'The Arc Science paper theme: cream surfaces, a dark-brown primary button, Geist type, rounded corners.';
+pj.description = 'The Arc Harness paper theme: cream surfaces, a dark-brown primary button, Geist type, rounded corners.';
 fs.writeFileSync(path.join(plugin, 'package.json'), JSON.stringify(pj, null, 2) + '\n');
 console.log('done: one skin (arc), tokens', Object.keys(T).length, 'scoped rules', arc.scoped.length);

@@ -1,12 +1,12 @@
 /**
- * dsh-hoh 0.3.0 (2026-11-03): the browser half. A Trace tab in the right sidebar shows the HoH ledger
+ * arc-hoh 0.3.0 (2026-11-03): the browser half. A Trace tab in the right sidebar shows the HoH ledger
  * (proposals, freezes and gate verdicts, newest first, with the chain check) and the Cammut brief.
- * Data: POST api/dsh-hoh/trace (lib/index.js), polled every 5 seconds while the tab is shown. Read only.
+ * Data: POST api/arc-hoh/trace (lib/index.js), polled every 5 seconds while the tab is shown. Read only.
  */
-window.__ModuleLoader__.load({ id: 'dsh-hoh', factory: (require) => {
+window.__ModuleLoader__.load({ id: 'arc-hoh', factory: (require) => {
   const React = require('react');
   const h = React.createElement;
-  const NS = 'dsh-hoh', TAB = 'dsh-hoh-trace', POLL_MS = 5000;
+  const NS = 'arc-hoh', TAB = 'arc-hoh-trace', POLL_MS = 5000;
   const en = {
     'tab.trace': 'Trace',
     'tab.guide': 'See the proposals, frozen candidates and gate verdicts of the HoH cycle, and the memory brief the agent reads.',
@@ -57,7 +57,7 @@ window.__ModuleLoader__.load({ id: 'dsh-hoh', factory: (require) => {
         let live = true;
         const load = async () => {
           try {
-            const r = await fetch('api/dsh-hoh/trace', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+            const r = await fetch('api/arc-hoh/trace', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
             const j = r.ok ? await r.json() : null;
             if (!live) return;
             if (j && j.ok) { setData(j); setFailed(false); } else setFailed(true);
@@ -83,7 +83,7 @@ window.__ModuleLoader__.load({ id: 'dsh-hoh', factory: (require) => {
   }
 
   function apply(ctx) {
-    ctx.effect(() => ctx.locale.register(NS, { en, zh: en }), 'dsh-hoh: dictionaries');
+    ctx.effect(() => ctx.locale.register(NS, { en, zh: en }), 'arc-hoh: dictionaries');
     const t = ctx.locale.bind(NS);
     const Pane = makePane(t);
     const Title = () => h(React.Fragment, null, h(Icon, { size: 16 }), h('span', null, t('tab.trace')));
@@ -101,5 +101,5 @@ window.__ModuleLoader__.load({ id: 'dsh-hoh', factory: (require) => {
     });
   }
 
-  return { name: 'dsh-hoh', inject: ['slots', 'locale'], apply };
+  return { name: 'arc-hoh', inject: ['slots', 'locale'], apply };
 } });

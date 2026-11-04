@@ -27,12 +27,14 @@
     "\\.test\\.m?js$": "Tests of upstream packages.",
     "\\.min\\.js$": "Minified third-party libraries.",
     "/local-plugins/dsh-english/": "A translation tool of this kit with its working cache (Chinese text and the English answer, old product name included) and old file copies. No profile loads it and no page shows it. It leaves with the rename slices (ARC-RENAME-2).",
-    "/dsh-hoh/lib/index\\.js$": "The owner's own HoH plugin. Its retrieval query to Cammut keeps the old wording, because the stored notes are ranked by it; brandtext/apply-profiles.mjs leaves the file as it was (KEEP).",
+    "/local-plugins/arc-english/": "A translation tool of this kit with its working cache (Chinese text and the English answer, old product name included) and old file copies. No profile loads it and no page shows it. It leaves with the rename slices (ARC-RENAME-2).",
+    "/arc-hoh/lib/index\\.js$": "The owner's own HoH plugin. Its retrieval query to Cammut keeps the old wording, because the stored notes are ranked by it; brandtext/apply-profiles.mjs leaves the file as it was (KEEP).",
     "/node_modules/(?:@types|typescript|vitest|zod|d3|cytoscape|dompurify|dayjs|file-type|fflate|jimp|pdfjs-dist)/": "Third-party libraries that ship inside the profile packages."
   },
   "profileSkip": [
     "/local-plugins/dsh-english/",
-    "/dsh-hoh/lib/index\\.js$",
+    "/local-plugins/arc-english/",
+    "/arc-hoh/lib/index\\.js$",
     "/node_modules/(?:@types|typescript|vitest|zod|d3|cytoscape|dompurify|dayjs|file-type|fflate|jimp|pdfjs-dist)/",
     "/CHANGELOG",
     "/(?:test|tests|__tests__)/",

@@ -10,6 +10,8 @@ import { openAsar, writeAsar } from '../lib/asar.mjs';
 import { allow, rewriteFile, rewriteHosts } from '../lib/brandrules.mjs';
 import { recolorSvg, recolorBlueAttrsInScript, recolorBlueTokens, replaceVendorBlue, recolorBlueHues, HUE_ARCHIVE } from '../lib/iconcolor.mjs';
 import { swapPicture } from '../lib/whaleimg.mjs';
+import { arcText, LEFT } from '../lib/arcnames.mjs';
+import { makeArcCopy } from '../lib/arcunpacked.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.resolve(process.argv[2] || path.join(root, 'build', 'app.asar'));
@@ -616,7 +618,7 @@ Use this image in Markdown:
   report.push('running label: "Thinking" and "Thinking for 2s" (was "Deep diving", with middle dots)');
 }
 
-// ---- patch 14: the lean core. The browser roster of the web bundle (which the desktop app serves as well) loses the screens that
+// ---- patch 14: the lean core, with a read-only Built-in plugins section kept in Settings. The browser roster of the web bundle (which the desktop app serves as well) loses the screens that
 // have no place in a v0 style harness: the Plugins page and its Built-in plugins settings, Automation tasks, trajectories,
 // skills, accounts, the subagent settings, and the mode picker with its Agent presets page. The host halves stay, so the agent
 // still works. A row is switched off by one `disabled: true` line, so a screen comes back by deleting that line.
@@ -647,31 +649,114 @@ Use this image in Markdown:
   report.push('coding view row: removed from General settings');
 }
 
-// ---- keep the runtime manifest honest: new size and hash for every changed file under dsh/
+// ---- patch 16: the data folder is ~/.arc (was ~/.dsh), its variable ARC_HOME (was DSH_HOME), project skills in .arc/skills
+{
+  // a path segment only: after a quote, slash, tilde or space ("~/.dsh", ".dsh/skills", ".dsh-mkdir-"); never a property such as manifest?.dsh?.bundle
+  const DOT = /(?<=[\s'"`/\\~(])\.dsh(?![\w])/g, ENV = /(?<![\w])DSH_HOME(?![\w])/g;
+  let files = 0, n = 0;
+  for (const f of src.files) {
+    if (f.entry.unpacked || overrides.get(f.path) === null || !/\.(js|cjs|mjs|json|ya?ml|md)$/.test(f.path)) continue;
+    const s = text(f.path);
+    if (!/(?<=[\s'"`/\\~(])\.dsh(?![\w])|DSH_HOME/.test(s)) continue;
+    const out = s.replace(DOT, () => (n++, '.arc')).replace(ENV, () => (n++, 'ARC_HOME'));
+    if (/\.(m?js|cjs)$/.test(f.path)) mustParse(out, f.path);
+    put(f.path, out);
+    files++;
+  }
+  const home = text(DS + 'dsh-home-paths/lib/index.js');
+  must(home.includes('const DSH_HOME_DIR_NAME = ".arc";') && home.includes('const DSH_HOME_ENV = "ARC_HOME";'), 'data folder constants in dsh-home-paths');
+  must(text('lib/main.js').includes('const DSH_HOME_DIR_NAME = ".arc";'), 'data folder constant in the desktop main process');
+  must(!/\?\.arc\?\./.test(text(DS + 'dsh-app-boot/lib/index.js')), 'the dsh manifest field stays');
+  // DSH_HOME was refused in .env files by its DSH_ prefix; ARC_HOME needs its own entry
+  const bp = DS + 'dsh-app-boot/lib/index.js';
+  put(bp, replaceOnce(text(bp), 'const BOOTSTRAP_NAMES = new Set([\n\t"PATH",', 'const BOOTSTRAP_NAMES = new Set([\n\t"ARC_HOME",\n\t"PATH",', 'ARC_HOME in the bootstrap-only names'));
+  report.push(`data folder: ~/.arc and ARC_HOME (${n} places in ${files} files)`);
+}
+
+// ---- patch 17: clean room. Every internal name of the original moves to Arc (lib/arcnames.mjs): package names
+// (@deepseek-ai/dsh-x -> @arc-harness/arc-x), the runtime folder (dsh/ -> arc/), code names, the "dsh" package.json field,
+// the command and link names. File paths are renamed when the archive is written; the files kept beside the archive
+// (app.asar.unpacked) get the same names in build/app.asar.unpacked, made of hard links and rewritten texts.
+const TEXTFILE = /\.(m?js|cjs|json|ya?ml|md|txt|css|html|svg|ts|map|sh|cmd|ps1|py|toml|xml|lock|c|h)$|(^|\/)[^./]+$/i;
+const unpackedNew = new Map(); // new path under arc/ -> rewritten buffer of an unpacked text file
+{
+  let files = 0, n = 0, clash = 0;
+  for (const f of src.files) {
+    if (f.entry.unpacked || overrides.get(f.path) === null || !TEXTFILE.test(f.path)) continue;
+    const s = overrides.has(f.path) ? overrides.get(f.path).toString('utf8') : src.read(f).toString('utf8');
+    const [t, k] = arcText(s);
+    if (!k) continue;
+    // a new name may not already exist in the same file with another meaning (arcFoo next to dshFoo)
+    const had = new Set(s.match(/[\w$-]*(?:arc|Arc|ARC)[\w$-]*/g) || []);
+    for (const w of new Set(s.match(/[\w$-]*(?:dsh|Dsh|DSH)[\w$-]*/g) || [])) { if (/^(?:dsh|Dsh|DSH)$/.test(w)) continue; const nw = arcText(w)[0]; if (nw !== w && had.has(nw)) { clash++; if (clash < 6) console.log(`name clash in ${f.path}: ${w} -> ${nw}`); } }
+    put(f.path, t);
+    files++; n += k;
+  }
+  must(clash === 0, `${clash} renamed names already exist in the same file`);
+  const resources = process.env.ARC_RESOURCES || path.join(process.env.LOCALAPPDATA || '', 'Programs', 'DeepSeek Harness', 'resources');
+  const unpackedSrc = [path.join(root, 'pristine', 'app.asar.unpacked'), path.join(resources, 'app.asar.unpacked')].find((d) => fs.existsSync(path.join(d, 'dsh')));
+  must(unpackedSrc, 'the original app.asar.unpacked (with its dsh folder) was not found');
+  const ud = out + '.unpacked';
+  if (fs.existsSync(ud)) {
+    if (fs.lstatSync(ud).isSymbolicLink()) fs.rmdirSync(ud); // a junction left by a test: remove the link only
+    else fs.rmSync(ud, { recursive: true }); // our own earlier copy: hard links and rewritten texts
+  }
+  const st = makeArcCopy(unpackedSrc, ud, { rewrite: (p) => /[\\/]@deepseek-ai[\\/]/.test(p) });
+  (function walk(d, rel) {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = rel ? rel + '/' + e.name : e.name;
+      if (e.isDirectory()) walk(path.join(d, e.name), p);
+      else if (fs.statSync(path.join(d, e.name)).nlink === 1) unpackedNew.set(p, fs.readFileSync(path.join(d, e.name)));
+    }
+  })(ud, '');
+  report.push(`clean room: ${n} internal names in ${files} files move to Arc; side folder ${st.linked} files linked, ${st.rewritten} rewritten, ${st.renamed} names changed`);
+}
+
+// ---- keep the runtime manifest honest: new size and hash for every changed file under dsh/ (named arc/ in the written archive)
 {
   const mp = 'dsh/desktop-runtime.json';
   const m = JSON.parse(text(mp));
   const byPath = new Map(m.files.map((e) => [e.path, e]));
   let n = 0, gone = 0;
   const removed = new Set();
+  const rel = (p) => arcText(p)[0].slice(4);
+  const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
   for (const [p, buf] of overrides) {
     if (!p.startsWith('dsh/') || p === mp) continue;
-    const e = byPath.get(p.slice(4));
+    const e = byPath.get(rel(p));
     if (!e) {
       // a file this build adds: it gets its own manifest entry
-      if (buf !== null) { const ne = { path: p.slice(4), bytes: buf.length, sha256: crypto.createHash('sha256').update(buf).digest('hex'), executable: false }; m.files.push(ne); byPath.set(ne.path, ne); n++; }
+      if (buf !== null) { const ne = { path: rel(p), bytes: buf.length, sha256: sha256(buf), executable: false }; m.files.push(ne); byPath.set(ne.path, ne); n++; }
       continue;
     }
     if (buf === null) { removed.add(e.path); gone++; continue; }
-    e.bytes = buf.length; e.sha256 = crypto.createHash('sha256').update(buf).digest('hex'); n++;
+    e.bytes = buf.length; e.sha256 = sha256(buf); n++;
+  }
+  for (const [p, buf] of unpackedNew) {
+    const e = byPath.get(p.slice(4));
+    must(e, 'manifest entry of a rewritten unpacked file: ' + p);
+    e.bytes = buf.length; e.sha256 = sha256(buf); n++;
   }
   m.files = m.files.filter((e) => !removed.has(e.path));
   put(mp, JSON.stringify(m));
   report.push(`runtime manifest: ${n} entries updated, ${gone} removed`);
 }
 
+// ---- clean-room check: no old name is left in any text file of the written archive (base64 data excepted)
+{
+  let left = 0;
+  for (const f of src.files) {
+    if (f.entry.unpacked || overrides.get(f.path) === null || !TEXTFILE.test(f.path)) continue;
+    const s = overrides.has(f.path) ? overrides.get(f.path).toString('utf8') : src.read(f).toString('utf8');
+    const skip = [...s.matchAll(/[A-Za-z0-9+/=_-]{120,}/g)].filter((r) => /[+=]/.test(r[0])).map((r) => [r.index, r.index + r[0].length]);
+    for (const m of s.matchAll(LEFT)) if (!skip.some(([x, y]) => m.index >= x && m.index < y)) { left++; if (left < 6) console.log('left:', f.path, s.slice(Math.max(0, m.index - 30), m.index + 30).replace(/\s+/g, ' ')); }
+  }
+  must(left === 0, `${left} old names left in the archive text`);
+  report.push('clean room: 0 old names left in the archive text');
+}
+
 fs.mkdirSync(path.dirname(out), { recursive: true });
-const info = writeAsar(src, out, overrides);
+const info = writeAsar(src, out, overrides, (seg) => arcText(seg)[0]);
 const sha = crypto.createHash('sha256').update(fs.readFileSync(out)).digest('hex');
 fs.writeFileSync(path.join(path.dirname(out), 'BUILD.json'), JSON.stringify({ built: new Date().toISOString(), source: 'pristine/app.asar', changedFiles: overrides.size, report, sha256: sha, ...info }, null, 2));
 console.log(report.map((r) => '- ' + r).join('\n'));

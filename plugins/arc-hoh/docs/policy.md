@@ -38,9 +38,9 @@ Harness of Harness makes the agent plan, test and prove its work in a fixed cycl
 
 ## Settings
 
-- DSH_HOH_BRIEF set to 0 switches off the shared-memory brief in the prompt.
-- DSH_HOH_RETAIN set to 0 stops the gate from writing verdicts to shared memory.
-- DSH_HOME moves the ledger folder. The default is the .dsh folder in your home folder.
+- ARC_HOH_BRIEF set to 0 switches off the shared-memory brief in the prompt.
+- ARC_HOH_RETAIN set to 0 stops the gate from writing verdicts to shared memory.
+- ARC_HOME moves the ledger folder. The default is the .arc folder in your home folder.
 - Fixed limits: three cycles, files up to 20 MB, six brief notes of 220 characters, a brief refresh every 20 minutes.
 
 ## Data it reads and writes
@@ -60,7 +60,7 @@ Harness of Harness makes the agent plan, test and prove its work in a fixed cycl
 
 ## How to verify
 
-1. Open the Plugins page and find Harness of Harness.
+1. Check that `plugins/arc-hoh` is in the profile folder and that the Trace tab shows in the right sidebar.
 2. Start a session and ask the agent to call hoh_verify_ledger.
 3. Check that the answer reads Ledger intact with an entry count.
 4. In the plugin source folder, run node --test test/hoh.test.mjs and check that every test passes.

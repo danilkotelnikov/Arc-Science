@@ -1,0 +1,4 @@
+# arc-hoh bundle patch: mounts the plugin on the host.
+- insert:
+    - id: hoh
+      name: arc-hoh

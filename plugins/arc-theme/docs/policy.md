@@ -1,10 +1,10 @@
-# Arc Science Theme
+# Arc Theme
 
-Gives the interface the Arc Science paper look, with cream surfaces, a brown primary button, Geist type and rounded corners.
+Gives the interface the Arc Harness paper look, with cream surfaces, a brown primary button, Geist type and rounded corners.
 
 ## Purpose
 
-Arc Science Theme restyles the web interface in the Arc Science paper look. It follows the system light or dark mode.
+Arc Theme restyles the web interface in the Arc Harness paper look. It follows the system light or dark mode.
 
 ## Policy
 
@@ -44,7 +44,7 @@ Arc Science Theme restyles the web interface in the Arc Science paper look. It f
 
 ## How to verify
 
-1. Open the Plugins page and find Arc Science Theme.
+1. Open the Plugins page and find Arc Theme.
 2. Check that the page is cream in light mode and warm near-black in dark mode.
 3. Check that no blue remains, in light and in dark mode.
 4. Check that cards have rounded corners and that the text is Geist.

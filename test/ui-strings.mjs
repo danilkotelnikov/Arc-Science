@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { dataHome } from '../lib/testhome.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { allow, classify, dirtyMarkdownLines, literalRanges, markEscapes } from '../lib/brandrules.mjs';
 
@@ -130,9 +131,9 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
   const noReason = [...allow.archiveSkip, ...allow.profileSkip].filter((s) => !reasons[s]);
   if (noReason.length) { console.error('SKIP LIST: no reason stated for ' + noReason.join(' ; ')); process.exit(3); }
   const hi = args.indexOf('--dsh-home');
-  const fixture = hi >= 0;   // a test folder in place of ~/.dsh: the file floor does not apply
+  const fixture = hi >= 0;   // a test folder in place of the data home: the file floor does not apply
   if (args.includes('--profiles')) {
-    const home = fixture ? args[hi + 1] : path.join(os.homedir(), '.dsh');
+    const home = fixture ? args[hi + 1] : path.join(dataHome());
     const dirs = [path.join(home, 'local-plugins'), path.join(home, 'profiles', 'web', 'node_modules'), path.join(home, 'profiles', 'desktop', 'node_modules')];
     const res = scanDirs(dirs);
     // scripts of the data home that serve a page or open a dialog
