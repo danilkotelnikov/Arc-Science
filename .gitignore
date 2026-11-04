@@ -18,3 +18,8 @@ __pycache__/
 *.key
 *.pfx
 *.log
+.credentials.yaml
+/pristine/app-update.yml
+/pristine/runtime/
+/pristine/runtime-plan.json
+/brandtext/lean-profile.undo.json
