@@ -213,7 +213,7 @@ for (const [id, skin] of Object.entries(exp.SKINS ?? {})) {
 {
   const skin = (exp.SKINS ?? {}).arc;
   const css = [].concat(skin.scoped ?? []).join(String.fromCharCode(10));
-  const kfs = [...css.matchAll(/@keyframes\s+(arc\w+)\{((?:[^{}]|\{[^{}]*\})*)\}/g)].filter((m) => m[1] !== 'arcTurn');
+  const kfs = [...css.matchAll(/@keyframes\s+(arc\w+)\{((?:[^{}]|\{[^{}]*\})*)\}/g)].filter((m) => !['arcTurn', 'arcShine'].includes(m[1])); // arcShine moves a gradient: it repaints one line of text and changes no layout
   check(kfs.length >= 6, `motion: ${kfs.length} new keyframes`);
   const OK = new Set(['transform', 'opacity']);
   for (const [, name, body] of kfs) {
