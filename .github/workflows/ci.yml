@@ -17,6 +17,8 @@ jobs:
           node-version: 24
       - name: Syntax of every .mjs and .cjs file
         run: node scripts/check-syntax.mjs
+      - name: Rename map self-check
+        run: node lib/arcnames.mjs
       - name: Colour recolor tests
         run: node test/iconcolor.test.mjs
       - name: Harness of Harness plugin tests

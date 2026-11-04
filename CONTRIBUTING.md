@@ -10,7 +10,7 @@ Thank you for helping. This page tells you how to change the kit, what to run be
 
 ## Set up
 
-You need Node.js 24, Git and Python 3. The Python scripts use the standard library only, so nothing needs installing.
+You need Node.js 22.19 or newer, Git and Python 3. Most Python scripts use the standard library only; `brand/build_brand.py` also needs Pillow.
 
 ```
 git clone <your fork>
@@ -18,7 +18,7 @@ cd <the folder>
 npm test
 ```
 
-`npm test` needs no original archive. It checks syntax, the brand rules, the scans' self-checks, the brand file hashes, the test-home helper and the privacy scan.
+`npm test` needs no original archive. It checks syntax, the rename map, icon colours, both plugins and the privacy scan self-test.
 
 To test a change to a build patch, you need the original archive. The wiki page "Build from source" shows how to get it.
 Then run `node tools/build.mjs` and `npm run test:archive`.

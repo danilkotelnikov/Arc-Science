@@ -17,13 +17,13 @@ next to your built archive holds the build's SHA-256.
 
 ## What is out of scope
 
-- Problems in the original DeepSeek Harness, in Electron or in Chromium. Report them to their maintainers.
+- Problems in the original app, in Electron or in Chromium. Report them to their maintainers.
 - Problems in the third-party packages inside the app archive. Report them to the package's authors.
 - The fact that agent tool processes can read the credential file. The page "Privacy and security" in the wiki explains it.
 
 ## Supported versions
 
-Only the newest tagged release of this kit gets fixes. The kit works with DeepSeek Harness 0.2.1-rc.5 only.
+Only the newest tagged release of this kit gets fixes. The kit works with version 0.2.1-rc.5 of the original app only.
 
 ## What to expect
 

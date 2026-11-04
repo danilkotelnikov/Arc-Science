@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use Arc Harness in your work, please cite it as below."
+title: "Arc Harness: a desktop AI harness that never grades its own work"
+type: software
+authors:
+  - name: "Arc Harness contributors"
+license: MIT
+keywords:
+  - AI agents
+  - agent harness
+  - provenance
+  - independent review
