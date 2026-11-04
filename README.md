@@ -122,7 +122,7 @@ You need Node.js 22.19 or newer and an installed copy of the original app, versi
 4. Run `node test/build-check.mjs build/app.asar <scratch folder>`.
 5. Close the app. Run `install.cmd`. To undo, run `install.cmd rollback`.
 6. Copy `plugins/arc-hoh` and `plugins/arc-theme` into `~/.arc/profiles/<profile>/node_modules`.
-7. Run `node tools/lean-profile.mjs apply`. A plugin loads only when the bundle list names it, and this step adds both. It stops, and changes nothing, if a plugin is missing from a profile, so copy them into both `web` and `desktop`. `restore` undoes it.
+7. Run `node tools/lean-profile.mjs apply`. A plugin loads only when the bundle list names it, and this step adds both. It stops, and changes nothing, if a plugin is missing from a profile, so copy them into both `web` and `desktop`. `restore` undoes it. The original lists are saved per data home (`--home`, `ARC_HOME` or the default), so each home restores its own.
 
 Set `ARC_RESOURCES` or `ARC_APP_DIR` when the app is installed somewhere else.
 

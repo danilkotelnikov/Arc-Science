@@ -4,6 +4,8 @@
 //   node tools/lean-profile.mjs restore [--home <dir>]
 // --home <dir> sets the data home with profiles/<name>/package.json; the default is ARC_HOME, then .arc in your home folder.
 // Packages stay installed. Only the profile's bundle list changes, so a bundle comes back by one line.
+// The undo list keeps the original lists of each data home apart, under the resolved path of the home, so applying or restoring
+// one home (~/.arc, an ARC_HOME, a --home) never reads or overwrites the saved list of another.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -38,36 +40,77 @@ export function lean(text, has) {
   return JSON.stringify(j, null, 2).replace(/\n/g, eol) + (/\n$/.test(text) ? eol : '');
 }
 
+const PROFILES = ['web', 'desktop'];
+const COMMANDS = ['status', 'apply', 'restore'];
+
+/** The key of a data home in the undo list: its resolved path (lower case on Windows, where paths ignore case). */
+export function homeKey(home) {
+  const abs = path.resolve(home);
+  return process.platform === 'win32' ? abs.toLowerCase() : abs;
+}
+
+/** The data home of a command line: --home <dir>, else ARC_HOME, else ~/.arc or ~/.dsh (dataHome of lib/testhome.mjs). Always resolved. */
+export function resolveHome(argv, env = process.env, userHome = os.homedir()) {
+  const hi = argv.indexOf('--home');
+  return path.resolve(hi >= 0 ? argv[hi + 1] : dataHome(env, userHome));
+}
+
+/** The undo list as { [homeKey]: { web?: [...], desktop?: [...] } }. The file is { "homes": { ... } }.
+ *  An old file without "homes" holds the flat lists { web, desktop } of the one home it was written for: they move to legacyHome,
+ *  without replacing a list that home already has under "homes". */
+export function readUndo(file, legacyHome) {
+  const raw = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  const homes = raw.homes && typeof raw.homes === 'object' && !Array.isArray(raw.homes) ? { ...raw.homes } : {};
+  const old = Object.fromEntries(PROFILES.filter((p) => Array.isArray(raw[p])).map((p) => [p, raw[p]]));
+  if (Object.keys(old).length && legacyHome) {
+    const k = homeKey(legacyHome);
+    homes[k] = { ...old, ...homes[k] };
+  }
+  return homes;
+}
+
+/** Runs status, apply or restore on the profiles of one data home. Only the undo entry of that home is read or changed.
+ *  undoFile: where the undo list lives (default: the kit's brandtext/lean-profile.undo.json).
+ *  legacyHome: the home an old flat undo file belongs to (default: the home without ARC_HOME, the one the old tool wrote for). */
+export function run(cmd, home, { undoFile: file = undoFile, legacyHome, log = console.log } = {}) {
+  if (!COMMANDS.includes(cmd)) throw new Error('usage: lean-profile.mjs status|apply|restore [--home <dir>]');
+  const undo = readUndo(file, legacyHome === undefined ? dataHome({}) : legacyHome);
+  const key = homeKey(home);
+  const saved = { ...undo[key] };
+  const installed = (f) => (b) => fs.existsSync(path.join(path.dirname(f), 'node_modules', b));
+  if (cmd === 'apply') for (const prof of PROFILES) {
+    const f = path.join(home, 'profiles', prof, 'package.json');
+    if (fs.existsSync(f)) lean(fs.readFileSync(f, 'utf8'), installed(f)); // throws before any profile is written
+  }
+  for (const prof of PROFILES) {
+    const f = path.join(home, 'profiles', prof, 'package.json');
+    if (!fs.existsSync(f)) { log(`${prof}: no profile at ${f}`); continue; }
+    const text = fs.readFileSync(f, 'utf8');
+    const now = JSON.parse(text)[field(JSON.parse(text))].profile.bundles;
+    if (cmd === 'status') log(`${prof}: ${now.length} bundles${saved[prof] ? ' (lean, original list saved)' : ''}: ${now.join(', ')}`);
+    else if (cmd === 'apply') {
+      if (!saved[prof]) saved[prof] = now; // the first original list stays, a second apply never overwrites it
+      fs.writeFileSync(f, lean(text, installed(f)));
+      log(`${prof}: now ${spec.keep.length + spec.add.length} bundles`);
+    } else {
+      if (!saved[prof]) { log(`${prof}: nothing saved to restore`); continue; }
+      const j = JSON.parse(text);
+      j[field(j)].profile.bundles = names(j, saved[prof]);
+      const eol = text.includes('\r\n') ? '\r\n' : '\n';
+      fs.writeFileSync(f, JSON.stringify(j, null, 2).replace(/\n/g, eol) + (/\n$/.test(text) ? eol : ''));
+      delete saved[prof];
+      log(`${prof}: original list of ${j[field(j)].profile.bundles.length} bundles is back`);
+    }
+  }
+  if (cmd === 'apply' || cmd === 'restore') {
+    if (Object.keys(saved).length) undo[key] = saved; else delete undo[key]; // a fully restored home leaves the list
+    fs.writeFileSync(file, JSON.stringify({ homes: undo }, null, 2) + '\n');
+  }
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   const cmd = argv[0];
-  const hi = argv.indexOf('--home');
-  const home = hi >= 0 ? path.resolve(argv[hi + 1]) : dataHome();
-  const undo = fs.existsSync(undoFile) ? JSON.parse(fs.readFileSync(undoFile, 'utf8')) : {};
-  const installed = (file) => (b) => fs.existsSync(path.join(path.dirname(file), 'node_modules', b));
-  if (cmd === 'apply') for (const prof of ['web', 'desktop']) {
-    const file = path.join(home, 'profiles', prof, 'package.json');
-    if (fs.existsSync(file)) lean(fs.readFileSync(file, 'utf8'), installed(file)); // throws before any profile is written
-  }
-  for (const prof of ['web', 'desktop']) {
-    const file = path.join(home, 'profiles', prof, 'package.json');
-    if (!fs.existsSync(file)) { console.log(`${prof}: no profile at ${file}`); continue; }
-    const text = fs.readFileSync(file, 'utf8');
-    const now = JSON.parse(text)[field(JSON.parse(text))].profile.bundles;
-    if (cmd === 'status') console.log(`${prof}: ${now.length} bundles${undo[prof] ? ' (lean, original list saved)' : ''}: ${now.join(', ')}`);
-    else if (cmd === 'apply') {
-      if (!undo[prof]) undo[prof] = now; // the first original list stays, a second apply never overwrites it
-      fs.writeFileSync(file, lean(text, installed(file)));
-      console.log(`${prof}: now ${spec.keep.length + spec.add.length} bundles`);
-    } else if (cmd === 'restore') {
-      if (!undo[prof]) { console.log(`${prof}: nothing saved to restore`); continue; }
-      const j = JSON.parse(text);
-      j[field(j)].profile.bundles = names(j, undo[prof]);
-      const eol = text.includes('\r\n') ? '\r\n' : '\n';
-      fs.writeFileSync(file, JSON.stringify(j, null, 2).replace(/\n/g, eol) + (/\n$/.test(text) ? eol : ''));
-      delete undo[prof];
-      console.log(`${prof}: original list of ${j[field(j)].profile.bundles.length} bundles is back`);
-    } else { console.error('usage: lean-profile.mjs status|apply|restore [--home <dir>]'); process.exit(2); }
-  }
-  if ((cmd === 'apply' || cmd === 'restore') && hi < 0) fs.writeFileSync(undoFile, JSON.stringify(undo, null, 2) + '\n'); // only the real home keeps an undo list
+  if (!COMMANDS.includes(cmd)) { console.error('usage: lean-profile.mjs status|apply|restore [--home <dir>]'); process.exit(2); }
+  run(cmd, resolveHome(argv));
 }

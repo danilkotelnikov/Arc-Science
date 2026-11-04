@@ -23,6 +23,15 @@ All notable changes to Arc Harness are listed here. The format follows [Keep a C
 - The upstream project is credited once, in the README. `NOTICE.md` keeps the licence text.
 - The repository history starts at the Arc Harness build kit. The retired Arc Science desktop app is no longer in this repository.
 
+### Fixed
+
+- The Harness of Harness ledger stays in use across the upgrade: `arc-hoh` keeps a ledger in the original data folder until `~/.arc` has its own, and it honours `DSH_HOME`.
+- `DSH_HOH_RETAIN=0` and `DSH_HOH_BRIEF=0` count as opt-outs again.
+- The lean profile keeps one undo list per data home, so restoring one home cannot write the list of another.
+- A `~/.arc` that holds only the ledger no longer hides the profiles in `~/.dsh`.
+- The data-home copy stops when two names map to one target, and private folders and files stay private.
+- CI runs the build kit tests and the test home self-test.
+
 ## Build kit, first public state (2026-11-03)
 
 ### Added

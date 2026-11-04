@@ -9,7 +9,7 @@
   },
   "scripts": {
     "check": "node scripts/check-syntax.mjs",
-    "test": "node scripts/check-syntax.mjs && node lib/arcnames.mjs && node test/iconcolor.test.mjs && node --test plugins/arc-hoh/test/hoh.test.mjs plugins/arc-theme/test/theme.test.mjs && node scripts/privacy-scan.mjs --self-test",
+    "test": "node scripts/check-syntax.mjs && node lib/arcnames.mjs && node test/iconcolor.test.mjs && node --test plugins/arc-hoh/test/hoh.test.mjs plugins/arc-theme/test/theme.test.mjs test/lean-profile.test.mjs test/arcunpacked.test.mjs && node lib/testhome.mjs --selftest && node scripts/privacy-scan.mjs --self-test",
     "build": "node tools/build.mjs",
     "test:archive": "node -e \"require('fs').mkdirSync('build/check',{recursive:true})\" && node test/build-check.mjs build/app.asar build/check && node test/ui-strings.mjs && node test/independent-scan.mjs && node test/positive-control.mjs",
     "scan": "node scripts/privacy-scan.mjs"
