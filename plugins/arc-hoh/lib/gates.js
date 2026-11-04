@@ -1,6 +1,7 @@
 // arc-hoh 0.2.0 (2026-10-31): deterministic gates for the Harness-of-Harness cycle.
 // Pure functions plus a hash-chained ledger. No network.
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readFile, stat, mkdir, appendFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -8,10 +9,17 @@ import os from 'node:os';
 export const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
-/** The ledger file. ARC_HOME wins; the default is ~/.arc/hoh/ledger.jsonl, the Arc Harness data home. */
-export function ledgerFile(env = process.env) {
-  return path.join(env.ARC_HOME || path.join(os.homedir(), '.arc'), 'hoh', 'ledger.jsonl');
+/** The ledger file. ARC_HOME wins, then a ledger already in ~/.arc, then the ledger of the original data folder (DSH_HOME or ~/.dsh),
+ *  so that an upgrade keeps the hash chain and its history. A new install starts in ~/.arc/hoh/ledger.jsonl. */
+export function ledgerFile(env = process.env, home = os.homedir()) {
+  const inFolder = (dir) => path.join(dir, 'hoh', 'ledger.jsonl');
+  if (env.ARC_HOME) return inFolder(env.ARC_HOME);
+  const arc = inFolder(path.join(home, '.arc')), old = inFolder(env.DSH_HOME || path.join(home, '.dsh'));
+  return !existsSync(arc) && existsSync(old) ? old : arc;
 }
+
+/** True when a setting is 0 under its Arc name or its original name: an opt-out made before the upgrade still counts. */
+export const optedOut = (name, env = process.env) => env[`ARC_HOH_${name}`] === '0' || env[`DSH_HOH_${name}`] === '0';
 
 /** One candidate id for a set of files: sha256 over the sorted (path, content hash) pairs. */
 export async function hashFiles(files) {

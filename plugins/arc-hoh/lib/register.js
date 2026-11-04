@@ -1,5 +1,5 @@
 // arc-hoh 0.2.0 (2026-10-31): the tools and prompt sections. No arc imports here, so node can test it.
-import { appendLedger, hashFiles, lastEvent, ledgerFile, verifyLedger, decideGate } from './gates.js';
+import { appendLedger, hashFiles, lastEvent, ledgerFile, optedOut, verifyLedger, decideGate } from './gates.js';
 import { CONTRACT, briefText } from './contract.js';
 import { retainNote } from './brief.js';
 
@@ -16,7 +16,7 @@ export function callerOf(exec) {
 export function makeTools(defineTool, env = process.env, deps = {}) {
   const file = () => ledgerFile(env);
   const retain = deps.retain || retainNote;
-  const retainOn = () => env.ARC_HOH_RETAIN !== '0';
+  const retainOn = () => !optedOut('RETAIN', env);
 
   const propose = defineTool({
     name: 'hoh_propose',

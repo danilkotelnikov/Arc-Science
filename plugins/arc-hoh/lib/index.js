@@ -10,7 +10,7 @@
 import { defineTool } from '@arc-harness/arc-tools';
 import { makeTools, registerPrompt } from './register.js';
 import { fetchBrief } from './brief.js';
-import { ledgerFile } from './gates.js';
+import { ledgerFile, optedOut } from './gates.js';
 import { traceView } from './trace.js';
 
 export const name = 'arc-hoh';
@@ -38,7 +38,7 @@ export function apply(ctx) {
     }), 'arc-hoh: trace route');
   });
 
-  if (process.env.ARC_HOH_BRIEF === '0') return;
+  if (optedOut('BRIEF')) return;
   const refresh = async () => {
     const text = await fetchBrief({ query: BRIEF_QUERY, tags: BRIEF_TAGS });
     if (text) state.brief = text;

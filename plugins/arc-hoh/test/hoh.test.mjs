@@ -1,10 +1,10 @@
 // arc-hoh 0.2.0 (2026-10-31): run with  node --test test/hoh.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { hashFiles, appendLedger, verifyLedger, lastFreeze, decideGate, MAX_CYCLES } from '../lib/gates.js';
+import { hashFiles, appendLedger, verifyLedger, lastFreeze, decideGate, ledgerFile, optedOut, MAX_CYCLES } from '../lib/gates.js';
 import { formatNotes, parseMcpBody, redact } from '../lib/brief.js';
 import { makeTools, registerPrompt, callerOf } from '../lib/register.js';
 import { CONTRACT, briefText } from '../lib/contract.js';
@@ -171,6 +171,44 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   assert.equal(r.retained, false);
   assert.match(freeze.output.render({}, fr)[0].text, /Frozen 1 file/);
   assert.match(gate.output.render({}, ok)[0].text, /Written to Cammut/);
+  await rm(d, { recursive: true });
+});
+
+test('the ledger stays where it is across the upgrade', async () => {
+  const h = await tmp();
+  const arc = path.join(h, '.arc', 'hoh', 'ledger.jsonl'), dsh = path.join(h, '.dsh', 'hoh', 'ledger.jsonl');
+  const moved = path.join(h, 'moved'), movedLedger = path.join(moved, 'hoh', 'ledger.jsonl');
+  const put = async (p) => { await mkdir(path.dirname(p), { recursive: true }); await writeFile(p, ''); };
+  assert.equal(ledgerFile({}, h), arc, 'a new install starts in ~/.arc');
+  await put(dsh);
+  assert.equal(ledgerFile({}, h), dsh, 'an old ledger stays in use, so the chain goes on');
+  assert.equal(ledgerFile({ DSH_HOME: moved }, h), arc, 'DSH_HOME without a ledger there: not ~/.dsh');
+  await put(movedLedger);
+  assert.equal(ledgerFile({ DSH_HOME: moved }, h), movedLedger, 'the old DSH_HOME is still honoured');
+  await put(arc);
+  assert.equal(ledgerFile({}, h), arc, 'a ledger in ~/.arc wins over the old one');
+  const set = path.join(h, 'set');
+  assert.equal(ledgerFile({ ARC_HOME: set, DSH_HOME: moved }, h), path.join(set, 'hoh', 'ledger.jsonl'), 'ARC_HOME always wins');
+  await rm(h, { recursive: true });
+});
+
+test('an opt-out set under the old name still counts', async () => {
+  assert.equal(optedOut('RETAIN', {}), false);
+  assert.equal(optedOut('RETAIN', { ARC_HOH_RETAIN: '0' }), true);
+  assert.equal(optedOut('RETAIN', { DSH_HOH_RETAIN: '0' }), true);
+  assert.equal(optedOut('BRIEF', { DSH_HOH_BRIEF: '0' }), true);
+  assert.equal(optedOut('RETAIN', { ARC_HOH_RETAIN: '1', DSH_HOH_RETAIN: '0' }), true, 'either name opts out');
+  const d = await tmp();
+  const f = path.join(d, 'a.txt');
+  await writeFile(f, 'one');
+  const never = { retain: async () => { throw new Error('must not be called'); } };
+  const [propose, freeze, gate] = makeTools((def) => def, { ARC_HOME: d, DSH_HOH_RETAIN: '0' }, never);
+  const lead = { agent: { id: 'lead-1' } }, reviewer = { agent: { id: 'rev-1' } };
+  await propose.execute({ goal: 'demo', hypothesis: 'h', boundary: 'b', checks: ['node t.js'], probes: ['empty'] }, lead);
+  const fr = await freeze.execute({ goal: 'demo', files: [f] }, lead);
+  const r = await gate.execute({ goal: 'demo', ...goodGate(fr.candidate) }, reviewer);
+  assert.equal(r.verdict, 'accepted');
+  assert.equal(r.retained, false, 'the old opt-out stops the write to shared memory');
   await rm(d, { recursive: true });
 });
 
