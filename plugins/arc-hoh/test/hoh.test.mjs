@@ -1,4 +1,4 @@
-// dsh-hoh 0.2.0 (2026-10-31): run with  node --test test/hoh.test.mjs
+// arc-hoh 0.2.0 (2026-10-31): run with  node --test test/hoh.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
@@ -9,7 +9,7 @@ import { formatNotes, parseMcpBody, redact } from '../lib/brief.js';
 import { makeTools, registerPrompt, callerOf } from '../lib/register.js';
 import { CONTRACT, briefText } from '../lib/contract.js';
 
-const tmp = async () => mkdtemp(path.join(os.tmpdir(), 'dsh-hoh-'));
+const tmp = async () => mkdtemp(path.join(os.tmpdir(), 'arc-hoh-'));
 const goodGate = (candidate) => ({
   candidate, cycle: 1, builder: 'agent-a', reviewer: 'agent-b',
   checks: [{ id: 'c1', command: 'node test.js', exit: 0, excerpt: 'ok 12' }],
@@ -132,7 +132,7 @@ test('parseMcpBody reads json and one event', () => {
 
 test('propose, freeze and gate work end to end, with runtime agent ids', async () => {
   const d = await tmp();
-  const env = { DSH_HOME: d };
+  const env = { ARC_HOME: d };
   const notes = [];
   const tools = makeTools((def) => def, env, { retain: async (n) => { notes.push(n); return true; } });
   assert.deepEqual(tools.map((t) => t.name), ['hoh_propose', 'hoh_freeze', 'hoh_gate', 'hoh_verify_ledger']);
@@ -166,7 +166,7 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   const v = await verify.execute({}, {});
   assert.equal(v.ok, true);
 
-  const off = makeTools((def) => def, { DSH_HOME: d, DSH_HOH_RETAIN: '0' }, { retain: async () => { throw new Error('must not be called'); } });
+  const off = makeTools((def) => def, { ARC_HOME: d, ARC_HOH_RETAIN: '0' }, { retain: async () => { throw new Error('must not be called'); } });
   const r = await off[2].execute({ ...base, candidate: fr2.candidate }, reviewer);
   assert.equal(r.retained, false);
   assert.match(freeze.output.render({}, fr)[0].text, /Frozen 1 file/);

@@ -1,4 +1,4 @@
-// dsh-hoh 0.2.0 (2026-10-31): a short brief from Cammut for the system prompt, and one retain call.
+// arc-hoh 0.2.0 (2026-10-31): a short brief from Cammut for the system prompt, and one retain call.
 // Fail open: any error gives an empty brief. Notes are untrusted data.
 
 const SECRET_PATTERNS = [
@@ -61,7 +61,7 @@ export async function fetchBrief({ base = 'http://127.0.0.1:7424/cammut/mcp', qu
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const init = await rpc(base, 1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'dsh-hoh', version: '0.1.0' } }, null, ac.signal);
+    const init = await rpc(base, 1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'arc-hoh', version: '0.1.0' } }, null, ac.signal);
     const call = await rpc(base, 2, 'tools/call', { name: 'cammut_call', arguments: { tool: 'hindsight/recall', arguments: { query, tags, budget: 'low' } } }, init.session, ac.signal);
     const content = call.body && call.body.result && call.body.result.content;
     const first = Array.isArray(content) ? content.find((c) => c && typeof c.text === 'string') : null;
@@ -80,7 +80,7 @@ export async function retainNote({ content, context, tags, base = 'http://127.0.
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const init = await rpc(base, 1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'dsh-hoh', version: '0.2.0' } }, null, ac.signal);
+    const init = await rpc(base, 1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'arc-hoh', version: '0.2.0' } }, null, ac.signal);
     const call = await rpc(base, 2, 'tools/call', { name: 'cammut_call', arguments: { tool: 'hindsight/retain', arguments: { content: redact(content), context, tags } } }, init.session, ac.signal);
     return !(call.body && call.body.error) && !(call.body && call.body.result && call.body.result.isError);
   } catch {
