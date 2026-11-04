@@ -36,7 +36,7 @@ You need Node.js 22.19 or newer and an installed DeepSeek Harness 0.2.1-rc.5.
 3. Run `node tools/build.mjs`. The build stops if a patch does not find its text.
 4. Run `node test/build-check.mjs build/app.asar <scratch folder>`.
 5. Close the app. Run `install.cmd`. To undo, run `install.cmd rollback`.
-6. Optional: run `node tools/lean-profile.mjs apply` for the lean profile, and `restore` to undo.
+6. Optional: run `node tools/lean-profile.mjs apply` for the lean profile, and `restore` to undo. The original lists are saved per data home (`--home`, `ARC_HOME` or the default), so each home restores its own.
 
 Install the plugins into your profiles with the app's own plugin command, or copy them into `~/.dsh/profiles/<profile>/node_modules`.
 
