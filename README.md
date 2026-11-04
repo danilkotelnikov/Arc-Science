@@ -1,18 +1,12 @@
 <p align="center">
-  <img src="brand/dist/cube-as.svg" width="96" alt="The AS cube logo">
-</p>
-
-<h1 align="center">Arc Harness</h1>
-
-<p align="center"><b>A desktop AI harness that never grades its own work.</b></p>
-
-<p align="center">
-  Every task is proposed, frozen and judged by another reviewer. Every step goes into a hash-chained ledger.
+  <img src="docs/images/header.png" width="100%" alt="Arc Harness. We run AI agents on your desktop. The agent that does a task never accepts its own work.">
 </p>
 
 <p align="center">
+  <a href="https://github.com/danilkotelnikov/Arc-Science/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/danilkotelnikov/Arc-Science/ci.yml?branch=main&label=CI"></a>
   <a href="LICENSE"><img alt="Licence: MIT" src="https://img.shields.io/badge/licence-MIT-54453c"></a>
   <a href="#build-and-install-windows"><img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows-54453c"></a>
+  <a href="SECURITY.md"><img alt="Security policy" src="https://img.shields.io/badge/security-policy-54453c"></a>
   <a href="CHANGELOG.md"><img alt="Changelog" src="https://img.shields.io/badge/changelog-kept-54453c"></a>
   <a href="CITATION.cff"><img alt="Cite this project" src="https://img.shields.io/badge/cite-CITATION.cff-54453c"></a>
 </p>
@@ -22,7 +16,7 @@
   <a href="#how-it-works">How it works</a> &nbsp;&nbsp;
   <a href="#road-map">Road map</a> &nbsp;&nbsp;
   <a href="#build-and-install-windows">Install</a> &nbsp;&nbsp;
-  <a href="wiki/Home.md">Wiki</a>
+  <a href="https://github.com/danilkotelnikov/Arc-Science/wiki">Wiki</a>
 </p>
 
 <p align="center">

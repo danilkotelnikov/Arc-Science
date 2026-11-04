@@ -20,6 +20,7 @@ All notable changes to Arc Harness are listed here. The format follows [Keep a C
 - The plugins are renamed: `dsh-hoh` is now `arc-hoh`, and `dsh-theme-pair` is now `arc-theme`.
 - GitHub Actions are pinned to full commit SHAs.
 - The lean profile tool refuses to list a plugin that is not installed, and a refused apply changes nothing.
+- The README opens with a new header built with Molecullage, with the AS tile as its icon. `docs/images/social-preview.png` is the picture for links to the repository.
 - The upstream project is credited once, in the README. `NOTICE.md` keeps the licence text.
 - The repository history starts at the Arc Harness build kit. The retired Arc Science desktop app is no longer in this repository.
 
@@ -30,6 +31,10 @@ All notable changes to Arc Harness are listed here. The format follows [Keep a C
 - The lean profile keeps one undo list per data home, so restoring one home cannot write the list of another.
 - A `~/.arc` that holds only the ledger no longer hides the profiles in `~/.dsh`.
 - The data-home copy stops when two names map to one target, and private folders and files stay private.
+- The first install copies the data before it replaces the app, and a failed copy leaves nothing behind.
+- A text file that is not UTF-8 keeps its bytes in the data copy.
+- The runtime rollback list is saved before each change.
+- A data copy cannot go inside its own source, and a file that cannot be linked is copied.
 - CI runs the build kit tests and the test home self-test.
 
 ## Build kit, first public state (2026-11-03)
