@@ -1,4 +1,4 @@
-// dsh-theme-pair 0.4.0 (2026-11-01): checks the Arc Science skin without a browser.
+// arc-theme 0.4.0 (2026-11-01): checks the Arc Harness skin without a browser.
 // Run: node test/theme.test.mjs
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -23,7 +23,7 @@ const exp = loaded.factory((name) => requires[name] ?? {});
 
 check(typeof exp.apply === 'function', 'client exports apply');
 check(Array.isArray(exp.inject) && exp.inject.includes('theme'), 'client injects the theme service');
-check(exp.SKINS && Object.keys(exp.SKINS).join() === 'arc' && exp.SKINS.arc.label === 'Arc Science', 'one skin exists: Arc Science (the v0 and Radium skins are gone)');
+check(exp.SKINS && Object.keys(exp.SKINS).join() === 'arc' && exp.SKINS.arc.label === 'Arc Harness', 'one skin exists: Arc Harness (the v0 and Radium skins are gone)');
 
 // The safety net: any picture or inline colour that is still blue is drawn in grey at run time.
 check(typeof exp.isBlue === 'function', 'client exports isBlue (the safety net test for one colour)');
@@ -77,12 +77,12 @@ if (typeof exp.fixDelimiters === 'function') {
   check(fd('• Item') === 'Item' && fd('a • b • c') === 'a, b, c', 'fixDelimiters: bullets');
   check(fd('x · ') === 'x', 'fixDelimiters: a trailing delimiter is dropped');
   check(fd('Ca·H2O') === 'Ca·H2O' && fd('plain text') === 'plain text', 'fixDelimiters: no space around the dot means a formula, keep it');
-  // the owner, 2026-10-31 (screenshot): "Deep diving for 3s ···" showed as "Deep diving for 3s,,"
+  // Owner decision, 2026-10-31 (screenshot): "Deep diving for 3s ···" showed as "Deep diving for 3s,,"
   check(fd('Deep diving for 3s ···') === 'Deep diving for 3s…' && fd('···') === '…' && fd('Loading ··· done') === 'Loading… done',
     'fixDelimiters: a run of dots is a loading marker and becomes one ellipsis, never commas');
 }
 // Owner decision, 2026-10-31 (screenshot): the AI Review panel showed pale text on a white sheet because only its text colour followed the skin
-const arRules = source.split('[data-dsh-auto-review]{').slice(1).map((s) => s.split('}')[0]);
+const arRules = source.split('[data-arc-auto-review]{').slice(1).map((s) => s.split('}')[0]);
 check(arRules.length === 1 && arRules.every((r) => ['--ar-fg', '--ar-muted', '--ar-bg', '--ar-border'].every((v) => r.includes(v + ':var(--dsw-alias-'))),
   'AI Review panel: the skin sets text, muted text, surface and border from its tokens');
 check(typeof exp.blueCss === 'function' && exp.blueCss('rgb(47, 111, 237)') === true && exp.blueCss('rgb(143, 143, 143)') === false
@@ -147,7 +147,7 @@ for (const [id, skin] of Object.entries(exp.SKINS ?? {})) {
   const tokens = skin.tokens;
   const names = Object.keys(tokens);
   check(names.length > 20, `${id}: has ${names.length} tokens`);
-  check(names.every((n) => /^--(dsw|dsh|shiki|color)-/.test(n)), `${id}: every token name is an app variable`);
+  check(names.every((n) => /^--(dsw|arc|shiki|color)-/.test(n)), `${id}: every token name is an app variable`);
   check(names.every((n) => typeof tokens[n].light === 'string' && typeof tokens[n].dark === 'string'),
     `${id}: every token has a light and a dark value`);
   const missing = BLUE_BASE.filter((n) => !(n in tokens));
@@ -163,19 +163,19 @@ for (const [id, skin] of Object.entries(exp.SKINS ?? {})) {
   check(/_cardIcon[^{]*\{[^}]*grayscale\(1\)/.test(scoped), `${id}: plugin card icons are drawn in grey`);
   // plugin screens that set their own colours (reasoning slider, Visualize, auto-review, body text)
   check(/\.re-effort\{[^}]*grayscale\(1\)/.test(scoped), `${id}: the reasoning slider is drawn in grey`);
-  check(/\.dshviz-option\[data-selected="true"\]\{[^}]*border-color:var\(--dsw-alias-label-primary\)/.test(scoped)
-    && /dshviz-select:focus-visible[^{]*\{[^}]*outline-color:var\(--dsw-alias-label-primary\)/.test(scoped),
+  check(/\.arcviz-option\[data-selected="true"\]\{[^}]*border-color:var\(--dsw-alias-label-primary\)/.test(scoped)
+    && /arcviz-select:focus-visible[^{]*\{[^}]*outline-color:var\(--dsw-alias-label-primary\)/.test(scoped),
     `${id}: Visualize selection and focus use the ink colour`);
   check(/html body\{color:var\(--dsw-alias-label-primary\)\}/.test(scoped) && /--ar-fg:var\(--dsw-alias-label-primary\)/.test(scoped),
     `${id}: body text and the auto-review text use the ink colour`);
-  check(/\[data-dsh-gray\]\{[^}]*grayscale\(1\)/.test(scoped), `${id}: the safety net rule draws marked elements in grey`);
-  check(/\.dshviz-button\{[^}]*background:var\(--dsw-alias-label-primary\)/.test(scoped), `${id}: Visualize buttons use the ink colour`);
+  check(/\[data-arc-gray\]\{[^}]*grayscale\(1\)/.test(scoped), `${id}: the safety net rule draws marked elements in grey`);
+  check(/\.arcviz-button\{[^}]*background:var\(--dsw-alias-label-primary\)/.test(scoped), `${id}: Visualize buttons use the ink colour`);
   const scopedBlue = (scoped.match(/#[0-9a-f]{6}(?:[0-9a-f]{2})?\b/gi) ?? []).filter((c) => isBlue(hexAny(c)));
   check(scopedBlue.length === 0, `${id}: no blue colour in the scoped rules (${scopedBlue.length} found)`);
   // the C2 look: cards 10 px, controls 8 px, Geist type, a dark-brown primary button, cream paper
   check(tokens['--dsw-radius-md'].light === '10px' && tokens['--dsw-radius-sm'].light === '8px', `${id}: cards are 10 px and controls 8 px`);
   check(!/border-radius:\s*0\s*!important/.test(scoped), `${id}: no rule squares the corners`);
-  check(/^"Geist"/.test(tokens['--dsh-font-family-text-default'].light) && /^"Geist Mono"/.test(tokens['--dsh-font-family-code-default'].light), `${id}: text is Geist and code is Geist Mono`);
+  check(/^"Geist"/.test(tokens['--arc-font-family-text-default'].light) && /^"Geist Mono"/.test(tokens['--arc-font-family-code-default'].light), `${id}: text is Geist and code is Geist Mono`);
   check(/@font-face\{font-family:Geist;/.test(scoped) && /@font-face\{font-family:Geist Mono;/.test(scoped), `${id}: Geist and Geist Mono are embedded`);
   check(tokens['--dsw-alias-button-info-fill'].light === '#54453c', `${id}: the send button is the C2 dark brown on paper`);
   check(hex(tokens['--dsw-static-neutral-bluish-50'].light).join() === '250,249,246', `${id}: the light page is the C2 paper #faf9f6`);
@@ -206,6 +206,49 @@ for (const [id, skin] of Object.entries(exp.SKINS ?? {})) {
   check(ls.every((v, i) => i === 0 || v <= ls[i - 1] + 1e-9), `${id}/light: grey ramp never gets lighter going down`);
   const ds = order.map((s) => lum(hex(tokens[`--dsw-static-neutral-bluish-${s}`].dark)));
   check(ds.every((v, i) => i === 0 || v <= ds[i - 1] + 1e-9), `${id}/dark: grey ramp never gets lighter going down`);
+}
+
+
+// ---- motion and icons (2026-11-03) ------------------------------------------------------------
+{
+  const skin = (exp.SKINS ?? {}).arc;
+  const css = [].concat(skin.scoped ?? []).join(String.fromCharCode(10));
+  const kfs = [...css.matchAll(/@keyframes\s+(arc\w+)\{((?:[^{}]|\{[^{}]*\})*)\}/g)].filter((m) => m[1] !== 'arcTurn');
+  check(kfs.length >= 6, `motion: ${kfs.length} new keyframes`);
+  const OK = new Set(['transform', 'opacity']);
+  for (const [, name, body] of kfs) {
+    const props = [...body.matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1]);
+    check(props.length > 0 && props.every((p) => OK.has(p)), `motion: ${name} animates only transform and opacity`);
+  }
+  const reduced = (css.match(/@media \(prefers-reduced-motion:reduce\)\{([^@]*)\}\}/g) ?? []).join('');
+  const rules = [...css.matchAll(/(?:^|\})([^{}@]+)\{animation:(arc\w+) \d+ms /gm)];
+  check(rules.length >= 8, `motion: ${rules.length} animated rules`);
+  for (const [, sel, name] of rules) {
+    check(sel.split(',').every((s) => reduced.includes(s.trim())), `motion: reduced-motion covers ${name} on ${sel.slice(0, 40)}`);
+  }
+  check(/animation:none !important/.test(reduced) && /button:not\(:disabled\):active/.test(reduced), 'motion: reduced-motion turns off animation and the button press');
+  for (const m of css.matchAll(/animation:arc\w+ (\d+)ms/g)) check(+m[1] >= 120 && +m[1] <= 320, `motion: duration ${m[1]} ms is within 120 to 320`);
+  check(!/(?:transition|animation)[^;{}]*(width|height|top|left|margin|box-shadow|filter)/.test(css.replace(/@font-face[^}]*\}/g, '')), 'motion: no layout property is animated or transitioned');
+}
+{
+  const { readdirSync, existsSync } = await import('node:fs');
+  const roots = ['../..', '../../../profiles/web/node_modules', '../../../profiles/desktop/node_modules'].map((r) => join(here, r));
+  const INK = /^(none|currentcolor|canvastext|#111111|#faf9f6|#a09d93)$/i;
+  let n = 0;
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    for (const d of readdirSync(root)) {
+      if (!/^(arc-|arc-|superpowers-arc|arc-harness-remote)/.test(d)) continue;
+      const f = join(root, d, 'icon.svg');
+      if (!existsSync(f)) continue;
+      const svg = readFileSync(f, 'utf8');
+      n += 1;
+      const colours = [...svg.matchAll(/(?:fill|stroke|color)\s*[=:]\s*"?([^";}\s]+)/g)].map((m) => m[1]);
+      const bad = colours.filter((c) => !INK.test(c));
+      check(bad.length === 0 && /stroke-width="1\.5"/.test(svg) && /viewBox="0 0 24 24"/.test(svg) && !svg.includes(String.fromCharCode(183)), `icon ${d}: ink colours only, 24 grid, stroke 1.5${bad.length ? ' (bad: ' + bad.join(' ') + ')' : ''}`);
+    }
+  }
+  check(n >= 1, `icons: ${n} icon.svg files checked`);
 }
 
 console.log(failures === 0 ? 'ALL PASS' : `${failures} FAILED`);

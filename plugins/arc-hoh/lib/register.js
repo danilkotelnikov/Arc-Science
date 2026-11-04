@@ -1,4 +1,4 @@
-// dsh-hoh 0.2.0 (2026-10-31): the tools and prompt sections. No dsh imports here, so node can test it.
+// arc-hoh 0.2.0 (2026-10-31): the tools and prompt sections. No arc imports here, so node can test it.
 import { appendLedger, hashFiles, lastEvent, ledgerFile, verifyLedger, decideGate } from './gates.js';
 import { CONTRACT, briefText } from './contract.js';
 import { retainNote } from './brief.js';
@@ -16,7 +16,7 @@ export function callerOf(exec) {
 export function makeTools(defineTool, env = process.env, deps = {}) {
   const file = () => ledgerFile(env);
   const retain = deps.retain || retainNote;
-  const retainOn = () => env.DSH_HOH_RETAIN !== '0';
+  const retainOn = () => env.ARC_HOH_RETAIN !== '0';
 
   const propose = defineTool({
     name: 'hoh_propose',
@@ -137,8 +137,8 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
         const day = new Date().toISOString().slice(0, 10);
         retained = await retain({
           content: `HoH gate for goal "${clip(args.goal, 80)}", cycle ${args.cycle}: ${verdict}. ${reasons.length ? clip(reasons.join('; '), 400) : 'Every check, probe and requirement held.'} Candidate ${String(args.candidate).slice(0, 19)}.`,
-          context: 'Written automatically by the dsh-hoh accept gate (Harness^2 carry-over)',
-          tags: [process.env.DSH_HOH_PROJECT_TAG || 'project:arc-harness', 'source:arc-harness', 'hoh:slice', `date:${day}`],
+          context: 'Written automatically by the arc-hoh accept gate (Harness^2 carry-over)',
+          tags: [process.env.ARC_HOH_PROJECT_TAG || 'project:arc-harness', 'source:arc-harness', 'hoh:slice', `date:${day}`],
         });
       }
       return { verdict, reasons, seq, retained: retained === true };

@@ -1,5 +1,5 @@
 {
-  "name": "dsh-hoh",
+  "name": "arc-hoh",
   "version": "0.3.0",
   "description": "Harness^2 (Google) and Harness-of-Harness inside Arc Harness: an operating contract in every prompt, a hash-chained ledger, a deterministic accept gate, a Cammut brief and a Trace tab in the right sidebar.",
   "icon": "icon.svg",
@@ -25,23 +25,23 @@
   "scripts": {
     "test": "node --test test/hoh.test.mjs"
   },
-  "dsh": {
+  "arc": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-sidebar-right"
+        "@arc-harness/arc-client-locale",
+        "@arc-harness/arc-client-ui-sidebar-right"
       ],
       "platform": "web"
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "^0.2.1-rc.2"
+    "@arc-harness/arc-tools": "^0.2.1-rc.2"
   },
   "engines": {
     "node": ">=22.19",
-    "dsh": ">=0.2.1-rc.2 <0.3.0"
+    "arc": ">=0.2.1-rc.2 <0.3.0"
   }
 }

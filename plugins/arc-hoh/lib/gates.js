@@ -1,4 +1,4 @@
-// dsh-hoh 0.2.0 (2026-10-31): deterministic gates for the Harness-of-Harness cycle.
+// arc-hoh 0.2.0 (2026-10-31): deterministic gates for the Harness-of-Harness cycle.
 // Pure functions plus a hash-chained ledger. No network.
 import { createHash } from 'node:crypto';
 import { readFile, stat, mkdir, appendFile } from 'node:fs/promises';
@@ -8,9 +8,9 @@ import os from 'node:os';
 export const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
-/** The ledger file. DSH_HOME wins; the default is ~/.dsh/hoh/ledger.jsonl. */
+/** The ledger file. ARC_HOME wins; the default is ~/.arc/hoh/ledger.jsonl, the Arc Harness data home. */
 export function ledgerFile(env = process.env) {
-  return path.join(env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'hoh', 'ledger.jsonl');
+  return path.join(env.ARC_HOME || path.join(os.homedir(), '.arc'), 'hoh', 'ledger.jsonl');
 }
 
 /** One candidate id for a set of files: sha256 over the sorted (path, content hash) pairs. */

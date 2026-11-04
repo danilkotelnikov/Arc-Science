@@ -1,0 +1,4 @@
+# arc-theme bundle patch: mounts the plugin so its client half loads.
+- insert:
+    - id: theme-pair
+      name: arc-theme

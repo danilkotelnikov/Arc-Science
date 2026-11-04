@@ -1,4 +1,4 @@
-// dsh-hoh 0.3.0 (2026-11-03): the data of the Trace tab. Reads the ledger, never writes it.
+// arc-hoh 0.3.0 (2026-11-03): the data of the Trace tab. Reads the ledger, never writes it.
 import { readFile } from 'node:fs/promises';
 import { verifyLedger } from './gates.js';
 

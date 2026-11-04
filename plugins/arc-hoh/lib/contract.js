@@ -1,4 +1,4 @@
-// dsh-hoh 0.2.0 (2026-10-31): the operating contract that goes into every system prompt.
+// arc-hoh 0.2.0 (2026-10-31): the operating contract that goes into every system prompt.
 // Sources: Harness-of-Harness (Yan et al., arXiv 2609.01481) and Harness^2, Recursive Agent Harnessing
 // for an Open World (Google Cloud AI Research, arXiv 2610.14224).
 
