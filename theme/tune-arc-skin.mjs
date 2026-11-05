@@ -1,12 +1,12 @@
 // Second pass on the Arc Science skin (run after make-arc-skin.mjs; safe to run again).
 // C2 layers: paper canvas #faf9f6, white cards, sidebar #f4f2ed, readable captions. Checks go into the plugin test.
-//   node theme/tune-arc-skin.mjs            edits local-plugins/dsh-theme-pair and copies it into both profiles
+//   node theme/tune-arc-skin.mjs            edits local-plugins/arc-theme and copies it into both profiles
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { dataHome } from '../lib/testhome.mjs';
 
-const home = path.join(os.homedir(), '.dsh');
-const plugin = path.join(home, 'local-plugins', 'dsh-theme-pair');
+const home = dataHome();
+const plugin = path.join(home, 'local-plugins', 'arc-theme');
 const file = path.join(plugin, 'lib', 'client', 'index.js');
 let s = fs.readFileSync(file, 'utf8');
 
@@ -67,7 +67,7 @@ if (!t.includes(MARK)) {
 // copy into both profiles
 const copy = ['lib/client/index.js', 'lib/index.js', 'package.json', 'README.md'];
 for (const prof of ['web', 'desktop']) {
-  const dest = path.join(home, 'profiles', prof, 'node_modules', 'dsh-theme-pair');
+  const dest = path.join(home, 'profiles', prof, 'node_modules', 'arc-theme');
   for (const f of copy) {
     const from = path.join(plugin, f);
     if (!fs.existsSync(from)) continue;

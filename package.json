@@ -1,0 +1,17 @@
+{
+  "name": "arc-harness-kit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Build kit that turns your copy of the original app archive, version 0.2.1-rc.5, into Arc Harness",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "check": "node scripts/check-syntax.mjs",
+    "test": "node scripts/check-syntax.mjs && node lib/arcnames.mjs && node test/iconcolor.test.mjs && node --test plugins/arc-hoh/test/hoh.test.mjs plugins/arc-theme/test/theme.test.mjs test/lean-profile.test.mjs test/arcunpacked.test.mjs && node lib/testhome.mjs --selftest && node scripts/privacy-scan.mjs --self-test",
+    "build": "node tools/build.mjs",
+    "test:archive": "node -e \"require('fs').mkdirSync('build/check',{recursive:true})\" && node test/build-check.mjs build/app.asar build/check && node test/ui-strings.mjs && node test/independent-scan.mjs && node test/positive-control.mjs",
+    "scan": "node scripts/privacy-scan.mjs"
+  }
+}

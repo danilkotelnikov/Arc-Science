@@ -8,9 +8,13 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { openAsar } from '../lib/asar.mjs';
+import { arcPath } from '../lib/arcnames.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const built = openAsar(path.resolve(process.argv[2] || path.join(root, 'build', 'app.asar')));
+// the build renames every internal path (lib/arcnames.mjs, patch 17): a lookup by an original path finds the renamed file
+const builtRaw = openAsar(path.resolve(process.argv[2] || path.join(root, 'build', 'app.asar')));
+const look = (p) => builtRaw.byPath.get(p) ?? builtRaw.byPath.get(arcPath(p));
+const built = { ...builtRaw, byPath: { get: look, has: (p) => !!look(p) } };
 const pristine = openAsar(path.join(root, 'pristine', 'app.asar'));
 const tmp = fs.mkdtempSync(path.join(process.argv[3] || os.tmpdir(), 'arc-check-'));
 let bad = 0;
@@ -25,12 +29,12 @@ for (const f of pristine.files) {
   if (f.entry.size === g.entry.size && pristine.read(f).equals(built.read(g))) identical++; else changed.push({ path: f.path, buf: built.read(g) });
 }
 const removedCount = changed.filter((c) => c.removed).length;
-const pristinePaths = new Set(pristine.files.map((f) => f.path));
+const pristinePaths = new Set(pristine.files.map((f) => arcPath(f.path)));
 const addedPaths = built.files.filter((f) => !pristinePaths.has(f.path)).map((f) => f.path);
 check(built.files.length === pristine.files.length - removedCount + addedPaths.length, `file count = pristine ${pristine.files.length} minus ${removedCount} removed documents plus ${addedPaths.length} added`);
 check(addedPaths.every((p) => /\/locale\/en\.json$/.test(p)), 'the only added files are plugin-name locale files');
 check(changed.filter((c) => c.removed).every((c) => /\.zh[^/]*\.md$|README\.i18n\.yaml$/.test(c.path)), 'only Chinese documents were removed');
-check(changed.length > 0 && changed.length < 2000, `${changed.length} files changed or removed, ${identical} identical`);
+check(changed.length > 0 && changed.length < 3000, `${changed.length} files changed or removed, ${identical} identical`);
 
 let parsed = 0;
 for (const c of changed) {
@@ -53,14 +57,14 @@ const byPath = new Map(rt.files.map((e) => [e.path, e]));
 let stale = 0;
 for (const c of changed) {
   if (!c.buf || !c.path.startsWith('dsh/') || /desktop-runtime\.json$/.test(c.path)) continue;
-  const e = byPath.get(c.path.slice(4));
+  const e = byPath.get(arcPath(c.path).slice(4));
   if (e && e.bytes !== c.buf.length) stale++;
 }
 check(stale === 0, 'runtime manifest sizes match the changed files');
 // every packed file under dsh/ that the manifest lists must match its listed hash (a same-length edit would show here)
 let hashBad = 0, listed = 0;
 for (const f of built.files) {
-  if (f.entry.unpacked || !f.path.startsWith('dsh/') || f.path === 'dsh/desktop-runtime.json') continue;
+  if (f.entry.unpacked || !/^(?:dsh|arc)\//.test(f.path) || /^(?:dsh|arc)\/desktop-runtime\.json$/.test(f.path)) continue;
   const e = byPath.get(f.path.slice(4));
   if (!e) continue;
   listed++;

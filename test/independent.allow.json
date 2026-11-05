@@ -30,8 +30,10 @@
     "\\.min\\.js$",
     "/node_modules/(?:@types|typescript|zod|d3|cytoscape|dompurify|dayjs|file-type|fflate|jimp|pdfjs-dist|highlight\\.js|marked|katex|mermaid)/",
     "/node_modules/ds-harness-remote/",
-    "/dsh-hoh/lib/index\\.js$",
-    "/local-plugins/dsh-english/"
+    "/node_modules/arc-harness-remote/",
+    "/arc-hoh/lib/index\\.js$",
+    "/local-plugins/dsh-english/",
+    "/local-plugins/arc-english/"
   ],
   "skipReasons": {
     "/node_modules/@earendil-works/pi-ai/": "Third-party model provider catalog (names of providers and labs). Its DeepSeek addresses are rewritten by the build and read by the network census.",
@@ -43,8 +45,10 @@
     "\\.min\\.js$": "Minified third-party libraries.",
     "/node_modules/(?:@types|typescript|zod|d3|cytoscape|dompurify|dayjs|file-type|fflate|jimp|pdfjs-dist|highlight\\.js|marked|katex|mermaid)/": "Third-party libraries that ship inside the packages.",
     "/node_modules/ds-harness-remote/": "The third-party remote-control plugin. It is switched off in both profiles (profile-state checks that); its text names the old product and is never shown.",
-    "/dsh-hoh/lib/index\\.js$": "The owner's own HoH plugin. Its retrieval query to Cammut keeps the old wording, because the stored notes are ranked by it; apply-profiles leaves the file as it was.",
-    "/local-plugins/dsh-english/": "A translation tool of this kit with its working cache (Chinese text and the English answer, old product name included) and old file copies. No profile loads it and no page shows it. It leaves with the rename slices (ARC-RENAME-2)."
+    "/node_modules/arc-harness-remote/": "The third-party remote-control plugin. It is switched off in both profiles (profile-state checks that); its text names the old product and is never shown.",
+    "/arc-hoh/lib/index\\.js$": "The owner's own HoH plugin. Its retrieval query to Cammut keeps the old wording, because the stored notes are ranked by it; apply-profiles leaves the file as it was.",
+    "/local-plugins/dsh-english/": "A translation tool of this kit with its working cache (Chinese text and the English answer, old product name included) and old file copies. No profile loads it and no page shows it. It leaves with the rename slices (ARC-RENAME-2).",
+    "/local-plugins/arc-english/": "A translation tool of this kit with its working cache (Chinese text and the English answer, old product name included) and old file copies. No profile loads it and no page shows it. It leaves with the rename slices (ARC-RENAME-2)."
   },
   "bigFiles": [
     "dsh-client-ui-sidebar-documentpreview/lib/client.pdf.js"

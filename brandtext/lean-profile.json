@@ -1,30 +1,31 @@
 {
   "about": "The lean Arc Harness profile (owner request D-20261102-01 and -02): the two core bundles, the Arc Harness skin, and the Arc parts. Every other bundle leaves the bundle list. Its package stays installed, so putting a bundle back is one line.",
   "keep": [
-    "@deepseek-ai/dsh-base",
-    "@deepseek-ai/dsh-web-app",
-    "dsh-theme-pair",
-    "dsh-hoh"
+    "@arc-harness/arc-base",
+    "@arc-harness/arc-web-app"
   ],
-  "add": [],
+  "add": [
+    "arc-theme",
+    "arc-hoh"
+  ],
   "left_out": {
-    "dsh-context": "Context Insights: trajectories and spending pages",
-    "dsh-vision-router": "vision model routing",
+    "arc-context": "Context Insights: trajectories and spending pages",
+    "arc-vision-router": "vision model routing",
     "@liustack/modlens": "vision model tools",
-    "@michengai/dsh-skills-manager": "skills page and its manual update box",
-    "superpowers-dsh": "skills",
-    "@nagi-ovo/dsh-visualize": "chart styles page",
-    "ds-harness-remote": "remote access (already off)",
-    "@deepseek-ai/dsh-experimental-auto-review": "automation tasks",
-    "dsh-auto-review": "automation tasks",
-    "dsh-client-auto-continue": "automation tasks",
-    "dsh-better-sidebar": "second sidebar header and list",
-    "dsh-chat-import": "session import",
-    "@michengai/dsh-archive-manager": "archived sessions page",
-    "@ayanehana/dsh-reasoning-effort": "extra effort menu",
+    "@michengai/arc-skills-manager": "skills page and its manual update box",
+    "superpowers-arc": "skills",
+    "@nagi-ovo/arc-visualize": "chart styles page",
+    "arc-harness-remote": "remote access (already off)",
+    "@arc-harness/arc-experimental-auto-review": "automation tasks",
+    "arc-auto-review": "automation tasks",
+    "arc-client-auto-continue": "automation tasks",
+    "arc-better-sidebar": "second sidebar header and list",
+    "arc-chat-import": "session import",
+    "@michengai/arc-archive-manager": "archived sessions page",
+    "@ayanehana/arc-reasoning-effort": "extra effort menu",
     "@liustack/modsearch": "web search tool",
-    "@anysearch/anysearch-dsh": "web search tool",
-    "@deepseek-ai/dsh-experimental-voice-input-bundle": "voice input",
+    "@anysearch/anysearch-arc": "web search tool",
+    "@arc-harness/arc-experimental-voice-input-bundle": "voice input",
     "aegis": "third-party guard"
   }
 }

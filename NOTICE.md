@@ -19,7 +19,7 @@ a copy, and writes a new archive on your machine. The original archive is never 
 
 ## The AS cube logo
 
-The AS cube logo, and every picture, film or page of this repository that shows it (`brand/`, `media/`, `site/`, `docs/img`), are not covered by the MIT license.
+The AS cube logo, and every picture, film or page of this repository that shows it (`brand/`, `media/`, `docs/images`), are not covered by the MIT license.
 All rights are reserved by the project owner. The build uses the logo files unchanged. No license header is added to them.
 
 ## What the built app contains
@@ -39,7 +39,7 @@ The archive you build still holds the upstream code, changed as described in the
 
 | Component | License | Where the text is |
 |---|---|---|
-| Geist and Geist Mono typefaces. The page `site/preview.html` embeds subsets of both as WOFF2 files. The product name in the app is set in Geist when it is installed on the machine. | SIL Open Font License 1.1 | [THIRD_PARTY_LICENSES/Geist-OFL-1.1.txt](THIRD_PARTY_LICENSES/Geist-OFL-1.1.txt). No other file of this repository ships font files. |
+| Geist and Geist Mono typefaces. `brand/dist/geist.css` and `plugins/arc-theme/lib/client/index.js` embed subsets of both as WOFF2 files. The product name in the app is set in Geist when it is installed on the machine. | SIL Open Font License 1.1 | [THIRD_PARTY_LICENSES/Geist-OFL-1.1.txt](THIRD_PARTY_LICENSES/Geist-OFL-1.1.txt). No other file of this repository ships font files. |
 | The AS cube logo, and the pictures, films and pages that show it | Not covered by the MIT license. All rights are reserved by the project owner. | See "The AS cube logo" above. |
 
 Keep these notices when you copy or redistribute any part of the kit or of an archive built with it.
