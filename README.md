@@ -41,13 +41,13 @@ This repository holds the build kit and the two Arc plugins. It does not contain
 
 ## A real task
 
-We gave Arc Harness a real job on this repository: write the test that guards the header at the top of this page. It planned the work, built it, froze it and handed it to a fresh reviewer. The run took 5 minutes 31 seconds, with 7 subagents and 102 steps, on Clarke 1.0 through Radium. The file it wrote is [`test/header.test.mjs`](test/header.test.mjs), and `npm test` runs it now.
+We gave Arc Harness a real job on this repository: write the test that guards the header at the top of this page. It planned the work, built it, froze it and handed it to a fresh reviewer. The run took 5 minutes 31 seconds, with 7 subagents and 102 steps, on Clarke 1.0 through Radium. The file it wrote is [`test/header.test.mjs`](test/header.test.mjs), and `npm test` runs it now. An independent read then found gaps in it, and we added those checks by hand.
 
 ![The session of that run on the left, with its seven steps. The Trace tab on the right lists the ledger: a proposal, frozen candidates, three refusals and one acceptance.](docs/images/task-run.png)
 
-The Trace tab on the right is the ledger of that run, newest first. The gate refused first. The agent that froze the work asked for acceptance itself, and the gate answered that the reviewer must call it. Two more tries failed because the reviewers passed a wrong candidate value. The file never changed. The fourth try passed, and the chain holds all 11 entries.
+The Trace tab on the right is the ledger of that run, newest first. The gate refused first. The agent that froze the work asked for acceptance itself, and the gate answered that the reviewer must call it. That try and the next left off the `sha256:` prefix, and the third sent a different hash. The file never changed. The fourth try passed, and the chain holds all 11 entries.
 
-**Shared memory.** Each verdict went to Cammut by itself. In a new session, a question found those verdicts. The answer repeats the gate's stock wording about a later edit, and the ledger above shows what really happened.
+**Shared memory.** Each verdict went to Cammut by itself. In a new session, a question found those verdicts. The answer repeats the gate's stock wording about a later edit. That wording does not fit this run: every freeze in the ledger holds the same hash.
 
 ![A new session asks Cammut for the gate verdicts of that goal and gets back the refusals and the acceptance.](docs/images/task-memory.png)
 
@@ -59,7 +59,7 @@ The Trace tab on the right is the ledger of that run, newest first. The gate ref
 |---|---|
 | Harness of Harness gate | Runs. Everything above comes from it. |
 | Ledger and Trace tab | Runs. |
-| Cammut memory | Runs. Verdicts go in by themselves, the brief reaches each session and the agent can search notes. |
+| Cammut memory | Runs. Verdicts go in by themselves, the brief reached the session, and the agent searched notes. |
 | Permission card | Runs. |
 | Diagrams | Partly. The agent wrote a Mermaid diagram of its steps, and the app shows it as text. |
 | Hook building | Not in the app yet. |

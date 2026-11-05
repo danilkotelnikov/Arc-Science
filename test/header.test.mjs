@@ -88,9 +88,18 @@ const readme = read('README.md');
 if (readme === null) {
   t('README.md exists', false, 'File not found');
 } else {
-  t('README.md references header.svg',       hasRef(readme, 'docs/images/header.svg'),       'Missing reference');
-  t('README.md references header-still.svg', hasRef(readme, 'docs/images/header-still.svg'), 'Missing reference');
+  t('README.md references header.svg',       hasRef(readme, 'src="docs/images/header.svg"'),       'Missing reference');
+  t('README.md references header-still.svg', hasRef(readme, 'srcset="docs/images/header-still.svg"'), 'Missing reference');
 }
+
+// Added after review: an image cannot load or run these, so a header that holds one is broken.
+for (const [name, c] of [['header.svg', headerSVG], ['header-still.svg', stillSVG]]) {
+  if (c === null) continue;
+  t(`${name}: no href`, !/\bhref\s*=/i.test(c), 'Found href');
+  t(`${name}: no event handler`, !/\son\w+\s*=/i.test(c), 'Found an event handler');
+  t(`${name}: no foreignObject`, !/<foreignObject/i.test(c), 'Found foreignObject');
+}
+if (stillSVG !== null) t('header-still.svg: no SMIL animation', !/<(animate\w*|set)\b/i.test(stillSVG), 'Found SMIL animation');
 
 // ---------------------------------------------------------------------------
 // Summary
