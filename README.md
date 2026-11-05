@@ -1,6 +1,11 @@
 <p align="center">
-  <img src="docs/images/header.png" width="100%" alt="Arc Harness. We run AI agents on your desktop. The agent that does a task never accepts its own work.">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/header-still.svg">
+    <img src="docs/images/header.svg" width="100%" alt="Arc Harness">
+  </picture>
 </p>
+
+<p align="center">Predict the future with the flow of your thoughts</p>
 
 <p align="center">
   <a href="https://github.com/danilkotelnikov/Arc-Science/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/danilkotelnikov/Arc-Science/ci.yml?branch=main&label=CI"></a>
@@ -17,10 +22,6 @@
   <a href="#road-map">Road map</a> &nbsp;&nbsp;
   <a href="#build-and-install-windows">Install</a> &nbsp;&nbsp;
   <a href="https://github.com/danilkotelnikov/Arc-Science/wiki">Wiki</a>
-</p>
-
-<p align="center">
-  <img src="docs/images/light-session.png" width="90%" alt="An Arc Harness session with a model reply, in the light cream look">
 </p>
 
 ## What it is
@@ -46,6 +47,8 @@ These are captures of the running app, made by `test/desktop-journey.mjs --mode 
 |---|---|
 | ![Home screen, light](docs/images/light-home.png) | ![Home screen, dark](docs/images/dark-home.png) |
 | **Home.** Start a session in a workspace. | **Warm dark look.** Light, Dark or System. |
+| ![A session in the light look](docs/images/light-session.png) | |
+| **A session in the light look.** | |
 | ![A session in the dark look](docs/images/dark-session.png) | ![The Models page in Settings](docs/images/light-settings-models.png) |
 | **A session.** A real model reply. | **Models.** Add providers and keys. A green dot means connected. |
 | ![General settings](docs/images/light-settings-general.png) | ![Built-in plugins in Settings](docs/images/light-settings-plugins.png) |
