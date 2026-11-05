@@ -112,20 +112,6 @@ The app comes first, then claims, then proof. The full plan is on the [Roadmap](
 
 ![Road map: phases 0 to 6, with built and planned steps](docs/images/roadmap.png)
 
-## What the build changes
-
-| Change | How |
-|---|---|
-| AS cube logo, product name, ink icons, no blue or violet | `tools/build.mjs`, patches 1 to 10 |
-| No update feed, no telemetry, no connections to the original vendor | patches 9 and 11 |
-| Light first run, the cream look in Light and a warm dark set in Dark | patch 7 and the theme plugin |
-| "Thinking" and "Thinking for 2s" as the running label | patch 13 |
-| Lean core: no plugin manager page (Settings keeps a read-only Built-in plugins section), Automation tasks, trajectories, skills, account, subagent and agent preset screens | patch 14 (one `disabled: true` line per screen) |
-| No "Show coding view" row in General settings | patch 15 |
-| Data folder `~/.arc` and its variable `ARC_HOME` | patch 16 |
-| Clean room: every internal name moves to Arc. Packages are `@arc-harness/arc-*`, the runtime folder is `arc/`, and the command and link name is `arc` | patch 17 and `lib/arcnames.mjs` (the build stops if one old name is left) |
-| Lean profile: 4 bundles (`@arc-harness/arc-base`, `@arc-harness/arc-web-app`, `arc-theme`, `arc-hoh`) | `tools/lean-profile.mjs`, with an undo list |
-
 ## The Arc plugins
 
 | Plugin | What it does |

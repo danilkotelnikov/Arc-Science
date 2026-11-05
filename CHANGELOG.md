@@ -2,6 +2,12 @@
 
 All notable changes to Arc Harness are listed here. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). The build kit is at 0.1.0, and each plugin has its own version in its `package.json`.
 
+## [Unreleased]
+
+### Removed
+
+- The "What the build changes" table is gone from the README.
+
 ## [0.1.0] - 2026-11-05
 
 ### Added
