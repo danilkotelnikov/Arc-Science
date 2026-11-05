@@ -40,7 +40,8 @@ Harness of Harness makes the agent plan, test and prove its work in a fixed cycl
 
 - ARC_HOH_BRIEF set to 0 switches off the shared-memory brief in the prompt.
 - ARC_HOH_RETAIN set to 0 stops the gate from writing verdicts to shared memory.
-- ARC_HOME moves the ledger folder. The default is the .arc folder in your home folder.
+- Both opt-outs also work under their original names, DSH_HOH_BRIEF and DSH_HOH_RETAIN.
+- ARC_HOME moves the ledger folder. The default is the .arc folder in your home folder. An existing ledger in the original data folder stays in use until .arc has its own, so an upgrade keeps the chain.
 - Fixed limits: three cycles, files up to 20 MB, six brief notes of 220 characters, a brief refresh every 20 minutes.
 
 ## Data it reads and writes
