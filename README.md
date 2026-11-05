@@ -1,6 +1,11 @@
 <p align="center">
-  <img src="docs/images/header.png" width="100%" alt="Arc Harness. We run AI agents on your desktop. The agent that does a task never accepts its own work.">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/header-still.svg">
+    <img src="docs/images/header.svg" width="100%" alt="Arc Harness">
+  </picture>
 </p>
+
+<p align="center">Predict the future with the flow of your thoughts</p>
 
 <p align="center">
   <a href="https://github.com/danilkotelnikov/Arc-Science/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/danilkotelnikov/Arc-Science/ci.yml?branch=main&label=CI"></a>
@@ -19,10 +24,6 @@
   <a href="https://github.com/danilkotelnikov/Arc-Science/wiki">Wiki</a>
 </p>
 
-<p align="center">
-  <img src="docs/images/light-session.png" width="90%" alt="An Arc Harness session with a model reply, in the light cream look">
-</p>
-
 ## What it is
 
 Arc Harness is a desktop app where an AI model works in sessions. It reads and edits files in a workspace, runs shell commands within the permission mode you choose, and calls tools. Its goal is a scientific harness that never grades its own work.
@@ -38,6 +39,32 @@ This repository holds the build kit and the two Arc plugins. It does not contain
 | **No vendor links** | No update feed, no telemetry and no connections to the original vendor. A network test proves it. |
 | **A real test** | A journey test opens the desktop app, clicks through Settings and waits for a real model reply. |
 
+## A real task
+
+We gave Arc Harness a real job on this repository: write the test that guards the header at the top of this page. It planned the work, built it, froze it and handed it to a fresh reviewer. The run took 5 minutes 31 seconds, with 7 subagents and 102 steps, on Clarke 1.0 through Radium. The file it wrote is [`test/header.test.mjs`](test/header.test.mjs), and `npm test` runs it now. An independent read then found gaps in it, and we added those checks by hand.
+
+![The session of that run on the left, with its seven steps. The Trace tab on the right lists the ledger: a proposal, frozen candidates, three refusals and one acceptance.](docs/images/task-run.png)
+
+The Trace tab on the right is the ledger of that run, newest first. The gate refused first. The agent that froze the work asked for acceptance itself, and the gate answered that the reviewer must call it. That try and the next left off the `sha256:` prefix, and the third sent a different hash. The file never changed. The fourth try passed, and the chain holds all 11 entries.
+
+**Shared memory.** Each verdict went to Cammut by itself. In a new session, a question found those verdicts. The answer repeats the gate's stock wording about a later edit. That wording does not fit this run: every freeze in the ledger holds the same hash.
+
+![A new session asks Cammut for the gate verdicts of that goal and gets back the refusals and the acceptance.](docs/images/task-memory.png)
+
+**A person decides.** An earlier try at the same task asked to leave the sandbox, and the app stopped until someone answered. No one did, so we changed the task to stay inside it. The folder path is hidden in this picture.
+
+![A card that reads Waiting for approval, with Reject and Allow once buttons.](docs/images/task-approval.png)
+
+| Part | What runs in the app today |
+|---|---|
+| Harness of Harness gate | Runs. Everything above comes from it. |
+| Ledger and Trace tab | Runs. |
+| Cammut memory | Runs. Verdicts go in by themselves, the brief reached the session, and the agent searched notes. |
+| Permission card | Runs. |
+| Diagrams | Partly. The agent wrote a Mermaid diagram of its steps, and the app shows it as text. |
+| Hook building | Not in the app yet. |
+| Schematics on this page | Made with Molecullage, outside the app. |
+
 ## Screens
 
 These are captures of the running app, made by `test/desktop-journey.mjs --mode shots`.
@@ -46,6 +73,8 @@ These are captures of the running app, made by `test/desktop-journey.mjs --mode 
 |---|---|
 | ![Home screen, light](docs/images/light-home.png) | ![Home screen, dark](docs/images/dark-home.png) |
 | **Home.** Start a session in a workspace. | **Warm dark look.** Light, Dark or System. |
+| ![A session in the light look](docs/images/light-session.png) | ![The side panels: workspace files, terminal, Trace and browser](docs/images/task-panels.png) |
+| **A session in the light look.** | **Side panels.** Files, a terminal, Trace and a browser sit beside the session. |
 | ![A session in the dark look](docs/images/dark-session.png) | ![The Models page in Settings](docs/images/light-settings-models.png) |
 | **A session.** A real model reply. | **Models.** Add providers and keys. A green dot means connected. |
 | ![General settings](docs/images/light-settings-general.png) | ![Built-in plugins in Settings](docs/images/light-settings-plugins.png) |

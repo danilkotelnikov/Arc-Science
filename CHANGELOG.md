@@ -2,7 +2,7 @@
 
 All notable changes to Arc Harness are listed here. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). The build kit is at 0.1.0, and each plugin has its own version in its `package.json`.
 
-## [Unreleased]
+## [0.1.0] - 2026-11-05
 
 ### Added
 
@@ -20,7 +20,12 @@ All notable changes to Arc Harness are listed here. The format follows [Keep a C
 - The plugins are renamed: `dsh-hoh` is now `arc-hoh`, and `dsh-theme-pair` is now `arc-theme`.
 - GitHub Actions are pinned to full commit SHAs.
 - The lean profile tool refuses to list a plugin that is not installed, and a refused apply changes nothing.
-- The README opens with a new header built with Molecullage, with the AS tile as its icon. `docs/images/social-preview.png` is the picture for links to the repository.
+- The README opens with an animated header that plays once, with a still copy for readers who turn animation off. The tile and name sit on a dark band with a cream edge, so the band shows on every GitHub theme.
+- The slogan is now "Predict the future with the flow of your thoughts". It is page text under the header, and `docs/images/social-preview.png` carries it too.
+- The session screenshot moved from the top of the README to Screens.
+- The README shows a real task: the gate refusals, the shared memory answer, the permission card, and a table of what runs in the app today.
+- `test/header.test.mjs` guards the header files. Arc Harness wrote it in that task, an independent read added more checks, and `npm test` runs it.
+- `test/desktop-journey.mjs` has a `task` mode. It never answers a permission prompt.
 - The upstream project is credited once, in the README. `NOTICE.md` keeps the licence text.
 - The repository history starts at the Arc Harness build kit. The retired Arc Science desktop app is no longer in this repository.
 

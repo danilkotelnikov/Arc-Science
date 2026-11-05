@@ -1,9 +1,12 @@
 // Walks the desktop app the way a person does, with real mouse clicks, on a throwaway copy of the desktop profile.
-//   node test/desktop-journey.mjs [--mode settings|reply|retry|shots] [--theme light|dark] [--model <provider>/<model>] [--out <folder>] [--exe <electron exe>] [--size 1280x800]
+//   node test/desktop-journey.mjs [--mode settings|reply|retry|shots|task] [--theme light|dark] [--model <provider>/<model>] [--out <folder>] [--exe <electron exe>] [--size 1280x800] [--prompt <file>] [--minutes 12] [--ledger <file>] [--memory]
 // settings: the window opens; a Settings control is on screen; a click opens Settings; the Models page lists Anthropic and Google Vertex.
 // reply: a typed message gets a real model reply through the local gateway (uses a temporary copy of the credentials file).
 // retry: the gateway address is broken on purpose, and the retry line must stay still and on one line.
 // shots: the screens for the documents, at twice the pixel density, with a real reply on screen.
+// task: a real multi-step task from --prompt runs to its end; the journey saves a frame every 20 s and the button labels it sees.
+//   --ledger starts from an earlier ledger; --memory turns the Cammut client on and saves the foot of the Trace tab.
+//   A permission prompt stays for a person: the journey never answers one.
 // Writes one PNG per step and report.json to the output folder. Exit 0 only when every step passes.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -37,17 +40,19 @@ for (const f of fs.readdirSync(real)) {
   const from = path.join(real, f);
   if (!fs.statSync(from).isFile()) continue;
   if (f === 'cordis.patch.yml') {
-    const text = quietConfig(fs.readFileSync(from, 'utf8'));
+    const quiet = quietConfig(fs.readFileSync(from, 'utf8'));
+    const text = argv.includes('--memory') ? quiet.replace(/(id: mcp-cammut\r?\n) *disabled: true\r?\n/, '$1') : quiet;
     const route = (/^([^/]+)\/(.+)$/.exec(opt('--model', '')) || []).slice(1);
     const picked = route[1] ? text.replace(/(id: agent-default-model[\s\S]*?provider: )\S+(\s+model: )\S+/, `$1${route[0]}$2${route[1]}`) : text;
-    const theme = mode === 'shots' ? `\n- id: ui-theme\n  name: "@arc-harness/arc-client-ui-theme"\n  config:\n    preference: ${opt('--theme', 'light')}\n` : '';
+    const theme = mode === 'shots' || mode === 'task' ? `\n- id: ui-theme\n  name: "@arc-harness/arc-client-ui-theme"\n  config:\n    preference: ${opt('--theme', 'light')}\n` : '';
     fs.writeFileSync(path.join(dst, f), (mode === 'retry' ? picked.replaceAll('127.0.0.1:7424', '127.0.0.1:9') : picked) + theme);
   }
   else fs.copyFileSync(from, path.join(dst, f));
 }
 linkTree(path.join(real, 'node_modules'), path.join(dst, 'node_modules'));
-if (mode === 'reply' || mode === 'shots') fs.copyFileSync(path.join(dataHome(), '.credentials.yaml'), path.join(home, '.credentials.yaml'));
+if (mode === 'reply' || mode === 'shots' || mode === 'task') fs.copyFileSync(path.join(dataHome(), '.credentials.yaml'), path.join(home, '.credentials.yaml'));
 fs.mkdirSync(outDir, { recursive: true });
+if (opt('--ledger')) { fs.mkdirSync(path.join(home, 'hoh'), { recursive: true }); fs.copyFileSync(opt('--ledger'), path.join(home, 'hoh', 'ledger.jsonl')); }
 
 const steps = [];
 const step = (name, ok, detail = '') => { steps.push({ name, ok: !!ok, detail }); console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? ': ' + detail : ''}`); };
@@ -79,7 +84,7 @@ try {
   const send = (method, params = {}) => new Promise((res, rej) => { const i = ++id; waiting.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params })); });
   await send('Page.enable');
   await send('Runtime.enable');
-  await send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: mode === 'shots' ? 2 : 1, mobile: false });
+  await send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: mode === 'shots' || mode === 'task' ? 2 : 1, mobile: false });
   const evalIn = async (expr) => {
     const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
     if (r.exceptionDetails) throw new Error('page error: ' + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
@@ -150,6 +155,46 @@ try {
     if (trace?.onTop) { await click(trace); await sleep(1800); await shot(`${tag}-trace`); }
     ws.close();
     exitCode = steps.every((s) => s.ok) ? 0 : 1;
+    throw new Error('stop');
+  }
+  if (mode === 'task') {
+    await say(fs.readFileSync(opt('--prompt'), 'utf8').trim());
+    const started = Date.now();
+    const limit = Number(opt('--minutes', '12')) * 60000;
+    const seen = new Set();
+    let frame = 0, idle = 0, held = 0;
+    while (Date.now() - started < limit && idle < 8) {
+      await sleep(5000);
+      for (const b of String(await buttons()).split(' | ')) seen.add(b);
+      const busy = await evalIn(`!!document.querySelector('[data-shimmer="true"]')`);
+      // a permission prompt stays for a person: the journey never answers it
+      held = (await evalIn(`document.body.innerText.includes('Waiting for approval')`)) ? held + 1 : 0;
+      if (held >= 12) { await shot('task-approval'); break; }
+      idle = busy ? 0 : idle + 1;
+      const s = Math.round((Date.now() - started) / 1000);
+      if (s >= frame * 20) await shot(`run-${String(frame++).padStart(3, '0')}`);
+      fs.writeFileSync(path.join(outDir, 'task-text.txt'), await evalIn('document.body.innerText'));
+    }
+    fs.writeFileSync(path.join(outDir, 'task-buttons.txt'), [...seen].join('\n'));
+    step('the task ends on screen', idle >= 8, `${Math.round((Date.now() - started) / 1000)} s`);
+    await shot('task-end');
+    await click({ x: W - 26, y: 65 });
+    await sleep(1500);
+    await shot('task-sidebar');
+    fs.writeFileSync(path.join(outDir, 'sidebar-buttons.txt'), await buttons());
+    const trace = await locate('Trace');
+    step('the Trace tab is on screen', trace?.onTop);
+    if (trace?.onTop) { await click(trace); await sleep(2500); await shot('task-trace'); }
+    if (trace?.onTop && argv.includes('--memory')) {
+      await evalIn(`(() => { const all = [...document.querySelectorAll('*')].filter((e) => e.scrollHeight > e.clientHeight + 40 && e.getBoundingClientRect().left > innerWidth * 0.5); all.forEach((e) => { e.scrollTop = e.scrollHeight; }); })()`);
+      await sleep(1200);
+      await shot('task-memory');
+      fs.writeFileSync(path.join(outDir, 'memory-text.txt'), await evalIn('document.body.innerText'));
+    }
+    const ledger = path.join(home, 'hoh', 'ledger.jsonl');
+    if (fs.existsSync(ledger)) fs.copyFileSync(ledger, path.join(outDir, 'ledger.jsonl'));
+    ws.close();
+    exitCode = steps.every((x) => x.ok) ? 0 : 1;
     throw new Error('stop');
   }
   if (mode === 'reply') {
