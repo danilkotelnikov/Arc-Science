@@ -103,6 +103,10 @@ const STATUSES = new Set(['open', 'fixed', 'rejected']);
 const REQUIREMENT_STATES = new Set(['verified', 'failed', 'unverified', 'blocked']);
 export const MAX_CYCLES = 3;
 
+// The gate compares whole hashes. A shortened hash from the trace view stays unequal.
+const bareHash = (id) => String(id ?? '').replace(/^sha256:/, '');
+const shortHash = (id) => { const h = bareHash(id); return h.length > 12 ? h.slice(0, 12) + '...' : h; };
+
 /**
  * The accept gate. Missing evidence is unmet. A claim that a different agent ran the checks is
  * compared with the agent ids the runtime reports for the two calls (freeze and gate).
@@ -120,7 +124,7 @@ export function decideGate(input, context = {}) {
 
   if (!propose) unmet('no proposal recorded for this goal: call hoh_propose first (Propose step)');
   if (!freeze) unmet('no freeze recorded for this goal');
-  else if (input.candidate !== freeze.candidate) unmet('the candidate is not the frozen one (a later edit makes a new candidate)');
+  else if (bareHash(input.candidate) !== bareHash(freeze.candidate)) unmet(`the candidate hash differs from the frozen hash: sent ${shortHash(input.candidate)}, frozen ${shortHash(freeze.candidate)}; send the candidate that hoh_freeze returned`);
   else if (!fileCheck || fileCheck.ok !== true) unmet('the files changed after the freeze' + (fileCheck && fileCheck.reason ? ': ' + fileCheck.reason : ''));
 
   if (!Number.isInteger(input.cycle) || input.cycle < 1) unmet('cycle must be a whole number from 1');

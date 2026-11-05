@@ -96,6 +96,53 @@ test('the gate accepts only complete evidence', () => {
   assert.equal(decideGate({ ...base, cycle: MAX_CYCLES + 1 }, goodCtx(c)).verdict, 'blocked');
 });
 
+test('the gate accepts the frozen hash without the sha256 prefix', () => {
+  const c = 'sha256:' + 'c'.repeat(64);
+  assert.deepEqual(decideGate(goodGate('c'.repeat(64)), goodCtx(c)), { verdict: 'accepted', reasons: [] });
+});
+
+test('the gate calls a different hash a different hash, with or without the prefix', () => {
+  const c = 'sha256:' + 'c'.repeat(64);
+  for (const sent of ['sha256:' + 'd'.repeat(64), 'd'.repeat(64)]) {
+    const r = decideGate(goodGate(sent), goodCtx(c));
+    assert.equal(r.verdict, 'unmet');
+    assert.deepEqual(r.reasons, ['the candidate hash differs from the frozen hash: sent dddddddddddd..., frozen cccccccccccc...; send the candidate that hoh_freeze returned']);
+  }
+});
+
+test('a shortened hash is refused, and the message shows that it is short', () => {
+  const c = 'sha256:' + 'c'.repeat(64);
+  const r = decideGate(goodGate(c.slice(0, 19)), goodCtx(c));
+  assert.equal(r.verdict, 'unmet');
+  assert.match(r.reasons[0], /sent c{12}, frozen c{12}\.\.\./);
+  assert.equal(decideGate({ ...goodGate(c), candidate: undefined }, goodCtx(c)).verdict, 'unmet');
+});
+
+test('through the tools, the hash check and the file check each report their own fault', async () => {
+  const d = await tmp();
+  const [propose, freeze, gate] = makeTools((def) => def, { ARC_HOME: d }, { retain: async () => true });
+  const lead = { agent: { id: 'lead-1' } }, reviewer = { agent: { id: 'rev-1' } };
+  const f = path.join(d, 'work.txt'); await writeFile(f, 'candidate one');
+  await propose.execute({ goal: 'demo', hypothesis: 'h', boundary: 'b', checks: ['node t.js'], probes: ['empty'] }, lead);
+  const fr = await freeze.execute({ goal: 'demo', files: [f] }, lead);
+  const sent = (candidate) => gate.execute({ goal: 'demo', ...goodGate(candidate) }, reviewer);
+
+  assert.equal((await sent(fr.candidate.replace(/^sha256:/, ''))).verdict, 'accepted');
+  const other = await sent('sha256:' + 'd'.repeat(64));
+  assert.equal(other.verdict, 'unmet');
+  assert.match(other.reasons.join(' '), /candidate hash differs from the frozen hash/);
+  assert.doesNotMatch(other.reasons.join(' '), /later edit|files changed/);
+
+  await writeFile(f, 'candidate TWO edited after the freeze');
+  for (const candidate of [fr.candidate, fr.candidate.replace(/^sha256:/, '')]) {
+    const edited = await sent(candidate);
+    assert.equal(edited.verdict, 'unmet');
+    assert.match(edited.reasons.join(' '), /files changed after the freeze/);
+    assert.doesNotMatch(edited.reasons.join(' '), /candidate hash differs/);
+  }
+  await rm(d, { recursive: true });
+});
+
 test('callerOf reads the agent id the runtime reports', () => {
   assert.equal(callerOf({ agent: { id: 'a1' } }), 'a1');
   assert.equal(callerOf({ agent: { session: { id: 's1' } } }), 's1');
