@@ -13,7 +13,8 @@ Harness of Harness makes the agent plan, test and prove its work in a fixed cycl
 - The agent records a proposal before it builds. The freeze tool refuses a goal that has no proposal.
 - The reviewer calls the accept gate. The agent that froze the candidate may not call it. The gate compares the agent ids that the runtime reports.
 - The gate accepts only when a proposal and a freeze exist and the files still match the freeze.
-- The gate also needs every check to exit 0 with an output excerpt, every probe to pass, and the preservation list to hold.
+- The gate also needs each proposed check back, word for word, as the command of a reported check. A later proposal adds checks and never removes one.
+- The gate also needs every check to exit 0 with an output excerpt and no timeout, every probe to pass, and the preservation list to hold.
 - The gate also needs every requirement verified and no blocking or major finding open.
 - Missing evidence counts as unmet. A skipped check never turns into a pass.
 - Cycle 4 or later is blocked. The agent stops and asks the user.
