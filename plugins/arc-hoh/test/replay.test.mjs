@@ -99,14 +99,14 @@ test('a gate that accepts everything is caught by the traps', () => {
 });
 
 test('the acceptance rule', () => {
-  const clear = decide(cases(150, 20, 100), CLEAN, 1);
+  const clear = decide(cases(190, 20, 60), CLEAN, 1);
   assert.equal(clear.accepted, true, clear.reasons.join('; '));
   assert.ok(clear.lower > 0);
   const few = decide(cases(40, 0, 200), CLEAN, 1);
   assert.equal(few.accepted, false); assert.match(few.reasons.join(' '), /pairs/);
-  const trap = decide(cases(150, 20, 100), [{ id: 't1', passed: true }], 1);
+  const trap = decide(cases(190, 20, 60), [{ id: 't1', passed: true }], 1);
   assert.equal(trap.accepted, false); assert.match(trap.reasons.join(' '), /trap/);
-  const none = decide(cases(150, 20, 100), [], 1);
+  const none = decide(cases(190, 20, 60), [], 1);
   assert.equal(none.accepted, false); assert.match(none.reasons.join(' '), /trap set must run/);
   assert.equal(decide(cases(20, 150, 100), CLEAN, 1).accepted, false);
   const flat = decide(cases(90, 90, 100), CLEAN, 1);
@@ -116,7 +116,7 @@ test('the acceptance rule', () => {
 });
 
 test('the bound keeps tightening as k grows, and evaluation stops when it cannot', () => {
-  const rows = cases(150, 20, 100);
+  const rows = cases(190, 20, 60);
   const low = decide(rows, CLEAN, 7), lower = decide(rows, CLEAN, 20);
   assert.ok(lower.B > low.B && low.B > 2000);
   assert.ok(lower.lower < low.lower, `${lower.lower} is not below ${low.lower}`);
@@ -127,24 +127,37 @@ test('the bound keeps tightening as k grows, and evaluation stops when it cannot
 
 test('settings that cannot finish are refused, not run', () => {
   for (const bad of [{ effect: 1 }, { effect: 0 }, { effect: NaN }, { effect: 1e-6 }, { power: 1 }, { alpha: 0 }, { alpha: 2 }, { B: 0 }, { B: 1e9 }, { epsilon: -1 }]) {
-    const r = decide(cases(150, 20, 100), CLEAN, 1, bad);
+    const r = decide(cases(190, 20, 60), CLEAN, 1, bad);
     assert.equal(r.accepted, false, JSON.stringify(bad));
     assert.match(r.reasons.join(' '), /bad settings/);
   }
   assert.throws(() => minDiscordantPairs(1, 0.05, 0.8), /effect/);
   assert.throws(() => minDiscordantPairs(0.2, 0.05, 1), /power/);
   assert.throws(() => minDiscordantPairs(0.05, 1e-12, 0.999), /more than 5000/);
-  const extreme = decide(cases(150, 20, 100), CLEAN, 1, { effect: 0.05, alpha: 1e-12, power: 0.999 });
+  const extreme = decide(cases(190, 20, 60), CLEAN, 1, { effect: 0.05, power: 0.999 });
   assert.equal(extreme.accepted, false);
   assert.match(extreme.reasons.join(' '), /bad settings: these settings need more than 5000/);
 });
 
+test('a later evaluation needs more pairs, because it tests at a stricter level', () => {
+  const rows = cases(190, 20, 60);
+  const first = decide(rows, CLEAN, 1), second = decide(rows, CLEAN, 2);
+  assert.equal(first.pairs_needed, 198);
+  assert.equal(second.pairs_needed, 278);
+  assert.equal(first.accepted, true, first.reasons.join('; '));
+  assert.equal(second.accepted, false);
+  assert.match(second.reasons.join(' '), /210 of the 278/);
+  const late = decide(cases(150, 20, 100), CLEAN, 100);
+  assert.match(late.reasons.join(' '), /error budget/, 'the budget is checked before the longer pair search');
+  assert.equal(late.pairs_needed, undefined);
+});
+
 test('bad data is refused, not scored', () => {
   assert.equal(decide([], CLEAN, 1).accepted, false);
-  assert.equal(decide([...cases(150, 20, 100), { id: 'c0', m_old: 0, m_new: 1 }], CLEAN, 1).accepted, false);
-  const weird = cases(150, 20, 100); weird[0].m_new = true;
+  assert.equal(decide([...cases(190, 20, 60), { id: 'c0', m_old: 0, m_new: 1 }], CLEAN, 1).accepted, false);
+  const weird = cases(190, 20, 60); weird[0].m_new = true;
   assert.match(decide(weird, CLEAN, 1).reasons.join(' '), /bad data/);
-  const text = cases(150, 20, 100); text[0].m_new = '1';
+  const text = cases(190, 20, 60); text[0].m_new = '1';
   assert.equal(decide(text, CLEAN, 1).accepted, false);
 });
 
@@ -191,7 +204,7 @@ const evaluate = (file, patch, diff, cases, gate = decideGate) => evaluateAndRec
 test('a patch needs an accepted replay of its exact text', async () => {
   const { d, file } = await ready();
   assert.match(await replayProblem(file, 'P1', 'diff one'), /no replay evaluation/);
-  const r = await evaluate(file, 'P1', 'diff one', await scored(file, 150, 20, 100));
+  const r = await evaluate(file, 'P1', 'diff one', await scored(file, 190, 20, 60));
   assert.equal(r.result.accepted, true, r.result.reasons.join('; '));
   assert.equal(await replayProblem(file, 'P1', 'diff one'), null);
   assert.match(await replayProblem(file, 'P1', 'diff two'), /no replay evaluation/);
@@ -220,7 +233,7 @@ test('a rejected evaluation does not open the door', async () => {
 
 test('the traps run on the gate of the patch, and a caller must name that gate', async () => {
   const { d, file } = await ready();
-  const rows = await scored(file, 150, 20, 100);
+  const rows = await scored(file, 190, 20, 60);
   await assert.rejects(() => evaluateAndRecord(file, 'P1', 'diff', rows), /candidate gate/);
   const weak = (input, context) => ({ ...decideGate(input, context), verdict: 'accepted' });
   const r = await evaluate(file, 'P1', 'diff', rows, weak);
@@ -232,7 +245,7 @@ test('the traps run on the gate of the patch, and a caller must name that gate',
 
 test('a gate that answers later is refused, and the call spends nothing', async () => {
   const { d, file } = await ready();
-  const rows = await scored(file, 150, 20, 100);
+  const rows = await scored(file, 190, 20, 60);
   const later = async (input, context) => ({ ...decideGate(input, context), verdict: 'accepted' });
   await assert.rejects(() => evaluate(file, 'P1', 'diff', rows, later), /answer at once/);
   assert.throws(() => runTraps(TRAPS, later), /answer at once/);
@@ -242,7 +255,7 @@ test('a gate that answers later is refused, and the call spends nothing', async 
 
 test('a stored report with settings that cannot finish fails at once', async () => {
   const { d, file } = await ready();
-  const r = await evaluate(file, 'P1', 'diff', await scored(file, 150, 20, 100));
+  const r = await evaluate(file, 'P1', 'diff', await scored(file, 190, 20, 60));
   const { digest, ...body } = JSON.parse(await readFile(r.file, 'utf8'));
   const forged = { ...body, params: { ...body.params, effect: 1 } };
   await writeFile(r.file, JSON.stringify({ ...forged, digest: sha256(JSON.stringify(forged)) }));
@@ -266,7 +279,7 @@ test('the case set is frozen once, before any scoring', async () => {
 
 test('only the exact next slice is scored, so cases cannot be picked by hand', async () => {
   const { d, file } = await ready();
-  const rows = await scored(file, 150, 20, 100);
+  const rows = await scored(file, 190, 20, 60);
   const spare = heldoutSlice(ids.filter((i) => splitOf(i) === 'heldout'), SIZE + 1, 1)[0];
   await assert.rejects(() => evaluate(file, 'P1', 'diff', rows.slice(1)), /exactly the next slice/);
   await assert.rejects(() => evaluate(file, 'P1', 'diff', [{ ...rows[0], id: spare }, ...rows.slice(1)]), /exactly the next slice/);
@@ -278,7 +291,7 @@ test('only the exact next slice is scored, so cases cannot be picked by hand', a
 
 test('dev cases and bad ids are refused', async () => {
   const { d, file } = await ready();
-  const rows = await scored(file, 150, 20, 100);
+  const rows = await scored(file, 190, 20, 60);
   const devId = ids.find((i) => splitOf(i) === 'dev');
   await assert.rejects(() => evaluate(file, 'P1', 'diff', [{ ...rows[0], id: devId }, ...rows.slice(1)]), /held-out cases only/);
   await assert.rejects(() => evaluate(file, 'P1', 'diff', [{ m_old: 0, m_new: 1 }, ...rows]), /held-out cases only/);
@@ -302,7 +315,7 @@ test('every evaluation counts toward k, also a failed one, and parallel calls sh
 
 test('an edited report fails, and the door closes', async () => {
   const { d, file } = await ready();
-  const r = await evaluate(file, 'P1', 'diff', await scored(file, 150, 20, 100));
+  const r = await evaluate(file, 'P1', 'diff', await scored(file, 190, 20, 60));
   assert.equal((await verifyReport(r.file)).ok, true);
   const data = JSON.parse(await readFile(r.file, 'utf8'));
   const original = JSON.stringify(data);
@@ -319,7 +332,7 @@ test('an edited report fails, and the door closes', async () => {
 
 test('a report with a fresh digest still fails against its own cases and the ledger', async () => {
   const { d, file } = await ready();
-  const r = await evaluate(file, 'P1', 'diff', await scored(file, 150, 20, 100));
+  const r = await evaluate(file, 'P1', 'diff', await scored(file, 190, 20, 60));
   const seal = ({ digest, ...body }) => ({ ...body, digest: sha256(JSON.stringify(body)) });
   const data = JSON.parse(await readFile(r.file, 'utf8'));
   const flipped = structuredClone(data);

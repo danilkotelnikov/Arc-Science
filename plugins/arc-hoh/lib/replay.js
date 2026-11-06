@@ -156,14 +156,15 @@ export function decide(cases, traps, k, params = {}) {
     return out;
   }
   const d = cases.map((c) => c.m_new - c.m_old);
-  let needed;
-  try { needed = minDiscordantPairs(p.effect, p.alpha, p.power); } catch (err) {
-    reasons.push(`bad settings: ${err.message}`);
-    return out;
-  }
   const B = Math.max(p.B, Math.ceil(TAIL / out.alpha_k));
   if (B > MAX_B) {
     reasons.push(`error budget: level ${out.alpha_k} at k=${k} needs more than ${MAX_B} resamples`);
+    return out;
+  }
+  // The pairs must suit the level this evaluation tests at, so a later evaluation needs more of them.
+  let needed;
+  try { needed = minDiscordantPairs(p.effect, out.alpha_k, p.power); } catch (err) {
+    reasons.push(`bad settings: ${err.message}`);
     return out;
   }
   const lower = pairedLowerBound(d, out.alpha_k, B, p.seed);
