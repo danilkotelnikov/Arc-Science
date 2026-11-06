@@ -23,7 +23,7 @@ The plugin `arc-hoh` puts this cycle into the app for an agent's task. Its full 
 - The agent records a proposal with `hoh_propose` before it builds. `hoh_freeze` refuses a goal that has no proposal.
 - `hoh_freeze` fixes the files by their hashes.
 - A reviewer that did not build the work calls `hoh_gate`. The agent that froze the candidate may not call it. The gate compares the agent ids that the runtime reports.
-- The gate accepts only when the files still match the freeze and every check exits 0 with an output excerpt. Every probe must pass, and no blocking or major finding may be open. Missing evidence counts as unmet.
+- The gate accepts only when the files still match the freeze and each proposed check comes back word for word. Every check must exit 0 with an output excerpt and no timeout. Every probe must pass, and no blocking or major finding may be open. Missing evidence counts as unmet.
 - Each step goes into a hash-chained ledger. `hoh_verify_ledger` names the first bad entry when the chain breaks.
 - From the fourth cycle on, the gate blocks. The agent stops and asks the user.
 

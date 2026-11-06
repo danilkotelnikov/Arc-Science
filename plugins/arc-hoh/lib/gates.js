@@ -7,6 +7,9 @@ import path from 'node:path';
 import os from 'node:os';
 
 export const sha256 = (data) => createHash('sha256').update(data).digest('hex');
+/** The identity of a check: the digest of its whole text, so that a shared prefix or outer spaces change nothing. */
+export const checkDigest = (text) => sha256(String(text).trim());
+export const clip = (s, n = 600) => (typeof s === 'string' && s.length > n ? s.slice(0, n) + '...' : s);
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 /** The ledger file. ARC_HOME wins, then a ledger already in ~/.arc, then the ledger of the original data folder (DSH_HOME or ~/.dsh),
@@ -49,9 +52,11 @@ async function readLines(file) {
 // One writer at a time per ledger file inside this process. Two calls that run together would read
 // the same last line and fork the chain.
 const queues = new Map();
+// ponytail: the key keeps the case of the path. ledgerFile() is the one source of this path, so it spells it one way.
 function withLock(file, fn) {
-  const run = (queues.get(file) || Promise.resolve()).then(fn, fn);
-  queues.set(file, run.then(() => undefined, () => undefined));
+  const key = path.resolve(file);
+  const run = (queues.get(key) || Promise.resolve()).then(fn, fn);
+  queues.set(key, run.then(() => undefined, () => undefined));
   return run;
 }
 
@@ -70,6 +75,12 @@ async function appendUnlocked(file, event) {
 export function appendLedger(file, event) {
   return withLock(file, () => appendUnlocked(file, event));
 }
+
+/** Run fn under the ledger lock, so that a read and the append after it are one step. fn gets the append function. */
+export const withLedger = (file, fn) => withLock(file, () => fn((event) => appendUnlocked(file, event)));
+
+/** Every ledger row. Call verifyLedger first: a broken line throws here. */
+export const ledgerRows = async (file) => (await readLines(file)).map((line) => JSON.parse(line));
 
 /** Walk the chain. Returns { ok, entries, badAt } where badAt is the first broken sequence number. */
 export async function verifyLedger(file) {
@@ -98,6 +109,18 @@ export async function lastEvent(file, goal, type) {
 }
 export const lastFreeze = (file, goal) => lastEvent(file, goal, 'freeze');
 
+/** All events of one type for a goal, oldest first. */
+export async function goalEvents(file, goal, type) {
+  const rows = [];
+  for (const line of await readLines(file)) {
+    try {
+      const row = JSON.parse(line);
+      if (row.type === type && row.goal === goal) rows.push(row);
+    } catch { /* a broken line is reported by verifyLedger */ }
+  }
+  return rows;
+}
+
 const SEVERITIES = new Set(['blocking', 'major', 'minor']);
 const STATUSES = new Set(['open', 'fixed', 'rejected']);
 const REQUIREMENT_STATES = new Set(['verified', 'failed', 'unverified', 'blocked']);
@@ -106,7 +129,7 @@ export const MAX_CYCLES = 3;
 /**
  * The accept gate. Missing evidence is unmet. A claim that a different agent ran the checks is
  * compared with the agent ids the runtime reports for the two calls (freeze and gate).
- * input: { candidate, cycle, builder, reviewer, checks[{id,command,exit,excerpt}], probes[{id,description,result}],
+ * input: { candidate, cycle, builder, reviewer, checks[{id,command,exit,excerpt,timed_out?}], probes[{id,description,result}],
  *          preservation[{id,ok}], findings[{id,severity,status,reason}], requirements[{id,state}] }
  * context: { freeze, propose, fileCheck: {ok, reason}, caller }
  * Returns { verdict: 'accepted'|'unmet'|'blocked', reasons: string[] }.
@@ -131,8 +154,18 @@ export function decideGate(input, context = {}) {
   for (const c of checks) {
     if (!c || typeof c.id !== 'string' || c.id === '') { unmet('a check has no id'); continue; }
     if (c.exit !== 0) unmet(`check ${c.id}: exit code ${c.exit} (needs 0)`);
+    if (c.timed_out === true) unmet(`check ${c.id}: timed out`);
     if (typeof c.excerpt !== 'string' || c.excerpt.trim() === '') unmet(`check ${c.id}: no output excerpt`);
     if (typeof c.command !== 'string' || c.command.trim() === '') unmet(`check ${c.id}: no command`);
+  }
+  // Each proposed check must come back in its own words.
+  const reported = new Set(checks.map((c) => (c && typeof c.command === 'string' ? checkDigest(c.command) : null)));
+  (propose && Array.isArray(propose.digests) ? propose.digests : []).forEach((digest, i) => {
+    if (!reported.has(digest)) unmet(`proposed check was not reported: ${clip(String(propose.checks?.[i] ?? digest), 80)}`);
+  });
+  // An old proposal kept only the first 300 characters of a long check, so that start is all there is to compare.
+  for (const start of propose && Array.isArray(propose.starts) ? propose.starts : []) {
+    if (!checks.some((c) => c && typeof c.command === 'string' && c.command.trim().startsWith(start))) unmet(`proposed check was not reported: ${clip(start, 80)}`);
   }
 
   const probes = Array.isArray(input.probes) ? input.probes : [];

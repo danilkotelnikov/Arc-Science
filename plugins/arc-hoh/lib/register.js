@@ -1,10 +1,9 @@
 // arc-hoh 0.2.0 (2026-10-31): the tools and prompt sections. No arc imports here, so node can test it.
-import { appendLedger, hashFiles, lastEvent, ledgerFile, optedOut, verifyLedger, decideGate } from './gates.js';
+import { appendLedger, checkDigest, clip, goalEvents, hashFiles, lastEvent, ledgerFile, optedOut, verifyLedger, decideGate } from './gates.js';
 import { CONTRACT, briefText } from './contract.js';
 import { retainNote } from './brief.js';
 
 const strList = { type: 'array', items: { type: 'string' } };
-const clip = (s, n = 600) => (typeof s === 'string' && s.length > n ? s.slice(0, n) + '...' : s);
 
 /** The id the runtime reports for the calling agent, or null when it reports none. */
 export function callerOf(exec) {
@@ -25,7 +24,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
       goal: { type: 'string', required: true, description: 'Short name of the task. Propose, freeze and gate must use the same name.' },
       hypothesis: { type: 'string', required: true, description: 'What you believe will solve the task and why.' },
       boundary: { type: 'string', required: true, description: 'The files and behaviour you will not touch.' },
-      checks: { ...strList, required: true, description: 'The acceptance checks, each a command or an observable result.' },
+      checks: { ...strList, required: true, description: 'The acceptance checks, each a command or an observable result. hoh_gate needs each one back, word for word, as the command of a reported check. A later proposal for the same goal adds checks and never removes one.' },
       probes: { ...strList, required: true, description: 'The edge cases and rival options you will test.' },
     },
     output: {
@@ -37,7 +36,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
       if (!Array.isArray(args.probes) || args.probes.length === 0) throw new Error('hoh_propose needs at least one probe');
       const { seq } = await appendLedger(file(), {
         type: 'propose', goal: args.goal, caller: callerOf(exec), hypothesis: clip(args.hypothesis), boundary: clip(args.boundary),
-        checks: args.checks.map((c) => clip(c, 300)), probes: args.probes.map((c) => clip(c, 300)),
+        checks: args.checks.map((c) => clip(c, 300)), digests: args.checks.map(checkDigest), probes: args.probes.map((c) => clip(c, 300)),
       });
       return { seq };
     },
@@ -69,7 +68,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
 
   const gate = defineTool({
     name: 'hoh_gate',
-    description: 'HoH step 10. The reviewer calls this, not the agent that froze the candidate. It accepts only when: a proposal and a freeze exist; the files still match the freeze; every check exited 0 with an excerpt; every probe passed; the reviewer is not the builder and not the agent that froze; the preservation list holds; no blocking or major finding is open; every requirement is verified. Missing evidence is unmet. The verdict is written to the ledger and to Cammut.',
+    description: 'HoH step 10. The reviewer calls this, not the agent that froze the candidate. It accepts only when: a proposal and a freeze exist; the files still match the freeze; every proposed check is reported by its own words; every check exited 0 with an excerpt and did not time out; every probe passed; the reviewer is not the builder and not the agent that froze; the preservation list holds; no blocking or major finding is open; every requirement is verified. Missing evidence is unmet. The verdict is written to the ledger and to Cammut.',
     parameters: {
       goal: { type: 'string', required: true, description: 'The same goal name as in hoh_propose and hoh_freeze.' },
       candidate: { type: 'string', required: true, description: 'The candidate id that hoh_freeze returned.' },
@@ -80,7 +79,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
         type: 'array', required: true, description: 'Each acceptance check with its command, exit code and a short output excerpt.',
         items: { type: 'object', additionalProperties: false, properties: {
           id: { type: 'string', required: true }, command: { type: 'string', required: true },
-          exit: { type: 'integer', required: true }, excerpt: { type: 'string', required: true } } },
+          exit: { type: 'integer', required: true }, excerpt: { type: 'string', required: true }, timed_out: { type: 'boolean' } } },
       },
       probes: {
         type: 'array', required: true, description: 'Each probe (edge case or rival option) with its result.',
@@ -116,7 +115,14 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
     },
     async execute(args, exec) {
       const freezeRow = await lastEvent(file(), args.goal, 'freeze');
-      const proposeRow = await lastEvent(file(), args.goal, 'propose');
+      // Every proposal of the goal counts, so a later proposal cannot drop a check. To drop one, start a new goal.
+      const proposals = await goalEvents(file(), args.goal, 'propose');
+      const clipped = (c) => typeof c === 'string' && c.length === 303 && c.endsWith('...');
+      const whole = (p) => (p.digests ? p.checks ?? [] : (p.checks ?? []).filter((c) => !clipped(c)));
+      const proposeRow = proposals.length ? {
+        ...proposals[proposals.length - 1], checks: proposals.flatMap(whole), digests: proposals.flatMap((p) => p.digests ?? whole(p).map(checkDigest)),
+        starts: proposals.flatMap((p) => (p.digests ? [] : (p.checks ?? []).filter(clipped).map((c) => c.slice(0, 300).trim()))),
+      } : null;
       let fileCheck = null;
       if (freezeRow && Array.isArray(freezeRow.paths)) {
         try {

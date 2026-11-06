@@ -4,6 +4,17 @@ All notable changes to Arc Harness are listed here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- Replay gate in the HoH plugin: `plugins/arc-hoh/lib/replay.js` decides whether a patch to the harness may go to the user. It holds the trap set, the held-out split, the bootstrap bound and the error budget. It moved from the development database, and no tool calls it yet.
+- Branch tree in the HoH plugin: `plugins/arc-hoh/lib/tree.js` holds branch states, the support score by likelihood ratio and the order of the next check. A tree is a pure fold over recorded events. No tool calls it yet.
+- Claim graph in the HoH plugin: `plugins/arc-hoh/lib/claims.js` links claims, evidence, sources and experiments. A new result updates only the nodes below it, and a claim never shows a higher evidence level than it has. No tool calls it yet.
+
+### Fixed
+
+- The accept gate took a swapped command, a planned check that never ran, and a timeout with exit 0. It now needs each proposed check back word for word, and it refuses a timed-out check.
+- A later proposal for the same goal now adds checks and never removes one. A ledger written before this change keeps working, and its proposed checks bind the gate too.
+
 ### Removed
 
 - The "What the build changes" table is gone from the README.
