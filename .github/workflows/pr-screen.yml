@@ -38,6 +38,9 @@ jobs:
         env:
           GEMINI_CLI_TRUST_WORKSPACE: 'true'
           GITHUB_TOKEN: ${{ github.token }}
+          # The review command names these two.
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
         with:
           gemini_model: gemini-4-argon
           use_vertex_ai: 'true'
@@ -64,7 +67,7 @@ jobs:
             [
               "https://github.com/gemini-cli-extensions/code-review"
             ]
-          prompt: /pr-code-review
+          prompt: /pr-code-review ${{ github.event.pull_request.html_url }}
 
   claude:
     needs: argon

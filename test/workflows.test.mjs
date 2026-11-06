@@ -69,6 +69,13 @@ test('the screen can only read and comment, and only the fix step can push', () 
   assert.match(fixStep, /Bash\(git push origin HEAD\)/);
 });
 
+test('Argon is told which pull request to read', () => {
+  const argon = screen.slice(screen.indexOf('  argon:'), screen.indexOf('  claude:\n'));
+  assert.match(argon, /REPOSITORY: \$\{\{ github\.repository \}\}/);
+  assert.match(argon, /PULL_REQUEST_NUMBER: \$\{\{ github\.event\.pull_request\.number \}\}/);
+  assert.match(argon, /prompt: \/pr-code-review \$\{\{ github\.event\.pull_request\.html_url \}\}/);
+});
+
 test('the fix runs only on a critical finding and stops after three rounds', () => {
   const when = fixStep.match(/^ +if: (.+)$/m)[1];
   assert.match(when, /\.critical == true/);
