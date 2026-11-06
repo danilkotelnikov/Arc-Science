@@ -21,6 +21,7 @@ export const DEFAULTS = Object.freeze({ alpha: 0.05, epsilon: 0.02, effect: 0.2,
 // ponytail: past about k = 55 the resamples pass MAX_B and evaluation stops. Use an exact bound if that many patches are real.
 export const MAX_B = 1000000;
 const TAIL = 10;
+const MIN_EFFECT = 0.05;
 
 /** Significance spent on the k-th evaluation over all time. The series sums to alpha. */
 export const alphaK = (alpha, k) => alpha * 6 / (Math.PI ** 2 * k * k);
@@ -74,6 +75,10 @@ const pairsMemo = new Map();
 /** Fewest discordant pairs for the exact sign test to hold the power. Power saw-tooths with n, so the
  *  answer is the first n from which it stays above the target for the next 25 values. */
 export function minDiscordantPairs(effect = 0.2, alpha = 0.05, target = 0.8) {
+  // The search below ends only inside these ranges: a certain gain or a tiny one never settles.
+  if (!(effect >= MIN_EFFECT && effect < 1)) throw new Error(`the effect must lie from ${MIN_EFFECT} to below 1`);
+  if (!(target > 0 && target < 1)) throw new Error('the power must lie between 0 and 1');
+  if (!(alpha > 0 && alpha < 1)) throw new Error('alpha must lie between 0 and 1');
   const key = `${effect}|${alpha}|${target}`;
   if (pairsMemo.has(key)) return pairsMemo.get(key);
   let n = 1, run = 0;
@@ -118,7 +123,12 @@ export function runTraps(traps = TRAPS, gate = decideGate) {
       preservation: [{ id: 'k', ok: true }], findings: [], requirements: [{ id: 'r', state: 'verified' }], ...parts,
     };
     const context = { freeze: { candidate: 'c', caller: 'lead' }, propose: { seq: 1, checks: ['npm test'], digests: [checkDigest('npm test')] }, fileCheck: { ok: true }, caller: 'reviewer' };
-    return { id, passed: gate(input, context).verdict === 'accepted' };
+    const got = gate(input, context);
+    if (typeof got?.then === 'function') {
+      got.then(undefined, () => {});
+      throw new Error('a gate must answer at once: a promise has no verdict to read');
+    }
+    return { id, passed: got.verdict === 'accepted' };
   });
 }
 
@@ -133,6 +143,12 @@ function valid(cases) {
 export function decide(cases, traps, k, params = {}) {
   const p = { ...DEFAULTS, ...params }, reasons = [];
   const out = { accepted: false, k, alpha_k: alphaK(p.alpha, k), reasons };
+  const sane = p.effect >= MIN_EFFECT && p.effect < 1 && p.alpha > 0 && p.alpha < 1 && p.power > 0 && p.power < 1
+    && p.epsilon >= 0 && Number.isInteger(p.B) && p.B >= 1 && p.B <= MAX_B;
+  if (!sane) {
+    reasons.push('bad settings: effect, alpha, power, epsilon or B lies outside its range');
+    return out;
+  }
   if (!valid(cases)) {
     reasons.push('bad data: cases must be non-empty, have unique string ids and scores that are the integers 0 or 1');
     return out;

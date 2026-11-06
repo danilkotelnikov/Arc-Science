@@ -125,6 +125,16 @@ test('the bound keeps tightening as k grows, and evaluation stops when it cannot
   assert.match(spent.reasons.join(' '), new RegExp(`more than ${MAX_B} resamples`));
 });
 
+test('settings that cannot finish are refused, not run', () => {
+  for (const bad of [{ effect: 1 }, { effect: 0 }, { effect: NaN }, { effect: 1e-6 }, { power: 1 }, { alpha: 0 }, { alpha: 2 }, { B: 0 }, { B: 1e9 }, { epsilon: -1 }]) {
+    const r = decide(cases(150, 20, 100), CLEAN, 1, bad);
+    assert.equal(r.accepted, false, JSON.stringify(bad));
+    assert.match(r.reasons.join(' '), /bad settings/);
+  }
+  assert.throws(() => minDiscordantPairs(1, 0.05, 0.8), /effect/);
+  assert.throws(() => minDiscordantPairs(0.2, 0.05, 1), /power/);
+});
+
 test('bad data is refused, not scored', () => {
   assert.equal(decide([], CLEAN, 1).accepted, false);
   assert.equal(decide([...cases(150, 20, 100), { id: 'c0', m_old: 0, m_new: 1 }], CLEAN, 1).accepted, false);
@@ -213,6 +223,26 @@ test('the traps run on the gate of the patch, and a caller must name that gate',
   assert.equal(r.result.accepted, false);
   assert.equal(r.result.traps_passed.length, TRAPS.length);
   assert.match(await replayProblem(file, 'P1', 'diff'), /not accepted/);
+  await rm(d, { recursive: true });
+});
+
+test('a gate that answers later is refused, and the call spends nothing', async () => {
+  const { d, file } = await ready();
+  const rows = await scored(file, 150, 20, 100);
+  const later = async (input, context) => ({ ...decideGate(input, context), verdict: 'accepted' });
+  await assert.rejects(() => evaluate(file, 'P1', 'diff', rows, later), /answer at once/);
+  assert.throws(() => runTraps(TRAPS, later), /answer at once/);
+  assert.equal((await evaluate(file, 'P1', 'diff', rows)).k, 1);
+  await rm(d, { recursive: true });
+});
+
+test('a stored report with settings that cannot finish fails at once', async () => {
+  const { d, file } = await ready();
+  const r = await evaluate(file, 'P1', 'diff', await scored(file, 150, 20, 100));
+  const { digest, ...body } = JSON.parse(await readFile(r.file, 'utf8'));
+  const forged = { ...body, params: { ...body.params, effect: 1 } };
+  await writeFile(r.file, JSON.stringify({ ...forged, digest: sha256(JSON.stringify(forged)) }));
+  assert.equal((await verifyReport(r.file)).ok, false);
   await rm(d, { recursive: true });
 });
 
