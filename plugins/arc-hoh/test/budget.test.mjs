@@ -54,6 +54,12 @@ test('a check dearer than what the branch has left is not offered', () => {
   assert.equal(nextCheck(after, { limits: {} }), null, 'a branch with no limit has no budget');
 });
 
+test('a two-step plan needs both checks to fit in what is left', () => {
+  const t = buildTree([branch('a', 0.35), ...go('a'), check('a', 'x', 1, 0.6, 0.7), obs('o1', 'a', 'x', false), check('a', 'w1'), check('a', 'w2')]);
+  assert.equal(nextCheck(t, { limits: { a: 3 } }).steps, 2, 'two left, and both fit');
+  assert.equal(nextCheck(t, { limits: { a: 2.5 } }), null, 'one and a half left, and the second check does not fit');
+});
+
 test('a branch gets what it has spent plus the share of this stage', () => {
   const p = plan(4, 80);
   const t = buildTree([...['a', 'b', 'c', 'd'].flatMap((id) => [branch(id), ...go(id)]), check('a', 'x', 7), obs('o', 'a', 'x', true)]);

@@ -150,7 +150,7 @@ export function nextCheck(tree, { cfp = 1, cfn = 1, limits } = {}) {
     if (open.length > 1 && rows.every((r) => r.priority === 0)) {
       // The spec names the strongest check, but a weaker pair can flip the decision when the strongest cannot.
       rows = open.map((c) => {
-        const { value, cost } = twoStep(b.q, c, open.filter((o) => o !== c && groupOf(o) !== groupOf(c)), cfp, cfn);
+        const { value, cost } = twoStep(b.q, c, open.filter((o) => o !== c && groupOf(o) !== groupOf(c) && o.cost <= left - c.cost), cfp, cfn);
         return { c, steps: 2, priority: value / cost };
       });
     }
