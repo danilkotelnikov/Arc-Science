@@ -1,0 +1,50 @@
+// arc-hoh branch budgets (2026-11-07): sequential halving (Karnin, Koren and Somekh, 2013; concept/tree-hoh.md, section 1).
+// The budget is split evenly over about log(n) stages. After each stage the better branches stay, and each survivor gets
+// a larger share. The paper proves its guarantee for rewards with one fixed distribution per branch. Our checks differ in
+// strength and cost, so here the guarantee is a heuristic. Each stage can add only its own share, so total spending
+// stays inside the budget whoever the operator keeps. A share a branch leaves unspent is not carried over.
+import { ACTIVE } from './tree.js';
+
+/** The stages for n branches. Each stage has { stage, branches, perBranch, keep }. */
+export function plan(n, budget, eta = 2) {
+  if (!Number.isInteger(n) || n < 1) throw new Error('the branch count must be a whole number from 1');
+  if (!(typeof budget === 'number' && Number.isFinite(budget) && budget > 0)) throw new Error('a plan needs a positive budget');
+  if (!Number.isInteger(eta) || eta < 2) throw new Error('eta must be a whole number from 2');
+  const sizes = [n];
+  while (sizes[sizes.length - 1] > 1) sizes.push(Math.ceil(sizes[sizes.length - 1] / eta));
+  const count = Math.max(1, sizes.length - 1), share = budget / count;
+  return {
+    budget, eta,
+    stages: Array.from({ length: count }, (_, i) => ({ stage: i, branches: sizes[i], perBranch: share / sizes[i], keep: sizes[Math.min(i + 1, sizes.length - 1)] })),
+  };
+}
+
+/** What a branch has spent: the cost of its observed checks. */
+export function spent(tree, id) {
+  const b = tree.branches[id];
+  return b ? b.observations.reduce((sum, o) => sum + b.checks[o.check].cost, 0) : 0;
+}
+
+function stageOf(p, stage) {
+  if (!p.stages[stage]) throw new Error(`the plan has no stage ${stage}`);
+  return p.stages[stage];
+}
+
+/** The spending limit of each kept branch at a stage: what it has spent plus this stage's share. A branch not listed has no
+ *  budget. Call this once, at the start of a stage: a second call after spending would pay the share again. */
+export function limitsFor(tree, p, stage, keep) {
+  const { branches, perBranch } = stageOf(p, stage);
+  if (keep.length > branches) throw new Error(`stage ${stage} pays for ${branches} branches, and ${keep.length} are listed: more branches than the plan holds`);
+  return Object.fromEntries(keep.map((id) => [id, spent(tree, id) + perBranch]));
+}
+
+/** End a stage. Operator-kept branches fill the places first, then the best scores, ties to the smaller id. Returns the
+ *  ids that stay and the events that park the rest. An operator-kept branch past the places stays live with no new budget. */
+export function closeStage(tree, p, stage) {
+  const { keep: places } = stageOf(p, stage);
+  const active = Object.values(tree.branches).filter((b) => ACTIVE.has(b.state));
+  const ranked = active.sort((x, y) => Number(y.pinned) - Number(x.pinned) || y.q - x.q || (x.id < y.id ? -1 : 1));
+  const keep = ranked.slice(0, places).map((b) => b.id);
+  const events = ranked.slice(places).filter((b) => !b.pinned).map((b) => ({ type: 'state', branch: b.id, to: 'parked', reason: `dropped at stage ${stage + 1} of ${p.stages.length}, score ${b.q.toFixed(3)}` }));
+  return { keep, events };
+}

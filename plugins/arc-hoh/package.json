@@ -23,7 +23,7 @@
     "docs/policy.md"
   ],
   "scripts": {
-    "test": "node --test test/hoh.test.mjs test/replay.test.mjs test/tree.test.mjs test/claims.test.mjs"
+    "test": "node --test test/hoh.test.mjs test/replay.test.mjs test/tree.test.mjs test/claims.test.mjs test/reliability.test.mjs test/budget.test.mjs"
   },
   "arc": {
     "bundle": {

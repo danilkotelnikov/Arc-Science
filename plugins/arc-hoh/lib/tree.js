@@ -18,7 +18,7 @@ const NEXT = {
   sketched: ['probing', 'parked'], probing: ['live', 'parked'], live: ['parked', 'merged', 'confirmed-limited'],
   parked: ['probing', 'live'], refuted: [], merged: [], 'confirmed-limited': ['parked'],
 };
-const ACTIVE = new Set(['probing', 'live']);
+export const ACTIVE = new Set(['probing', 'live']);
 
 const logit = (q) => Math.log(q / (1 - q));
 const expit = (x) => 1 / (1 + Math.exp(-x));
@@ -136,14 +136,16 @@ const byId = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** The next check over all active branches: the highest value per cost, ties to the smaller id. Null when none has value.
  *  ponytail: a full scan on every step. Use the lazy heap of the design when many branches run at once. */
-export function nextCheck(tree, { cfp = 1, cfn = 1 } = {}) {
+export function nextCheck(tree, { cfp = 1, cfn = 1, limits } = {}) {
   let top = null;
   for (const id of Object.keys(tree.branches).sort(byId)) {
     const b = tree.branches[id];
     if (!ACTIVE.has(b.state)) continue;
     const usedChecks = new Set(b.observations.map((o) => o.check));
     const usedGroups = new Set(b.observations.map((o) => groupOf(b.checks[o.check])));
-    const open = Object.values(b.checks).filter((c) => !usedChecks.has(c.id) && !usedGroups.has(groupOf(c))).sort((x, y) => byId(x.id, y.id));
+    // With limits, a branch that is not listed has no budget, and a check must fit in what is left: cost <= limit - spent.
+    const left = limits ? (limits[id] ?? 0) - b.observations.reduce((sum, o) => sum + b.checks[o.check].cost, 0) : Infinity;
+    const open = Object.values(b.checks).filter((c) => !usedChecks.has(c.id) && !usedGroups.has(groupOf(c)) && c.cost <= left).sort((x, y) => byId(x.id, y.id));
     let rows = open.map((c) => ({ c, steps: 1, priority: voi(b.q, c, cfp, cfn) / c.cost }));
     if (open.length > 1 && rows.every((r) => r.priority === 0)) {
       // The spec names the strongest check, but a weaker pair can flip the decision when the strongest cannot.
