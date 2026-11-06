@@ -5,10 +5,10 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { appendFile } from 'node:fs/promises';
-import { ledgerFile, sha256 } from '../lib/gates.js';
+import { decideGate, ledgerFile, sha256 } from '../lib/gates.js';
 import {
   alphaK, signTestP, pairedLowerBound, minDiscordantPairs, splitOf, heldoutSlice, TRAPS, runTraps, decide, runCases,
-  evaluateAndRecord, verifyReport, replayProblem, mulberry, MAX_B,
+  evaluateAndRecord, freezeReplaySet, nextSlice, verifyReport, replayProblem, mulberry, MAX_B,
 } from '../lib/replay.js';
 
 const CLEAN = [{ id: 'clean', passed: false }];
@@ -154,23 +154,30 @@ test('a good patch is usually accepted', () => {
 });
 
 // Recording: the verdict goes to the hash-chained ledger, and the report file lies beside it.
-const heldout = (pos, neg, same, start = 0) => {
-  const want = pairs(pos, neg, same), out = [];
-  for (let i = start; out.length < want.length; i++) {
-    const id = `case-${i}`;
-    if (splitOf(id) === 'heldout') out.push({ id, m_old: want[out.length][0], m_new: want[out.length][1] });
-  }
-  return out;
-};
+const SIZE = 270;
+const ids = Array.from({ length: 4000 }, (_, i) => `case-${i}`);
 const home = async () => {
   const d = await mkdtemp(path.join(os.tmpdir(), 'arc-replay-'));
   return { d, file: ledgerFile({ ARC_HOME: d }) };
 };
+/** A home with a frozen case set. */
+const ready = async () => {
+  const h = await home();
+  await freezeReplaySet(h.file, ids, SIZE);
+  return h;
+};
+/** The next slice the gate asks for, scored with these counts. */
+const scored = async (file, pos, neg, same) => {
+  const want = pairs(pos, neg, same);
+  assert.equal(want.length, SIZE);
+  return (await nextSlice(file)).map((id, i) => ({ id, m_old: want[i][0], m_new: want[i][1] }));
+};
+const evaluate = (file, patch, diff, cases, gate = decideGate) => evaluateAndRecord(file, patch, diff, cases, gate);
 
 test('a patch needs an accepted replay of its exact text', async () => {
-  const { d, file } = await home();
+  const { d, file } = await ready();
   assert.match(await replayProblem(file, 'P1', 'diff one'), /no replay evaluation/);
-  const r = await evaluateAndRecord(file, 'P1', 'diff one', heldout(150, 20, 100));
+  const r = await evaluate(file, 'P1', 'diff one', await scored(file, 150, 20, 100));
   assert.equal(r.result.accepted, true, r.result.reasons.join('; '));
   assert.equal(await replayProblem(file, 'P1', 'diff one'), null);
   assert.match(await replayProblem(file, 'P1', 'diff two'), /no replay evaluation/);
@@ -179,54 +186,89 @@ test('a patch needs an accepted replay of its exact text', async () => {
 });
 
 test('a report verifies whatever order the cases came in', async () => {
-  const { d, file } = await home();
+  const { d, file } = await ready();
   for (const [i, seed] of [11, 22, 33, 44, 55].entries()) {
     const rng = mulberry(seed);
-    const rows = heldout(100, 60, 60, i * 4000).map((c) => [rng(), c]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
-    const r = await evaluateAndRecord(file, `P${i}`, `diff ${i}`, rows);
+    const rows = (await scored(file, 130, 50, 90)).map((c) => [rng(), c]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+    const r = await evaluate(file, `P${i}`, `diff ${i}`, rows);
     assert.equal((await verifyReport(r.file)).ok, true, `order ${seed}`);
   }
   await rm(d, { recursive: true });
 });
 
 test('a rejected evaluation does not open the door', async () => {
-  const { d, file } = await home();
-  const r = await evaluateAndRecord(file, 'P1', 'diff', heldout(90, 90, 100));
+  const { d, file } = await ready();
+  const r = await evaluate(file, 'P1', 'diff', await scored(file, 90, 90, 90));
   assert.equal(r.result.accepted, false);
   assert.match(await replayProblem(file, 'P1', 'diff'), /not accepted/);
   await rm(d, { recursive: true });
 });
 
-test('dev cases, bad ids and a reused slice are refused', async () => {
-  const { d, file } = await home();
-  const rows = heldout(150, 20, 100);
-  const devId = Array.from({ length: 100 }, (_, i) => `case-${i}`).find((i) => splitOf(i) === 'dev');
-  await assert.rejects(() => evaluateAndRecord(file, 'P1', 'diff', [{ ...rows[0], id: devId }, ...rows.slice(1)]), /held-out cases only/);
-  await assert.rejects(() => evaluateAndRecord(file, 'P1', 'diff', [{ m_old: 0, m_new: 1 }, ...rows]), /held-out cases only/);
-  await assert.rejects(() => evaluateAndRecord(file, 'P1', 'diff', []), /bad data/);
-  await assert.rejects(() => evaluateAndRecord(file, 'P1', 'diff', 'abc'), /bad data/);
-  await assert.rejects(() => evaluateAndRecord(file, 'P1', 'diff', [{ ...rows[0], m_new: true }]), /bad data/);
-  assert.equal((await evaluateAndRecord(file, 'P1', 'diff', rows)).k, 1, 'a refused call spends nothing');
-  await assert.rejects(() => evaluateAndRecord(file, 'P2', 'other', rows), /already used/);
+test('the traps run on the gate of the patch, and a caller must name that gate', async () => {
+  const { d, file } = await ready();
+  const rows = await scored(file, 150, 20, 100);
+  await assert.rejects(() => evaluateAndRecord(file, 'P1', 'diff', rows), /candidate gate/);
+  const weak = (input, context) => ({ ...decideGate(input, context), verdict: 'accepted' });
+  const r = await evaluate(file, 'P1', 'diff', rows, weak);
+  assert.equal(r.result.accepted, false);
+  assert.equal(r.result.traps_passed.length, TRAPS.length);
+  assert.match(await replayProblem(file, 'P1', 'diff'), /not accepted/);
   await rm(d, { recursive: true });
 });
 
-test('every evaluation counts toward k, also a failed one and parallel ones', async () => {
+test('the case set is frozen once, before any scoring', async () => {
   const { d, file } = await home();
-  const a = await evaluateAndRecord(file, 'P1', 'diff', heldout(90, 90, 100));
-  const b = await evaluateAndRecord(file, 'P1', 'diff', heldout(90, 90, 100, 5000));
+  await assert.rejects(() => nextSlice(file), /no frozen replay set/);
+  await assert.rejects(() => evaluate(file, 'P1', 'diff', [{ id: ids.find((i) => splitOf(i) === 'heldout'), m_old: 0, m_new: 1 }]), /no frozen replay set/);
+  await assert.rejects(() => freezeReplaySet(file, ids, 0), /whole number/);
+  await assert.rejects(() => freezeReplaySet(file, ['case-5'], 270), /no full slice/);
+  await assert.rejects(() => freezeReplaySet(file, ['a', 'a', 7], 1), /unique text ids/);
+  const frozen = await freezeReplaySet(file, ids, SIZE);
+  assert.equal(frozen.size, SIZE);
+  assert.ok(frozen.slices >= 7);
+  await assert.rejects(() => freezeReplaySet(file, ids, 10), /already frozen/);
+  await rm(d, { recursive: true });
+});
+
+test('only the exact next slice is scored, so cases cannot be picked by hand', async () => {
+  const { d, file } = await ready();
+  const rows = await scored(file, 150, 20, 100);
+  const spare = heldoutSlice(ids.filter((i) => splitOf(i) === 'heldout'), SIZE + 1, 1)[0];
+  await assert.rejects(() => evaluate(file, 'P1', 'diff', rows.slice(1)), /exactly the next slice/);
+  await assert.rejects(() => evaluate(file, 'P1', 'diff', [{ ...rows[0], id: spare }, ...rows.slice(1)]), /exactly the next slice/);
+  assert.equal((await evaluate(file, 'P1', 'diff', rows)).k, 1, 'a refused call spends nothing');
+  await assert.rejects(() => evaluate(file, 'P2', 'other', rows), /exactly the next slice/);
+  assert.notDeepEqual((await nextSlice(file)).sort(), rows.map((r) => r.id).sort());
+  await rm(d, { recursive: true });
+});
+
+test('dev cases and bad ids are refused', async () => {
+  const { d, file } = await ready();
+  const rows = await scored(file, 150, 20, 100);
+  const devId = ids.find((i) => splitOf(i) === 'dev');
+  await assert.rejects(() => evaluate(file, 'P1', 'diff', [{ ...rows[0], id: devId }, ...rows.slice(1)]), /held-out cases only/);
+  await assert.rejects(() => evaluate(file, 'P1', 'diff', [{ m_old: 0, m_new: 1 }, ...rows]), /held-out cases only/);
+  await assert.rejects(() => evaluate(file, 'P1', 'diff', []), /bad data/);
+  await assert.rejects(() => evaluate(file, 'P1', 'diff', 'abc'), /bad data/);
+  await assert.rejects(() => evaluate(file, 'P1', 'diff', [{ ...rows[0], m_new: true }]), /bad data/);
+  await rm(d, { recursive: true });
+});
+
+test('every evaluation counts toward k, also a failed one, and parallel calls share the lock', async () => {
+  const { d, file } = await ready();
+  const a = await evaluate(file, 'P1', 'diff', await scored(file, 90, 90, 90));
+  const b = await evaluate(file, 'P1', 'diff', await scored(file, 90, 90, 90));
   assert.deepEqual([a.k, b.k], [1, 2]);
-  const both = await Promise.all([heldout(90, 90, 100, 10000), heldout(90, 90, 100, 15000)].map((c) => evaluateAndRecord(file, 'P1', 'diff', c)));
-  assert.deepEqual(both.map((r) => r.k).sort(), [3, 4]);
+  const rows = await scored(file, 90, 90, 90);
   const other = file.replaceAll('\\', '/');
-  const spelled = await Promise.allSettled([evaluateAndRecord(file, 'P1', 'diff', heldout(90, 90, 100, 20000)), evaluateAndRecord(other, 'P1', 'diff', heldout(90, 90, 100, 20000))]);
+  const spelled = await Promise.allSettled([evaluate(file, 'P1', 'diff', rows), evaluate(other, 'P1', 'diff', rows)]);
   assert.equal(spelled.filter((r) => r.status === 'fulfilled').length, 1, 'two spellings of one path share the lock');
   await rm(d, { recursive: true });
 });
 
 test('an edited report fails, and the door closes', async () => {
-  const { d, file } = await home();
-  const r = await evaluateAndRecord(file, 'P1', 'diff', heldout(150, 20, 100));
+  const { d, file } = await ready();
+  const r = await evaluate(file, 'P1', 'diff', await scored(file, 150, 20, 100));
   assert.equal((await verifyReport(r.file)).ok, true);
   const data = JSON.parse(await readFile(r.file, 'utf8'));
   const original = JSON.stringify(data);
@@ -242,8 +284,8 @@ test('an edited report fails, and the door closes', async () => {
 });
 
 test('a report with a fresh digest still fails against its own cases and the ledger', async () => {
-  const { d, file } = await home();
-  const r = await evaluateAndRecord(file, 'P1', 'diff', heldout(150, 20, 100));
+  const { d, file } = await ready();
+  const r = await evaluate(file, 'P1', 'diff', await scored(file, 150, 20, 100));
   const seal = ({ digest, ...body }) => ({ ...body, digest: sha256(JSON.stringify(body)) });
   const data = JSON.parse(await readFile(r.file, 'utf8'));
   const flipped = structuredClone(data);
@@ -259,9 +301,11 @@ test('a report with a fresh digest still fails against its own cases and the led
 });
 
 test('a broken ledger stops the evaluation, so k cannot go back', async () => {
-  const { d, file } = await home();
-  await evaluateAndRecord(file, 'P1', 'diff', heldout(90, 90, 100));
+  const { d, file } = await ready();
+  await evaluate(file, 'P1', 'diff', await scored(file, 90, 90, 90));
+  const rows = await scored(file, 90, 90, 90);
   await appendFile(file, 'not json\n');
-  await assert.rejects(() => evaluateAndRecord(file, 'P1', 'diff', heldout(90, 90, 100, 5000)), /ledger is broken/);
+  await assert.rejects(() => evaluate(file, 'P1', 'diff', rows), /ledger is broken/);
+  await assert.rejects(() => nextSlice(file), /ledger is broken/);
   await rm(d, { recursive: true });
 });

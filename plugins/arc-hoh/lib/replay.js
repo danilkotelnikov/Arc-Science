@@ -6,7 +6,9 @@
 //   4. enough discordant pairs for the chosen effect and power.
 // The level is spent as alpha_k = alpha * 6 / (pi^2 k^2) over all evaluations ever made, and each uses a held-out
 // slice never used before. The result only opens the door to the user's approval, which stays separate and required.
-// This module cannot check the 0 and 1 scores themselves: a runner that invents scores defeats it. The ledger has no key,
+// The case set is frozen once, and each evaluation must score exactly its next slice, so nobody picks cases by hand.
+// The traps run on the gate the caller names as the patched one. This module cannot prove that gate comes from the diff.
+// It also cannot check the 0 and 1 scores themselves: a runner that invents scores defeats it. The ledger has no key,
 // so someone who rewrites the whole ledger and its reports, or deletes them, also defeats it.
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -164,24 +166,49 @@ export const runCases = (traces, oldPolicy, newPolicy) => traces.map((t) => ({ i
 const digestOf = ({ digest, ...body }) => sha256(JSON.stringify(body));
 const reportsDir = (ledger) => path.join(path.dirname(ledger), 'replay');
 
-async function evaluations(ledger) {
+async function replayState(ledger) {
   const chain = await verifyLedger(ledger);
   if (!chain.ok) throw new Error(`the ledger is broken at entry ${chain.badAt}: k and the used slices cannot be trusted`);
-  return (await ledgerRows(ledger)).filter((r) => r.type === 'replay-eval');
+  const rows = await ledgerRows(ledger);
+  return { set: rows.find((r) => r.type === 'replay-set') ?? null, earlier: rows.filter((r) => r.type === 'replay-eval') };
 }
 
+const sliceOf = ({ set, earlier }) => {
+  if (!set) throw new Error('no frozen replay set: call freezeReplaySet before any scoring');
+  return heldoutSlice(set.ids, earlier.length + 1, set.size);
+};
+
+/** Fix the case set and the slice size once, before anyone scores a case. Only held-out ids are kept. */
+export function freezeReplaySet(ledger, ids, size) {
+  return withLedger(ledger, async (append) => {
+    if (!Array.isArray(ids) || !ids.every((i) => typeof i === 'string' && i !== '') || new Set(ids).size !== ids.length) throw new Error('a replay set needs unique text ids');
+    if (!Number.isInteger(size) || size < 1) throw new Error('the slice size must be a whole number from 1');
+    const kept = ids.filter((i) => splitOf(i) === 'heldout');
+    const slices = Math.floor(kept.length / size);
+    if (slices < 1) throw new Error(`the set has no full slice of ${size} held-out cases`);
+    if ((await replayState(ledger)).set) throw new Error('the replay set is already frozen');
+    await append({ type: 'replay-set', goal: 'replay-set', ids: kept, size });
+    return { size, slices };
+  });
+}
+
+/** The ids the next evaluation must score. */
+export const nextSlice = async (ledger) => sliceOf(await replayState(ledger));
+
 /** Score a patch on a fresh held-out slice, store a hashed report and log it. Every evaluation counts toward k,
- *  accepted or not, so a failed attempt still spends significance. The settings are fixed: a caller cannot loosen them. */
-export function evaluateAndRecord(ledger, patch, diff, cases) {
+ *  accepted or not, so a failed attempt still spends significance. The settings are fixed: a caller cannot loosen them.
+ *  `gate` is the accept gate with the patch applied, so that the traps test the patched rules. */
+export function evaluateAndRecord(ledger, patch, diff, cases, gate) {
   // ponytail: one lock per process, like the rest of the ledger. Two processes on one ledger would need a file lock.
   return withLedger(ledger, async (append) => {
+    if (typeof gate !== 'function') throw new Error('name the candidate gate: the traps must run on the patched rules');
     const ids = (Array.isArray(cases) ? cases : []).map((c) => c && c.id);
     if (ids.some((i) => typeof i !== 'string' || splitOf(i) !== 'heldout')) throw new Error('acceptance uses held-out cases only; dev cases are for building the patch');
     if (!valid(cases)) throw new Error('bad data: cases must be non-empty, have unique string ids and scores that are the integers 0 or 1');
-    const earlier = await evaluations(ledger);
-    const used = new Set(earlier.flatMap((e) => e.slice_ids));
-    if (ids.some((i) => used.has(i))) throw new Error('a held-out case was already used by an earlier evaluation; every patch needs a fresh slice');
-    const k = earlier.length + 1, traps = runTraps();
+    const state = await replayState(ledger);
+    const expected = sliceOf(state);
+    if (JSON.stringify([...ids].sort()) !== JSON.stringify([...expected].sort())) throw new Error('an evaluation must score exactly the next slice of the frozen set');
+    const k = state.earlier.length + 1, traps = runTraps(TRAPS, gate);
     // The seeded bound depends on the order, so the report stores the order the decision used.
     const sorted = [...cases].sort((a, b) => (a.id < b.id ? -1 : 1));
     const report = {
@@ -216,7 +243,7 @@ export async function verifyReport(file) {
 /** Why a patch may not go to approval, or null: it needs an accepted, verified replay of this exact text. */
 export async function replayProblem(ledger, patch, diff) {
   const digest = sha256(diff);
-  const mine = (await evaluations(ledger)).filter((e) => e.goal === patch && e.patch_digest === digest);
+  const mine = (await replayState(ledger)).earlier.filter((e) => e.goal === patch && e.patch_digest === digest);
   if (mine.length === 0) return `no replay evaluation of the current ${patch}`;
   const last = mine[mine.length - 1];
   if (!last.accepted) return `the latest replay evaluation of ${patch} was not accepted (k=${last.k})`;
