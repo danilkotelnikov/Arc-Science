@@ -22,6 +22,7 @@ export const DEFAULTS = Object.freeze({ alpha: 0.05, epsilon: 0.02, effect: 0.2,
 export const MAX_B = 1000000;
 const TAIL = 10;
 const MIN_EFFECT = 0.05;
+const MAX_PAIRS = 5000;
 
 /** Significance spent on the k-th evaluation over all time. The series sums to alpha. */
 export const alphaK = (alpha, k) => alpha * 6 / (Math.PI ** 2 * k * k);
@@ -83,6 +84,7 @@ export function minDiscordantPairs(effect = 0.2, alpha = 0.05, target = 0.8) {
   if (pairsMemo.has(key)) return pairsMemo.get(key);
   let n = 1, run = 0;
   for (let m = 1; run < 25; m++) {
+    if (m > MAX_PAIRS) throw new Error(`these settings need more than ${MAX_PAIRS} discordant pairs`);
     if (power(m, effect, alpha) >= target) { if (run++ === 0) n = m; } else run = 0;
   }
   pairsMemo.set(key, n);
@@ -154,7 +156,11 @@ export function decide(cases, traps, k, params = {}) {
     return out;
   }
   const d = cases.map((c) => c.m_new - c.m_old);
-  const needed = minDiscordantPairs(p.effect, p.alpha, p.power);
+  let needed;
+  try { needed = minDiscordantPairs(p.effect, p.alpha, p.power); } catch (err) {
+    reasons.push(`bad settings: ${err.message}`);
+    return out;
+  }
   const B = Math.max(p.B, Math.ceil(TAIL / out.alpha_k));
   if (B > MAX_B) {
     reasons.push(`error budget: level ${out.alpha_k} at k=${k} needs more than ${MAX_B} resamples`);

@@ -133,6 +133,10 @@ test('settings that cannot finish are refused, not run', () => {
   }
   assert.throws(() => minDiscordantPairs(1, 0.05, 0.8), /effect/);
   assert.throws(() => minDiscordantPairs(0.2, 0.05, 1), /power/);
+  assert.throws(() => minDiscordantPairs(0.05, 1e-12, 0.999), /more than 5000/);
+  const extreme = decide(cases(150, 20, 100), CLEAN, 1, { effect: 0.05, alpha: 1e-12, power: 0.999 });
+  assert.equal(extreme.accepted, false);
+  assert.match(extreme.reasons.join(' '), /bad settings: these settings need more than 5000/);
 });
 
 test('bad data is refused, not scored', () => {
