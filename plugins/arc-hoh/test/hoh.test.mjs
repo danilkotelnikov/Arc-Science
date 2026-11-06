@@ -178,6 +178,22 @@ test('a proposal written before the digests still binds its checks', async () =>
   await rm(d, { recursive: true });
 });
 
+test('a long check in an old proposal still binds the gate by its kept start', async () => {
+  const d = await tmp();
+  const env = { ARC_HOME: d, ARC_HOH_RETAIN: '0' };
+  const [, freeze, gate] = makeTools((def) => def, env);
+  const lead = { agent: { id: 'lead-1' } }, reviewer = { agent: { id: 'rev-1' } };
+  const long = 'npm test ' + 'x'.repeat(400);
+  await appendLedger(ledgerFile(env), { type: 'propose', goal: 'old', caller: 'lead-1', checks: [long.slice(0, 300) + '...'], probes: ['p'] });
+  const f = path.join(d, 'a.txt'); await writeFile(f, 'one');
+  const fr = await freeze.execute({ goal: 'old', files: [f] }, lead);
+  const row = { id: 'c1', exit: 0, excerpt: 'ok' };
+  const verdict = async (command) => (await gate.execute({ goal: 'old', ...goodGate(fr.candidate), checks: [{ ...row, command }] }, reviewer)).verdict;
+  assert.equal(await verdict(long), 'accepted');
+  assert.equal(await verdict('true'), 'unmet');
+  await rm(d, { recursive: true });
+});
+
 test('propose, freeze and gate work end to end, with runtime agent ids', async () => {
   const d = await tmp();
   const env = { ARC_HOME: d };

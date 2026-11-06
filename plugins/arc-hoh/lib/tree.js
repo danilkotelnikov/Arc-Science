@@ -132,7 +132,6 @@ function twoStep(q, c, others, cfp, cfn) {
   return { value: value > 1e-12 ? value : 0, cost: c.cost + pass * a.cost + (1 - pass) * b.cost };
 }
 
-const power = (c) => Math.abs(logLr(c, true)) + Math.abs(logLr(c, false));
 const byId = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** The next check over all active branches: the highest value per cost, ties to the smaller id. Null when none has value.
@@ -147,9 +146,11 @@ export function nextCheck(tree, { cfp = 1, cfn = 1 } = {}) {
     const open = Object.values(b.checks).filter((c) => !usedChecks.has(c.id) && !usedGroups.has(groupOf(c))).sort((x, y) => byId(x.id, y.id));
     let rows = open.map((c) => ({ c, steps: 1, priority: voi(b.q, c, cfp, cfn) / c.cost }));
     if (open.length > 1 && rows.every((r) => r.priority === 0)) {
-      const c = open.reduce((x, y) => (power(y) > power(x) ? y : x));
-      const { value, cost } = twoStep(b.q, c, open.filter((o) => o !== c && groupOf(o) !== groupOf(c)), cfp, cfn);
-      rows = [{ c, steps: 2, priority: value / cost }];
+      // The spec names the strongest check, but a weaker pair can flip the decision when the strongest cannot.
+      rows = open.map((c) => {
+        const { value, cost } = twoStep(b.q, c, open.filter((o) => o !== c && groupOf(o) !== groupOf(c)), cfp, cfn);
+        return { c, steps: 2, priority: value / cost };
+      });
     }
     for (const r of rows) {
       if (r.priority > 0 && (!top || r.priority > top.priority)) top = { branch: id, check: r.c.id, priority: r.priority, steps: r.steps };

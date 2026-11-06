@@ -178,6 +178,17 @@ test('a patch needs an accepted replay of its exact text', async () => {
   await rm(d, { recursive: true });
 });
 
+test('a report verifies whatever order the cases came in', async () => {
+  const { d, file } = await home();
+  for (const [i, seed] of [11, 22, 33, 44, 55].entries()) {
+    const rng = mulberry(seed);
+    const rows = heldout(100, 60, 60, i * 4000).map((c) => [rng(), c]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+    const r = await evaluateAndRecord(file, `P${i}`, `diff ${i}`, rows);
+    assert.equal((await verifyReport(r.file)).ok, true, `order ${seed}`);
+  }
+  await rm(d, { recursive: true });
+});
+
 test('a rejected evaluation does not open the door', async () => {
   const { d, file } = await home();
   const r = await evaluateAndRecord(file, 'P1', 'diff', heldout(90, 90, 100));

@@ -182,9 +182,11 @@ export function evaluateAndRecord(ledger, patch, diff, cases) {
     const used = new Set(earlier.flatMap((e) => e.slice_ids));
     if (ids.some((i) => used.has(i))) throw new Error('a held-out case was already used by an earlier evaluation; every patch needs a fresh slice');
     const k = earlier.length + 1, traps = runTraps();
+    // The seeded bound depends on the order, so the report stores the order the decision used.
+    const sorted = [...cases].sort((a, b) => (a.id < b.id ? -1 : 1));
     const report = {
       version: REPLAY_VERSION, patch, patch_digest: sha256(diff), k, params: { ...DEFAULTS },
-      cases: [...cases].sort((a, b) => (a.id < b.id ? -1 : 1)), traps, result: decide(cases, traps, k),
+      cases: sorted, traps, result: decide(sorted, traps, k),
     };
     report.digest = digestOf(report);
     const name = `replay-k${k}-${report.digest.slice(0, 12)}.json`;

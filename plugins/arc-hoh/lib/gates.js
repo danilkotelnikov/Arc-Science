@@ -163,6 +163,10 @@ export function decideGate(input, context = {}) {
   (propose && Array.isArray(propose.digests) ? propose.digests : []).forEach((digest, i) => {
     if (!reported.has(digest)) unmet(`proposed check was not reported: ${clip(String(propose.checks?.[i] ?? digest), 80)}`);
   });
+  // An old proposal kept only the first 300 characters of a long check, so that start is all there is to compare.
+  for (const start of propose && Array.isArray(propose.starts) ? propose.starts : []) {
+    if (!checks.some((c) => c && typeof c.command === 'string' && c.command.trim().startsWith(start))) unmet(`proposed check was not reported: ${clip(start, 80)}`);
+  }
 
   const probes = Array.isArray(input.probes) ? input.probes : [];
   if (probes.length === 0) unmet('no probes: test the candidate against edge cases and rival options (Probe step)');

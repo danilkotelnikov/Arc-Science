@@ -163,6 +163,15 @@ test('a check that cannot flip the decision alone gets a two-step value', () => 
   assert.ok(next.priority > 0);
 });
 
+test('the two-step value looks at every open check, not only the strongest', () => {
+  const t = buildTree([branch('a', 0.35), ...go('a'), check('a', 'x', { s: 0.6, e: 0.7 }), obs('o1', 'a', 'x', false),
+    check('a', 'strong', { s: 0.99, e: 0.2, group: 'g' }), check('a', 'w1', { s: 0.7, e: 0.7, group: 'g' }), check('a', 'w2', { s: 0.7, e: 0.7 })]);
+  const next = nextCheck(t);
+  assert.ok(next, 'w1 and then w2 can still flip the decision');
+  assert.equal(next.steps, 2);
+  assert.notEqual(next.check, 'strong');
+});
+
 test('the next check is the best value per cost, and ties go to the smaller id', () => {
   const t = buildTree([branch('b'), branch('a'), ...go('a'), ...go('b'), check('b', 'c1'), check('a', 'c1'), check('a', 'dear', { cost: 100 })]);
   assert.deepEqual([nextCheck(t).branch, nextCheck(t).check], ['a', 'c1']);

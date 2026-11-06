@@ -117,8 +117,11 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
       const freezeRow = await lastEvent(file(), args.goal, 'freeze');
       // Every proposal of the goal counts, so a later proposal cannot drop a check. To drop one, start a new goal.
       const proposals = await goalEvents(file(), args.goal, 'propose');
+      const clipped = (c) => typeof c === 'string' && c.length === 303 && c.endsWith('...');
+      const whole = (p) => (p.digests ? p.checks ?? [] : (p.checks ?? []).filter((c) => !clipped(c)));
       const proposeRow = proposals.length ? {
-        ...proposals[proposals.length - 1], checks: proposals.flatMap((p) => p.checks ?? []), digests: proposals.flatMap((p) => p.digests ?? (p.checks ?? []).map(checkDigest)),
+        ...proposals[proposals.length - 1], checks: proposals.flatMap(whole), digests: proposals.flatMap((p) => p.digests ?? whole(p).map(checkDigest)),
+        starts: proposals.flatMap((p) => (p.digests ? [] : (p.checks ?? []).filter(clipped).map((c) => c.slice(0, 300).trim()))),
       } : null;
       let fileCheck = null;
       if (freezeRow && Array.isArray(freezeRow.paths)) {
