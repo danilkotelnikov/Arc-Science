@@ -42,6 +42,12 @@ The Trace tab in the right sidebar shows the ledger. The gate checks the evidenc
 A page that shows a number or a picture says where it came from. Measured means a test or a tool produced it on this build. Published means a source outside the project says so.
 Planned means it does not exist yet. A page never claims more than the project has. That is why every wiki page starts with a Status line.
 
+## Automatic review on GitHub
+
+Write `@claude` in a pull request comment to ask for an edit or a fix. Only people with write access can do this.
+
+The `pr-screen` workflow reads each pull request from this repository. Haiku looks for faults and posts them as comments. Sonnet fixes a blocking or major fault and pushes, and that push starts the next review. Sonnet stops after three rounds, and then a person decides. Argon reviews first when the `ARGON_REVIEW` variable is `on`. A pull request from a fork gets no automatic review, because GitHub keeps secrets from forks.
+
 ## What you can do
 
 When you send a change, say which checks you ran and show their output. A reviewer can run them again on the frozen state.
