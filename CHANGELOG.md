@@ -4,6 +4,10 @@ All notable changes to Arc Harness are listed here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- Pull request automation: `@claude` in a pull request comment asks for an edit or a fix, and `pr-screen` reviews each pull request from this repository. Haiku screens, Sonnet fixes critical findings for at most three rounds, and Argon reviews first when it is turned on. Nothing merges by itself.
+
 ### Removed
 
 - The "What the build changes" table is gone from the README.
