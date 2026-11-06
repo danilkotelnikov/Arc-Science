@@ -22,7 +22,7 @@ jobs:
       - name: Colour recolor tests
         run: node test/iconcolor.test.mjs
       - name: Harness of Harness plugin tests
-        run: node --test plugins/arc-hoh/test/hoh.test.mjs plugins/arc-hoh/test/replay.test.mjs plugins/arc-hoh/test/tree.test.mjs plugins/arc-hoh/test/claims.test.mjs
+        run: node --test plugins/arc-hoh/test/hoh.test.mjs plugins/arc-hoh/test/replay.test.mjs plugins/arc-hoh/test/tree.test.mjs plugins/arc-hoh/test/claims.test.mjs plugins/arc-hoh/test/reliability.test.mjs plugins/arc-hoh/test/budget.test.mjs
       - name: Theme plugin tests
         run: node --test plugins/arc-theme/test/theme.test.mjs
       - name: Build kit tests
