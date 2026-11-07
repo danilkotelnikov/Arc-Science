@@ -46,7 +46,7 @@ function run(exe, args) {
 
 function main() {
   const arg = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : undefined; };
-  const from = arg('--from') || path.join(process.env.LOCALAPPDATA || '', 'Programs', 'DeepSeek Harness');
+  const from = arg('--from') || path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Arc Harness');
   const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
   const to = path.join(root, 'build', 'stage', 'Arc Harness');
   const icon = path.join(root, 'brand', 'dist', 'tray.ico');
