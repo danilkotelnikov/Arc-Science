@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Arc core",
+    "description": "Exposes shared Arc Kit tools for shelf search, claim recording, gate checks, toolpack loading and memory."
+  }
+}

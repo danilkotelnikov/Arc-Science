@@ -1,7 +1,7 @@
 {
   "name": "arc-theme",
-  "version": "0.4.0",
-  "description": "The Arc Harness paper theme: cream surfaces, a dark-brown primary button, Geist type, rounded corners.",
+  "version": "0.5.0",
+  "description": "Three interface themes: the Arc Harness paper look, black and white, and Radium. All use Geist type and carry no blue.",
   "icon": "icon.svg",
   "type": "module",
   "license": "MIT",

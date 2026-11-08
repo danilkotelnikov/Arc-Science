@@ -77,8 +77,8 @@ These are captures of the running app, made by `test/desktop-journey.mjs --mode 
 | **A session in the light look.** | **Side panels.** Files, a terminal, Trace and a browser sit beside the session. |
 | ![A session in the dark look](docs/images/dark-session.png) | ![The Models page in Settings](docs/images/light-settings-models.png) |
 | **A session.** A real model reply. | **Models.** Add providers and keys. A green dot means connected. |
-| ![General settings](docs/images/light-settings-general.png) | ![Built-in plugins in Settings](docs/images/light-settings-plugins.png) |
-| **General settings.** | **Built-in plugins.** A read-only list of what ships. |
+| ![General settings](docs/images/light-settings-general.png) | |
+| **General settings.** | |
 
 ## How it works
 
@@ -169,7 +169,6 @@ CI actions are pinned to full commit SHAs, and Dependabot keeps them current.
 - The plugin manager is switched off in the lean core, so plugins are installed by copying.
 - The local gateway and its Google Vertex route are a separate small program. They are not in this repository yet.
 - On a network that drops large uploads, model calls need a local proxy. If the proxy stops, requests fail until it returns, and the app shows its retries.
-- The Built-in plugins page shows one raw label, `presetStandardName`.
 - Only Windows is tested.
 
 ## Credit and licence

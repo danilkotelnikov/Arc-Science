@@ -7,10 +7,25 @@ All notable changes to Arc Harness are listed here. The format follows [Keep a C
 ### Added
 
 - Pull request automation: `@claude` in a pull request comment asks for an edit or a fix, and `pr-screen` reviews each pull request from this repository. Haiku screens, Sonnet fixes critical findings for at most three rounds, and Argon reviews first when it is turned on. Nothing merges by itself.
+- Phase 3 modules in `plugins/arc-hoh`: replay patch gate (`lib/replay.js`), hypothesis tree (`lib/tree.js`), claim graph (`lib/claims.js`), Dawid-Skene source reliability (`lib/reliability.js`), and branch budget (`lib/budget.js`).
+- `plugins/arc-core` 0.1.0 (`K1`): MCP server with `shelf.search`, `claim.record`, `gate.check`, `toolpack.load`, `memory.retain` and `memory.recall`.
+- `plugins/arc-mode` 0.1.0: Advanced settings page with the Arc Harness mode switch, installed hooks and skills list, and measured benchmark table.
+- `plugins/arc-molecullage` 0.1.0: Molecullage workspace replacing the earlier separate Molecules and BioArt workspaces, backed by the 231-source library, eight-domain atlas and 56-rule anti-overplating check.
+- `tools/package.mjs` and `installer/arc-harness.iss`: Windows installer staging and Inno Setup definition.
+- `tools/measure-start.mjs` (`B1`): startup and memory baseline runner.
+
+### Changed
+
+- `plugins/arc-theme` 0.5.0: three skins (`Arc Harness`, `Black and white`, `Radium`) with Geist type.
+- All plugin and add-on titles follow Sentence case with space delimiters, while package identifiers use lowercase `arc-*` hyphenated names.
+- `plugins/arc-hoh` Trace view and `plugins/arc-mode` Advanced settings view add loading states, capitalized verdict badges and tabular numerals.
+- `plugins/arc-hoh` `hoh_gate` accepts frozen candidate hashes with or without a leading `sha256:` prefix.
 
 ### Removed
 
 - The "What the build changes" table is gone from the README.
+- Settings no longer shows a Built-in plugins page. The plugins stay built in and keep working.
+- Separate Molecules and BioArt workspace plans are retired and unified under Molecullage (`arc-molecullage`).
 
 ## [0.1.0] - 2026-11-05
 

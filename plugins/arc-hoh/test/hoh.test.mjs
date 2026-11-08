@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { hashFiles, appendLedger, verifyLedger, lastFreeze, decideGate, ledgerFile, optedOut, MAX_CYCLES } from '../lib/gates.js';
+import { hashFiles, appendLedger, verifyLedger, lastFreeze, decideGate, ledgerFile, optedOut, checkDigest, MAX_CYCLES } from '../lib/gates.js';
 import { formatNotes, parseMcpBody, redact } from '../lib/brief.js';
 import { makeTools, registerPrompt, callerOf } from '../lib/register.js';
 import { CONTRACT, briefText } from '../lib/contract.js';
@@ -96,6 +96,53 @@ test('the gate accepts only complete evidence', () => {
   assert.equal(decideGate({ ...base, cycle: MAX_CYCLES + 1 }, goodCtx(c)).verdict, 'blocked');
 });
 
+test('the gate accepts the frozen hash without the sha256 prefix', () => {
+  const c = 'sha256:' + 'c'.repeat(64);
+  assert.deepEqual(decideGate(goodGate('c'.repeat(64)), goodCtx(c)), { verdict: 'accepted', reasons: [] });
+});
+
+test('the gate calls a different hash a different hash, with or without the prefix', () => {
+  const c = 'sha256:' + 'c'.repeat(64);
+  for (const sent of ['sha256:' + 'd'.repeat(64), 'd'.repeat(64)]) {
+    const r = decideGate(goodGate(sent), goodCtx(c));
+    assert.equal(r.verdict, 'unmet');
+    assert.deepEqual(r.reasons, ['the candidate hash differs from the frozen hash: sent dddddddddddd..., frozen cccccccccccc...; send the candidate that hoh_freeze returned']);
+  }
+});
+
+test('a shortened hash is refused, and the message shows that it is short', () => {
+  const c = 'sha256:' + 'c'.repeat(64);
+  const r = decideGate(goodGate(c.slice(0, 19)), goodCtx(c));
+  assert.equal(r.verdict, 'unmet');
+  assert.match(r.reasons[0], /sent c{12}, frozen c{12}\.\.\./);
+  assert.equal(decideGate({ ...goodGate(c), candidate: undefined }, goodCtx(c)).verdict, 'unmet');
+});
+
+test('through the tools, the hash check and the file check each report their own fault', async () => {
+  const d = await tmp();
+  const [propose, freeze, gate] = makeTools((def) => def, { ARC_HOME: d }, { retain: async () => true });
+  const lead = { agent: { id: 'lead-1' } }, reviewer = { agent: { id: 'rev-1' } };
+  const f = path.join(d, 'work.txt'); await writeFile(f, 'candidate one');
+  await propose.execute({ goal: 'demo', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, lead);
+  const fr = await freeze.execute({ goal: 'demo', files: [f] }, lead);
+  const sent = (candidate) => gate.execute({ goal: 'demo', ...goodGate(candidate) }, reviewer);
+
+  assert.equal((await sent(fr.candidate.replace(/^sha256:/, ''))).verdict, 'accepted');
+  const other = await sent('sha256:' + 'd'.repeat(64));
+  assert.equal(other.verdict, 'unmet');
+  assert.match(other.reasons.join(' '), /candidate hash differs from the frozen hash/);
+  assert.doesNotMatch(other.reasons.join(' '), /later edit|files changed/);
+
+  await writeFile(f, 'candidate TWO edited after the freeze');
+  for (const candidate of [fr.candidate, fr.candidate.replace(/^sha256:/, '')]) {
+    const edited = await sent(candidate);
+    assert.equal(edited.verdict, 'unmet');
+    assert.match(edited.reasons.join(' '), /files changed after the freeze/);
+    assert.doesNotMatch(edited.reasons.join(' '), /candidate hash differs/);
+  }
+  await rm(d, { recursive: true });
+});
+
 test('callerOf reads the agent id the runtime reports', () => {
   assert.equal(callerOf({ agent: { id: 'a1' } }), 'a1');
   assert.equal(callerOf({ agent: { session: { id: 's1' } } }), 's1');
@@ -130,6 +177,70 @@ test('parseMcpBody reads json and one event', () => {
   assert.throws(() => parseMcpBody('event: ping\n'), /empty/);
 });
 
+test('the gate ties reported checks to the proposal and refuses a timeout', () => {
+  const ctx = (checks) => ({ ...goodCtx('c'), propose: { seq: 1, checks, digests: checks.map(checkDigest) } });
+  const gate = (rows, checks = ['node test.js']) => decideGate({ ...goodGate('c'), checks: rows }, ctx(checks));
+  const row = { id: 'c1', command: 'node test.js', exit: 0, excerpt: 'ok 12' };
+  assert.equal(gate([row]).verdict, 'accepted');
+  assert.equal(gate([{ ...row, command: ' node test.js ' }]).verdict, 'accepted');
+  const swapped = gate([{ ...row, command: 'true' }]);
+  assert.equal(swapped.verdict, 'unmet'); assert.match(swapped.reasons.join(' '), /proposed check was not reported/);
+  assert.equal(gate([row], ['node test.js', 'npm run lint']).verdict, 'unmet');
+  const long = 'x'.repeat(400);
+  assert.equal(gate([{ ...row, command: long }], ['  ' + long]).verdict, 'accepted');
+  assert.equal(gate([{ ...row, command: long + ' && true' }], [long + ' && npm test']).verdict, 'unmet', 'a shared prefix is not the same check');
+  const timeout = gate([{ ...row, timed_out: true }]);
+  assert.equal(timeout.verdict, 'unmet'); assert.match(timeout.reasons.join(' '), /timed out/);
+  assert.equal(decideGate(goodGate('c'), goodCtx('c')).verdict, 'accepted');
+});
+
+test('a proposal after the freeze cannot drop a proposed check', async () => {
+  const d = await tmp();
+  const [propose, freeze, gate] = makeTools((def) => def, { ARC_HOME: d, ARC_HOH_RETAIN: '0' });
+  const lead = { agent: { id: 'lead-1' } }, reviewer = { agent: { id: 'rev-1' } };
+  const f = path.join(d, 'a.txt'); await writeFile(f, 'one');
+  const plan = (checks) => ({ goal: 'demo', hypothesis: 'h', boundary: 'b', checks, probes: ['p'] });
+  await propose.execute(plan(['npm test']), lead);
+  const fr = await freeze.execute({ goal: 'demo', files: [f] }, lead);
+  await propose.execute(plan(['true']), lead);
+  const easy = { id: 'c1', command: 'true', exit: 0, excerpt: 'ok' };
+  const swapped = await gate.execute({ goal: 'demo', ...goodGate(fr.candidate), checks: [easy] }, reviewer);
+  assert.equal(swapped.verdict, 'unmet'); assert.match(swapped.reasons.join(' '), /npm test/);
+  const both = await gate.execute({ goal: 'demo', ...goodGate(fr.candidate), checks: [easy, { ...easy, id: 'c2', command: 'npm test' }] }, reviewer);
+  assert.equal(both.verdict, 'accepted');
+  await rm(d, { recursive: true });
+});
+
+test('a proposal written before the digests still binds its checks', async () => {
+  const d = await tmp();
+  const env = { ARC_HOME: d, ARC_HOH_RETAIN: '0' };
+  const [, freeze, gate] = makeTools((def) => def, env);
+  const lead = { agent: { id: 'lead-1' } }, reviewer = { agent: { id: 'rev-1' } };
+  await appendLedger(ledgerFile(env), { type: 'propose', goal: 'old', caller: 'lead-1', checks: ['npm test'], probes: ['p'] });
+  const f = path.join(d, 'a.txt'); await writeFile(f, 'one');
+  const fr = await freeze.execute({ goal: 'old', files: [f] }, lead);
+  const row = { id: 'c1', command: 'true', exit: 0, excerpt: 'ok' };
+  assert.equal((await gate.execute({ goal: 'old', ...goodGate(fr.candidate), checks: [row] }, reviewer)).verdict, 'unmet');
+  assert.equal((await gate.execute({ goal: 'old', ...goodGate(fr.candidate), checks: [{ ...row, command: 'npm test' }] }, reviewer)).verdict, 'accepted');
+  await rm(d, { recursive: true });
+});
+
+test('a long check in an old proposal still binds the gate by its kept start', async () => {
+  const d = await tmp();
+  const env = { ARC_HOME: d, ARC_HOH_RETAIN: '0' };
+  const [, freeze, gate] = makeTools((def) => def, env);
+  const lead = { agent: { id: 'lead-1' } }, reviewer = { agent: { id: 'rev-1' } };
+  const long = 'npm test ' + 'x'.repeat(400);
+  await appendLedger(ledgerFile(env), { type: 'propose', goal: 'old', caller: 'lead-1', checks: [long.slice(0, 300) + '...'], probes: ['p'] });
+  const f = path.join(d, 'a.txt'); await writeFile(f, 'one');
+  const fr = await freeze.execute({ goal: 'old', files: [f] }, lead);
+  const row = { id: 'c1', exit: 0, excerpt: 'ok' };
+  const verdict = async (command) => (await gate.execute({ goal: 'old', ...goodGate(fr.candidate), checks: [{ ...row, command }] }, reviewer)).verdict;
+  assert.equal(await verdict(long), 'accepted');
+  assert.equal(await verdict('true'), 'unmet');
+  await rm(d, { recursive: true });
+});
+
 test('propose, freeze and gate work end to end, with runtime agent ids', async () => {
   const d = await tmp();
   const env = { ARC_HOME: d };
@@ -142,7 +253,7 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
 
   await assert.rejects(() => freeze.execute({ goal: 'demo', files: [f] }, lead), /no proposal/);
   await assert.rejects(() => propose.execute({ goal: 'demo', hypothesis: 'h', boundary: 'b', checks: [], probes: ['x'] }, lead), /at least one acceptance check/);
-  assert.equal((await propose.execute({ goal: 'demo', hypothesis: 'h', boundary: 'b', checks: ['node t.js'], probes: ['empty'] }, lead)).seq, 1);
+  assert.equal((await propose.execute({ goal: 'demo', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, lead)).seq, 1);
   const fr = await freeze.execute({ goal: 'demo', files: [f] }, lead);
   assert.equal(fr.seq, 2);
   const base = { goal: 'demo', ...goodGate(fr.candidate) };
@@ -204,7 +315,7 @@ test('an opt-out set under the old name still counts', async () => {
   const never = { retain: async () => { throw new Error('must not be called'); } };
   const [propose, freeze, gate] = makeTools((def) => def, { ARC_HOME: d, DSH_HOH_RETAIN: '0' }, never);
   const lead = { agent: { id: 'lead-1' } }, reviewer = { agent: { id: 'rev-1' } };
-  await propose.execute({ goal: 'demo', hypothesis: 'h', boundary: 'b', checks: ['node t.js'], probes: ['empty'] }, lead);
+  await propose.execute({ goal: 'demo', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, lead);
   const fr = await freeze.execute({ goal: 'demo', files: [f] }, lead);
   const r = await gate.execute({ goal: 'demo', ...goodGate(fr.candidate) }, reviewer);
   assert.equal(r.verdict, 'accepted');

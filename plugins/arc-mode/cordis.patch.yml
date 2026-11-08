@@ -1,0 +1,4 @@
+# arc-mode bundle patch: mounts the plugin on the host, so its client half loads.
+- insert:
+    - id: arc-mode
+      name: arc-mode

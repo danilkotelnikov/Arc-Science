@@ -36,6 +36,7 @@ Every page starts with a Status line. It says one of three things.
 - [Build from source](Build-from-source)
 - [Run the tests](Run-the-tests)
 - [A review checklist](How-we-check-our-work)
+- [The working loop](The-working-loop)
 - [Privacy and security](Privacy-and-security)
 
 ## About the project

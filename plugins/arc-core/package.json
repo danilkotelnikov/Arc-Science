@@ -1,0 +1,24 @@
+{
+  "name": "arc-core",
+  "version": "0.1.0",
+  "description": "Shared Arc Kit MCP server and core tools for shelf search, claim recording, gate checks, toolpack loading and memory.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "lib",
+    "locale",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/core.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.19"
+  }
+}

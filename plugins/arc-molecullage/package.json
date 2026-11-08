@@ -1,0 +1,50 @@
+{
+  "name": "arc-molecullage",
+  "version": "0.1.0",
+  "description": "Molecullage workspace for Arc Harness: the 231-source library, eight-domain atlas, five-gate anti-overplating check and 3D structure and Blender figure pipeline.",
+  "icon": "icon.svg",
+  "type": "module",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./icon": "./icon.svg",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "icon.svg",
+    "locale"
+  ],
+  "scripts": {
+    "test": "node --test test/molecullage.test.mjs"
+  },
+  "arc": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@arc-harness/arc-client-ui-slots",
+        "@arc-harness/arc-client-locale",
+        "@arc-harness/arc-client-ui-sidebar-right"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@arc-harness/arc-client-locale": "^0.2.1-rc.2",
+    "@arc-harness/arc-client-ui-sidebar-right": "^0.2.1-rc.2",
+    "@arc-harness/arc-client-ui-slots": "^0.2.1-rc.2",
+    "react": "^18.2.0"
+  },
+  "engines": {
+    "node": ">=22.19",
+    "arc": ">=0.2.1-rc.2 <0.3.0"
+  }
+}

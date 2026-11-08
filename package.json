@@ -9,8 +9,10 @@
   },
   "scripts": {
     "check": "node scripts/check-syntax.mjs",
-    "test": "node scripts/check-syntax.mjs && node lib/arcnames.mjs && node test/iconcolor.test.mjs && node test/header.test.mjs && node --test plugins/arc-hoh/test/hoh.test.mjs plugins/arc-theme/test/theme.test.mjs test/lean-profile.test.mjs test/arcunpacked.test.mjs test/workflows.test.mjs && node lib/testhome.mjs --selftest && node scripts/privacy-scan.mjs --self-test",
+    "test": "node scripts/check-syntax.mjs && node lib/arcnames.mjs && node test/iconcolor.test.mjs && node test/header.test.mjs && node --test plugins/arc-hoh/test/hoh.test.mjs plugins/arc-hoh/test/replay.test.mjs plugins/arc-hoh/test/tree.test.mjs plugins/arc-hoh/test/claims.test.mjs plugins/arc-hoh/test/reliability.test.mjs plugins/arc-hoh/test/budget.test.mjs plugins/arc-hoh/test/register.test.mjs plugins/arc-core/test/core.test.mjs plugins/arc-mode/test/mode.test.mjs plugins/arc-molecullage/test/molecullage.test.mjs plugins/arc-theme/test/theme.test.mjs test/package.test.mjs test/lean-profile.test.mjs test/arcunpacked.test.mjs test/workflows.test.mjs && node tools/measure-start.mjs --self-test && node lib/testhome.mjs --selftest && node scripts/privacy-scan.mjs --self-test",
     "build": "node tools/build.mjs",
+    "package": "node tools/package.mjs",
+    "bench:start": "node tools/measure-start.mjs",
     "test:archive": "node -e \"require('fs').mkdirSync('build/check',{recursive:true})\" && node test/build-check.mjs build/app.asar build/check && node test/ui-strings.mjs && node test/independent-scan.mjs && node test/positive-control.mjs",
     "scan": "node scripts/privacy-scan.mjs"
   }

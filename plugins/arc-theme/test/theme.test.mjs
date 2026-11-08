@@ -1,4 +1,4 @@
-// arc-theme 0.4.0 (2026-11-01): checks the Arc Harness skin without a browser.
+// arc-theme 0.5.0 (2026-11-08): checks the three themes without a browser.
 // Run: node test/theme.test.mjs
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -23,7 +23,7 @@ const exp = loaded.factory((name) => requires[name] ?? {});
 
 check(typeof exp.apply === 'function', 'client exports apply');
 check(Array.isArray(exp.inject) && exp.inject.includes('theme'), 'client injects the theme service');
-check(exp.SKINS && Object.keys(exp.SKINS).join() === 'arc' && exp.SKINS.arc.label === 'Arc Harness', 'one skin exists: Arc Harness (the v0 and Radium skins are gone)');
+check(exp.SKINS && Object.keys(exp.SKINS).join() === 'arc,v0,radium' && exp.SKINS.arc.label === 'Arc Harness', 'three themes exist: Arc Harness, black and white (v0) and Radium');
 
 // The safety net: any picture or inline colour that is still blue is drawn in grey at run time.
 check(typeof exp.isBlue === 'function', 'client exports isBlue (the safety net test for one colour)');
@@ -83,7 +83,7 @@ if (typeof exp.fixDelimiters === 'function') {
 }
 // Owner decision, 2026-10-31 (screenshot): the AI Review panel showed pale text on a white sheet because only its text colour followed the skin
 const arRules = source.split('[data-arc-auto-review]{').slice(1).map((s) => s.split('}')[0]);
-check(arRules.length === 1 && arRules.every((r) => ['--ar-fg', '--ar-muted', '--ar-bg', '--ar-border'].every((v) => r.includes(v + ':var(--dsw-alias-'))),
+check(arRules.length === Object.keys(exp.SKINS).length && arRules.every((r) => ['--ar-fg', '--ar-muted', '--ar-bg', '--ar-border'].every((v) => r.includes(v + ':var(--dsw-alias-'))),
   'AI Review panel: the skin sets text, muted text, surface and border from its tokens');
 check(typeof exp.blueCss === 'function' && exp.blueCss('rgb(47, 111, 237)') === true && exp.blueCss('rgb(143, 143, 143)') === false
   && exp.blueCss('rgba(47, 111, 237, 0)') === false && exp.blueCss('none') === false, 'blueCss reads a computed colour string, ignores none and transparent');
@@ -172,15 +172,15 @@ for (const [id, skin] of Object.entries(exp.SKINS ?? {})) {
   check(/\.arcviz-button\{[^}]*background:var\(--dsw-alias-label-primary\)/.test(scoped), `${id}: Visualize buttons use the ink colour`);
   const scopedBlue = (scoped.match(/#[0-9a-f]{6}(?:[0-9a-f]{2})?\b/gi) ?? []).filter((c) => isBlue(hexAny(c)));
   check(scopedBlue.length === 0, `${id}: no blue colour in the scoped rules (${scopedBlue.length} found)`);
-  // the C2 look: cards 10 px, controls 8 px, Geist type, a dark-brown primary button, cream paper
-  check(tokens['--dsw-radius-md'].light === '10px' && tokens['--dsw-radius-sm'].light === '8px', `${id}: cards are 10 px and controls 8 px`);
-  check(!/border-radius:\s*0\s*!important/.test(scoped), `${id}: no rule squares the corners`);
+  // the C2 look (the Arc theme only; black and white is square and Radium has its own colours): cards 10 px, controls 8 px, Geist type, a dark-brown primary button, cream paper
+  if (id === 'arc') check(tokens['--dsw-radius-md'].light === '10px' && tokens['--dsw-radius-sm'].light === '8px', `${id}: cards are 10 px and controls 8 px`);
+  if (id === 'arc') check(!/border-radius:\s*0\s*!important/.test(scoped), `${id}: no rule squares the corners`);
   check(/^"Geist"/.test(tokens['--arc-font-family-text-default'].light) && /^"Geist Mono"/.test(tokens['--arc-font-family-code-default'].light), `${id}: text is Geist and code is Geist Mono`);
   check(/@font-face\{font-family:Geist;/.test(scoped) && /@font-face\{font-family:Geist Mono;/.test(scoped), `${id}: Geist and Geist Mono are embedded`);
-  check(tokens['--dsw-alias-button-info-fill'].light === '#54453c', `${id}: the send button is the C2 dark brown on paper`);
-  check(hex(tokens['--dsw-static-neutral-bluish-50'].light).join() === '250,249,246', `${id}: the light page is the C2 paper #faf9f6`);
-  check(tokens['--dsw-alias-bg-base'].light === '#faf9f6' && tokens['--dsw-alias-bg-layer-1'].light === '#ffffff' && tokens['--dsw-specific-sidebar-fill'].light === '#f4f2ed', `${id}: the canvas is paper, cards are white, the sidebar is #f4f2ed (the C2 layers)`);
-  check(tokens['--dsw-alias-bg-base'].dark === '#171614' && tokens['--dsw-specific-sidebar-fill'].dark === '#1b1a18', `${id}: the dark canvas and sidebar are the C2 dark set`);
+  if (id === 'arc') check(tokens['--dsw-alias-button-info-fill'].light === '#54453c', `${id}: the send button is the C2 dark brown on paper`);
+  if (id === 'arc') check(hex(tokens['--dsw-static-neutral-bluish-50'].light).join() === '250,249,246', `${id}: the light page is the C2 paper #faf9f6`);
+  if (id === 'arc') check(tokens['--dsw-alias-bg-base'].light === '#faf9f6' && tokens['--dsw-alias-bg-layer-1'].light === '#ffffff' && tokens['--dsw-specific-sidebar-fill'].light === '#f4f2ed', `${id}: the canvas is paper, cards are white, the sidebar is #f4f2ed (the C2 layers)`);
+  if (id === 'arc') check(tokens['--dsw-alias-bg-base'].dark === '#171614' && tokens['--dsw-specific-sidebar-fill'].dark === '#1b1a18', `${id}: the dark canvas and sidebar are the C2 dark set`);
   { const cap = hex(tokens['--dsw-alias-label-caption'].light); const lumOf = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); }; check((1.05) / (lumOf(cap) + 0.05) >= 4.5, `${id}: captions and placeholders have 4.5:1 contrast on white`); }
   check(/arcTurn/.test(scoped), `${id}: the cube turn animation exists`);
   for (const mode of ['light', 'dark']) {
@@ -249,6 +249,56 @@ for (const [id, skin] of Object.entries(exp.SKINS ?? {})) {
     }
   }
   check(n >= 1, `icons: ${n} icon.svg files checked`);
+}
+
+// Three themes (owner decision, 2026-11-08): the two old themes return beside the cream Arc theme, adapted to Arc.
+{
+  const ids = Object.keys(exp.SKINS);
+  const arcKeys = Object.keys(exp.SKINS.arc.tokens);
+  const hex = /^#[0-9a-f]{6}$/i;
+  for (const id of ids) {
+    const sk = exp.SKINS[id];
+    const miss = arcKeys.filter((k) => !(k in sk.tokens));
+    check(miss.length === 0, `theme ${id}: has every token of the Arc theme${miss.length ? ' (missing ' + miss.slice(0, 3).join(', ') + ')' : ''}`);
+    const blue = [];
+    for (const [k, v] of Object.entries(sk.tokens)) for (const m of ['light', 'dark']) {
+      const c = v && v[m];
+      if (typeof c === 'string' && hex.test(c)) { const n = parseInt(c.slice(1), 16); if (exp.isBlue([n >> 16, (n >> 8) & 255, n & 255])) blue.push(`${k}:${m}:${c}`); }
+    }
+    check(blue.length === 0, `theme ${id}: no blue token${blue.length ? ' (' + blue.slice(0, 3).join(', ') + ')' : ''}`);
+    const text = JSON.stringify({ ...sk, scoped: (sk.scoped || []).filter((r) => !r.startsWith('@font-face')) }); // a font file is base64 text
+    check(!/dsh|deepseek-theme|KH Teka|Vercel/i.test(text.replace(/--dsw-static-deepseek-\w+(-delete)?/g, '')), `theme ${id}: no old product name or unlicensed font`);
+    check(/^"?Geist/.test(String(sk.tokens['--arc-font-family-text-default']?.light).replace(/^\?"/, '"')) || String(sk.tokens['--arc-font-family-text-default']?.light).startsWith('"Geist"'), `theme ${id}: Geist is the first font`);
+    check((sk.scoped || []).some((r) => r.startsWith('@font-face{font-family:Geist')), `theme ${id}: carries the Geist font face`);
+    check((sk.scoped || []).some((r) => r.includes('[data-arc-gray]')), `theme ${id}: draws marked blue pictures in grey`);
+  }
+  check(exp.SKINS.v0.label !== exp.SKINS.radium.label && exp.SKINS.arc.tokens['--dsw-alias-bg-base'].light !== exp.SKINS.v0.tokens['--dsw-alias-bg-base'].light, 'the three themes differ in their base colour');
+  check(/role: "radiogroup"/.test(source) && /StyleRow/.test(source) && /"settings\.general\.item"/.test(source), 'a theme picker sits in Settings, General');
+  // apply() with a stub app: the default is Arc, choose() switches, a stored unknown value falls back to Arc
+  const calls = []; const attrs = {}; const store = { 'arc-theme:skin': 'nonsense' };
+  const doc = { documentElement: { setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: () => {} }, head: { appendChild: () => {} }, createElement: () => ({ isConnected: false, remove() {} }), querySelectorAll: () => [] };
+  const w2 = { __ModuleLoader__: { load: (m) => { loaded = m; } } };
+  vm.runInNewContext(source, { window: w2, document: doc, localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; } } });
+  const e2 = loaded.factory((name) => requires[name] ?? {});
+  const ctx = { theme: { overrideTokens: (src, t) => calls.push(t) }, effect: (fn) => fn(), slots: { inject: () => {}, register: () => {} }, locale: { register: () => {} } };
+  e2.apply(ctx);
+  check(attrs['data-arc-skin'] === 'arc' && calls[0] === e2.SKINS.arc.tokens, 'apply: an unknown stored theme falls back to Arc');
+  e2.choose('radium');
+  check(attrs['data-arc-skin'] === 'radium' && store['arc-theme:skin'] === 'radium' && calls[1] === e2.SKINS.radium.tokens, 'choose: Radium is applied and remembered');
+  e2.choose('v0');
+  check(attrs['data-arc-skin'] === 'v0' && store['arc-theme:skin'] === 'v0', 'choose: black and white is applied and remembered');
+  e2.choose('nope');
+  check(attrs['data-arc-skin'] === 'v0', 'choose: an unknown id changes nothing');
+  // start-up with a valid stored theme, and cleanup on unload (reviewer 2026-11-08)
+  const offs = []; let removed = 0; let rowOff = 0;
+  store['arc-theme:skin'] = 'radium';
+  const doc3 = { ...doc, documentElement: { setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: () => { removed += 1; } } };
+  vm.runInNewContext(source, { window: w2, document: doc3, clearInterval, clearTimeout, setTimeout, setInterval, localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; } } });
+  const e3 = loaded.factory((name) => requires[name] ?? {});
+  e3.apply({ ...ctx, effect: (fn) => { const r = fn(); if (typeof r === 'function') offs.push(r); }, slots: { inject: () => () => { rowOff += 1; }, register: () => {} } });
+  check(attrs['data-arc-skin'] === 'radium', 'apply: a stored Radium theme is used at start-up');
+  offs.forEach((f) => f());
+  check(removed === 1 && rowOff === 1, 'unload: the theme attribute and the Settings row are removed');
 }
 
 console.log(failures === 0 ? 'ALL PASS' : `${failures} FAILED`);

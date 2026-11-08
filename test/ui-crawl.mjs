@@ -259,7 +259,7 @@ const SCREENS = LEAN ? LEAN_SCREENS : [
   { name: 'plus-menu', pre: HOME, run: async () => evalIn("__arc.clickAndWait('Add files or run commands')") },
   { name: 'access-mode', pre: HOME, run: async () => evalIn("__arc.clickAndWait('Access mode')") },
   { name: 'right-sidebar', pre: HOME, run: async () => evalIn("__arc.clickAndWait('Open right sidebar')") },
-  ...['General', 'Models', 'Built-in plugins', 'Agent presets', 'Skills', 'Archived sessions', 'Visualize', 'Side card', 'Vision Router'].map((n) => ({
+  ...['General', 'Models', 'Agent presets', 'Skills', 'Archived sessions', 'Visualize', 'Side card', 'Vision Router'].map((n) => ({
     name: 'settings-' + n.toLowerCase().replace(/[^a-z]+/g, '-'),
     optional: ['Archived sessions', 'Visualize', 'Side card'].includes(n) ? OPT_SETTINGS : undefined,
     run: async () => evalIn(`__arc.openSettings(${JSON.stringify(n)})`),

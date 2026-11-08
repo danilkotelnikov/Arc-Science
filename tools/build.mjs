@@ -430,7 +430,7 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
   web = disableRow(web, 'desktop-product-telemetry');
   web = disableRow(web, 'product-analytics');
   put(WEB, web);
-  // (d) plain names for the dormant DeepSeek-only plugins on the Plugins page
+  // (d) plain names for the dormant DeepSeek-only plugins and Sentence-case titles for all built-in plugins
   const TITLES = {
     'dsh-llm-deepseek-api-key': 'Direct API-key route', 'dsh-llm-deepseek-account': 'Account route', 'dsh-deepseek-account-platform': 'Account platform',
     'dsh-deepseek-llm-api-extensions': 'Model API extensions', 'dsh-session-log-deepseek': 'Session log add-on', 'dsh-plugin-package-inventory-deepseek': 'Package inventory add-on',
@@ -446,9 +446,42 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
       put(p, JSON.stringify(j, null, 2) + '\n');
     }
   }
+  const ACRONYMS = {
+    api: 'API',
+    cli: 'CLI',
+    ui: 'UI',
+    mcp: 'MCP',
+    html: 'HTML',
+    json: 'JSON',
+    powershell: 'PowerShell',
+    pwsh: 'PowerShell',
+    bash: 'Bash',
+  };
+  const slugToSentence = (s) =>
+    s
+      .split('-')
+      .map((w, i) => ACRONYMS[w] ?? (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+      .join(' ');
+  let slugTitles = 0;
+  for (const f of src.files) {
+    if (f.entry.unpacked || overrides.get(f.path) === null) continue;
+    if (!/^dsh\/node_modules\/(?:@[^/]+\/)?[^/]+\/locale\/(?:en|zh)\.json$/.test(f.path)) continue;
+    const j = JSON.parse(text(f.path));
+    let dirty = false;
+    if (typeof j.meta?.title === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(j.meta.title)) {
+      j.meta.title = slugToSentence(j.meta.title);
+      slugTitles++;
+      dirty = true;
+    }
+    if (!j.presetStandardName) {
+      j.presetStandardName = 'Standard';
+      dirty = true;
+    }
+    if (dirty) put(f.path, JSON.stringify(j, null, 2) + '\n');
+  }
   // the 1017 label plugin has no locale file: add one so the Plugins page does not show its package name
-  put(`${DS}dsh-client-ui-deepseek-model-label-1017/locale/en.json`, JSON.stringify({ meta: { title: 'Model label badge' } }, null, 2) + '\n');
-  report.push(`DeepSeek services: provider unregistered, ${catalog} catalog files with dead addresses, 3 telemetry rows off, ${Object.keys(TITLES).length + 1} plugin names plain`);
+  put(`${DS}dsh-client-ui-deepseek-model-label-1017/locale/en.json`, JSON.stringify({ meta: { title: 'Model label badge' }, presetStandardName: 'Standard' }, null, 2) + '\n');
+  report.push(`DeepSeek services: provider unregistered, ${catalog} catalog files with dead addresses, 3 telemetry rows off, ${Object.keys(TITLES).length + 1} plugin names plain, ${slugTitles} built-in plugin slug titles formatted`);
 }
 
 // ---- patch 10: the welcome window
@@ -618,14 +651,14 @@ Use this image in Markdown:
   report.push('running label: "Thinking" and "Thinking for 2s" (was "Deep diving", with middle dots)');
 }
 
-// ---- patch 14: the lean core, with a read-only Built-in plugins section kept in Settings. The browser roster of the web bundle (which the desktop app serves as well) loses the screens that
+// ---- patch 14: the lean core. Built-in plugins stay built in and show no page in Settings. The browser roster of the web bundle (which the desktop app serves as well) loses the screens that
 // have no place in a v0 style harness: the Plugins page and its Built-in plugins settings, Automation tasks, trajectories,
 // skills, accounts, the subagent settings, and the mode picker with its Agent presets page. The host halves stay, so the agent
 // still works. A row is switched off by one `disabled: true` line, so a screen comes back by deleting that line.
 {
   const p = DS + 'dsh-web-app/cordis.patch.yml';
   let s = text(p);
-  const OFF = ['ui-plugin-manager', 'ui-settings-account', 'ui-schedule', 'ui-trajectory', 'ui-skill', 'ui-settings-subagent', 'ui-agent-preset', 'entry-customization'];
+  const OFF = ['ui-plugin-manager', 'ui-settings-account', 'ui-schedule', 'ui-trajectory', 'ui-skill', 'ui-settings-subagent', 'ui-agent-preset', 'entry-customization', 'ui-settings-plugins', 'ui-settings-plugin-inventory'];
   for (const id of OFF) {
     const re = new RegExp(`(\\n {4}- id: ${id}\\r?\\n {6}name: [^\\r\\n]+(\\r?\\n))(?! {6}disabled:)`);
     must(re.test(s), `lean core: row ${id} not found, or it is disabled already`);

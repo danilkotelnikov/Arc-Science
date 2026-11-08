@@ -25,6 +25,7 @@
 - [Build from source](Build-from-source)
 - [Run the tests](Run-the-tests)
 - [A review checklist](How-we-check-our-work)
+- [The working loop](The-working-loop)
 - [Privacy and security](Privacy-and-security)
 
 **Project**

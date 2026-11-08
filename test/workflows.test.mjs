@@ -110,24 +110,29 @@ test('@claude stops on a fork before it checks out or runs anything', () => {
 });
 
 // Run the real step with a stand-in for gh. Skipped where no bash or awk exists.
+const BASH = spawnSync('bash', ['-c', 'test -n "$PROBE" && awk 1 /dev/null'], { env: { ...process.env, PROBE: '1' } }).status === 0
+  ? 'bash'
+  : (fs.existsSync('C:\\Program Files\\Git\\bin\\bash.exe') ? 'C:\\Program Files\\Git\\bin\\bash.exe' : 'bash');
+const HAS_BASH_AWK = spawnSync(BASH, ['-c', 'test -n "$PROBE" && awk 1 /dev/null'], { env: { ...process.env, PROBE: '1' } }).status === 0;
+
 function rounds(pages, ghExit = 0) {
-  const script = screen.match(/- name: Count the fix rounds[\s\S]*?run: \|\n([\s\S]*?)\n {6}- name: Read the trusted comments/)[1].replace(/^ {10}/gm, '');
+  const script = screen.match(/- name: Count the fix rounds[\s\S]*?run: \|\r?\n([\s\S]*?)\r?\n {6}- name: Read the trusted comments/)[1].replace(/^ {10}/gm, '').replace(/\r/g, '');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rounds-'));
   fs.writeFileSync(path.join(dir, 'gh'), `#!/bin/sh\nprintf '${pages.join('\\n')}\\n'\nexit ${ghExit}\n`, { mode: 0o755 });
   const out = path.join(dir, 'out');
-  const r = spawnSync('bash', ['-e', '-c', script], { env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}`, GITHUB_OUTPUT: out, REPO: 'a/b', PR: '1' }, encoding: 'utf8' });
+  const r = spawnSync(BASH, ['-e', '-c', script], { env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}`, GITHUB_OUTPUT: out, REPO: 'a/b', PR: '1' }, encoding: 'utf8' });
   if (ghExit) return r.status;
   assert.equal(r.status, 0, r.stderr);
   return fs.readFileSync(out, 'utf8').trim();
 }
 
-test('the fix rounds add up over pages', { skip: spawnSync('bash', ['-c', 'awk 1 /dev/null']).status !== 0 }, () => {
+test('the fix rounds add up over pages', { skip: !HAS_BASH_AWK }, () => {
   assert.equal(rounds(['0']), 'fixes=0');
   assert.equal(rounds(['1', '1']), 'fixes=2');
   assert.equal(rounds(['2', '1']), 'fixes=3');
 });
 
-test('a failed lookup stops the job and cannot reset the count', { skip: spawnSync('bash', ['-c', 'awk 1 /dev/null']).status !== 0 }, () => {
+test('a failed lookup stops the job and cannot reset the count', { skip: !HAS_BASH_AWK }, () => {
   assert.notEqual(rounds([''], 1), 0);
 });
 

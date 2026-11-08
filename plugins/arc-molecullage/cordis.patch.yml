@@ -1,0 +1,4 @@
+# arc-molecullage bundle patch: mounts the Molecullage workspace plugin on the host.
+- insert:
+    - id: arc-molecullage
+      name: arc-molecullage

@@ -136,7 +136,7 @@ try {
     await sleep(1800);
     await open('General', 'settings-general');
     await open('Models', 'settings-models');
-    await open('Built-in plugins', 'settings-plugins');
+    step('Settings has no Built-in plugins page', !(await locate('Built-in plugins', `document.querySelector('[role=dialog]')`)));
     for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
     await sleep(900);
     await say('In two short sentences, what does a hash-chained ledger prove about an agent run?');

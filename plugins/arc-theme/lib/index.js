@@ -1,5 +1,5 @@
 /**
- * arc-theme 0.4.0 (2026-11-01)
+ * arc-theme 0.5.0 (2026-11-08)
  * Host half. The skins live in the browser half (./client); the host only
  * mounts the plugin so the client loads.
  */
