@@ -26,7 +26,7 @@ jobs:
       - name: Theme plugin tests
         run: node --test plugins/arc-theme/test/theme.test.mjs
       - name: Build kit tests
-        run: node --test test/lean-profile.test.mjs test/arcunpacked.test.mjs
+        run: node --test test/lean-profile.test.mjs test/arcunpacked.test.mjs test/workflows.test.mjs
       - name: Test home self-test
         run: node lib/testhome.mjs --selftest
       - name: Privacy scan self-test

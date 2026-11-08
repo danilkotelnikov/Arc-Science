@@ -11,6 +11,7 @@ All notable changes to Arc Harness are listed here. The format follows [Keep a C
 - Claim graph in the HoH plugin: `plugins/arc-hoh/lib/claims.js` links claims, evidence, sources and experiments. A new result updates only the nodes below it, and a claim never shows a higher evidence level than it has. No tool calls it yet.
 - Source reliability in the HoH plugin: `plugins/arc-hoh/lib/reliability.js` estimates how far to trust each source from its votes and the gate verdicts, and an unreliable source counts for less in the claim graph. No tool calls it yet.
 - Branch budgets in the HoH plugin: `plugins/arc-hoh/lib/budget.js` splits a budget over stages, and weak branches stop early. No tool calls it yet.
+- Pull request automation: `@claude` in a pull request comment asks for an edit or a fix, and `pr-screen` reviews each pull request from this repository. Haiku screens, Sonnet fixes critical findings for at most three rounds, and Argon reviews first when it is turned on. Nothing merges by itself.
 
 ### Fixed
 
