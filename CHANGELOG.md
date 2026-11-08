@@ -9,6 +9,8 @@ All notable changes to Arc Harness are listed here. The format follows [Keep a C
 - Replay gate in the HoH plugin: `plugins/arc-hoh/lib/replay.js` decides whether a patch to the harness may go to the user. It holds the trap set, the held-out split, the bootstrap bound and the error budget. It moved from the development database, and no tool calls it yet.
 - Branch tree in the HoH plugin: `plugins/arc-hoh/lib/tree.js` holds branch states, the support score by likelihood ratio and the order of the next check. A tree is a pure fold over recorded events. No tool calls it yet.
 - Claim graph in the HoH plugin: `plugins/arc-hoh/lib/claims.js` links claims, evidence, sources and experiments. A new result updates only the nodes below it, and a claim never shows a higher evidence level than it has. No tool calls it yet.
+- Source reliability in the HoH plugin: `plugins/arc-hoh/lib/reliability.js` estimates how far to trust each source from its votes and the gate verdicts, and an unreliable source counts for less in the claim graph. No tool calls it yet.
+- Branch budgets in the HoH plugin: `plugins/arc-hoh/lib/budget.js` splits a budget over stages, and weak branches stop early. No tool calls it yet.
 
 ### Fixed
 
