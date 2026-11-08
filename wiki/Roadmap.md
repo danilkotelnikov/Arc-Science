@@ -10,13 +10,24 @@ The app works first, then claims, then proof. Nothing new goes in unless the app
 
 | Phase | What | State | Proof |
 |---|---|---|---|
-| 0. Working basics | The gateway restarts itself and passes long requests. Settings shows Built-in plugins. Google Vertex replies. Running labels shine from one gradient. | One step left: the gateway must start at login. | The desktop journey |
+| 0. Working basics | The gateway restarts itself and passes long requests. Google Vertex replies. Running labels shine from one gradient. | Done | The desktop journey |
 | 1. Lean Arc Harness | Coding view row removed, Trace tab, crawl in three phases, install with undo. | Done | Crawl and gate reports |
-| 2. Memory upgrade | Search in two languages with a reranker, living notes, advice records, chat export import. | Runs alongside | Recall measured before and after |
-| 3. Claims and rating | A tree of branches, a claim graph, a small local rater, source reliability, a budget per branch, training from verdicts. | Next | Tests on recorded sessions, then calibration |
-| 4. Research session | Built-in read routes, three panes, a decision map, a consent dialog and the Cammut client tab. | Planned | End-to-end tests |
-| 5. Benchmark proof | One public benchmark and a calibration score. We say "better" only after this. | Planned | Score against published agents, same budget |
-| 6. Native and public | The gateway security fix is built. Next come no packages at run time, Rust parts, a first-run wizard and releases. | Planned, one part built | Hashes and a clean-clone build |
+| 1b. App look | Built-in plugins leave Settings. One unified C2 console joins Research, Memory, Molecules, BioArt and Prose with Servers, Keys, Apps and Audit. | Planned before phase 4 UI | Console and desktop journey tests |
+| 2. Memory upgrade | Search in two languages with a reranker, living notes, advice records, chat export import, daily agent digest, nightly merge, and one-time SSH server deploy. | Runs alongside | Recall measured before and after; WSL deploy test |
+| 3. Claims and rating | A tree of branches, a claim graph, a small local rater, source reliability, a budget per branch, decision records, checkpoint and resume, and training from verdicts. | Built on local branches for 3.0, 3.1, 3.2, 3.4 and 3.5; rater choice and training next | Tests on recorded sessions, then calibration |
+| 4. Research session, Arc Kit, Shelf and Workshop | Shared `arc-core` MCP and skills, built-in read routes, three panes, a decision map, a consent dialog, the Cammut client tab, the Shelf reference library, Workshop toolpacks, and Molecules and BioArt workspaces backed by Molecullage. | Molecullage 231-source library, eight-domain atlas and 56-rule anti-overplating gate built; workspace UI planned | End-to-end tests and `qa_figure` checks |
+| 5. Benchmark proof | Startup speed baseline, headless `arc` benchmark runner, one public benchmark and a Brier calibration score. We say "better" only after this. | Planned | Score against published agents, same budget |
+| 6. Native and public | The gateway security fix is built. Next come no packages at run time, Rust parts, weekly policy and Shelf freshness proposals, an updater, a first-run wizard and releases. | Planned, one part built | Hashes and a clean-clone build |
+
+## Arc Kit, Shelf and Workshop
+
+Arc Harness shares its core across hosts through **Arc Kit**: rule files at Depth 0, Agent Skills and the `arc-core` MCP server at Depth 1, hooks and a plugin bundle at Depth 2, and the headless `arc` command and ACP agent at Depth 3. Even when a host has no hook system, `arc-core` enforces two rules in code: only a checker other than the builder can record an accepted verdict, and every side-effecting tool call requires a consent token issued by the window or terminal.
+
+Agent work uses four typed layers. The **Thought** layer summarises one step and drops the raw trace. The **Intuition** layer runs a small fast model to return probabilities for routing, risk and effort, checked by Brier score. The **Decision** layer writes a YAML record of options, choice, evidence, reversibility and check. The **Claim** layer records a statement with its evidence level and traced numbers in the claim graph.
+
+The **Shelf** is a local, version-pinned reference corpus searched before a task. The **Workshop** loads software and MCP toolpacks on a task signal (Structure, CAD, 3D, 2D, App, Science compute, and the scope-gated `Inspect` reverse-engineering pack). The Molecullage 231-source library, eight-domain software and model atlas, and 56-rule anti-overplating grammar (`overplate = 0`) form the first verified Shelf and toolpack vertical for Molecules and BioArt.
+
+The **Memory server deploy tab** deploys Hindsight, the Cammut gateway and a reverse proxy to a user's Linux server over SSH. A native main-process password dialog holds the one-time password in memory for the first login so that no password enters the WebView, URLs, storage or logs.
 
 ## The goal
 
