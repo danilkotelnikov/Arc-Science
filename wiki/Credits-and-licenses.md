@@ -14,7 +14,7 @@ Real model names appear only as names of models.
 
 The kit is licensed under the MIT license, "Copyright (c) 2026 Arc Harness contributors". The file is `LICENSE`.
 The AS cube logo is the exception. See "The AS cube logo" below.
-The kit holds scripts, brand files, tests, the two Arc plugins and documents. It holds no part of the original app.
+The kit holds build and installer scripts, brand files, tests, the six Arc plugins, the C2 console, the Rust validator crate and documents. It holds no part of the original app.
 
 ## The AS cube logo
 

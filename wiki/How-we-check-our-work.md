@@ -35,7 +35,7 @@ The Trace tab in the right sidebar shows the ledger. The gate checks the evidenc
 - Two scans read the same archive with different code, so a mistake in one shows in the other.
 - A positive control runs the scans on the original archive. A scan that reads nothing fails there.
 - The privacy scan runs before anything is published. Run it yourself with `npm run scan`.
-- CI runs the syntax check, the rename map check, the icon color test, the two plugin tests, the privacy scan self-test and the privacy scan on every push. The file is `.github/workflows/ci.yml`. Run the first four yourself with `npm test`.
+- CI runs the full `npm test` suite (syntax, rename map, icon colors, header SVGs, all six plugins, installer, benchmark and native transition tests, and privacy self-test), `cargo test` on `native/arc-validators`, and the repository privacy scan on every push. The file is `.github/workflows/ci.yml`.
 
 ## Evidence levels
 

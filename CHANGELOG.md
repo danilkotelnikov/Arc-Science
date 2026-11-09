@@ -23,14 +23,14 @@ All notable changes to Arc Harness are listed here. The format follows [Keep a C
 ### Removed
 
 - Purged November 4 debug-progress narrative and failed-run screenshots (`task-run.png`, `task-memory.png`, `task-approval.png`), retired Built-in plugins screenshot (`light-settings-plugins.png`), and stale white-background November 4 raster schematics (`roadmap.png`, `arc-build.png`, `request-flow.png`, `hoh-cycle.png`).
-- Pruned merged temporary worktrees and stale merged feature branches so `main` is the clean active branch.
+- Pruned 5 merged temporary worktrees, 8 merged local feature branches, and all 14 stale remote feature branches on `origin` so `origin/main` is the sole remote branch.
 
 ## [0.4.0] - 2026-11-09
 
 ### Added
 
 - Unified C2 console UI (`plugins/arc-core/ui/panel.js` and `lib/console.js`): joins Research, Memory, Molecullage, and Prose workspaces with Servers, Keys, Apps, and Audit panels, three-pane Research session view, 30-day consent dialog, and local prose rule detector.
-- Phase 6 Arc Native and Rust transition slices `N0` to `N9` (`lib/native/` and `native/arc-validators`): pinned upstream manifest diffing, runtime package-manager and registry probe guards, vendored plugin license auditor, loopback `127.0.0.1` Cammut gateway with Bearer auth, settings-only profile pruner, deterministic Cordis module-table generator, and zero-dependency Rust crate (`sha256`, `arc_rules`, `arc_scan`, `arc_hook`, `vector_assets`, `seal_guard`, `grants_net`).
+- Phase 6 Arc Native and Rust transition slices `N0` to `N9` (`lib/native/` and `native/arc-validators`): pinned upstream manifest diffing, runtime package-manager guards, vendored plugin license audit, loopback `127.0.0.1` Cammut gateway, settings-only profile pruner, and Cordis module-table generator. Includes the zero-dependency Rust crate (`sha256`, `arc_rules`, `arc_scan`, `arc_hook`, `vector_assets`, `seal_guard`, `grants_net`).
 - Intuition Router and decision checkpoints (`plugins/arc-hoh/lib/intuition.js`): `DEC-xxxx` schema validation, 13-state task graph checkpoint/resume, and Brier-calibrated routing.
 - `tools/bench-runner.mjs`: deterministic headless benchmark harness with self-test suite.
 

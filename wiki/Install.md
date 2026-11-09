@@ -1,6 +1,6 @@
 # Install
 
-Status: Partly. The kit builds and installs on Windows. The desktop window, the menus and the installer are not started by any check. macOS and Linux are not tested.
+Status: Partly. The kit builds and installs on Windows, and `test/desktop-journey.mjs` checks the desktop window and Settings. Native menus and the Inno Setup installer are not run in CI. macOS and Linux are not tested.
 
 This page takes you from nothing to a patched app. It has no model keys in it yet. [Add your API keys](Add-your-API-keys) comes next.
 

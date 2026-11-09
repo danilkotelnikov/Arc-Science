@@ -39,21 +39,21 @@ Keep the module system inside the app. Freeze one composition. Remove pnpm and t
 
 Each item is small and has a proof. Each goes through the review checklist on the page [A review checklist](How-we-check-our-work).
 
-| Planned work | What it means | Proof |
+| Work item | State in 0.5.0 | Proof |
 |---|---|---|
-| Pin the upstream release | Pin the upstream release tag, build it, and compare it with the shipped archive. | A hash report |
-| Close the plugin manager | Part exists: the lean core switches off the plugin manager and the Plugins page. Still planned: remove pnpm from the app, the plugin market, hot reload and the registry checks, and add a read-only page called "Built-in features". | No pnpm process, no registry traffic, a page test |
-| Fold in the kept plugins | Part exists: the two Arc plugins are in `plugins/`, and you install them by copying. Still planned: move the plugins we keep into the archive, including the theme skin. | A profile with an empty `node_modules` folder still works |
-| Memory gateway | Build a memory gateway into the app as a host part. A setting switches it on. It has authentication, and keys go into the system credential store. Today `arc-hoh` talks to a separate local gateway on port 7424. | Recall and store work without a start-up script |
-| Cammut client tab | A tab for your own Cammut server. You enter the server address, an API key and a token if the server needs one. The tab shows the connection state. You pick the memory scopes. The tab also shows the memory policy. | A fresh install with an empty profile connects to a test server, recalls a note and stores one |
-| Memory policy | Part exists: `arc-hoh` puts memory rules into the prompt. Still planned: the memory policy as a built-in module, with a documented default text. See [The memory policy](The-memory-policy). | Policy tests with a fake server: each rule fires, a switched-off rule does not |
-| Vendor the kept plugins | Copy the kept plugins into the repository with their license notices. | A license audit and feature checks |
-| Settings-only profile | The profile keeps only its settings file. | Delete `node_modules` and every feature remains |
-| Source fork | Fork the upstream source with a generated module table and reproducible hashes. | The same hash twice |
-| Rust parts | Replace single parts with Rust, one at a time, only where measured time or a removed dependency justifies it. | Tests that compare output byte for byte with the current implementation |
-| Public release | Credits, license files, a clean history, a first-run wizard that asks for your server address and your keys, and releases built by CI. | A clean clone builds the installer, and a scan finds no secret and no personal path |
+| Pin the upstream release | Built in `lib/native/upstream-diff.mjs` and `brandtext/upstream-manifest.json`; building upstream from source remains planned. | Manifest hash report in `native-transition.test.mjs` |
+| Close the plugin manager | Lean core switches off the Plugins page, and `lib/native/runtime-guard.mjs` blocks `pnpm` and registry probes in tests. Removing `pnpm` from the upstream archive awaits the source fork. | `ui-crawl.mjs --lean` and `native-transition.test.mjs` |
+| Fold in the kept plugins | All six Arc plugins live in `plugins/`, and `lib/native/vendor-bundler.mjs` stages them with a license audit. Folding them into a single unpatched archive awaits the source fork. | `native-transition.test.mjs` |
+| Memory gateway | `lib/native/cammut-gateway.mjs` implements the loopback `127.0.0.1` Bearer-authenticated Cammut gateway, and `plugins/arc-core/lib/deploy.js` deploys Hindsight and Cammut over TOFU SSH. System credential-store storage remains planned. | `native-transition.test.mjs` and `plugins/arc-core/test/core.test.mjs` |
+| Cammut client tab | `plugins/arc-core` provides the C2 console (Memory and Servers panels) plus TOFU SSH server deployment; system credential-store storage remains planned. | `plugins/arc-core/test/ui-panel.test.mjs` |
+| Memory policy | Built in `plugins/arc-core` (five-label note policy, secret rejection, near-twin supersede, and fail-open Cammut breaker) alongside the `arc-hoh` prompt contract. | `plugins/arc-core/test/core.test.mjs` |
+| Vendor the kept plugins | Built in `brandtext/upstream-manifest.json` and `lib/native/vendor-bundler.mjs`, generating `THIRD_PARTY_NOTICES`. | `native-transition.test.mjs` |
+| Settings-only profile | `lib/native/settings-profile.mjs` implements the settings-only profile pruner; removing `node_modules` at boot awaits the source fork. | `native-transition.test.mjs` |
+| Source fork | `lib/native/module-table.mjs` generates deterministic Cordis module tables; the full upstream source fork remains planned. | Same hash twice (`native-transition.test.mjs`) |
+| Rust parts | Built in `native/arc-validators` (zero-dependency Rust crate for SHA-256, prose rules, secret scans, hook guards, SVG bounds, network grants and seal guards). | `cargo test --manifest-path native/arc-validators/Cargo.toml` |
+| Public release | Windows installer staging (`tools/package.mjs`, `installer/arc-harness.iss`), releases `0.1.0` to `0.5.0`, and SHA-pinned Node + Rust CI are built; upstream source fork and first-run wizard remain planned. | `test/package.test.mjs` and `npm run scan` |
 
-Cammut is a separate memory server. Users run it themselves. Arc Harness talks to it through `arc-hoh` and plans a client tab. See [Connect your Cammut server](Connect-your-Cammut-server).
+Cammut is a separate memory server that users run themselves. Arc Harness connects through `arc-hoh`, the `arc-core` MCP tools and C2 console, and the loopback gateway module in `lib/native/cammut-gateway.mjs`. See [Connect your Cammut server](Connect-your-Cammut-server).
 
 ## Order
 

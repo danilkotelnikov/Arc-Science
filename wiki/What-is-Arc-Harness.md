@@ -45,4 +45,4 @@ You need to be comfortable with a terminal, because you build the app yourself.
 
 ## Where it is going
 
-[Roadmap](Roadmap) lists the planned steps. The largest are a built-in memory policy and a profile without plugin packages.
+[Roadmap](Roadmap) lists the next steps: the public benchmark campaign, operating-system credential storage and the upstream source fork.

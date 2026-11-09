@@ -42,12 +42,14 @@ The lean core has no Plugins page, no Automation tasks, no Context Insights and 
 
 ## Settings worth knowing
 
-The lean core keeps two settings pages: General and Models.
+The lean core keeps General and Models, and the plugin `arc-mode` adds Advanced.
 
 - **General, Permission.** The default permission mode for new sessions.
 - **General, Appearance.** Light, Dark or System. A new data folder starts in Light.
 - **General, Font size.** Affects the conversation text only.
+- **General, Theme.** Select Arc Harness (paper), Black and white or Radium when `arc-theme` is installed.
 - **Models.** Your providers and keys.
+- **Advanced.** Switch Arc Harness mode on or off and inspect the installed rules, hooks, skills and benchmark tables.
 
 ## Next
 

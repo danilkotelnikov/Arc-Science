@@ -56,7 +56,7 @@ The build removes the known connections of the original app to the vendor's serv
 
 ### What the checks cannot see
 
-- The desktop window, the menus, the welcome window and the installer were not started by any test.
+- `test/desktop-journey.mjs` opens the desktop window and Settings; native menus, the skipped welcome window and the Inno Setup installer are not started in CI.
 - The live trace sees Node connections only. A program that a plugin starts, such as a Python helper, is outside it.
 - The text scans do not read pictures or the native files in `app.asar.unpacked`.
 - The picture scan cannot read words drawn inside a picture. A plugin's asset folder can hold a screenshot that shows the old product name. The repository ships none.

@@ -30,8 +30,8 @@ No. The patches target version 0.2.1-rc.5. A different version needs new patches
 
 ## Can I run a memory server?
 
-Not through a built-in feature yet. The plugin `arc-hoh` can read notes from your own Cammut server and write gate verdicts to it through a local gateway.
-See [Connect your Cammut server](Connect-your-Cammut-server) and [The memory policy](The-memory-policy). The client tab and the default policy file are Planned.
+Yes, by running your own Cammut server alongside the local gateway on `127.0.0.1:7424`. `arc-hoh` reads memory briefs and writes gate verdicts, `arc-core` adds `memory.recall` and `memory.retain` MCP tools, the C2 Memory and Servers panels, and TOFU SSH server deployment, and `lib/native/cammut-gateway.mjs` provides the Phase 6 loopback gateway module.
+See [Connect your Cammut server](Connect-your-Cammut-server) and [The memory policy](The-memory-policy). Storing keys in the OS credential store and editing the policy file in Settings remain planned.
 
 ## Where is my data?
 
@@ -58,7 +58,7 @@ Not tested: no check ran the original uninstaller.
 
 ## Why is the old name still in some places?
 
-The installed app keeps the original program file name, install folder and Start menu name. The design-token prefixes `dsw-` and `ds-` stay, and so do the ids of real models in the third-party catalog.
+An in-place `install.cmd` updates `resources/app.asar` inside the existing app folder and keeps its executable name. Run `node tools/package.mjs` with `rcedit` and Inno Setup (`installer/arc-harness.iss`) to stage `Arc Harness.exe` and a standalone Start menu installer. The design-token prefixes `dsw-` and `ds-` stay, and so do the ids of real models in the third-party catalog.
 The internal names are Arc names: the packages, the runtime folder, the command `arc`, the data folder `.arc` and the variable `ARC_HOME`. See "What stays" in [Build from source](Build-from-source).
 
 ## Why are the Chinese texts gone?

@@ -9,13 +9,13 @@ Read [Build from source](Build-from-source) and [A review checklist](How-we-chec
 
 ## Set up
 
-You need Node.js 22.19 or newer, Git and Python 3. CI runs Node.js 24. The picture scan `test/image-scan.py` uses the standard library only. The brand file builder `brand/build_brand.py` also needs Pillow. Then:
+You need Node.js 22.19 or newer, Git and Python 3. Rust (`cargo`) is optional and runs `native/arc-validators`. CI runs Node.js 24 and stable Rust. The picture scan `test/image-scan.py` uses the standard library only. The brand file builder `brand/build_brand.py` also needs Pillow. Then:
 
 ```
 npm test
 ```
 
-It needs no original archive. It runs the syntax check, the rename map check, the icon color test, the tests of the two Arc plugins and the self-test of the privacy scan.
+It needs no original archive. It runs the syntax check, the rename map check, the icon color and header tests, all six Arc plugin test suites, the installer and native transition tests, and the privacy scan self-test. Run `cargo test --manifest-path native/arc-validators/Cargo.toml` when you touch `native/arc-validators`.
 To test a change to a patch, build from the original archive and run `npm run test:archive`. See [Build from source](Build-from-source) and [Run the tests](Run-the-tests).
 
 ## Rules for a change

@@ -1,6 +1,6 @@
 # The memory policy
 
-Status: Partly. The plugin `arc-hoh` puts memory rules into every system prompt as text. The app enforces only the brief, the secret redaction and the verdict write. The default policy as an editable file is Planned.
+Status: Partly. `arc-hoh` puts the memory contract into every system prompt and filters the brief, and `arc-core` (`0.2.0`) enforces the five-label memory policy, secret rejection, near-twin supersede and fail-open circuit breaker in code. Editing the default policy file from a Settings tab remains planned.
 
 A memory policy is a short list of rules that says when the agent reads from the memory server and when it writes to it.
 Without rules, a memory server is only a place to put notes. With rules, the agent uses it the same way every time.
@@ -22,19 +22,22 @@ The contract is text in the prompt. The agent can ignore it. Code enforces three
 - the accept gate writes each verdict to memory by itself, after the same redaction,
 - the notes sit inside a tag that marks them as untrusted data.
 
-## What is planned
+## Code enforcement in `arc-core`
 
-The plan is to ship one documented default policy as a file. You can read it, change it, and switch parts off. It adds one rule that the contract does not have today:
+Alongside `arc-hoh`, `plugins/arc-core` (`0.2.0`) enforces the Phase 2 memory policy in code whenever `memory.retain` or `memory.recall` runs:
 
-- **Replace a stale note.** When a note is wrong, the agent stores a corrected note and marks the old note invalid.
+- **Five allowed labels.** Every retained note must carry one of five labels: `decision`, `correction`, `artifact`, `verified_fact` or `lesson`. Other labels are rejected.
+- **Secret rejection.** Notes matching API key, token or private-key patterns are refused before any network call.
+- **Replace stale near-twins.** Storing an updated note supersedes near-twin stale notes so superseded claims do not accumulate.
+- **Fail-open breaker.** When the Cammut gateway is unreachable, the circuit breaker trips cleanly without blocking local session work.
 
-The Cammut client tab would show the policy and let you switch parts of it off. See [Connect your Cammut server](Connect-your-Cammut-server).
+## How it is tested
 
-## How it would be tested
+`plugins/arc-core/test/core.test.mjs` tests the five-label filter, secret rejection, near-twin supersede and fail-open breaker against a mock gateway. `plugins/arc-hoh/test/hoh.test.mjs` tests the brief filter, untrusted-data framing and prompt sections. Run both with `npm test`.
 
-Each rule gets a test with a fake memory server. A test checks that a rule fires when it should. A test checks that a rule you switched off does not fire.
-These tests do not exist yet. The roadmap item "Memory policy" covers them. See [Roadmap](Roadmap).
-Today the plugin tests cover the brief filter and the prompt sections. Run `node --test plugins/arc-hoh/test/hoh.test.mjs`.
+## What remains planned
+
+Exposing the default memory policy as a user-editable file with per-rule toggles in Settings. See [Roadmap](Roadmap) and [Connect your Cammut server](Connect-your-Cammut-server).
 
 ## Why a policy helps
 

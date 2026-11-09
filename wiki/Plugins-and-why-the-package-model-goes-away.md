@@ -25,7 +25,7 @@ The plugin manager is off, so you install plugins by copying them and adding the
 
 ## The lean profile
 
-`node tools/lean-profile.mjs apply` cuts the bundle list of a profile to four bundles: `@arc-harness/arc-base`, `@arc-harness/arc-web-app`, `arc-theme` and `arc-hoh`.
+`node tools/lean-profile.mjs apply` cuts the bundle list of a profile to `@arc-harness/arc-base`, `@arc-harness/arc-web-app`, `arc-theme`, `arc-hoh` and every optional Arc plugin (`arc-core`, `arc-mode`, `arc-molecullage`, `arc-mermaid`) installed in `node_modules`.
 The other packages stay installed. Only the list changes, so a bundle comes back by one line. The tool keeps an undo list, and `restore` uses it.
 The file `brandtext/lean-profile.json` lists each bundle that leaves the profile and why.
 

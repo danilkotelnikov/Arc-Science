@@ -130,7 +130,7 @@ The built archive uses the Arc paths: `arc/node_modules/@arc-harness/arc-<name>`
 
 The build changes the names that a person reads, and the internal names listed above. These stay:
 
-- the original program file name, the install folder and the Start menu name of the installed app,
+- the original program file name, install folder and Start menu name when you use in-place `install.cmd` (`node tools/package.mjs` and `installer/arc-harness.iss` stage `Arc Harness.exe` instead),
 - the design-token prefixes `dsw-` and `ds-` of the original interface,
 - the ids of real models in the third-party model catalog.
 
@@ -138,4 +138,4 @@ The build changes the names that a person reads, and the internal names listed a
 
 - The build changes the archive. It does not change the Electron runtime, Chromium or the native modules next to the archive.
 - The patches target one build. A different version needs new patches.
-- The desktop window, the menus and the installer are not started by any test.
+- `test/desktop-journey.mjs` checks the desktop window and Settings; native operating-system menus and the Inno Setup installer are not run in CI.

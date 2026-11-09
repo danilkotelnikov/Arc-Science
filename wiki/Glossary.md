@@ -48,7 +48,7 @@ Status: Works today. Words are in alphabetical order.
 
 **Permission mode.** The setting that decides what the agent may do without asking you. "Workspace Write" is the default.
 
-**Plugin.** A feature of the app in the form of a package. The kit has two of its own: `arc-hoh` and `arc-theme`.
+**Plugin.** A feature of the app in the form of a package. The kit ships six built-in Arc plugins: `arc-hoh`, `arc-core`, `arc-theme`, `arc-mode`, `arc-molecullage` and `arc-mermaid`.
 
 **pnpm.** A tool that installs packages. The original app carries a copy of it.
 

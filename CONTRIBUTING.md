@@ -10,7 +10,7 @@ Thank you for helping. This page tells you how to change the kit, what to run be
 
 ## Set up
 
-You need Node.js 22.19 or newer, Git and Python 3. Most Python scripts use the standard library only; `brand/build_brand.py` also needs Pillow.
+You need Node.js 22.19 or newer, Git and Python 3. Rust (`cargo`) is optional and runs the `native/arc-validators` suite. Most Python scripts use the standard library only; `brand/build_brand.py` also needs Pillow.
 
 ```
 git clone <your fork>
@@ -18,7 +18,7 @@ cd <the folder>
 npm test
 ```
 
-`npm test` needs no original archive. It checks syntax, the rename map, icon colours, both plugins and the privacy scan self-test.
+`npm test` needs no original archive. It checks syntax, the rename map, icon colours, header SVGs, all six Arc plugins, installer and native transition slices, and the privacy scan self-test. Run `cargo test --manifest-path native/arc-validators/Cargo.toml` when you change `native/arc-validators`.
 
 To test a change to a build patch, you need the original archive. The wiki page "Build from source" shows how to get it.
 Then run `node tools/build.mjs` and `npm run test:archive`.
@@ -31,7 +31,7 @@ Then run `node tools/build.mjs` and `npm run test:archive`.
 4. Never add the original app archive, any file from an installed app, or any binary built from them.
 5. Never add personal data: no names, e-mail addresses, home paths, machine names, keys or tokens.
 6. Run `npm run scan` before you push. It must report no findings.
-7. Do not add a dependency for something a few lines can do. The kit has none today.
+7. Do not add a runtime dependency for something a few lines can do. Both the Node kit and the Rust validator crate have zero external runtime packages.
 8. Review every new picture by eye. Add its SHA-256 to `brand/pictures.json` only after you have looked at it. A picture that shows the old vendor's mark goes in the `whale` list with a replacement.
 9. Update the wiki page that describes what you changed, and its "Status" line.
 

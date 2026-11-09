@@ -1,13 +1,13 @@
 # Connect your Cammut server
 
-Status: Partly. The plugin `arc-hoh` already reads notes from a Cammut server and writes gate verdicts to it through a local gateway. The Cammut client tab is Planned. Arc Harness has no Cammut tab and no setting for a server address, an API key or a token today.
+Status: Partly. `arc-hoh` reads memory briefs and writes gate verdicts through `127.0.0.1:7424`, `arc-core` adds `memory.recall` and `memory.retain` MCP tools plus the C2 console and TOFU SSH deployment, and `lib/native/cammut-gateway.mjs` provides the loopback Bearer-authenticated gateway module. Storing keys in the operating system credential store remains planned.
 
 Cammut is a separate memory server. Users run it themselves. It stores short notes that an agent can search later, so a new session can start with what earlier sessions learned.
 
 ## What exists today
 
-The plugin `arc-hoh` talks to your Cammut server through a local gateway on the loopback address `127.0.0.1`, port 7424. The gateway is a separate program. This repository does not contain it.
-The plugin sends no key or token of its own to the gateway.
+The plugin `arc-hoh` talks to your Cammut server through a local gateway on the loopback address `127.0.0.1`, port 7424. `lib/native/cammut-gateway.mjs` ships the Phase 6 loopback gateway module with Bearer token validation, and `plugins/arc-core` (`0.2.0`) exposes `memory.recall` and `memory.retain` tools, the C2 Memory and Servers panels, and `lib/deploy.js` TOFU SSH server deployment.
+`arc-hoh` sends no key or token of its own when reading the local brief.
 
 - **The brief.** The plugin asks Cammut for notes that match the task and puts at most six short notes into the system prompt. A note is cut to 220 characters. The brief refreshes every 20 minutes. The Trace tab in the right sidebar shows it.
 - **The verdicts.** The accept gate writes each verdict to Cammut through the same gateway. Secret-shaped text is redacted first.
@@ -28,28 +28,17 @@ The app's own documentation for the MCP client has the field list. It is in the 
 
 No check in this repository connects the generic MCP client to a Cammut server. That route is untested.
 
-## What is planned
+## C2 console and SSH deployment
 
-A tab inside Arc Harness, called the Cammut client tab. The tab would have three fields:
+`plugins/arc-core` (`0.2.0`) includes the Memory and Servers panels in the C2 console (`ui/panel.js`) and `lib/deploy.js` for deploying Hindsight, the Cammut gateway and a reverse proxy to a Linux host over SSH with Trust-On-First-Use host-key verification. A native main-process password dialog keeps first-login SSH passwords out of the WebView, URLs, storage and logs.
 
-1. **Server address.** The web address of your own Cammut server.
-2. **API key.** The key your Cammut server asks for.
-3. **Token.** An access token, only if your server needs one.
+## What remains planned
 
-Besides the fields, the tab would show whether the connection works. It would let you pick the memory scopes the agent may use.
-It would also show the memory policy that applies.
+- Storing Cammut API keys and access tokens in the operating system credential store.
+- Wiring `lib/native/cammut-gateway.mjs` directly into the unpatched upstream host once the Phase 6 source fork lands. See [Roadmap](Roadmap).
 
-A first run on an empty profile should connect to a test server, recall a note and store a note. That is the planned proof for this step.
-The roadmap item "Cammut client tab" covers it. See [Roadmap](Roadmap).
+## What you need
 
-Keys and tokens are planned to go into the system credential store.
-
-## What you will need
-
-- A Cammut server that you run yourself.
-- The local gateway on port 7424, which exposes it to the plugin.
-- The plugin `arc-hoh` in your profile.
-
-## Why the tab is not built yet
-
-The built-in memory gateway and the client tab depend on earlier roadmap items. The package model has to change first, and the memory policy needs a decided default text.
+- A Cammut server that you run yourself (locally or deployed over SSH with `arc-core`).
+- The local gateway on `127.0.0.1:7424`.
+- `arc-hoh` and `arc-core` installed in your profile.

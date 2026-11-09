@@ -49,7 +49,7 @@ Set `ARC_HOME` to the folder you want the app to use.
 
 ## The app still has the old name in the Start menu and the file name
 
-The build changes the text inside the app. The installed app keeps the original program file name, install folder and Start menu name. See "What stays" in [Build from source](Build-from-source).
+`install.cmd` patches `resources/app.asar` inside the existing install folder, so the old executable file name and Start menu shortcut stay unless you build the standalone `Arc Harness.exe` layout with `node tools/package.mjs` and `installer/arc-harness.iss`. See "What stays" in [Build from source](Build-from-source).
 
 ## The app looks different from the screenshots
 
