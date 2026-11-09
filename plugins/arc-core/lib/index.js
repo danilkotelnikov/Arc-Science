@@ -498,12 +498,19 @@ export const toolpackLoad = defaultServer.toolpack.load;
 export const memoryRetain = defaultServer.memory.retain;
 export const memoryRecall = defaultServer.memory.recall;
 
+import { createResearchSessionStore, registerConsoleRoutes } from './console.js';
+
 export function apply(ctx, opts = {}) {
   const server = createArcCoreServer(opts);
+  const consoleStore = createResearchSessionStore(opts.console || {});
+  server.console = consoleStore;
   if (ctx && ctx.tools && typeof ctx.tools.register === 'function') {
     for (const [toolName, execute] of Object.entries(server.tools)) {
       ctx.tools.register({ name: toolName, execute });
     }
+  }
+  if (ctx && typeof ctx.inject === 'function') {
+    registerConsoleRoutes(ctx, consoleStore);
   }
   return server;
 }
@@ -513,4 +520,5 @@ export * from './deploy.js';
 export * from './shelf.js';
 export * from './workshop.js';
 export * from './console.js';
+
 

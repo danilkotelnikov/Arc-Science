@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SKIP = new Set(['.git', 'node_modules', '_work', 'pristine', 'build']);
+const SKIP = new Set(['.git', 'node_modules', '_work', 'pristine', 'build', 'target']);
 let n = 0, bad = 0;
 const walk = (dir) => {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {

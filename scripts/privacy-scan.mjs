@@ -20,7 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SKIP_DIRS = new Set(['.git', 'node_modules', '_work', 'pristine', 'build']);
+const SKIP_DIRS = new Set(['.git', 'node_modules', '_work', 'pristine', 'build', 'target']);
 const BINARY = /\.(png|jpe?g|gif|webp|ico|asar|zip|xz|gz|tgz|7z|woff2?|ttf|otf|pdf|mp4|webm)$/i;
 const ALLOW_MARK = 'privacy-scan: allow';
 

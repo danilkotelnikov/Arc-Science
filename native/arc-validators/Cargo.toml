@@ -1,0 +1,8 @@
+[package]
+name = "arc-validators"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Zero-dependency Rust validators and guards for Arc Harness Phase 6 (N8)"
+
+[dependencies]

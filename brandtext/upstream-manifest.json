@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "upstream": {
+    "repository": "deepseek-ai/deepseek-harness",
+    "tag": "dsh-v0.2.1-rc.5",
+    "version": "0.2.1-rc.5",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 DeepSeek",
+    "sharedPackageEntries": 305,
+    "coreBundles": [
+      "@arc-harness/arc-base",
+      "@arc-harness/arc-web-app"
+    ]
+  },
+  "runtimePolicy": {
+    "packageManagerRemoved": true,
+    "marketplaceDisabled": true,
+    "hotReloadDisabled": true,
+    "registryProbesDisabled": true,
+    "profileMode": "settings-only"
+  },
+  "builtInPlugins": [
+    "arc-core",
+    "arc-hoh",
+    "arc-mode",
+    "arc-molecullage",
+    "arc-theme"
+  ],
+  "approvedLicenses": [
+    "MIT",
+    "Apache-2.0",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "OFL-1.1"
+  ]
+}
