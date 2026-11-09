@@ -34,9 +34,12 @@ fn is_placeholder_user(seg: &str) -> bool {
 fn has_windows_home_path(line: &str) -> bool {
     let low = line.to_ascii_lowercase();
     for marker in [":\\users\\", ":/users/", ":\\\\users\\\\"] {
-        if let Some(pos) = low.find(marker) {
-            if pos >= 1 && low.as_bytes()[pos - 1].is_ascii_alphabetic() {
-                let rest = &line[pos + marker.len()..];
+        let mut search_from = 0;
+        while let Some(pos) = low[search_from..].find(marker) {
+            let abs = search_from + pos;
+            let after = abs + marker.len();
+            if abs >= 1 && low.as_bytes()[abs - 1].is_ascii_alphabetic() && line.is_char_boundary(after) {
+                let rest = &line[after..];
                 let seg: String = rest
                     .chars()
                     .take_while(|c| !matches!(c, '\\' | '/' | ' ' | '"' | '\'' | '`'))
@@ -45,6 +48,7 @@ fn has_windows_home_path(line: &str) -> bool {
                     return true;
                 }
             }
+            search_from = after;
         }
     }
     false
@@ -90,35 +94,44 @@ fn has_secret_token(line: &str) -> bool {
     false
 }
 
-fn parse_hex_pair(s: &str) -> Option<u8> {
-    u8::from_str_radix(s, 16).ok()
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn parse_hex_pair_bytes(hi: u8, lo: u8) -> Option<u8> {
+    Some((hex_val(hi)? << 4) | hex_val(lo)?)
 }
 
 pub fn is_blue_hex(hex6: &str) -> bool {
-    if hex6.len() < 6 {
+    let b = hex6.as_bytes();
+    if b.len() < 6 {
         return false;
     }
-    let (Some(r), Some(g), Some(b)) = (
-        parse_hex_pair(&hex6[0..2]),
-        parse_hex_pair(&hex6[2..4]),
-        parse_hex_pair(&hex6[4..6]),
+    let (Some(r), Some(g), Some(bl)) = (
+        parse_hex_pair_bytes(b[0], b[1]),
+        parse_hex_pair_bytes(b[2], b[3]),
+        parse_hex_pair_bytes(b[4], b[5]),
     ) else {
         return false;
     };
     let max_rg = r.max(g);
-    (b as i32) - (max_rg as i32) >= 24
+    (bl as i32) - (max_rg as i32) >= 24
 }
 
-fn has_blue_hex_in_line(line: &str) -> bool {
-    let bytes = line.as_bytes();
+pub fn has_blue_hex_in_bytes(bytes: &[u8]) -> bool {
     let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'#' && i + 7 <= bytes.len() {
-            let sub = &line[i + 1..i + 7];
-            if sub.bytes().all(|b| b.is_ascii_hexdigit()) {
-                let next_is_hex = i + 7 < bytes.len() && bytes[i + 7].is_ascii_hexdigit();
-                let next2_is_hex = i + 8 < bytes.len() && bytes[i + 8].is_ascii_hexdigit();
-                let valid_len = !next_is_hex || (next_is_hex && next2_is_hex && (i + 9 == bytes.len() || !bytes[i + 9].is_ascii_hexdigit()));
+    while i + 7 <= bytes.len() {
+        if bytes[i] == b'#' && bytes[i + 1..i + 7].iter().all(|b| b.is_ascii_hexdigit()) {
+            let next_is_hex = i + 7 < bytes.len() && bytes[i + 7].is_ascii_hexdigit();
+            let next2_is_hex = i + 8 < bytes.len() && bytes[i + 8].is_ascii_hexdigit();
+            let valid_len =
+                !next_is_hex || (next_is_hex && next2_is_hex && (i + 9 == bytes.len() || !bytes[i + 9].is_ascii_hexdigit()));
+            if let Ok(sub) = core::str::from_utf8(&bytes[i + 1..i + 7]) {
                 if valid_len && is_blue_hex(sub) {
                     return true;
                 }
@@ -127,6 +140,10 @@ fn has_blue_hex_in_line(line: &str) -> bool {
         i += 1;
     }
     false
+}
+
+fn has_blue_hex_in_line(line: &str) -> bool {
+    has_blue_hex_in_bytes(line.as_bytes())
 }
 
 pub fn scan_text(text: &str, check_brand: bool) -> Vec<ScanHit> {

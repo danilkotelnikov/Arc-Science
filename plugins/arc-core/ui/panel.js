@@ -13,6 +13,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
 
   const WORKSPACES = ["Research", "Memory", "Molecullage", "Prose"];
   const CONNECTORS = ["Servers", "Keys", "Apps", "Audit"];
+  const SEATS = ["Planner", "Reviewer", "Falsifier", "Vision", "Prose"];
   const RESEARCH_VIEWS = ["Map", "Claims", "Evidence", "Release"];
   const DECISION_ACTIONS = ["Pursue", "Park", "Drop", "Request a test"];
   const CONSENT_MODES = ["Single action", "Grant for 30 days", "Revoke"];
@@ -31,12 +32,17 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "nav.connectors": "Connectors",
     "nav.settings": "Settings",
     "research.panes": "Research session",
+    "research.seats": "Active seats",
     "research.map": "Map",
     "research.claims": "Claims",
     "research.evidence": "Evidence",
     "research.release": "Release",
     "research.decisions": "Decision map",
     "research.ladder": "Validation ladder",
+    "connector.servers": "Connector servers",
+    "connector.keys": "Connector keys",
+    "connector.apps": "Connector apps",
+    "connector.audit": "Connector audit",
     "consent.title": "Connector consent",
     "consent.prompt": "Choose access duration for {appId}",
     "memory.title": "Shared memory gateway",
@@ -44,6 +50,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "prose.title": "Plain prose check",
     "prose.clean": "Clean plain prose",
     "prose.flagged": "Formulaic phrasing detected",
+    "prose.rewrite": "Rewrite locally",
     "settings.title": "Console settings",
     "settings.theme": "Active theme",
     "settings.switches": "Operator switches",
@@ -122,14 +129,75 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         onClose ? h("button", { type: "button", onClick: onClose, style: btnStyle(false) }, "Close") : null));
   }
 
+  function ConnectorView({ connector, detail, onOpenConsent, t }) {
+    const rows = (detail && detail[connector]) || [];
+    const titleKey = `connector.${String(connector || "servers").toLowerCase()}`;
+    return h("section", {
+      "aria-label": t(titleKey),
+      "data-connector-view": connector,
+      style: { display: "grid", gap: 10 },
+    },
+      h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t(titleKey)),
+      h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 } },
+        rows.map((item) =>
+          h("li", { key: item.id, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 4 } },
+            connector === "Servers"
+              ? h(React.Fragment, null,
+                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
+                    h("span", { style: { fontWeight: 600 } }, item.label),
+                    h("code", { style: tagStyle }, item.endpoint)),
+                  h("span", { style: { ...muted, fontSize: 12 } }, item.status))
+              : null,
+            connector === "Keys"
+              ? h(React.Fragment, null,
+                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
+                    h("span", { style: { fontWeight: 600 } }, item.label),
+                    h("code", { style: tagStyle }, item.ref)),
+                  h("span", { style: { ...muted, fontSize: 12 } }, item.status))
+              : null,
+            connector === "Apps"
+              ? h(React.Fragment, null,
+                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
+                    h("span", { style: { fontWeight: 600 } }, item.label),
+                    h("code", { style: tagStyle }, `Active grants: ${item.grants}`)),
+                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline", flexWrap: "wrap" } },
+                    h("span", { style: { ...muted, fontSize: 12 } }, `Scopes: ${(item.scopes || []).join(", ")}`),
+                    onOpenConsent
+                      ? h("button", {
+                          type: "button",
+                          "data-connector-consent": item.id,
+                          onClick: () => onOpenConsent({ appId: `${item.id}-connector`, scopes: item.scopes || ["read"] }),
+                          style: btnStyle(false),
+                        }, "Review access")
+                      : null))
+              : null,
+            connector === "Audit"
+              ? h(React.Fragment, null,
+                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
+                    h("span", { style: { fontWeight: 600 } }, item.summary),
+                    h("code", { style: tagStyle }, item.kind)),
+                  h("span", { style: { ...muted, ...num, fontSize: 12 } }, `Recorded at ${item.atMs}`))
+              : null))));
+  }
+
   function ResearchWorkspace({ data, activeView, onSelectView, onDecision, t }) {
     const branches = (data && data.tree && data.tree.branches) || [];
     const claims = (data && data.claims && data.claims.items) || [];
     const evidence = (data && data.evidence && data.evidence.items) || [];
     const ladder = (data && data.head && data.head.ladderRungs) || [];
+    const seats = (data && data.head && data.head.seatAssignments) || SEATS.map((seat) => ({ seat, role: "" }));
     const release = data && data.release;
 
     return h("section", { "aria-label": t("research.panes"), style: { display: "grid", gap: 12 } },
+      h("div", {
+        "data-research-seats": "true",
+        "aria-label": t("research.seats"),
+        style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "baseline" },
+      },
+        h("span", { style: { ...muted, fontSize: 12 } }, `${t("research.seats")}:`),
+        seats.map((entry) =>
+          h("code", { key: entry.seat, "data-seat": entry.seat, style: tagStyle }, entry.seat))),
+
       h("div", { role: "tablist", "aria-label": "Research views", style: { display: "flex", gap: 6, flexWrap: "wrap", paddingBottom: 8, borderBottom: HAIRLINE } },
         RESEARCH_VIEWS.map((view) =>
           h("button", {
@@ -211,6 +279,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     onCloseConsent,
     onOpenConsent,
     onProseChange,
+    onProseRewrite,
     onToggleSwitch,
     t,
   }) {
@@ -218,7 +287,10 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const activeWorkspace = (head && head.activeWorkspace) || "Research";
     const activeView = (head && head.activeResearchView) || "Map";
     const activeConnector = (head && head.activeConnector) || "Servers";
+    const activePaneMode = (head && head.activePaneMode) || "workspace";
     const settingsOpen = Boolean(head && head.settingsOpen);
+    const inConnectorMode = !settingsOpen && activePaneMode === "connector";
+    const inWorkspaceMode = !settingsOpen && !inConnectorMode;
     const themeEntry = THEMES.find((x) => x.id === skin) || THEMES[0];
 
     return h("div", {
@@ -243,24 +315,29 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
 
       data ? h("header", { style: { display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", paddingBottom: 10, borderBottom: HAIRLINE } },
         h("nav", { "aria-label": t("nav.workspaces"), style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          WORKSPACES.map((ws) =>
-            h("button", {
+          WORKSPACES.map((ws) => {
+            const isActive = inWorkspaceMode && activeWorkspace === ws;
+            return h("button", {
               key: ws,
               type: "button",
               "data-workspace": ws,
-              "aria-pressed": !settingsOpen && activeWorkspace === ws,
+              "aria-pressed": isActive,
               onClick: () => onSelectWorkspace && onSelectWorkspace(ws),
-              style: btnStyle(!settingsOpen && activeWorkspace === ws),
-            }, ws))),
+              style: btnStyle(isActive),
+            }, ws);
+          })),
         h("div", { "aria-label": t("nav.connectors"), style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          CONNECTORS.map((conn) =>
-            h("button", {
+          CONNECTORS.map((conn) => {
+            const isActive = inConnectorMode && activeConnector === conn;
+            return h("button", {
               key: conn,
               type: "button",
               "data-connector": conn,
+              "aria-pressed": isActive,
               onClick: () => onSelectConnector && onSelectConnector(conn),
-              style: btnStyle(activeConnector === conn && settingsOpen === false && false),
-            }, conn)),
+              style: btnStyle(isActive),
+            }, conn);
+          }),
           h("button", {
             type: "button",
             "data-settings-toggle": "true",
@@ -291,7 +368,16 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
                   }, r.active ? "On" : "Off")))))
         : null,
 
-      data && !settingsOpen && activeWorkspace === "Research"
+      data && inConnectorMode
+        ? h(ConnectorView, {
+            connector: activeConnector,
+            detail: data.connectorsDetail,
+            onOpenConsent,
+            t,
+          })
+        : null,
+
+      data && inWorkspaceMode && activeWorkspace === "Research"
         ? h(ResearchWorkspace, {
             data,
             activeView,
@@ -301,20 +387,20 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           })
         : null,
 
-      data && !settingsOpen && activeWorkspace === "Memory"
+      data && inWorkspaceMode && activeWorkspace === "Memory"
         ? h("section", { "aria-label": t("memory.title"), style: { display: "grid", gap: 8 } },
             h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("memory.title")),
             h("div", { style: num }, `Loopback gateway: ${data.memory.gateway}, token check active`),
             h("div", { style: muted }, `Policy labels: ${data.memory.labels.join(", ")}`))
         : null,
 
-      data && !settingsOpen && activeWorkspace === "Molecullage"
+      data && inWorkspaceMode && activeWorkspace === "Molecullage"
         ? h("section", { "aria-label": t("molecullage.title"), style: { display: "grid", gap: 8 } },
             h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("molecullage.title")),
             h("div", { style: num }, `${data.molecullage.sources} verified sources across ${data.molecullage.domains} domains, nested boxes: ${data.molecullage.nestedBoxes}`))
         : null,
 
-      data && !settingsOpen && activeWorkspace === "Prose"
+      data && inWorkspaceMode && activeWorkspace === "Prose"
         ? h("section", { "aria-label": t("prose.title"), style: { display: "grid", gap: 8 } },
             h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("prose.title")),
             h("p", { style: { margin: 0, fontFamily: MONO_FONT, fontSize: 12 } }, data.prose.text),
@@ -324,13 +410,22 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
                   data.prose.report.findings.map((f, idx) =>
                     h("li", { key: idx, style: { paddingTop: 4, borderTop: HAIRLINE } }, `${f.kind}: ${f.match}`)))
               : null,
-            onProseChange
-              ? h("button", {
-                  type: "button",
-                  onClick: () => onProseChange("The warm water bath holds 38.7 C at 20 minutes in the thermal model."),
-                  style: btnStyle(false),
-                }, "Check sample sentence")
-              : null)
+            h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+              onProseRewrite
+                ? h("button", {
+                    type: "button",
+                    "data-prose-rewrite": "true",
+                    onClick: () => onProseRewrite(),
+                    style: btnStyle(false),
+                  }, t("prose.rewrite"))
+                : null,
+              onProseChange
+                ? h("button", {
+                    type: "button",
+                    onClick: () => onProseChange("The wax bath holds 40 to 41 C for a 42 minute simulated window."),
+                    style: btnStyle(false),
+                  }, "Check sample sentence")
+                : null))
         : null,
 
       data && !settingsOpen
@@ -413,6 +508,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           setPendingConsent(null);
         },
         onProseChange: (text) => dispatch({ kind: "prose", text }),
+        onProseRewrite: () => dispatch({ kind: "prose-rewrite" }),
         onToggleSwitch: (rungId, enabled) => dispatch({ kind: "operator-switch", rungId, enabled }),
       });
     };
@@ -433,7 +529,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           id: TAB,
           kind: TAB,
           title: () => t("tab.title"),
-          guide: [{ order: 30, title: () => t("tab.title"), description: () => t("tab.guide"), icon: Icon }],
+          guide: [{ order: 25, title: () => t("tab.title"), description: () => t("tab.guide"), icon: Icon }],
         }));
         keep(c.slots.inject("sidebar.right.pane.tab", () => c.slots.register({ name: "sidebar.right.pane.tab", key: TAB, locale: NS }, Pane)));
         keep(c.slots.inject("sidebar.right.pane.tab.title", () => c.slots.register({ name: "sidebar.right.pane.tab.title", key: TAB }, Title)));
@@ -451,9 +547,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     apply,
     View,
     ConsentDialog,
+    ConnectorView,
     ResearchWorkspace,
     WORKSPACES,
     CONNECTORS,
+    SEATS,
     RESEARCH_VIEWS,
     DECISION_ACTIONS,
     CONSENT_MODES,

@@ -6,17 +6,50 @@ pub struct HookVerdict {
     pub violations: Vec<&'static str>,
 }
 
+fn find_closing_backticks_on_line(bytes: &[u8], start: usize, tick_len: usize) -> Option<usize> {
+    let mut j = start;
+    while j < bytes.len() && bytes[j] != b'\n' && bytes[j] != b'\r' {
+        if bytes[j] == b'`' {
+            let mut run = 0;
+            while j + run < bytes.len() && bytes[j + run] == b'`' {
+                run += 1;
+            }
+            if run == tick_len {
+                return Some(j + run);
+            }
+            j += run;
+            continue;
+        }
+        j += 1;
+    }
+    None
+}
+
+fn find_closing_quote_on_line(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut j = start;
+    while j < bytes.len() && bytes[j] != b'\n' && bytes[j] != b'\r' {
+        if bytes[j] == b'\\' {
+            j += 2;
+            continue;
+        }
+        if bytes[j] == b'"' {
+            return Some(j + 1);
+        }
+        j += 1;
+    }
+    None
+}
+
 fn strip_allowed_spans(text: &str) -> String {
-    // Strip fenced ```...``` blocks, inline `...` code spans, double-quoted file names, and http(s):// URLs.
+    // Strip fenced ```...``` blocks, line-bounded `...` / ``...`` code spans,
+    // escape-aware single-line "..." file names, and http(s):// URLs.
     let mut out = String::with_capacity(text.len());
     let bytes = text.as_bytes();
     let mut i = 0;
     let mut in_fence = false;
-    let mut in_inline = false;
-    let mut in_quote = false;
 
     while i < bytes.len() {
-        if !in_inline && !in_quote && i + 3 <= bytes.len() && &bytes[i..i + 3] == b"```" {
+        if i + 3 <= bytes.len() && &bytes[i..i + 3] == b"```" {
             in_fence = !in_fence;
             i += 3;
             continue;
@@ -25,25 +58,33 @@ fn strip_allowed_spans(text: &str) -> String {
             i += 1;
             continue;
         }
-        if !in_quote && bytes[i] == b'`' {
-            in_inline = !in_inline;
-            i += 1;
-            continue;
-        }
-        if in_inline {
-            i += 1;
+        if bytes[i] == b'`' {
+            let mut tick_len = 0;
+            while i + tick_len < bytes.len() && bytes[i + tick_len] == b'`' {
+                tick_len += 1;
+            }
+            if let Some(next_i) = find_closing_backticks_on_line(bytes, i + tick_len, tick_len) {
+                i = next_i;
+                continue;
+            }
+            for _ in 0..tick_len {
+                out.push('`');
+            }
+            i += tick_len;
             continue;
         }
         if bytes[i] == b'"' {
-            in_quote = !in_quote;
+            if let Some(next_i) = find_closing_quote_on_line(bytes, i + 1) {
+                i = next_i;
+                continue;
+            }
+            out.push('"');
             i += 1;
             continue;
         }
-        if in_quote {
-            i += 1;
-            continue;
-        }
-        if i + 7 <= bytes.len() && (&bytes[i..i + 7] == b"http://" || (i + 8 <= bytes.len() && &bytes[i..i + 8] == b"https://")) {
+        if i + 7 <= bytes.len()
+            && (&bytes[i..i + 7] == b"http://" || (i + 8 <= bytes.len() && &bytes[i..i + 8] == b"https://"))
+        {
             while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
                 i += 1;
             }

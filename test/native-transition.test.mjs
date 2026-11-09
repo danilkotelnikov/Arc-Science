@@ -307,10 +307,12 @@ test('N8: all 6 native Rust validator modules match Node golden vectors byte-for
     assert.equal(rustRes.code, jsRes.code);
   }
 
-  // 3. arc_hook golden check
+  // 3. arc_hook golden check (including escaped quotes, multi-backticks, and unclosed single-line quotes)
   for (const [recalled, substantive, text] of [
     [false, true, 'Edited file.'],
     [true, true, 'Checked "Пример.txt" and `код` cleanly.'],
+    [true, true, 'Saved "файл \\"привет\\".txt" and ``код `внутри` спана`` cleanly.'],
+    [true, true, 'He said "hello\nПривет мир'],
     [true, false, 'Привет, мир.'],
   ]) {
     const rustHook = runNativeValidatorCli('arc-hook', [String(recalled), String(substantive)], text);
@@ -319,9 +321,9 @@ test('N8: all 6 native Rust validator modules match Node golden vectors byte-for
     assert.deepEqual(rustHook.violations, jsHook.violations);
   }
 
-  // 4. arc_rules prose lint golden check
+  // 4. arc_rules prose lint golden check (including UTF-8 BOM on slide header)
   const refusedWord = ['lever', 'age'].join('');
-  const dirtyProse = `# Build 5x faster, today\nWe ${refusedWord} our tools.\nIt is not a script, it is a platform.\nIts check passes. No model is trained yet.`;
+  const dirtyProse = `\uFEFF# Build 5x faster, today\nWe ${refusedWord} our tools.\nIt is not a script, it is a platform.\nIts check passes. No model is trained yet.`;
   const rustDirty = runNativeValidatorCli('arc-rules', ['--slide'], dirtyProse);
   const jsDirty = lintProse(dirtyProse, { slideMode: true });
   assert.equal(rustDirty.ok, false);
@@ -330,11 +332,12 @@ test('N8: all 6 native Rust validator modules match Node golden vectors byte-for
   const cleanProse = '# Validation ladder\nEvery check passed across all three themes.';
   assert.equal(runNativeValidatorCli('arc-rules', ['--slide'], cleanProse).ok, true);
 
-  // 5. arc_scan golden check
+  // 5. arc_scan golden check (including multi-byte UTF-8 after '#' and personal path after Public placeholder)
   const winHome = ['C:', 'Users', 'alice', 'doc.txt'].join('\\');
+  const winPublic = ['C:', 'Users', 'Public', 'shared.txt'].join('\\');
   const winPlaceholder = ['C:', 'Users', '<you>', 'doc.txt'].join('\\');
   const fakeSk = 'sk-' + 'd4'.repeat(15);
-  const scanInput = `${winHome}\n${winPlaceholder}\n${fakeSk}\n#2563eb\n`;
+  const scanInput = `# Молекула\n${winPublic} ${winHome}\n${winPlaceholder}\n${fakeSk}\n#2563eb\n`;
   const rustScan = runNativeValidatorCli('arc-scan', [], scanInput);
   assert.equal(rustScan.clean, false);
   assert.deepEqual(
@@ -375,8 +378,8 @@ test('N8: all 6 native Rust validator modules match Node golden vectors byte-for
     assert.deepEqual(rustNet, jsNet);
   }
 
-  // 7. vector_assets SVG validator golden check
-  const validIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16"/></svg>';
+  // 7. vector_assets SVG validator golden check (including multi-byte UTF-8 comment after '#')
+  const validIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><!-- # Молекула --><path d="M4 12h16"/></svg>';
   const invalidIcon = '<svg viewBox="0 0 16 16" stroke="#2563eb" onclick="x()"><script>1</script></svg>';
   assert.deepEqual(runNativeValidatorCli('vector-svg', [], validIcon), validateSvg(validIcon));
   assert.deepEqual(runNativeValidatorCli('vector-svg', [], invalidIcon), validateSvg(invalidIcon));

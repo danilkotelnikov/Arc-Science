@@ -1,0 +1,4 @@
+# arc-core bundle patch: mounts the shared Arc console and core tools plugin on the host.
+- insert:
+    - id: arc-core
+      name: arc-core

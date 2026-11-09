@@ -60,8 +60,9 @@ fn has_clipped_status(line: &str) -> bool {
 
 pub fn lint_prose(text: &str, slide_mode: bool) -> Vec<ProseFinding> {
     let mut findings = Vec::new();
+    let clean_text = text.strip_prefix('\u{feff}').unwrap_or(text);
 
-    for (idx, raw_line) in text.lines().enumerate() {
+    for (idx, raw_line) in clean_text.lines().enumerate() {
         let line_no = idx + 1;
         let trimmed = raw_line.trim();
         if trimmed.is_empty() {

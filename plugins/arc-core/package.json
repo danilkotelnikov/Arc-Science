@@ -2,6 +2,7 @@
   "name": "arc-core",
   "version": "0.1.0",
   "description": "Shared Arc Kit MCP server, C2 unified console, and core tools for shelf search, claim recording, gate checks, toolpack loading and memory.",
+  "icon": "icon.svg",
   "type": "module",
   "license": "MIT",
   "main": "./lib/index.js",
@@ -9,19 +10,26 @@
     ".": "./lib/index.js",
     "./client": "./ui/panel.js",
     "./ui/panel": "./ui/panel.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json",
+    "./icon": "./icon.svg",
     "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "lib",
     "ui",
     "locale",
+    "cordis.patch.yml",
+    "icon.svg",
     "README.md"
   ],
   "scripts": {
     "test": "node --test test/core.test.mjs test/ui-panel.test.mjs"
   },
   "arc": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "inject": [
@@ -31,7 +39,14 @@
       ]
     }
   },
+  "peerDependencies": {
+    "@arc-harness/arc-client-locale": "^0.2.1-rc.2",
+    "@arc-harness/arc-client-ui-sidebar-right": "^0.2.1-rc.2",
+    "@arc-harness/arc-client-ui-slots": "^0.2.1-rc.2",
+    "react": "^18.2.0"
+  },
   "engines": {
-    "node": ">=22.19"
+    "node": ">=22.19",
+    "arc": ">=0.2.1-rc.2 <0.3.0"
   }
 }

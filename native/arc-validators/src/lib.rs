@@ -60,6 +60,13 @@ mod tests {
         let bad_prose = arc_hook::evaluate_hook(true, false, "Привет, готово.", true, true);
         assert!(!bad_prose.allowed);
         assert_eq!(bad_prose.violations, vec!["NON_ENGLISH_PROSE_OUTSIDE_CODE"]);
+
+        // Escaped quotes inside a quoted filename stay masked; an unclosed quote never masks subsequent lines.
+        let escaped_quote = arc_hook::evaluate_hook(true, true, "Saved \"файл \\\"привет\\\".txt\" cleanly.", true, true);
+        assert!(escaped_quote.allowed);
+        let unclosed_quote = arc_hook::evaluate_hook(true, true, "He said \"hello\nПривет мир", true, true);
+        assert!(!unclosed_quote.allowed);
+        assert_eq!(unclosed_quote.violations, vec!["NON_ENGLISH_PROSE_OUTSIDE_CODE"]);
     }
 
     #[test]
@@ -76,6 +83,12 @@ mod tests {
         assert!(rules.contains(&"CONTRAST_NOT_Y"));
         assert!(rules.contains(&"CLIPPED_STATUS"));
 
+        let bom_slogan = "\u{feff}# Build 1\nPlain body sentence.";
+        let bom_hits = arc_rules::lint_prose(bom_slogan, true);
+        assert_eq!(bom_hits.len(), 1);
+        assert_eq!(bom_hits[0].rule, "SLOGAN_HEADER");
+        assert_eq!(bom_hits[0].line, 1);
+
         let clean = "# Validation ladder\nThe check ran across all three themes and passed with zero findings.";
         assert!(arc_rules::lint_prose(clean, true).is_empty());
     }
@@ -83,13 +96,18 @@ mod tests {
     #[test]
     fn arc_scan_detects_paths_tokens_blue_and_brand() {
         let win_path = ["C:", "Users", "alice", "secret.txt"].join("\\");
+        let pub_path = ["C:", "Users", "Public", "a.txt"].join("\\");
         let placeholder = ["C:", "Users", "<you>", "file.txt"].join("\\");
         let sk_tok = format!("sk-{}", "a1".repeat(15));
-        let text = format!("{}\n{}\n{}\ncolor: #2563eb;\n", win_path, placeholder, sk_tok);
+        let text = format!(
+            "# Молекула\n{} {}\n{}\n{}\ncolor: #2563eb;\n",
+            pub_path, win_path, placeholder, sk_tok
+        );
 
         let hits = arc_scan::scan_text(&text, false);
         let classes: Vec<&str> = hits.iter().map(|h| h.class).collect();
         assert_eq!(classes, vec!["windows_home_path", "secret_token", "blue_hex"]);
+        assert!(!arc_scan::is_blue_hex("Молекула"));
     }
 
     #[test]
@@ -102,13 +120,6 @@ mod tests {
         assert!(!g_revoked.active);
 
         let d = grants_net::anchored_entry_digest("sha256:0000", 1, "claim.record", "{\"id\":\"c1\"}");
-        assert_eq!(
-            d,
-            "sha256:9cd264ef12989e89448d1e70941e730268545df2fd68049e93905b03052ba3f9".replace(
-                "9cd264ef12989e89448d1e70941e730268545df2fd68049e93905b03052ba3f9",
-                &d[7..]
-            )
-        );
         assert!(d.starts_with("sha256:") && d.len() == 71);
 
         assert!(grants_net::evaluate_net_endpoint("127.0.0.1", 7424, &[]).allowed);
@@ -119,7 +130,7 @@ mod tests {
 
     #[test]
     fn vector_assets_validates_24x24_stroke_and_rejects_scripts_or_blue() {
-        let good = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="8"/></svg>"#;
+        let good = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><!-- # Молекула --><circle cx="12" cy="12" r="8"/></svg>"#;
         assert!(vector_assets::validate_svg(good).valid);
 
         let bad = r##"<svg viewBox="0 0 16 16" stroke="#3b82f6"><script>alert(1)</script></svg>"##;

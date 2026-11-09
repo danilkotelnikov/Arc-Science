@@ -121,6 +121,38 @@ export function detectFormulaicProse(text = '') {
   };
 }
 
+export function rewriteFormulaicProse(text = '') {
+  let out = String(text || '');
+  out = out.replace(
+    /\b(not)\s+(?:[a-z]+\s+){0,3}[a-z]+,\s+but\s+((?:[a-z]+\s+){0,3}[a-z]+)\b/gi,
+    (match, notWord, replacement) => {
+      if (notWord[0] === 'N') {
+        return replacement.charAt(0).toUpperCase() + replacement.slice(1);
+      }
+      return replacement;
+    },
+  );
+  out = out.replace(
+    /\b(не)\s+(?:[а-яё]+\s+){0,3}[а-яё]+,\s+а\s+((?:[а-яё]+\s+){0,3}[а-яё]+)\b/giu,
+    (match, neWord, replacement) => {
+      if (neWord[0] === 'Н') {
+        return replacement.charAt(0).toUpperCase() + replacement.slice(1);
+      }
+      return replacement;
+    },
+  );
+  out = out.replace(/\s+\brather\s+than\s+[^.,;!?]+/gi, '');
+  out = out.replace(/\brather\s+than\b/gi, 'instead of');
+  out = out.replace(/\bdelve\s+into\b/gi, 'examine');
+  out = out.replace(/\ba\s+testament\s+to\b/gi, 'evidence for');
+  out = out.replace(/\btestament\s+to\b/gi, 'evidence for');
+  out = out.replace(/\bparadigm\s+shift\b/gi, 'method change');
+  out = out.replace(/\bseamlessly\b/gi, 'cleanly');
+  out = out.replace(/\bholistic\b/gi, 'whole');
+  out = out.replace(/\s{2,}/g, ' ').trim();
+  return out;
+}
+
 export function createC2ConsoleState() {
   return {
     workspaces: [...WORKSPACES],
@@ -133,6 +165,7 @@ export function createC2ConsoleState() {
     activeWorkspace: 'Research',
     activeResearchView: 'Map',
     activeConnector: 'Servers',
+    activePaneMode: 'workspace',
     settingsOpen: false,
   };
 }
@@ -141,6 +174,16 @@ export function createResearchSessionStore(opts = {}) {
   const nowFn = typeof opts.now === 'function' ? opts.now : () => Date.now();
   const state = createC2ConsoleState();
   const sessionId = typeof opts.sessionId === 'string' && opts.sessionId.trim() ? opts.sessionId.trim() : 'session-arc-science-01';
+
+  const seatAssignments = Array.isArray(opts.seatAssignments)
+    ? opts.seatAssignments.map((s) => ({ ...s }))
+    : [
+        { seat: 'Planner', role: 'Branch decomposition and budget' },
+        { seat: 'Reviewer', role: 'Evidence and citation audit' },
+        { seat: 'Falsifier', role: 'Counter-hypothesis and holdout probe' },
+        { seat: 'Vision', role: 'Rendered pixel and layout read' },
+        { seat: 'Prose', role: 'Plain wording and lexicon check' },
+      ];
 
   const branches = Array.isArray(opts.branches)
     ? opts.branches.map((b) => ({ ...b }))
@@ -186,7 +229,7 @@ export function createResearchSessionStore(opts = {}) {
         },
         {
           id: 'c-a100-share',
-          text: 'Combined autoencoder and denoiser Adam states occupy 6.094 GiB (7.62% of 80 GiB).',
+          text: 'Combined autoencoder and denoiser Adam training states occupy 6.54 GB (8.2% of an 80 GB NVIDIA A100).',
           level: 'architecture',
           source: 'studio/jobs/ml-explainer/compute/sizes.json',
           rung: 'L1',
@@ -222,10 +265,12 @@ export function createResearchSessionStore(opts = {}) {
       activeWorkspace: state.activeWorkspace,
       activeResearchView: state.activeResearchView,
       activeConnector: state.activeConnector,
+      activePaneMode: state.activePaneMode,
       settingsOpen: state.settingsOpen,
       workspaces: [...WORKSPACES],
       connectors: [...CONNECTORS],
       seats: [...SEATS],
+      seatAssignments: seatAssignments.map((s) => ({ ...s })),
       researchPanes: [...RESEARCH_PANES],
       researchViews: [...RESEARCH_VIEWS],
       decisionActions: [...DECISION_ACTIONS],
@@ -240,8 +285,9 @@ export function createResearchSessionStore(opts = {}) {
       return { ok: false, error: `Unknown workspace: ${String(workspace)}` };
     }
     state.activeWorkspace = workspace;
+    state.activePaneMode = 'workspace';
     state.settingsOpen = false;
-    return { ok: true, activeWorkspace: state.activeWorkspace };
+    return { ok: true, activeWorkspace: state.activeWorkspace, activePaneMode: state.activePaneMode };
   }
 
   function selectResearchView(view) {
@@ -257,7 +303,9 @@ export function createResearchSessionStore(opts = {}) {
       return { ok: false, error: `Unknown connector: ${String(connector)}` };
     }
     state.activeConnector = connector;
-    return { ok: true, activeConnector: state.activeConnector };
+    state.activePaneMode = 'connector';
+    state.settingsOpen = false;
+    return { ok: true, activeConnector: state.activeConnector, activePaneMode: state.activePaneMode };
   }
 
   function toggleSettings(open) {
@@ -363,6 +411,41 @@ export function createResearchSessionStore(opts = {}) {
     return { ok: true, text: proseText, report: detectFormulaicProse(proseText) };
   }
 
+  function rewriteProseDraft() {
+    proseText = rewriteFormulaicProse(proseText);
+    timeline.push({
+      id: `ev-${timeline.length + 1}`,
+      atMs: nowFn(),
+      kind: 'prose-rewrite',
+      summary: 'Rewrote draft to plain direct sentences locally',
+    });
+    return { ok: true, text: proseText, report: detectFormulaicProse(proseText) };
+  }
+
+  function connectorDetails() {
+    const activeGrants = listActiveGrants();
+    return {
+      Servers: [
+        { id: 'srv-cammut', label: 'Loopback Cammut gateway', endpoint: '127.0.0.1:4317', status: 'loopback token guard active' },
+        { id: 'srv-studio', label: 'Molecullage studio server', endpoint: 'stdio local', status: 'ready' },
+      ],
+      Keys: [
+        { id: 'key-cammut', label: 'Cammut bearer token', ref: 'cred://arc-native/cammut-bearer', status: 'stored in OS vault' },
+        { id: 'key-signing', label: 'Release bundle public key', ref: 'cred://arc-native/release-verify', status: 'pinned' },
+      ],
+      Apps: [
+        { id: 'molecullage', label: 'Molecullage figure and structure pack', scopes: ['read', 'render'], grants: activeGrants.filter((g) => g.appId.startsWith('molecullage')).length },
+        { id: 'inspect', label: 'Scoped archive inspector', scopes: ['read', 'verify'], grants: activeGrants.filter((g) => g.appId.startsWith('inspect')).length },
+      ],
+      Audit: timeline.slice(-6).map((ev) => ({
+        id: ev.id,
+        kind: ev.kind,
+        summary: ev.summary,
+        atMs: ev.atMs,
+      })),
+    };
+  }
+
   function snapshot() {
     return {
       ok: true,
@@ -372,6 +455,7 @@ export function createResearchSessionStore(opts = {}) {
       evidence: { ok: true, items: evidence.map((e) => ({ ...e })) },
       timeline: { ok: true, events: timeline.map((e) => ({ ...e })) },
       decisions: { ok: true, items: decisions.map((d) => ({ ...d })) },
+      connectorsDetail: connectorDetails(),
       release: {
         ok: true,
         verdict: 'accepted',
@@ -414,6 +498,7 @@ export function createResearchSessionStore(opts = {}) {
     applyConsent,
     listActiveGrants,
     updateProseDraft,
+    rewriteProseDraft,
     snapshot,
   };
 }
@@ -449,6 +534,7 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
     if (payload.kind === 'decision') return store.recordDecision(payload);
     if (payload.kind === 'consent') return store.applyConsent(payload);
     if (payload.kind === 'prose') return store.updateProseDraft(payload.text);
+    if (payload.kind === 'prose-rewrite') return store.rewriteProseDraft();
     if (payload.kind === 'operator-switch') return store.setOperatorSwitch(payload.rungId, payload.enabled);
     return { ok: false, error: `Unknown console action kind: ${String(payload.kind || '')}` };
   }
@@ -466,22 +552,47 @@ export function registerConsoleRoutes(ctx, store = createResearchSessionStore())
     '/api/arc-core/console/action',
   ];
   const disposers = [];
-  ctx.inject(['fetch'], (inner) => {
-    const host = typeof inner.get === 'function' ? inner.get() : inner;
-    const fetchSvc = host && host.fetch;
+  ctx.inject(['connection'], (c) => {
+    const conn = typeof c.get === 'function' ? c.get('connection') : c && c.connection;
+    const fallbackHost = typeof c.get === 'function' ? c.get() : c;
+    const fetchSvc = (conn && conn.fetch) || (fallbackHost && fallbackHost.fetch);
     if (!fetchSvc || typeof fetchSvc.register !== 'function') return;
     for (const p of routes) {
-      const off = fetchSvc.register({
-        path: p,
-        async fetch(req) {
-          const body = await serveConsoleRoute(req, {}, store);
-          return new Response(JSON.stringify(body), {
-            status: body.ok ? 200 : 400,
-            headers: { 'content-type': 'application/json' },
-          });
-        },
-      });
-      if (typeof off === 'function') disposers.push(off);
+      const mount = () =>
+        fetchSvc.register.call(fetchSvc, {
+          path: p,
+          methods: ['GET', 'POST'],
+          requestBody: 'buffered',
+          fetch: async (req) => {
+            try {
+              const body = await serveConsoleRoute(req, {}, store);
+              return new Response(JSON.stringify(body), {
+                status: body.ok ? 200 : 400,
+                headers: {
+                  'content-type': 'application/json',
+                  'cache-control': 'no-store',
+                },
+              });
+            } catch (err) {
+              return new Response(
+                JSON.stringify({ ok: false, error: String(err?.message || 'failed').slice(0, 200) }),
+                {
+                  status: 500,
+                  headers: {
+                    'content-type': 'application/json',
+                    'cache-control': 'no-store',
+                  },
+                },
+              );
+            }
+          },
+        });
+      if (typeof c.effect === 'function') {
+        c.effect(mount, `arc-core: ${p}`);
+      } else {
+        const off = mount();
+        if (typeof off === 'function') disposers.push(off);
+      }
     }
   });
   return disposers;

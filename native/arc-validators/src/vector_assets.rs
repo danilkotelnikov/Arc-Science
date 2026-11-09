@@ -1,5 +1,5 @@
 // Module 6 (vector_assets): Zero-dependency SVG validator enforcing 24x24 viewBox, 1.5 stroke, and safe ink-only elements.
-use crate::arc_scan::is_blue_hex;
+use crate::arc_scan::has_blue_hex_in_bytes;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SvgCheckResult {
@@ -8,18 +8,7 @@ pub struct SvgCheckResult {
 }
 
 fn has_blue_color_literal(svg: &str) -> bool {
-    let bytes = svg.as_bytes();
-    let mut i = 0;
-    while i + 7 <= bytes.len() {
-        if bytes[i] == b'#' {
-            let hex = &svg[i + 1..i + 7];
-            if hex.bytes().all(|b| b.is_ascii_hexdigit()) && is_blue_hex(hex) {
-                return true;
-            }
-        }
-        i += 1;
-    }
-    false
+    has_blue_hex_in_bytes(svg.as_bytes())
 }
 
 fn has_inline_event_attr(lower: &str) -> bool {
