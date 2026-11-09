@@ -1,0 +1,24 @@
+flowchart TD
+    U([Your prompt]) --> TAG[Intake: tag D-YYYYMMDD-NN<br/>split into tasks T1..Tn]
+    TAG --> REC[Recall from Cammut<br/>only if the task depends on earlier facts]
+    REC --> EX{Does a tool, skill or repo already do it?}
+    EX -- yes --> REUSE[Use it]
+    EX -- no --> SRC[Research, at most 5 sources<br/>score each 0-3]
+    REUSE --> PLAN
+    SRC --> PLAN
+    PLAN[Plan, at most 7 steps<br/>one acceptance check per step] --> PROP[[hoh_propose]]
+    PROP --> YES{Software run?<br/>Do you say yes?}
+    YES -- no --> WAIT[Stop and ask]
+    YES -- yes --> BUILD[Build the smallest increment]
+    BUILD --> PROBE[Probe: edge cases and rival options]
+    PROBE --> FREEZE[[hoh_freeze]]
+    FREEZE --> CHK[Fresh subagent runs each check]
+    CHK --> GATE[[hoh_gate]]
+    GATE --> D{All true?}
+    D -- no --> FIX[Fix the cause]
+    FIX --> CYC{Cycle > 3?}
+    CYC -- no --> BUILD
+    CYC -- yes --> ASK[Stop and ask you]
+    D -- yes --> ACC[Accepted]
+    ACC --> LEDGER[(Hash-chained ledger)]
+    LEDGER --> HERO([Result with evidence level])

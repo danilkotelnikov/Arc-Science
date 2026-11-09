@@ -8,6 +8,12 @@
     "arc-theme",
     "arc-hoh"
   ],
+  "optional": [
+    "arc-core",
+    "arc-mode",
+    "arc-molecullage",
+    "arc-mermaid"
+  ],
   "left_out": {
     "arc-context": "Context Insights: trajectories and spending pages",
     "arc-vision-router": "vision model routing",

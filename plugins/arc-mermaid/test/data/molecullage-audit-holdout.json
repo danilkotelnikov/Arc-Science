@@ -1,0 +1,26 @@
+{
+  "h-flow-lr": {
+    "ink": 19.02,
+    "cells": 60.42,
+    "band": 8.11,
+    "blank": 23.81
+  },
+  "h-seq-frames": {
+    "ink": 10.12,
+    "cells": 42.08,
+    "band": 4.0,
+    "blank": 20.95
+  },
+  "h-state-composite": {
+    "ink": 12.05,
+    "cells": 45.42,
+    "band": 8.68,
+    "blank": 9.38
+  },
+  "h-subgraph-tb": {
+    "ink": 22.17,
+    "cells": 30.42,
+    "band": 2.3,
+    "blank": 12.68
+  }
+}

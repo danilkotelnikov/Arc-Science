@@ -1,0 +1,10 @@
+flowchart TD
+    Q[Question] --> S{Source exists?}
+    S -- yes --> R[Read it once]
+    S -- no --> W[Web search<br/>at most five sources]
+    R --> T[Score 0 to 3]
+    W --> T
+    T --> B[Build the smallest increment]
+    B --> C{Check passes?}
+    C -- no --> B
+    C -- yes --> D([Deliver])

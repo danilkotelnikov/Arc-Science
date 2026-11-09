@@ -1,0 +1,50 @@
+{
+  "cycle": {
+    "ink": 23.04,
+    "cells": 47.5,
+    "band": 4.92,
+    "blank": 16.67
+  },
+  "prompt-flow": {
+    "ink": 16.36,
+    "cells": 48.75,
+    "band": 0.91,
+    "blank": 15.87
+  },
+  "sequence-card": {
+    "ink": 8.71,
+    "cells": 55.42,
+    "band": 3.7,
+    "blank": 14.12
+  },
+  "sequence-hoh": {
+    "ink": 10.69,
+    "cells": 42.5,
+    "band": 2.74,
+    "blank": 8.89
+  },
+  "shapes": {
+    "ink": 19.86,
+    "cells": 47.5,
+    "band": 1.76,
+    "blank": 15.99
+  },
+  "state-hoh": {
+    "ink": 14.55,
+    "cells": 57.5,
+    "band": 2.51,
+    "blank": 17.45
+  },
+  "subgraph-lr": {
+    "ink": 17.16,
+    "cells": 44.17,
+    "band": 10.24,
+    "blank": 12.12
+  },
+  "unicode-html": {
+    "ink": 29.98,
+    "cells": 37.92,
+    "band": 5.41,
+    "blank": 13.42
+  }
+}

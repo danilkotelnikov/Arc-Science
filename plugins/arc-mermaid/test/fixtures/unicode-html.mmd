@@ -1,0 +1,5 @@
+flowchart TD
+    A["Запрос <script>alert(1)</script> & <b>bold</b>"] --> B{"Проверка: #quot;да#quot;?"}
+    B -->|да| C[Готово ✓]
+    B -->|нет| D["a < b > c"]
+    D --> A

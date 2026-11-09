@@ -164,3 +164,14 @@ test('an old flat undo file with Arc names never goes to ~/.dsh', (t) => {
   fs.writeFileSync(opts.undoFile, JSON.stringify(A));
   assert.deepEqual(Object.keys(readUndo(opts.undoFile, [arc, dsh])), [homeKey(arc)]);
 });
+
+test('optional Arc plugins join the lean bundle list when installed in node_modules', (t) => {
+  const { makeHome, opts } = scratch(t);
+  const a = makeHome('a', A);
+  for (const b of ['arc-core', 'arc-mermaid']) {
+    fs.mkdirSync(path.join(a, 'profiles', 'desktop', 'node_modules', b), { recursive: true });
+  }
+  run('apply', resolveHome([], { ARC_HOME: a }), opts);
+  assert.deepEqual(bundles(a, 'web').slice().sort(), LEAN.slice().sort());
+  assert.deepEqual(bundles(a, 'desktop').slice().sort(), [...LEAN, 'arc-core', 'arc-mermaid'].sort());
+});

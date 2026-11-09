@@ -1,0 +1,15 @@
+flowchart LR
+    subgraph In [Inputs]
+        A[Prompt] --> B[Rules]
+    end
+    subgraph Core [Gate]
+        C[Propose] --> D[Freeze] --> E{Verdict}
+    end
+    subgraph Mem [Memory]
+        M[(Cammut)]
+    end
+    B --> C
+    E -->|accepted| F([Result])
+    E -->|unmet| C
+    M -.-> A
+    F -.-> M

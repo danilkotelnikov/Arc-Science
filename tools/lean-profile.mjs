@@ -28,12 +28,15 @@ export function lean(text, has) {
   if (field(j) !== 'arc') throw new Error('this profile still has the original names: run the install first');
   const old = j[field(j)]?.profile?.bundles;
   if (!Array.isArray(old)) throw new Error('no arc.profile.bundles in the profile package.json');
-  const keep = names(j, spec.keep), add = names(j, spec.add);
+  const keep = names(j, spec.keep), add = names(j, spec.add), opt = names(j, spec.optional || []);
   const kept = old.filter((b) => keep.includes(b));
   for (const b of keep) if (!kept.includes(b)) throw new Error(`the profile has no bundle ${b}`);
   for (const b of add) {
     if (!has(b)) throw new Error(`the package ${b} is not installed: copy it into the profile's node_modules first`);
     if (!kept.includes(b)) kept.push(b);
+  }
+  for (const b of opt) {
+    if (has(b) && !kept.includes(b)) kept.push(b);
   }
   j[field(j)].profile.bundles = kept;
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
@@ -92,8 +95,9 @@ export function run(cmd, home, { undoFile: file = undoFile, legacyHome, log = co
     if (cmd === 'status') log(`${prof}: ${now.length} bundles${saved[prof] ? ' (lean, original list saved)' : ''}: ${now.join(', ')}`);
     else if (cmd === 'apply') {
       if (!saved[prof]) saved[prof] = now; // the first original list stays, a second apply never overwrites it
-      fs.writeFileSync(f, lean(text, installed(f)));
-      log(`${prof}: now ${spec.keep.length + spec.add.length} bundles`);
+      const next = lean(text, installed(f));
+      fs.writeFileSync(f, next);
+      log(`${prof}: now ${JSON.parse(next)[field(JSON.parse(next))].profile.bundles.length} bundles`);
     } else {
       if (!saved[prof]) { log(`${prof}: nothing saved to restore`); continue; }
       const j = JSON.parse(text);

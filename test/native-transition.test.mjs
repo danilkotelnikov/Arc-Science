@@ -104,11 +104,12 @@ test('N2 & N4: vendored plugin bundler audits licenses, rejects UNLICENSED plugi
   const bundle = bundleVendoredPlugins();
   assert.deepEqual(
     bundle.plugins.map((p) => p.id),
-    ['arc-core', 'arc-hoh', 'arc-mode', 'arc-molecullage', 'arc-theme'],
+    ['arc-core', 'arc-hoh', 'arc-mermaid', 'arc-mode', 'arc-molecullage', 'arc-theme'],
   );
   assert.match(bundle.noticesText, /Based on DeepSeek Harness \(dsh-v0\.2\.1-rc\.5\), MIT/);
   assert.match(bundle.noticesText, /SIL Open Font License 1\.1/);
-  assert.match(bundle.noticesText, /arc-core@0\.1\.0/);
+  assert.match(bundle.noticesText, /arc-core@0\.2\.0/);
+  assert.match(bundle.noticesText, /arc-mermaid@0\.2\.0/);
 
   // Negative test: reject a plugin with UNLICENSED or missing license
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-vendor-bad-'));
@@ -135,7 +136,7 @@ test('N5 & N6: settings-only profile removes node_modules cleanly and static mod
   assert.equal(status.hasNodeModules, false);
   assert.equal(status.hasLockfile, false);
   assert.deepEqual(status.removed.sort(), ['node_modules', 'pnpm-lock.yaml']);
-  assert.equal(status.resolvedPlugins.length, 5);
+  assert.equal(status.resolvedPlugins.length, 6);
 
   const t1 = generateStaticModuleTable({
     coreBundles: ['@arc-harness/arc-web-app', '@arc-harness/arc-base'],
@@ -144,7 +145,7 @@ test('N5 & N6: settings-only profile removes node_modules cleanly and static mod
     coreBundles: ['@arc-harness/arc-base', '@arc-harness/arc-web-app'],
   });
   assert.equal(t1.tableSha256, t2.tableSha256);
-  assert.equal(t1.modules.length, 7);
+  assert.equal(t1.modules.length, 8);
 });
 
 test('N3, N3b & N7e: loopback Cammut gateway enforces 127.0.0.1 bind, 401 Bearer auth, secret boundary, memory policy, and L5/L6 default-off switches', async (t) => {

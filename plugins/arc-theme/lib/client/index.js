@@ -1,6 +1,6 @@
 /**
- * arc-theme 0.5.0 (2026-11-08)
- * Client half: three themes for the web UI. Arc Harness is the C2 paper look of the Cammut and Arc Harness console; black and white (v0) and Radium are the two older looks, adapted to Arc.
+ * arc-theme 0.6.0 (2026-11-10)
+ * Client half: three themes for the web UI, backdrop blur, Settings copy map and choreographed startup intro.
  * One token layer on the app's own theme service (ctx.theme.overrideTokens), so light, dark and system modes keep
  * working: cream paper #faf9f6, a dark-brown primary button #54453c, rounded corners (10 px cards, 8 px controls)
  * and Geist (embedded, SIL OFL 1.1). No blue is left in any theme (owner decision, 2026-10-31). The two older themes returned on 2026-11-08 (owner decision), picked in Settings, General.
@@ -46,7 +46,7 @@ window.__ModuleLoader__.load({
       Object.keys(KEYFRAMES).forEach(function (k) { out.push("@keyframes " + k + "{" + KEYFRAMES[k] + "}"); });
       var off = [];
       MOTION.forEach(function (m) {
-        var decl = "animation:" + m[1] + " " + m[2] + "ms " + m[3] + " backwards;will-change:transform,opacity;backface-visibility:hidden";
+        var decl = "animation:" + m[1] + " " + m[2] + "ms " + m[3] + " backwards;will-change:transform;backface-visibility:hidden";
         out.push(m[0] + "{" + decl + (m[1] === "arcToast" ? ";contain:layout paint" : "") + "}");
         off.push(m[0]);
         if (m[4]) {
@@ -70,6 +70,9 @@ window.__ModuleLoader__.load({
       out.push("@media (prefers-reduced-motion:reduce){" + off.join(",") + "{animation:none !important;transition:none !important;scale:none !important;will-change:auto !important}}");
       return out;
     })();
+
+    // Menus blur the page behind them. will-change:opacity on a menu would stop that (it becomes a backdrop root), so the motion rules above set only transform.
+    var MENU_CSS = ["html body{--dsw-menu-backdrop-filter:blur(24px) saturate(140%) !important}"];
 
     var SKINS = {
       "arc": {
@@ -421,7 +424,7 @@ window.__ModuleLoader__.load({
           "html body [class*=\"_headline\"][class*=\"WOwLGG\"]{flex-direction:column !important;gap:16px !important;text-align:center}",
           "html body [class*=\"WOwLGG_titleGroup\"]{font-size:32px !important;line-height:1.15 !important;font-weight:600 !important;letter-spacing:-.02em !important}",
           "html body [class*=\"WOwLGG_previewBadge\"]{display:none !important}"
-        ].concat(MOTION_CSS)
+        ].concat(MOTION_CSS, MENU_CSS)
       },
       "v0": {
         "label": "Black and white",
@@ -679,8 +682,8 @@ window.__ModuleLoader__.load({
             "dark": "#1f1f1fb3"
           },
           "--dsw-menu-surface-fill": {
-            "light": "#fafafa94",
-            "dark": "#45454573"
+            "light": "#fafafad6",
+            "dark": "#454545d6"
           },
           "--dsw-alias-menu-group-header-fill": {
             "light": "#fafafaf0",
@@ -1047,8 +1050,8 @@ window.__ModuleLoader__.load({
             "dark": "#1f1e1cb3"
           },
           "--dsw-menu-surface-fill": {
-            "light": "#faf9f694",
-            "dark": "#3e3d3a73"
+            "light": "#faf9f6d6",
+            "dark": "#3e3d3ad6"
           },
           "--dsw-alias-menu-group-header-fill": {
             "light": "#faf9f6f0",
@@ -1360,6 +1363,26 @@ window.__ModuleLoader__.load({
       }).join("");
     }
 
+    // ---- copy: labels of built-in screens (2026-11-09) ----------------------------------------
+    // Whole-text Settings labels follow one style: sentence case, short nouns, no deployment or host talk.
+    var COPY = Object.create(null);
+    [
+      ["Built-in plugins", "Plugins"],
+      ["Inspect the plugins this deployment ships.", "See which plugins are installed and whether they are running."],
+      ["Plugin views", "Plugin sections"],
+      ["This deployment exposes no plugin views.", "No plugin sections to show."],
+      ["Plugin list", "Installed plugins"],
+      ["Reading plugins\u2026", "Loading plugins\u2026"],
+      ["Syncing plugins on this page\u2026", "Syncing plugins\u2026"],
+      ["Some plugins could not sync on this page. Host enablement is unchanged.", "Some plugins could not sync. Their on and off state is unchanged."],
+      ["Retry this page", "Retry"],
+      ["Composed per session by agent presets", "Set per session by the agent preset"],
+      ["Choose the agent preset to inspect", "Agent preset"],
+      ["Shared by the system and every session", "Shared by every session"],
+      ["Disabled globally; agent presets provide it per session", "Off globally; the agent preset turns it on per session"]
+    ].forEach(function (pair) { COPY[pair[0]] = pair[1]; });
+    function copyOf(v) { var k = v && v.trim(); return k && COPY[k] !== undefined ? v.replace(k, COPY[k]) : null; }
+
     // ---- point delimiters ------------------------------------------------------------------
     var DELIM = "[\\u00b7\\u2022\\u2219\\u22c5\\u2027\\u30fb\\uff65]";
     var DELIM_ANY = new RegExp(DELIM);
@@ -1390,9 +1413,12 @@ window.__ModuleLoader__.load({
     var SKIP_TEXT = "pre, code, kbd, samp, textarea, input, script, style, noscript, .katex, [contenteditable=''], [contenteditable='true'], [class*='markdown' i], [class*='message' i], [class*='transcript' i]";
     function fixTextNode(n) {
       var v = n.nodeValue;
-      if (!v || !DELIM_ANY.test(v)) return;
+      if (!v) return;
+      var cp = copyOf(v);
+      if (!cp && !DELIM_ANY.test(v)) return;
       var p = n.parentElement;
       if (!p || p.closest(SKIP_TEXT)) return;
+      if (cp) { n.nodeValue = cp; return; }
       var out = fixDelimiters(v, { prev: !!n.previousSibling, next: !!n.nextSibling });
       if (out === v) return;
       n.nodeValue = out;
@@ -1403,7 +1429,7 @@ window.__ModuleLoader__.load({
       if (root.nodeType === 3) { fixTextNode(root); return; }
       if (root.nodeType !== 1) return;
       var w = document.createTreeWalker(root, 4), n, list = [];
-      while ((n = w.nextNode())) if (n.nodeValue && DELIM_ANY.test(n.nodeValue)) list.push(n);
+      while ((n = w.nextNode())) if (n.nodeValue && (DELIM_ANY.test(n.nodeValue) || copyOf(n.nodeValue))) list.push(n);
       list.forEach(fixTextNode);
     }
 
@@ -1540,11 +1566,133 @@ window.__ModuleLoader__.load({
 
     exports.greyBlues = greyBlues;
     exports.fixDelimiters = fixDelimiters;
+    exports.COPY = COPY;
 
     exports.isBlue = isBlue;
     exports.blueCss = blueCss;
     exports.SKINS = SKINS;
     exports.inject = ["theme", "slots", "locale"];
+    function playArcIntro(opts) {
+      if (typeof document === "undefined" || !document.body || typeof document.createElementNS !== "function") return;
+      var existing = document.getElementById("as-intro-live-stage");
+      if (existing) existing.remove();
+      if (!document.getElementById("as-intro-style")) {
+        var st = document.createElement("style");
+        st.id = "as-intro-style";
+        st.textContent = ".as-intro-stage{--as-bg:#faf9f6;--as-bg-glow:#f4f2ed;--as-surface:#f4f2ed;--as-chip:#ece9e2;--as-border:#e6e2da;--as-border-strong:#d2cdc2;--as-ink:#26231f;--as-cube:#0a0a0a;--as-accent:#54453c;--as-sand:#a89272;--as-muted:#645e55;position:fixed;inset:0;z-index:99999;display:grid;place-items:center;overflow:hidden;user-select:none;background:radial-gradient(circle at 50% 42%,var(--as-bg-glow) 0%,var(--as-bg) 70%);color:var(--as-ink);font-family:\"Geist\",ui-sans-serif,system-ui,-apple-system,\"Segoe UI\",sans-serif;transition:opacity 220ms cubic-bezier(0.22,1,0.36,1),transform 220ms cubic-bezier(0.22,1,0.36,1)}\nbody[data-ds-dark-theme] .as-intro-stage{--as-bg:#171614;--as-bg-glow:#1f1e1b;--as-surface:#1f1e1b;--as-chip:#272521;--as-border:#2e2b26;--as-border-strong:#3c3935;--as-ink:#f0eee9;--as-cube:#ffffff;--as-accent:#ede6d8;--as-sand:#a89272;--as-muted:#a39d93}\n.as-intro-stage[data-exiting=\"true\"]{opacity:0;transform:scale(1.018);pointer-events:none}\n.as-intro-grid{position:absolute;inset:0;background-image:radial-gradient(var(--as-border-strong) 1px,transparent 1px);background-size:24px 24px;background-position:center center;opacity:0;transform:scale(1.06);animation:asGridIn 1400ms cubic-bezier(0.16,1,0.3,1) 40ms forwards;pointer-events:none}\n.as-intro-axis-h,.as-intro-axis-v{position:absolute;background:var(--as-border);pointer-events:none}\n.as-intro-axis-h{left:0;right:0;top:50%;height:1px;transform:scaleX(0);animation:asAxisX 1250ms cubic-bezier(0.16,1,0.3,1) 80ms forwards}\n.as-intro-axis-v{top:0;bottom:0;left:50%;width:1px;transform:scaleY(0);animation:asAxisY 1250ms cubic-bezier(0.16,1,0.3,1) 80ms forwards}\n.as-intro-card{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:0;max-width:560px;width:calc(100% - 48px);padding:36px 32px 28px;text-align:center}\n.as-intro-emblem{position:relative;width:148px;height:148px;display:grid;place-items:center;margin-bottom:22px}\n.as-intro-orbit{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}\n.as-orbit-dash{stroke:var(--as-border-strong);stroke-width:1.2;stroke-dasharray:4 6;fill:none;transform-origin:128px 128px;opacity:0;animation:asOrbitSpin 18s linear infinite,asFadeIn 900ms cubic-bezier(0.16,1,0.3,1) 120ms forwards}\n.as-orbit-arc{stroke:var(--as-sand);stroke-width:1.6;stroke-linecap:round;fill:none;stroke-dasharray:1000;stroke-dashoffset:1000;transform-origin:128px 128px;transform:rotate(-90deg);animation:asStrokeDraw 1450ms cubic-bezier(0.16,1,0.3,1) 160ms forwards}\n.as-orbit-pulse{stroke:var(--as-sand);stroke-width:1.8;fill:none;opacity:0;transform-origin:128px 128px}\n.as-orbit-pulse[data-pulse=\"1\"]{animation:asPulseWave 920ms cubic-bezier(0.16,1,0.3,1) forwards}\n.as-cube-stage{position:relative;width:92px;height:92px;display:grid;place-items:center;transform:translateY(16px) scale(0.86);opacity:0;animation:asCubeRise 1100ms cubic-bezier(0.16,1,0.3,1) 60ms forwards}\n.as-cube-wire,.as-cube-solid{position:absolute;inset:0;width:100%;height:100%;overflow:visible}\n.as-cube-wire path{fill:none;stroke:var(--as-accent);stroke-width:3.6;stroke-linejoin:round;stroke-linecap:round;stroke-dasharray:1000;stroke-dashoffset:1000;animation:asStrokeDraw 1150ms cubic-bezier(0.22,1,0.36,1) var(--as-d,0ms) forwards}\n.as-cube-solid{opacity:0;transform-origin:50% 50%;animation:asSolidFade 620ms cubic-bezier(0.22,1,0.36,1) 920ms forwards}\n.as-cube-solid path{fill:var(--as-cube);fill-rule:evenodd}\n.as-cube-solid[data-turn=\"1\"]{opacity:1;animation:asCubeTurn 680ms cubic-bezier(0.34,1.56,0.64,1) forwards}\n.as-eyebrow-mask{overflow:hidden;margin-bottom:12px}\n.as-eyebrow{display:inline-flex;align-items:center;gap:8px;padding:4px 12px;border-radius:999px;background:var(--as-surface);border:1px solid var(--as-border-strong);font-family:\"Geist Mono\",ui-monospace,Consolas,monospace;font-size:11px;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:var(--as-muted);transform:translateY(120%);opacity:0;animation:asSlideUp 680ms cubic-bezier(0.16,1,0.3,1) 1450ms forwards}\n.as-eyebrow-dot{width:6px;height:6px;border-radius:50%;background:var(--as-accent);animation:asDotPulse 1800ms ease-in-out infinite}\n.as-intro-wordmark{display:inline-flex;flex-wrap:wrap;justify-content:center;font-size:38px;line-height:1.12;font-weight:600;letter-spacing:-0.025em;color:var(--as-ink);margin:0 0 10px}\n.as-char{display:inline-block;overflow:hidden;vertical-align:bottom;padding-bottom:2px}\n.as-char-in{display:inline-block;transform:translateY(115%) rotateZ(5deg);opacity:0;transform-origin:left bottom;animation:asCharIn 720ms cubic-bezier(0.16,1,0.3,1) var(--as-cd,1650ms) forwards}\n.as-tagline{font-size:14px;line-height:1.5;color:var(--as-muted);max-width:430px;margin:0 0 18px;opacity:0;transform:translateY(10px);animation:asSlideUp 700ms cubic-bezier(0.16,1,0.3,1) 2250ms forwards}\n.as-pills{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-bottom:26px}\n.as-pill{padding:4px 10px;border-radius:6px;background:var(--as-chip);border:1px solid var(--as-border);font-family:\"Geist Mono\",ui-monospace,Consolas,monospace;font-size:11px;color:var(--as-ink);opacity:0;transform:translateY(10px) scale(0.94);animation:asPillIn 580ms cubic-bezier(0.34,1.56,0.64,1) var(--as-pd,2550ms) forwards}\n.as-footer{display:flex;flex-direction:column;align-items:center;gap:12px;width:100%;max-width:340px;opacity:0;transform:translateY(8px);animation:asSlideUp 620ms cubic-bezier(0.16,1,0.3,1) 950ms forwards}\n.as-prog-track{position:relative;width:100%;height:3px;border-radius:999px;background:var(--as-border);overflow:hidden}\n.as-prog-bar{position:absolute;inset:0;background:var(--as-accent);transform-origin:left center;transform:scaleX(0.04);transition:transform 100ms linear}\n.as-meta-row{display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px}\n.as-status-left{display:inline-flex;align-items:center;gap:8px;min-width:0}\n.as-intro-hint{font-family:\"Geist Mono\",ui-monospace,Consolas,monospace;font-size:11.5px;line-height:16px;color:var(--as-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n.as-skip-btn{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:8px;background:var(--as-surface);border:1px solid var(--as-border-strong);color:var(--as-ink);font-size:12px;font-weight:500;line-height:16px;cursor:pointer;transition:transform 140ms ease,background-color 140ms ease}\n.as-skip-btn:hover{background:var(--as-chip);transform:translateY(-1px)}\n.as-skip-btn:active{transform:translateY(0) scale(0.98)}\n.as-skip-kbd{padding:1px 5px;border-radius:4px;background:var(--as-chip);border:1px solid var(--as-border-strong);font-family:\"Geist Mono\",ui-monospace,Consolas,monospace;font-size:10px;color:var(--as-muted)}\n@keyframes asGridIn{to{opacity:0.55;transform:scale(1)}}\n@keyframes asAxisX{to{transform:scaleX(1)}}\n@keyframes asAxisY{to{transform:scaleY(1)}}\n@keyframes asOrbitSpin{to{transform:rotate(360deg)}}\n@keyframes asFadeIn{to{opacity:1}}\n@keyframes asStrokeDraw{to{stroke-dashoffset:0}}\n@keyframes asCubeRise{to{opacity:1;transform:translateY(0) scale(1)}}\n@keyframes asSolidFade{to{opacity:1}}\n@keyframes asCubeTurn{0%{transform:scaleX(1) scaleY(1) translateY(0)}44%{transform:scaleX(0.03) scaleY(1.06) translateY(-4px)}76%{transform:scaleX(1.07) scaleY(0.97) translateY(1px)}100%{transform:scaleX(1) scaleY(1) translateY(0)}}\n@keyframes asPulseWave{0%{opacity:0.75;transform:scale(0.74)}100%{opacity:0;transform:scale(1.42)}}\n@keyframes asSlideUp{to{opacity:1;transform:translateY(0)}}\n@keyframes asCharIn{to{opacity:1;transform:translateY(0) rotateZ(0deg)}}\n@keyframes asPillIn{to{opacity:1;transform:translateY(0) scale(1)}}\n@keyframes asDotPulse{0%,100%{opacity:0.45;transform:scale(0.88)}50%{opacity:1;transform:scale(1.12)}}\n@media (prefers-reduced-motion:reduce){.as-intro-grid,.as-intro-axis-h,.as-intro-axis-v,.as-orbit-dash,.as-orbit-arc,.as-cube-stage,.as-cube-wire path,.as-cube-solid,.as-eyebrow,.as-char-in,.as-tagline,.as-pill,.as-footer,.as-eyebrow-dot{animation-duration:1ms !important;animation-delay:0ms !important}}";
+        document.head.appendChild(st);
+      }
+      var mk = function (cls, txt) {
+        var d = document.createElement("div");
+        if (cls) d.className = cls;
+        if (txt !== undefined) d.textContent = txt;
+        return d;
+      };
+      var root = mk("as-intro-stage");
+      root.id = "as-intro-live-stage";
+      var grid = mk("as-intro-grid"), axH = mk("as-intro-axis-h"), axV = mk("as-intro-axis-v"), card = mk("as-intro-card");
+      var ns = "http://www.w3.org/2000/svg";
+      var emblem = mk("as-intro-emblem");
+      var orbit = document.createElementNS(ns, "svg");
+      orbit.setAttribute("viewBox", "0 0 256 256");
+      orbit.setAttribute("class", "as-intro-orbit");
+      var cDash = document.createElementNS(ns, "circle");
+      cDash.setAttribute("cx", "128"); cDash.setAttribute("cy", "128"); cDash.setAttribute("r", "118"); cDash.setAttribute("class", "as-orbit-dash");
+      var cArc = document.createElementNS(ns, "circle");
+      cArc.setAttribute("cx", "128"); cArc.setAttribute("cy", "128"); cArc.setAttribute("r", "102"); cArc.setAttribute("pathLength", "1000"); cArc.setAttribute("class", "as-orbit-arc");
+      var pulseCircle = document.createElementNS(ns, "circle");
+      pulseCircle.setAttribute("cx", "128"); pulseCircle.setAttribute("cy", "128"); pulseCircle.setAttribute("r", "90"); pulseCircle.setAttribute("class", "as-orbit-pulse");
+      orbit.append(cDash, cArc, pulseCircle);
+      var cubeStage = mk("as-cube-stage");
+      var wire = document.createElementNS(ns, "svg");
+      wire.setAttribute("viewBox", "0 0 256 256");
+      wire.setAttribute("class", "as-cube-wire");
+      ["M128.00 18.80L220.15 72.00L128.00 125.20L35.85 72.00Z", "M33.43 76.20L125.58 129.40L125.58 235.80L33.43 182.60Z", "M130.42 129.40L222.57 76.20L222.57 182.60L130.42 235.80ZM140.61 202.62L151.82 144.34L162.29 138.30L173.51 183.63L164.53 188.81L161.92 178.23L152.20 183.84L149.58 197.44ZM157.06 158.59L160.05 170.68L154.07 174.13ZM179.49 128.37L206.40 112.83L212.39 116.29L212.39 119.74L188.46 133.55L188.46 143.91L212.39 130.10L212.39 161.18L185.47 176.72L179.49 173.27L179.49 169.81L203.41 156.00L203.41 145.64L179.49 159.45Z"].forEach(function (d, idx) {
+        var pt = document.createElementNS(ns, "path");
+        pt.setAttribute("d", d); pt.setAttribute("pathLength", "1000"); pt.style.setProperty("--as-d", (idx * 130) + "ms");
+        wire.appendChild(pt);
+      });
+      var solidSvg = document.createElementNS(ns, "svg");
+      solidSvg.setAttribute("viewBox", "0 0 256 256");
+      solidSvg.setAttribute("class", "as-cube-solid");
+      var setCubeFace = function (mode) {
+        var faces = mode === "right" ? ["M128.00 18.80L220.15 72.00L128.00 125.20L35.85 72.00Z", "M33.43 76.20L125.58 129.40L125.58 235.80L33.43 182.60Z", "M130.42 129.40L222.57 76.20L222.57 182.60L130.42 235.80ZM140.61 202.62L151.82 144.34L162.29 138.30L173.51 183.63L164.53 188.81L161.92 178.23L152.20 183.84L149.58 197.44ZM157.06 158.59L160.05 170.68L154.07 174.13ZM179.49 128.37L206.40 112.83L212.39 116.29L212.39 119.74L188.46 133.55L188.46 143.91L212.39 130.10L212.39 161.18L185.47 176.72L179.49 173.27L179.49 169.81L203.41 156.00L203.41 145.64L179.49 159.45Z"] : ["M128.00 18.80L220.15 72.00L128.00 125.20L35.85 72.00Z", "M33.43 76.20L125.58 129.40L125.58 235.80L33.43 182.60ZM43.61 161.18L54.83 115.85L65.30 121.90L76.51 180.17L67.54 174.99L64.92 161.40L55.20 155.78L52.59 166.36ZM60.06 136.14L63.05 151.68L57.07 148.23ZM82.49 131.83L109.41 147.37L115.39 157.73L115.39 161.18L91.47 147.37L91.47 157.73L115.39 171.54L115.39 202.62L88.47 187.08L82.49 176.72L82.49 173.27L106.42 187.08L106.42 176.72L82.49 162.91Z", "M130.42 129.40L222.57 76.20L222.57 182.60L130.42 235.80Z"];
+        solidSvg.replaceChildren.apply(solidSvg, faces.map(function (d) { var p = document.createElementNS(ns, "path"); p.setAttribute("d", d); return p; }));
+      };
+      setCubeFace("right");
+      cubeStage.append(wire, solidSvg);
+      emblem.append(orbit, cubeStage);
+      var eyeMask = mk("as-eyebrow-mask"), eye = mk("as-eyebrow"), eyeDot = mk("as-eyebrow-dot"), eyeTxt = document.createElement("span");
+      eyeTxt.textContent = "INDEPENDENT VERIFICATION";
+      eye.append(eyeDot, eyeTxt); eyeMask.appendChild(eye);
+      var wordmark = mk("as-intro-wordmark");
+      var titleStr = "Arc Harness";
+      for (var i = 0; i < titleStr.length; i++) {
+        var ch = titleStr[i], outer = document.createElement("span"), inner = document.createElement("span");
+        outer.className = "as-char"; inner.className = "as-char-in";
+        inner.textContent = ch === " " ? "\u00a0" : ch;
+        inner.style.setProperty("--as-cd", (1650 + i * 38) + "ms");
+        outer.appendChild(inner); wordmark.appendChild(outer);
+      }
+      var tagline = mk("as-tagline", "Plan, freeze, and verify work with shared memory and model routing.");
+      var pills = mk("as-pills");
+      ["Google Vertex AI", "Local Gateway", "Cammut Memory", "Accept Gate"].forEach(function (lbl, idx) {
+        var pl = mk("as-pill", lbl);
+        pl.style.setProperty("--as-pd", (2500 + idx * 95) + "ms");
+        pills.appendChild(pl);
+      });
+      var footer = mk("as-footer"), track = mk("as-prog-track"), progBar = mk("as-prog-bar");
+      track.appendChild(progBar);
+      var metaRow = mk("as-meta-row"), leftRow = mk("as-status-left"), hint = mk("as-intro-hint", "Starting workbench…");
+      leftRow.appendChild(hint);
+      var skipBtn = mk("as-skip-btn");
+      skipBtn.setAttribute("role", "button"); skipBtn.setAttribute("tabindex", "0"); skipBtn.setAttribute("aria-label", "Skip intro");
+      var skipLbl = document.createElement("span"); skipLbl.textContent = "Skip intro";
+      var skipKbd = mk("as-skip-kbd", "Esc");
+      skipBtn.append(skipLbl, skipKbd);
+      metaRow.append(leftRow, skipBtn);
+      footer.append(track, metaRow);
+      card.append(emblem, eyeMask, wordmark, tagline, pills, footer);
+      root.append(grid, axH, axV, card);
+      document.body.appendChild(root);
+      var disposed = false, startTime = performance.now(), minDurationMs = (opts && opts.durationMs) || 7400, timers = [], rafId = 0;
+      var closeIntro = function (fast) {
+        if (disposed) return;
+        disposed = true;
+        window.removeEventListener("keydown", onKey, true);
+        if (rafId) cancelAnimationFrame(rafId);
+        timers.forEach(clearTimeout);
+        progBar.style.transform = "scaleX(1)";
+        root.setAttribute("data-exiting", "true");
+        setTimeout(function () { root.remove(); }, fast ? 110 : 220);
+      };
+      var onKey = function (ev) {
+        if (ev.key === "Escape" || ev.key === " " || ev.key === "Enter") closeIntro(true);
+      };
+      window.addEventListener("keydown", onKey, true);
+      skipBtn.addEventListener("click", function () { closeIntro(true); });
+      var turnCube = function (face) {
+        if (disposed) return;
+        solidSvg.removeAttribute("data-turn"); void solidSvg.offsetWidth; solidSvg.setAttribute("data-turn", "1");
+        pulseCircle.removeAttribute("data-pulse"); void pulseCircle.offsetWidth; pulseCircle.setAttribute("data-pulse", "1");
+        timers.push(setTimeout(function () { if (!disposed) setCubeFace(face); }, 300));
+      };
+      timers.push(
+        setTimeout(function () { turnCube("as"); }, 1650),
+        setTimeout(function () { hint.textContent = "Workbench ready"; }, 3200),
+        setTimeout(function () { turnCube("right"); }, 4450),
+        setTimeout(function () { turnCube("as"); }, 5750),
+        setTimeout(function () { closeIntro(false); }, minDurationMs)
+      );
+      var tick = function () {
+        if (disposed) return;
+        var ratio = Math.min((performance.now() - startTime) / minDurationMs, 1);
+        progBar.style.transform = "scaleX(" + Math.max(0.04, ratio).toFixed(3) + ")";
+        if (ratio < 1) rafId = requestAnimationFrame(tick);
+      };
+      rafId = requestAnimationFrame(tick);
+    }
+    exports.playArcIntro = playArcIntro;
     exports.choose = function () {};
     exports.apply = function apply(ctx) {
       exports.choose = function (id) {
@@ -1570,6 +1718,13 @@ window.__ModuleLoader__.load({
       }, "theme-pair: attribute cleanup");
       applySkin(ctx, readSkin());
       startWatcher();
+      if (typeof window !== "undefined") {
+        window.arcPlayIntro = playArcIntro;
+        if (!window.__AS_INTRO_ACTIVE__) {
+          window.__AS_INTRO_ACTIVE__ = true;
+          playArcIntro();
+        }
+      }
     };
     return module.exports = exports;
   },

@@ -1,7 +1,7 @@
 {
   "name": "arc-theme",
-  "version": "0.5.0",
-  "description": "Three interface themes: the Arc Harness paper look, black and white, and Radium. All use Geist type and carry no blue.",
+  "version": "0.6.0",
+  "description": "Three interface themes (Arc Harness paper, Black and white, Radium) with Geist type, menu backdrop blur, Settings copy map, choreographed startup intro and zero blue.",
   "icon": "icon.svg",
   "type": "module",
   "license": "MIT",

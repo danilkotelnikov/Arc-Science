@@ -1,0 +1,4 @@
+# arc-mermaid bundle patch: mounts the plugin so its client half loads.
+- insert:
+    - id: arc-mermaid
+      name: arc-mermaid

@@ -1,0 +1,11 @@
+flowchart LR
+    IN([Prompt]) --> PLAN[Plan, seven steps at most]
+    PLAN -->|propose| PROP[[hoh_propose]]
+    PROP --> BUILD[Build test first]
+    BUILD --> PROBE[Probe edge cases]
+    PROBE -->|freeze| FRZ[[hoh_freeze]]
+    FRZ --> CHECK{Independent check}
+    CHECK -- pass --> OUT([Accepted])
+    CHECK -- fail --> FIX[Fix the cause]
+    FIX --> BUILD
+    CHECK -- three cycles --> ASK[Ask the user]

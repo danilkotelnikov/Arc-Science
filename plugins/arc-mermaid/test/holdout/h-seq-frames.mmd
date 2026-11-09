@@ -1,0 +1,16 @@
+sequenceDiagram
+    participant U as User
+    participant A as Agent
+    participant G as Gate
+    U->>A: scientific prompt
+    A->>A: recall and plan
+    loop up to three cycles
+        A->>G: freeze and check
+        alt accepted
+            G-->>A: accepted
+        else unmet
+            G-->>A: findings
+            Note right of A: fix and freeze again
+        end
+    end
+    A-->>U: result with evidence level

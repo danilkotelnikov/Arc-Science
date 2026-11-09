@@ -1,5 +1,5 @@
 /**
- * arc-mode 0.1.0 (2026-11-07): the browser half. The Advanced section of Settings: the Arc Harness mode switch,
+ * arc-mode 0.2.0 (2026-11-10): the browser half. The Advanced section of Settings: the Arc Harness mode switch,
  * the list of what the mode contains, and the measured results. Data: POST api/arc-mode/state (lib/index.js).
  * Colours come from currentColor and the app's own surfaces, so the page follows the paper theme in light and dark.
  */
@@ -16,13 +16,13 @@ window.__ModuleLoader__.load({ id: 'arc-mode', factory: (require) => {
     'group.hooks': 'Claude Code hooks',
     'group.skills': 'Claude Code skills',
     'scope.follows': 'Follows this switch',
-    'scope.fixed': 'Runs in Claude Code and stays as it is',
-    missing: 'File missing',
+    'scope.fixed': 'Runs in Claude Code and is not changed here',
+    missing: 'Missing',
     'hooks.unread': 'Could not read the hook list.',
-    'effect.title': 'Effect on open benchmarks',
+    'effect.title': 'Open benchmark results',
     'effect.none': 'Not measured',
     'private.title': 'Private results',
-    'private.label': 'Not an open benchmark, and the work differs per model, so these rows rank nothing.',
+    'private.label': 'These are not open benchmarks, and the work differs per model, so the rows rank nothing.',
     'col.benchmark': 'Benchmark',
     'col.model': 'Model',
     'col.date': 'Date',
@@ -30,7 +30,7 @@ window.__ModuleLoader__.load({ id: 'arc-mode', factory: (require) => {
     'col.result': 'Result',
     dropped: '{n} rows left out because a field is missing.',
     'rules.missing': 'The rules file is missing, so the switch adds nothing.',
-    loading: 'Loading mode state…',
+    loading: 'Loading…',
     'error.load': 'Could not read the mode state.',
     'error.save': 'Could not save the switch.',
   };

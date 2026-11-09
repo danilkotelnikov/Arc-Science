@@ -1,0 +1,12 @@
+stateDiagram-v2
+    direction LR
+    [*] --> Draft
+    Draft --> Review : submit
+    state Review {
+        [*] --> Read
+        Read --> Judge
+        Judge --> [*]
+    }
+    Review --> Draft : changes
+    Review --> Done : accept
+    Done --> [*]

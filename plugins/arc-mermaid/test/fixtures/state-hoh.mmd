@@ -1,0 +1,9 @@
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Proposed : hoh_propose
+    Proposed --> Built : build
+    Built --> Frozen : hoh_freeze
+    Frozen --> Checked : fresh reviewer
+    Checked --> Accepted : hoh_gate ok
+    Checked --> Built : findings open
+    Accepted --> [*]

@@ -299,6 +299,9 @@ for (const [id, skin] of Object.entries(exp.SKINS ?? {})) {
   check(attrs['data-arc-skin'] === 'radium', 'apply: a stored Radium theme is used at start-up');
   offs.forEach((f) => f());
   check(removed === 1 && rowOff === 1, 'unload: the theme attribute and the Settings row are removed');
+  check(exp.COPY && exp.COPY['Built-in plugins'] === 'Plugins' && exp.COPY['Retry this page'] === 'Retry', 'COPY maps Settings labels to plain nouns');
+  check(typeof exp.playArcIntro === 'function' && typeof w2.arcPlayIntro === 'function', 'playArcIntro is exported and attached to window.arcPlayIntro');
+  check(!source.includes('will-change:transform,opacity') && source.includes('--dsw-menu-backdrop-filter:blur(24px)'), 'menus keep transform-only will-change so backdrop blur works');
 }
 
 console.log(failures === 0 ? 'ALL PASS' : `${failures} FAILED`);

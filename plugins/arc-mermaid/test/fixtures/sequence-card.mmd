@@ -1,0 +1,15 @@
+sequenceDiagram
+    participant C as Chat
+    participant P as arc-mermaid
+    participant E as Engine
+    participant G as Molecullage gate
+    C->>P: code block appears
+    P->>P: wait until the text is stable
+    P->>E: parse and lay out candidates
+    loop up to ten layouts
+        E->>G: score marks
+        G-->>E: pass, warn or fail
+    end
+    E-->>P: best layout as SVG
+    P->>C: hide the block, show the card
+    Note right of G: stops at the first layout with no warning

@@ -1,0 +1,43 @@
+{
+  "name": "arc-mermaid",
+  "version": "0.2.0",
+  "description": "Draws Mermaid diagrams (flowchart, state, sequence) in the chat with a layout that the Molecullage gate checks, in the Arc Harness theme.",
+  "icon": "icon.svg",
+  "type": "module",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./icon": "./icon.svg",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "icon.svg",
+    "locale",
+    "docs/policy.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs && node --test test/*.test.mjs"
+  },
+  "arc": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "engines": {
+    "node": ">=22.19",
+    "arc": ">=0.2.1-rc.2 <0.3.0"
+  }
+}
+

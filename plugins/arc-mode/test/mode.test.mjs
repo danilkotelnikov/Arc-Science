@@ -189,13 +189,13 @@ test('open results and private results are separate parts, and the empty one say
   const { mod } = client();
   const tree = page(mod);
   const text = words(tree);
-  const open = nodes(tree).find((n) => n.props?.['aria-label'] === 'Effect on open benchmarks');
+  const open = nodes(tree).find((n) => n.props?.['aria-label'] === 'Open benchmark results');
   const priv = nodes(tree).find((n) => n.props?.['aria-label'] === 'Private results');
   assert.ok(open && priv);
   assert.equal(words(open).filter((w) => w === 'Not measured').length, 1, 'one open benchmark has no row');
   assert.ok(words(open).includes('5 runs'));
   assert.ok(words(priv).includes('Not measured'));
-  assert.ok(text.includes('Not an open benchmark, and the work differs per model, so these rows rank nothing.'));
+  assert.ok(text.includes('These are not open benchmarks, and the work differs per model, so the rows rank nothing.'));
 });
 
 test('the copy uses sentence case, no middle dot and no blue or violet', () => {

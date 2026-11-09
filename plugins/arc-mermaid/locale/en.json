@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Mermaid diagrams",
+    "description": "Draws Mermaid flowcharts, state diagrams and sequence diagrams in the chat. Every layout passes the Molecullage gate, and the colours follow the Arc Harness theme."
+  }
+}

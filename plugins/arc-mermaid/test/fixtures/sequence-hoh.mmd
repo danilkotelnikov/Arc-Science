@@ -1,0 +1,20 @@
+sequenceDiagram
+    autonumber
+    participant B as Builder agent
+    participant L as HoH ledger
+    participant R as Fresh reviewer
+    participant M as Cammut
+    B->>L: hoh_propose (checks and probes, fixed in advance)
+    B->>B: build and probe
+    B->>L: hoh_freeze (file hashes)
+    R->>R: re-run every check and probe on the frozen files
+    R->>L: hoh_gate (exit codes, excerpts, findings)
+    L-->>R: accepted or unmet
+    L->>M: verdict written automatically
+    B->>M: retain lessons (lesson:area)
+    Note over B,R: The gate rejects the agent that froze the candidate
+    alt accepted
+        R-->>B: done
+    else unmet
+        R-->>B: fix and freeze again
+    end

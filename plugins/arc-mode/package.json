@@ -1,6 +1,6 @@
 {
   "name": "arc-mode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The Advanced page of Arc Harness: the mode switch, the list of what the mode contains, and the measured results.",
   "icon": "icon.svg",
   "type": "module",

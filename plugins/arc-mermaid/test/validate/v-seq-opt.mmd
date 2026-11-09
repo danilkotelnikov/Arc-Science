@@ -1,0 +1,12 @@
+sequenceDiagram
+    participant P as Planner
+    participant W as Worker
+    participant K as Checker
+    P->>W: task with acceptance check
+    W->>W: build
+    W->>K: frozen files
+    K-->>W: findings
+    opt findings open
+        W->>K: fixed files
+    end
+    K-->>P: verdict

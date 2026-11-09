@@ -1,0 +1,17 @@
+graph TD
+    A[Rect] --> B(Round)
+    B --> C([Stadium])
+    C --> D[[Subroutine]]
+    D --> E[(Database)]
+    E --> F((Circle))
+    F --> G{Decision}
+    G --> H{{Hexagon}}
+    H --> I[/Parallelogram/]
+    I --> J[\Alt\]
+    J --> K[/Trapezoid\]
+    G -.->|dotted| A
+    H ==>|thick| K
+    A --- B
+    A --x C
+    A --o D
+    S[Self] --> S

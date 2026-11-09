@@ -1,0 +1,12 @@
+flowchart TB
+    subgraph Intake
+        T[Tag prompt] --> S[Split tasks]
+    end
+    subgraph Work [Work cycle]
+        R[Read code] --> B[Build] --> C[Check]
+        C -->|fail| B
+    end
+    S --> R
+    C -->|pass| D([Deliver])
+    M[(Cammut)] -.-> R
+    D -.-> M

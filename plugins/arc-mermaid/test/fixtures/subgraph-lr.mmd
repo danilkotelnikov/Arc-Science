@@ -1,0 +1,12 @@
+flowchart LR
+    subgraph Build [Builder side]
+        P[Propose] --> F[Freeze]
+    end
+    subgraph Check [Independent check]
+        R[Re-run checks] --> G{Gate}
+    end
+    F --> R
+    G -- accepted --> A([Accepted])
+    G -- unmet --> P
+    classDef ok fill:#9f6,stroke:#333
+    class A ok
