@@ -275,3 +275,155 @@ test('19. apply registers all six MCP tools on a host context', () => {
   ]);
   assert.equal(srv.callTool('shelf.search', { domain: '2d' })[0].id, 'molecullage-core');
 });
+
+import {
+  createMemoryPolicyStore,
+  createCammutClientProfile,
+  planMemoryDeploy,
+  runMemoryDeploy,
+  rollbackMemoryDeploy,
+  evaluateShelfRecallAt5,
+  checkShelfFreshness,
+  resolveToolpackSignal,
+  SIGNAL_BENCH_PROMPTS,
+  inspectArchivePatchPoints,
+  proposeUpdateLoop,
+  verifyUpdateChannel,
+  createConsentGrant,
+  detectFormulaicProse,
+  createC2ConsoleState,
+} from '../lib/index.js';
+
+test('20. Slices M1/M2: 5-label note policy, R007 secret rejection, near-twin supersede, rule toggle, and fail-open Cammut breaker', () => {
+  const store = createMemoryPolicyStore();
+  const sec = store.retainNote({ text: 'Token ' + 'sk-' + '1234567890abcdef123456' });
+  assert.equal(sec.ok, false);
+  assert.equal(sec.rule, 'R007');
+
+  const n1 = store.retainNote({
+    id: 'n1',
+    text: 'Molecullage Studio uses twelve lens roles across journal and cinematic.',
+    labels: { type: 'fact', scope: 'project', status: 'active', evidence: 'verified', sensitivity: 'internal' },
+  });
+  const n2 = store.retainNote({
+    id: 'n2',
+    text: 'Molecullage Studio uses twelve lens roles across journal and cinematic lenses.',
+    labels: { type: 'fact', scope: 'project', status: 'active', evidence: 'verified', sensitivity: 'internal' },
+  });
+  assert.equal(n1.ok, true);
+  assert.equal(n2.ok, true);
+  assert.equal(n2.supersededId, 'n1');
+  const active = store.recallNotes({ query: 'twelve lens roles' });
+  assert.equal(active.length, 1);
+  assert.equal(active[0].id, 'n2');
+
+  store.retainNote({
+    id: 'r1',
+    text: 'Always verify Crossref DOI before setting checked date.',
+    labels: { type: 'rule', scope: 'global', status: 'active', evidence: 'verified', sensitivity: 'public' },
+  });
+  store.toggleMemoryRule('r1', false);
+  assert.equal(store.recallNotes({ type: 'rule' }).length, 0);
+  store.toggleMemoryRule('r1', true);
+  assert.equal(store.recallNotes({ type: 'rule' }).length, 1);
+
+  const cammut = createCammutClientProfile({ maxFailures: 2, cooldownMs: 5000 });
+  assert.equal(cammut.canCall(1000), true);
+  cammut.recordFailure(1000);
+  const f2 = cammut.recordFailure(1001);
+  assert.equal(f2.circuitOpen, true);
+  assert.equal(f2.failOpen, true);
+  assert.equal(cammut.canCall(2000), false);
+  assert.equal(cammut.canCall(7000), true);
+});
+
+test('21. Slices V1/V2: VPS memory deploy enforces TOFU fingerprint, 127.0.0.1 bindings, R007 password modal, idempotence, and rollback', () => {
+  const badPw = planMemoryDeploy({
+    hostFingerprint: 'SHA256:abcdef0123456789abcdef0123456789abcdef01234',
+    passwordInWebview: true,
+  });
+  assert.equal(badPw.ok, false);
+  assert.equal(badPw.rule, 'R007');
+
+  const plan = planMemoryDeploy({
+    hostFingerprint: 'SHA256:abcdef0123456789abcdef0123456789abcdef01234',
+  });
+  assert.equal(plan.ok, true);
+  assert.ok(Object.values(plan.bindings).every((b) => b.startsWith('127.0.0.1:')));
+
+  const run1 = runMemoryDeploy({ ...plan, version: '1.1.0' }, { deployedVersion: '1.0.0', history: [] });
+  assert.equal(run1.ok, true);
+  assert.equal(run1.idempotent, false);
+  const run2 = runMemoryDeploy({ ...plan, version: '1.1.0' }, run1.state);
+  assert.equal(run2.idempotent, true);
+  const rolled = rollbackMemoryDeploy(run2.state);
+  assert.equal(rolled.restoredVersion, '1.0.0');
+});
+
+test('22. Slices S1/S2: Shelf Recall@5 benchmark passes on 20 labelled questions and freshness watcher does not mutate pins', () => {
+  const bench = evaluateShelfRecallAt5();
+  assert.equal(bench.total, 20);
+  assert.equal(bench.passed, true);
+  assert.ok(bench.recallAt5 >= 0.9);
+
+  const pins = { 'molecullage-studio': '1.2.0', 'language-docs': '2026.10' };
+  const fresh = checkShelfFreshness(pins, { 'molecullage-studio': '1.2.0', 'language-docs': '2026.11' });
+  assert.equal(fresh.mutatedPins, false);
+  assert.equal(pins['language-docs'], '2026.10');
+  assert.equal(fresh.updates.length, 1);
+  assert.equal(fresh.updates[0].packId, 'language-docs');
+});
+
+test('23. Slices W1/W2: Workshop signal router matches all 10 signal prompts and archive inspector enforces R009', () => {
+  for (const item of SIGNAL_BENCH_PROMPTS) {
+    const res = resolveToolpackSignal(item.prompt);
+    assert.ok(res, item.prompt);
+    assert.equal(res.pack, item.expectedPack, item.prompt);
+  }
+
+  const root = path.resolve('/tmp/allowed-archive');
+  const inside = path.join(root, 'app.asar');
+  const denied = inspectArchivePatchPoints({
+    target: inside,
+    scope: { authorized: false, allowedRoots: [root] },
+    archiveEntries: ['out/vs/workbench/workbench.desktop.main.js', 'product.json'],
+  });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.rule, 'R009');
+
+  const allowed = inspectArchivePatchPoints({
+    target: inside,
+    scope: { authorized: true, allowedRoots: [root] },
+    archiveEntries: ['out/vs/workbench/workbench.desktop.main.js', 'product.json'],
+  });
+  assert.equal(allowed.ok, true);
+  assert.equal(allowed.patchPoints.length, 2);
+});
+
+test('24. Slices U1/U2 and Phase 1b/4: proposal-only update loops, signed update channel, 30-day consent grant, C2 console, and prose detector', () => {
+  const prop = proposeUpdateLoop({ loop: 'policy-review', summary: 'Tighten citation check' });
+  assert.equal(prop.ok, true);
+  assert.equal(prop.autoApplied, false);
+  assert.equal(prop.requiresOperatorApproval, true);
+
+  assert.equal(verifyUpdateChannel({ channel: 'stable', signatureValid: false }).ok, false);
+  const upd = verifyUpdateChannel({ channel: 'stable', signatureValid: true });
+  assert.equal(upd.ok, true);
+  assert.ok(upd.preservedUserState.includes('config.json'));
+
+  const grant = createConsentGrant({ appId: 'github-connector', scopes: ['repo:read'], grantedAtMs: 1000, ttlDays: 30 });
+  assert.equal(grant.isValid(2000), true);
+  assert.equal(grant.isValid(1000 + 31 * 86400 * 1000), false);
+  grant.revoke();
+  assert.equal(grant.isValid(2000), false);
+
+  const c2 = createC2ConsoleState();
+  assert.deepEqual(c2.workspaces, ['Research', 'Memory', 'Molecullage', 'Prose']);
+  assert.deepEqual(c2.seats, ['Planner', 'Reviewer', 'Falsifier', 'Vision', 'Prose']);
+
+  const badProse = detectFormulaicProse('This is not a toy, but a revolution that we delve into.');
+  assert.equal(badProse.ok, false);
+  assert.equal(badProse.findings.length, 2);
+  assert.equal(detectFormulaicProse('The camera starts outside the tube.').ok, true);
+});
+

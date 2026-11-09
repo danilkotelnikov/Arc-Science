@@ -165,3 +165,114 @@ export function claimCard(g, id) {
   const level = LEVELS.find((l) => live.some((x) => x.from.level === l)) ?? null;
   return { id, text: n.text, q: n.q, score_kind: 'heuristic', trust: n.trust, status: n.status, level, rung: n.rung ?? null, numbers: n.numbers, supports: ids('supports'), contradicts: ids('contradicts'), depends_on: ids('depends_on') };
 }
+
+// Slice C1 (2026-11-09): Toolpack evidence adapter and Evidence Engine (validation ladder L1-L3, roadmap 3.2 & 4.6).
+const ISO_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/;
+
+export function recordToolpackEvidence(g, record = {}) {
+  if (!record || typeof record !== 'object') {
+    return { ok: false, error: 'Evidence record must be an object', touched: [] };
+  }
+  const {
+    id,
+    claimId,
+    toolpack,
+    source,
+    date,
+    level = 'measured',
+    doi,
+    lr = 4,
+    rel = 'supports',
+    numbers = [],
+    group,
+  } = record;
+
+  if (!name(id)) return { ok: false, error: 'Evidence record requires a non-empty id', touched: [] };
+  if (!name(claimId) || !g.nodes.has(claimId)) return { ok: false, error: 'Target claim node does not exist', touched: [] };
+  if (!name(toolpack)) return { ok: false, error: 'Evidence record requires a toolpack name', touched: [] };
+  if (!name(source)) return { ok: false, error: 'Evidence record requires a source identifier', touched: [] };
+  if (typeof date !== 'string' || !ISO_DATE_PREFIX.test(date)) {
+    return { ok: false, error: 'Evidence record requires an ISO date (YYYY-MM-DD)', touched: [] };
+  }
+
+  const srcNodeId = `src:${source}`;
+  const touchedSet = new Set();
+
+  if (!g.nodes.has(srcNodeId)) {
+    const rSrc = applyEvent(g, { type: 'node', id: srcNodeId, kind: 'source', text: `${source} (${date})` });
+    for (const t of rSrc.touched) touchedSet.add(t);
+  }
+
+  const evNode = {
+    type: 'node',
+    id,
+    kind: 'evidence',
+    text: `${toolpack}: ${source} @ ${date}`,
+    level,
+    ...(level === 'published' && doi ? { doi } : {}),
+    ...(group ? { group } : {}),
+    numbers: Array.isArray(numbers) ? numbers : [],
+  };
+  const rEv = applyEvent(g, evNode);
+  if (rEv.touched.length === 0 && g.refused.length > 0) {
+    return { ok: false, error: g.refused.at(-1).reason, touched: [] };
+  }
+  for (const t of rEv.touched) touchedSet.add(t);
+
+  const rDep = applyEvent(g, { type: 'link', from: id, rel: 'depends_on', to: srcNodeId });
+  for (const t of rDep.touched) touchedSet.add(t);
+
+  const rLink = applyEvent(g, { type: 'link', from: id, rel, to: claimId, lr });
+  for (const t of rLink.touched) touchedSet.add(t);
+
+  return { ok: true, id, sourceId: srcNodeId, touched: [...touchedSet].sort() };
+}
+
+export function evaluateEvidenceEngine(g, claimId, opts = {}) {
+  const card = claimCard(g, claimId);
+  if (!card) return { ok: false, error: `Unknown claim: ${String(claimId)}` };
+
+  const links = inputsOf(g, claimId);
+  const supportNodes = links
+    .filter((l) => l.rel === 'supports')
+    .map((l) => g.nodes.get(l.from))
+    .filter(Boolean);
+
+  const retractedSources = [];
+  for (const evNode of supportNodes) {
+    if (evNode.status === 'retracted') retractedSources.push(evNode.id);
+    for (const dep of inputsOf(g, evNode.id)) {
+      const up = g.nodes.get(dep.from);
+      if (up && up.status === 'retracted') retractedSources.push(up.id);
+    }
+  }
+
+  const activeSupports = supportNodes.filter((n) => n.status !== 'retracted' && n.trust > 0);
+  const passedL1 = activeSupports.length > 0 && retractedSources.length === 0 && card.q > 0.5;
+
+  const evidenceNumbers = new Set();
+  for (const evNode of activeSupports) {
+    for (const num of evNode.numbers ?? []) evidenceNumbers.add(num);
+  }
+  const untracedNumbers = (card.numbers ?? []).filter((num) => !evidenceNumbers.has(num));
+  const falsifier = typeof opts.falsifier === 'string' && opts.falsifier.trim() ? opts.falsifier.trim() : null;
+  const passedL2 = passedL1 && untracedNumbers.length === 0 && falsifier !== null;
+
+  const nullModel = opts.nullModel && typeof opts.nullModel === 'object' ? opts.nullModel : null;
+  const passedL3 = Boolean(passedL2 && nullModel && nullModel.passed === true);
+
+  const rungReached = passedL3 ? 'L3' : passedL2 ? 'L2' : passedL1 ? 'L1' : 'L0';
+  return {
+    ok: passedL1,
+    id: claimId,
+    rungReached,
+    passedL1,
+    passedL2,
+    passedL3,
+    retractedSources,
+    untracedNumbers,
+    falsifier,
+    nullModel,
+  };
+}
+

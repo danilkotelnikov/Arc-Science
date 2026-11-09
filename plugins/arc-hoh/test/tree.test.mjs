@@ -221,3 +221,82 @@ test('building a tree leaves its events unchanged', () => {
   buildTree(session);
   assert.equal(JSON.stringify(session), copy);
 });
+
+import {
+  TASK_STATES,
+  createDecisionRecord,
+  validateDecisionRecord,
+  createTaskGraph,
+  checkpointRun,
+  resumeRun,
+} from '../lib/tree.js';
+import {
+  INTUITION_OUTCOMES,
+  routeIntuition,
+  recordIntuitionOutcome,
+  brierScore,
+  calibrationReport,
+} from '../lib/intuition.js';
+
+test('Slice D1: DEC-xxxx decision record validates schema and rejects missing fields', () => {
+  const rec = createDecisionRecord({
+    id: 'DEC-0042',
+    title: 'Use Sequential Halving eta=3',
+    decision: 'Prune hypothesis branches with eta=3',
+    rationale: 'Balances exploration and compute budget',
+    alternatives: ['eta=2', 'no pruning'],
+    evidence: ['concept/tree-hoh.md'],
+    date: '2026-11-09',
+  });
+  assert.equal(rec.id, 'DEC-0042');
+  assert.equal(validateDecisionRecord(rec).ok, true);
+  assert.equal(validateDecisionRecord({ id: 'BAD-1' }).ok, false);
+});
+
+test('Slice D1: 13-state task graph checkpoints and resumes with intact ledger hash chain', () => {
+  assert.equal(TASK_STATES.length, 13);
+  const g = createTaskGraph();
+  g.addTask({ id: 't1', title: 'Probe branch A', state: 'Planned' });
+  g.transition('t1', 'Running', 'start probe');
+  g.recordDecision({
+    id: 'DEC-0001',
+    title: 'Initial probe',
+    decision: 'Run fast check first',
+    rationale: 'Highest VOI per cost',
+    alternatives: ['Full simulation'],
+    date: '2026-11-09',
+  });
+  const ckpt = checkpointRun(g, { reason: 'operator pause' });
+  assert.equal(g.getTask('t1').state, 'Checkpointed');
+  const resumed = resumeRun(ckpt);
+  assert.equal(resumed.getTask('t1').state, 'Running');
+  assert.equal(resumed.verifyLedger().ok, true);
+  resumed.transition('t1', 'Done', 'verified');
+  assert.equal(resumed.getTask('t1').state, 'Done');
+});
+
+test('Slice D2: System One intuition router enforces R009 and computes Brier calibration', () => {
+  assert.equal(INTUITION_OUTCOMES.length, 5);
+  const denied = routeIntuition({ id: 'g0', grantPermission: true });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.rule, 'R009');
+  assert.equal(denied.permissionGranted, false);
+
+  const g1 = routeIntuition({ id: 'g1', priorProbability: 0.9, uncertainty: 0.1 });
+  const g2 = routeIntuition({ id: 'g2', priorProbability: 0.7, cheapCheckAvailable: true });
+  const g3 = routeIntuition({ id: 'g3', priorProbability: 0.5, uncertainty: 0.7 });
+  const g4 = routeIntuition({ id: 'g4', priorProbability: 0.8, needsOperator: true });
+  const g5 = routeIntuition({ id: 'g5', priorProbability: 0.1, canVerify: false });
+  assert.equal(g1.outcome, 'answer_now');
+  assert.equal(g2.outcome, 'run_one_cheap_check');
+  assert.equal(g3.outcome, 'open_tree_hoh');
+  assert.equal(g4.outcome, 'ask_operator');
+  assert.equal(g5.outcome, 'abstain');
+
+  let log = [g1, g5];
+  log = recordIntuitionOutcome(log, 'g1', 1);
+  log = recordIntuitionOutcome(log, 'g5', 0);
+  near(brierScore(log), 0.01);
+  assert.equal(calibrationReport(log).calibrated, true);
+});
+

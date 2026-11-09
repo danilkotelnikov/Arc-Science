@@ -274,3 +274,37 @@ test('each step of a random session matches a separate calculation, and changes 
     }
   }
 });
+
+import { recordToolpackEvidence, evaluateEvidenceEngine } from '../lib/claims.js';
+
+test('Slice C1: recordToolpackEvidence requires source and date and updates only downstream claims', () => {
+  const g = buildGraph([
+    claim('c-target', { text: '1MEL has 55 contact pairs', numbers: ['55'] }),
+    claim('c-unrelated', { text: 'Unrelated claim' }),
+  ]);
+  const bad = recordToolpackEvidence(g, { id: 'ev-bad', claimId: 'c-target', toolpack: 'structure', source: '' });
+  assert.equal(bad.ok, false);
+
+  const okRes = recordToolpackEvidence(g, {
+    id: 'ev-1mel',
+    claimId: 'c-target',
+    toolpack: 'structure',
+    source: 'data/pdb/1MEL.pdb',
+    date: '2026-11-09',
+    level: 'measured',
+    lr: 8,
+    numbers: ['55'],
+  });
+  assert.equal(okRes.ok, true);
+  assert.ok(okRes.touched.includes('c-target'));
+  assert.ok(!okRes.touched.includes('c-unrelated'));
+
+  const evalL3 = evaluateEvidenceEngine(g, 'c-target', {
+    falsifier: 'Recompute heavy-atom pairs within 4.5 A on 1MEL.pdb',
+    nullModel: { passed: true, pValue: 0.001 },
+  });
+  assert.equal(evalL3.ok, true);
+  assert.equal(evalL3.rungReached, 'L3');
+  assert.deepEqual(evalL3.untracedNumbers, []);
+});
+

@@ -160,3 +160,180 @@ export function nextCheck(tree, { cfp = 1, cfn = 1, limits } = {}) {
   }
   return top;
 }
+
+// Slice D1 (2026-11-09): DEC-xxxx decision records and 13-state resumable task graph with hash-chained ledger.
+import crypto from 'node:crypto';
+
+export const TASK_STATES = Object.freeze([
+  'Planned',
+  'Running',
+  'Checkpointed',
+  'Waiting',
+  'Parked',
+  'Paused',
+  'Branching',
+  'Merged',
+  'Rework',
+  'Failed',
+  'Asked',
+  'Cancelled',
+  'Done',
+]);
+
+const DEC_ID_RE = /^DEC-\d{4,}$/;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}/;
+
+export function validateDecisionRecord(rec) {
+  const errors = [];
+  if (!rec || typeof rec !== 'object') return { ok: false, errors: ['Decision record must be an object'] };
+  if (typeof rec.id !== 'string' || !DEC_ID_RE.test(rec.id)) errors.push('id must match DEC-xxxx');
+  if (typeof rec.title !== 'string' || !rec.title.trim()) errors.push('title is required');
+  if (typeof rec.decision !== 'string' || !rec.decision.trim()) errors.push('decision is required');
+  if (typeof rec.rationale !== 'string' || !rec.rationale.trim()) errors.push('rationale is required');
+  if (!Array.isArray(rec.alternatives) || rec.alternatives.length === 0) errors.push('alternatives must be a non-empty array');
+  if (typeof rec.date !== 'string' || !ISO_DATE_RE.test(rec.date)) errors.push('date must be an ISO date string');
+  return { ok: errors.length === 0, errors };
+}
+
+export function createDecisionRecord(input = {}) {
+  const rec = {
+    id: input.id ?? 'DEC-0001',
+    title: String(input.title ?? '').trim(),
+    decision: String(input.decision ?? '').trim(),
+    rationale: String(input.rationale ?? '').trim(),
+    alternatives: Array.isArray(input.alternatives) ? [...input.alternatives] : [],
+    evidence: Array.isArray(input.evidence) ? [...input.evidence] : [],
+    date: input.date ?? new Date().toISOString().slice(0, 10),
+  };
+  const check = validateDecisionRecord(rec);
+  if (!check.ok) {
+    throw new Error(`Invalid decision record: ${check.errors.join('; ')}`);
+  }
+  return Object.freeze(rec);
+}
+
+function hashStep(prevHash, payload) {
+  return crypto.createHash('sha256').update(`${prevHash}|${JSON.stringify(payload)}`).digest('hex');
+}
+
+export function verifyTaskLedger(ledger = []) {
+  let prev = '0'.repeat(64);
+  for (let i = 0; i < ledger.length; i++) {
+    const entry = ledger[i];
+    if (!entry || entry.prevHash !== prev) return { ok: false, brokenAt: i };
+    const expected = hashStep(prev, { seq: entry.seq, taskId: entry.taskId, from: entry.from, to: entry.to, reason: entry.reason });
+    if (entry.hash !== expected) return { ok: false, brokenAt: i };
+    prev = entry.hash;
+  }
+  return { ok: true, headHash: prev, length: ledger.length };
+}
+
+export function createTaskGraph(initial = {}) {
+  const tasks = new Map();
+  const decisions = new Map();
+  const ledger = Array.isArray(initial.ledger) ? structuredClone(initial.ledger) : [];
+
+  if (Array.isArray(initial.tasks)) {
+    for (const t of initial.tasks) {
+      tasks.set(t.id, structuredClone(t));
+    }
+  }
+  if (Array.isArray(initial.decisions)) {
+    for (const d of initial.decisions) {
+      decisions.set(d.id, createDecisionRecord(d));
+    }
+  }
+
+  function appendLedger(taskId, from, to, reason = '') {
+    const prevHash = ledger.length > 0 ? ledger[ledger.length - 1].hash : '0'.repeat(64);
+    const seq = ledger.length + 1;
+    const payload = { seq, taskId, from, to, reason };
+    const hash = hashStep(prevHash, payload);
+    const entry = { ...payload, prevHash, hash };
+    ledger.push(entry);
+    return entry;
+  }
+
+  function addTask({ id, title, state = 'Planned', parent = null }) {
+    if (!name(id)) throw new Error('Task needs a non-empty id');
+    if (!TASK_STATES.includes(state)) throw new Error(`Unknown task state: ${state}`);
+    if (tasks.has(id)) throw new Error(`Task already exists: ${id}`);
+    const task = { id, title: String(title ?? id), state, parent, history: [{ to: state, reason: 'created' }] };
+    tasks.set(id, task);
+    appendLedger(id, null, state, 'created');
+    return structuredClone(task);
+  }
+
+  function transition(id, to, reason = '') {
+    const task = tasks.get(id);
+    if (!task) throw new Error(`Unknown task: ${id}`);
+    if (!TASK_STATES.includes(to)) throw new Error(`Unknown task state: ${to}`);
+    const from = task.state;
+    task.state = to;
+    task.history.push({ from, to, reason });
+    appendLedger(id, from, to, reason);
+    return structuredClone(task);
+  }
+
+  function recordDecision(input) {
+    const rec = createDecisionRecord(input);
+    decisions.set(rec.id, rec);
+    return rec;
+  }
+
+  function snapshot() {
+    return {
+      tasks: [...tasks.values()].map((t) => structuredClone(t)),
+      decisions: [...decisions.values()].map((d) => structuredClone(d)),
+      ledger: structuredClone(ledger),
+    };
+  }
+
+  return {
+    addTask,
+    transition,
+    recordDecision,
+    getTask: (id) => (tasks.has(id) ? structuredClone(tasks.get(id)) : null),
+    getDecision: (id) => decisions.get(id) ?? null,
+    snapshot,
+    verifyLedger: () => verifyTaskLedger(ledger),
+  };
+}
+
+export function checkpointRun(graph, meta = {}) {
+  const snap = graph.snapshot();
+  for (const t of snap.tasks) {
+    if (t.state === 'Running') {
+      graph.transition(t.id, 'Checkpointed', meta.reason ?? 'checkpoint');
+    }
+  }
+  const updated = graph.snapshot();
+  const verification = verifyTaskLedger(updated.ledger);
+  if (!verification.ok) {
+    throw new Error(`Cannot checkpoint broken ledger at index ${verification.brokenAt}`);
+  }
+  return {
+    version: 1,
+    createdAt: meta.createdAt ?? new Date().toISOString(),
+    headHash: verification.headHash,
+    state: updated,
+  };
+}
+
+export function resumeRun(checkpoint) {
+  if (!checkpoint || typeof checkpoint !== 'object' || !checkpoint.state) {
+    throw new Error('Invalid checkpoint payload');
+  }
+  const verification = verifyTaskLedger(checkpoint.state.ledger);
+  if (!verification.ok || verification.headHash !== checkpoint.headHash) {
+    throw new Error('Checkpoint ledger hash chain verification failed');
+  }
+  const graph = createTaskGraph(checkpoint.state);
+  for (const t of checkpoint.state.tasks) {
+    if (t.state === 'Checkpointed') {
+      graph.transition(t.id, 'Running', 'resumed');
+    }
+  }
+  return graph;
+}
+

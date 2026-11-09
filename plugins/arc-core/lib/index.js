@@ -507,3 +507,10 @@ export function apply(ctx, opts = {}) {
   }
   return server;
 }
+
+export * from './memory-policy.js';
+export * from './deploy.js';
+export * from './shelf.js';
+export * from './workshop.js';
+export * from './console.js';
+
