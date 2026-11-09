@@ -8,171 +8,151 @@
 <p align="center">Predict the future with the flow of your thoughts</p>
 
 <p align="center">
-  <a href="https://github.com/danilkotelnikov/Arc-Science/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/danilkotelnikov/Arc-Science/ci.yml?branch=main&label=CI"></a>
+  <a href="../../releases"><img alt="Release 0.5.0" src="https://img.shields.io/badge/release-0.5.0-54453c"></a>
+  <a href="../../actions/workflows/ci.yml"><img alt="Checks" src="https://img.shields.io/badge/checks-Node%2024%20%2B%20Rust-54453c"></a>
   <a href="LICENSE"><img alt="Licence: MIT" src="https://img.shields.io/badge/licence-MIT-54453c"></a>
-  <a href="#build-and-install-windows"><img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows-54453c"></a>
+  <a href="#install"><img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows-54453c"></a>
   <a href="SECURITY.md"><img alt="Security policy" src="https://img.shields.io/badge/security-policy-54453c"></a>
-  <a href="CHANGELOG.md"><img alt="Changelog" src="https://img.shields.io/badge/changelog-kept-54453c"></a>
-  <a href="CITATION.cff"><img alt="Cite this project" src="https://img.shields.io/badge/cite-CITATION.cff-54453c"></a>
+  <a href="CHANGELOG.md"><img alt="Changelog" src="https://img.shields.io/badge/changelog-0.5.0-54453c"></a>
+  <a href="CITATION.cff"><img alt="Citation" src="https://img.shields.io/badge/cite-CITATION.cff-54453c"></a>
 </p>
 
 <p align="center">
+  <a href="#capabilities">Capabilities</a> &nbsp;&nbsp;
+  <a href="#architecture">Architecture</a> &nbsp;&nbsp;
+  <a href="#plugins">Plugins</a> &nbsp;&nbsp;
   <a href="#screens">Screens</a> &nbsp;&nbsp;
-  <a href="#how-it-works">How it works</a> &nbsp;&nbsp;
-  <a href="#road-map">Road map</a> &nbsp;&nbsp;
-  <a href="#build-and-install-windows">Install</a> &nbsp;&nbsp;
-  <a href="https://github.com/danilkotelnikov/Arc-Science/wiki">Wiki</a>
+  <a href="#roadmap">Roadmap</a> &nbsp;&nbsp;
+  <a href="#install">Install</a> &nbsp;&nbsp;
+  <a href="wiki/Home.md">Wiki</a>
 </p>
 
-## What it is
+## Overview
 
-Arc Harness is a desktop app where an AI model works in sessions. It reads and edits files in a workspace, runs shell commands within the permission mode you choose, and calls tools. Its goal is a scientific harness that never grades its own work.
+Arc Harness is a desktop workbench where AI models work in sessions. The agent reads and edits workspace files, runs shell commands under your permission mode, and calls tools. We built it as a scientific harness where the agent that writes a change never approves its own work.
 
-This repository holds the build kit and the two Arc plugins. It does not contain the original app: you bring your own copy.
+This repository holds the build kit, six Arc plugins, the C2 console, Windows installer tools, benchmark runners, and Rust validators. You supply your own installed copy of the original 0.2.1-rc.5 app in `pristine/`.
 
-| What you get | How it works |
+## Capabilities
+
+| Capability | What runs in version 0.5.0 |
 |---|---|
-| **No self-approval** | Work passes propose, freeze and an independent accept gate. |
-| **A record you can check** | Each step goes into a hash-chained ledger, and the Trace tab shows it. |
-| **Your models** | Anthropic, OpenAI and many more, with your own keys on the Models page. Google Vertex runs through a local gateway. |
-| **Shared memory** | A Cammut memory server gives each session a short memory brief. |
-| **No vendor links** | No update feed, no telemetry and no connections to the original vendor. A network test proves it. |
-| **A real test** | A journey test opens the desktop app, clicks through Settings and waits for a real model reply. |
+| **Independent verification** | Tasks pass propose, freeze, and an independent accept gate in `arc-hoh`. Each step enters a hash-chained ledger checked every 5 seconds in Trace. |
+| **Statistical gates** | `arc-hoh` adds held-out patch replay gates, Bayesian hypothesis trees, claim graphs, Dawid-Skene source reliability, branch budgets, and Brier-scored intuition routing. |
+| **Unified C2 console** | `arc-core` joins Research, Memory, Molecullage, and Prose workspaces with Servers, Keys, Apps, Audit, 30-day consent grants, and six MCP tools. |
+| **Molecullage studio** | `arc-molecullage` connects the 231-source library, eight-domain software atlas, five-gate anti-overplating check, and 3D molecular and Blender figure pipeline. |
+| **Chat diagrams** | `arc-mermaid` renders `flowchart`, `stateDiagram`, and `sequenceDiagram` code blocks in chat with Molecullage layout gates and SVG or PNG export. |
+| **Paper look and intro** | `arc-theme` and `tools/build.mjs` ship the `#faf9f6` paper and `#171614` dark palette, 24 px menu blur, and a skippable 7.4 s intro. |
+| **Gemini tool continuity** | `tools/build.mjs` captures and replays `extra_content.google.thought_signature` on streamed and parallel tool calls for multi-turn Vertex AI and Gemini sessions. |
+| **Zero vendor telemetry** | Vendor sign-in, telemetry rows, and remote update feeds are disabled at build time and verified by static and live network traces. |
+| **Rust native guards** | `native/arc-validators` checks SHA-256 digests, prose rules, secret scans, SVG icon bounds, network grants, and seal boundaries with zero external crates. |
 
-## A real task
+## Architecture
 
-We gave Arc Harness a real job on this repository: write the test that guards the header at the top of this page. It planned the work, built it, froze it and handed it to a fresh reviewer. The run took 5 minutes 31 seconds, with 7 subagents and 102 steps, on Clarke 1.0 through Radium. The file it wrote is [`test/header.test.mjs`](test/header.test.mjs), and `npm test` runs it now. An independent read then found gaps in it, and we added those checks by hand.
+```mermaid
+flowchart LR
+  App["Arc Harness Desktop<br/>Sessions + C2 Console"] --> GateReq["Local Gateway<br/>127.0.0.1:7424"]
+  GateReq --> Providers["Model Providers<br/>Anthropic, OpenAI, Google Vertex AI"]
+  GateReq --> Cammut["Cammut Memory<br/>Recall + Retain"]
+  App --> Core["Arc Kit (arc-core)<br/>Shelf + Workshop + Consent"]
+  App --> HoH["HoH Engine (arc-hoh)<br/>Propose -> Freeze -> Replay Gate"]
+  HoH --> Reviewer["Independent Reviewer<br/>Accept Gate + Claim Graph"]
+  Reviewer --> Ledger["Hash-Chained Ledger<br/>Trace Tab + Rust Validators"]
+```
 
-![The session of that run on the left, with its seven steps. The Trace tab on the right lists the ledger: a proposal, frozen candidates, three refusals and one acceptance.](docs/images/task-run.png)
+A provider configured with its own API key on the Models page connects directly from the desktop host. Gateway routes pass through `127.0.0.1:7424`, where credentials stay outside workspace files and unsafe writes are refused. Five clips in [`media/`](media/README.md) show the five-gate AND chain ([`gates.gif`](media/gates.gif)), rank fusion ([`ranking.gif`](media/ranking.gif)), patch replay ([`better.mp4`](media/better.mp4)), distillation ([`student.mp4`](media/student.mp4)), and context compression ([`context.mp4`](media/context.mp4)).
 
-The Trace tab on the right is the ledger of that run, newest first. The gate refused first. The agent that froze the work asked for acceptance itself, and the gate answered that the reviewer must call it. That try and the next left off the `sha256:` prefix, and the third sent a different hash. The file never changed. The fourth try passed, and the chain holds all 11 entries.
+## Plugins
 
-**Shared memory.** Each verdict went to Cammut by itself. In a new session, a question found those verdicts. The answer repeats the gate's stock wording about a later edit. That wording does not fit this run: every freeze in the ledger holds the same hash.
-
-![A new session asks Cammut for the gate verdicts of that goal and gets back the refusals and the acceptance.](docs/images/task-memory.png)
-
-**A person decides.** An earlier try at the same task asked to leave the sandbox, and the app stopped until someone answered. No one did, so we changed the task to stay inside it. The folder path is hidden in this picture.
-
-![A card that reads Waiting for approval, with Reject and Allow once buttons.](docs/images/task-approval.png)
-
-| Part | What runs in the app today |
-|---|---|
-| Harness of Harness gate | Runs. Everything above comes from it. |
-| Ledger and Trace tab | Runs. |
-| Cammut memory | Runs. Verdicts go in by themselves, the brief reached the session, and the agent searched notes. |
-| Permission card | Runs. |
-| Diagrams | Partly. The agent wrote a Mermaid diagram of its steps, and the app shows it as text. |
-| Hook building | Not in the app yet. |
-| Schematics on this page | Made with Molecullage, outside the app. |
+| Plugin | Version | Role |
+|---|---|---|
+| [`plugins/arc-hoh`](plugins/arc-hoh/README.md) | `0.4.0` | Propose/freeze/accept gate, patch replay gate, hypothesis tree, claim graph, Dawid-Skene reliability, branch budgets, Intuition Router, ledger, and Trace tab. |
+| [`plugins/arc-core`](plugins/arc-core/README.md) | `0.2.0` | Shared Arc Kit MCP server, C2 unified console, 30-day consent dialog, Shelf search, Workshop toolpacks, and SSH memory deployment. |
+| [`plugins/arc-theme`](plugins/arc-theme/README.md) | `0.6.0` | Paper, Black and white, and Radium themes, Geist fonts, 24 px menu blur, Settings copy map, and startup intro. |
+| [`plugins/arc-mode`](plugins/arc-mode/README.md) | `0.2.0` | Advanced settings page with the Arc Harness mode switch, installed rules, hooks, and skills inventory, and benchmark tables. |
+| [`plugins/arc-molecullage`](plugins/arc-molecullage/README.md) | `0.1.0` | Molecullage workspace with the 231-source library, eight-domain software atlas, five-gate anti-overplating check, and 3D figure pipeline. |
+| [`plugins/arc-mermaid`](plugins/arc-mermaid/README.md) | `0.2.0` | Deterministic Mermaid renderer for flowcharts, state diagrams, and sequence diagrams in chat code blocks, gated by Molecullage layout checks. |
 
 ## Screens
 
-These are captures of the running app, made by `test/desktop-journey.mjs --mode shots`.
+Desktop captures generated by `test/desktop-journey.mjs --mode shots`:
 
 | | |
 |---|---|
-| ![Home screen, light](docs/images/light-home.png) | ![Home screen, dark](docs/images/dark-home.png) |
-| **Home.** Start a session in a workspace. | **Warm dark look.** Light, Dark or System. |
-| ![A session in the light look](docs/images/light-session.png) | ![The side panels: workspace files, terminal, Trace and browser](docs/images/task-panels.png) |
-| **A session in the light look.** | **Side panels.** Files, a terminal, Trace and a browser sit beside the session. |
-| ![A session in the dark look](docs/images/dark-session.png) | ![The Models page in Settings](docs/images/light-settings-models.png) |
-| **A session.** A real model reply. | **Models.** Add providers and keys. A green dot means connected. |
+| ![Home screen in light mode](docs/images/light-home.png) | ![Home screen in dark mode](docs/images/dark-home.png) |
+| **Home (light).** Start a workspace session on the cream `#faf9f6` paper canvas. | **Home (dark).** Warm `#171614` dark palette selectable alongside Light and System. |
+| ![Session in light mode](docs/images/light-session.png) | ![Workspace side panels](docs/images/task-panels.png) |
+| **Session (light).** Live session transcript with Geist typography and ink controls. | **Side panels.** Workspace files, terminal, Trace ledger, and browser beside the chat. |
+| ![Session in dark mode](docs/images/dark-session.png) | ![Models page in Settings](docs/images/light-settings-models.png) |
+| **Session (dark).** Live model reply in the warm dark theme. | **Models.** Connect providers and keys directly in Settings. |
 | ![General settings](docs/images/light-settings-general.png) | |
-| **General settings.** | |
+| **General settings.** Appearance selector, theme switcher, and shell preferences. | |
 
-## How it works
+## Roadmap
 
-**One request.** In this setup, gateway providers and memory go through one local gateway. It adds your keys and refuses unsafe writes. A provider with its own key connects directly.
+Full phase details and proof gates live in [`wiki/Roadmap.md`](wiki/Roadmap.md).
 
-![The app sends a request to the local gateway, which reaches the model services, Google Vertex and Cammut. Finished work goes to the accept gate and the ledger.](docs/images/request-flow.png)
+| Phase | Scope | Status in 0.5.0 | Verification |
+|---|---|---|---|
+| **0. Working basics** | Gateway recovery, Google Vertex route, Gemini `thought_signature` replay, skippable 7.4 s intro, one-gradient status text. | Built | `build-check.mjs` and `desktop-journey.mjs` |
+| **1. Lean Arc Harness** | Ten unused screens switched off, coding-view row removed, Trace sidebar tab, reversible `~/.arc` install. | Built | Three-phase `ui-crawl.mjs --lean` |
+| **1b. Unified C2 console** | Built-in plugins removed from Settings; Research, Memory, Molecullage, and Prose unified with Servers, Keys, Apps, and Audit. | Built | `plugins/arc-core/test/ui-panel.test.mjs` |
+| **2. Memory upgrade** | Five-label note policy, secret rejection, near-twin supersede, fail-open Cammut breaker, and TOFU SSH server deployment. | Built | `plugins/arc-core/test/core.test.mjs` |
+| **3. Claims and rating** | Patch replay gate, Bayesian hypothesis tree, claim graph, Dawid-Skene reliability, branch budgets, and Intuition Router. | Built | `plugins/arc-hoh/test/*.test.mjs` |
+| **4. Arc Kit and studios** | `arc-core` MCP, Shelf corpus, Workshop signal router, `arc-molecullage` studio, and `arc-mermaid` chat diagram engine. | Built | 100+ unit and layout audit tests |
+| **5. Benchmark proof** | Startup baseline (`measure-start.mjs`) and headless runner (`bench-runner.mjs`) built; public benchmark campaign open. | Runners built | `measure-start` and `bench-runner` self-tests |
+| **6. Native and public** | Windows installer (`package.mjs`, `arc-harness.iss`), vendored bundle audit, loopback gateway, and Rust `arc-validators` built; source fork open. | Core slices built | `native-transition.test.mjs` and `cargo test` |
 
-**One task.** The agent proposes, the work is frozen, and another reviewer gates it.
+## Install
 
-![Harness of Harness: the agent proposes, the work is frozen, and another reviewer gates it. Each step goes into a hash-chained ledger, and the Trace tab reads it.](docs/images/hoh-cycle.png)
+You need Windows 10 or 11 (64-bit), Node.js 22.19 or newer, and an installed copy of the original 0.2.1-rc.5 app (see [Credit](#credit)). Rust (`cargo`) is optional and runs the `native/arc-validators` suite.
 
-**One build.** The kit turns your copy of the original app into Arc Harness.
+1. Copy `app.asar`, `app-update.yml`, `icon.png`, and `tray.ico` from the `resources` folder of the original 0.2.1-rc.5 app into `pristine/`.
+2. Check SHA-256 hashes against `pristine/SHA256SUMS.txt`.
+3. Run `node tools/build.mjs` to apply all archive patches and write `build/app.asar` and `build/BUILD.json`.
+4. Run `npm run test:archive` to check every patched script, manifest digest, and brand asset.
+5. Close the running app and run `install.cmd` (or `install.cmd rollback` to restore the original files).
+6. Copy the plugin folders from `plugins/` (`arc-hoh`, `arc-theme`, `arc-core`, `arc-mode`, `arc-molecullage`, `arc-mermaid`) into `~/.arc/profiles/web/node_modules` and `~/.arc/profiles/desktop/node_modules`.
+7. Run `node tools/lean-profile.mjs apply` to enable the core bundles and installed Arc plugins in both profiles (`restore` reverts the bundle list).
+8. Optional installer: run `node tools/package.mjs [--rcedit <rcedit-x64.exe>] [--iscc <ISCC.exe>]` to build `build/Arc-Harness-Setup-0.5.0.exe` from `installer/arc-harness.iss`.
 
-![The build kit takes your copy of the original app through build, build check and install. The four kinds of change are brand, no vendor links, cream look and lean core. The two Arc plugins join at install.](docs/images/arc-build.png)
-
-### See the rails work
-
-A task is accepted only when five gates pass:
-
-![Five gates joined by AND, a hash-chain ledger, and repeats that become lessons](media/gates.gif)
-
-Memory search merges four ranked lists, then a reranker improves the top 5:
-
-![Four ranked lists merge into one, and the share of right notes in the top 5 rises to 0.66](media/ranking.gif)
-
-Three more clips are in [media](media/README.md): [when a patch is truly better](media/better.mp4), [a small model learns the big one](media/student.mp4) and [ten times smaller context](media/context.mp4). Each clip marks its numbers as concept values, targets or measured.
-
-## Road map
-
-The app comes first, then claims, then proof. The full plan is on the [Roadmap](wiki/Roadmap.md) page.
-
-![Road map: phases 0 to 6, with built and planned steps](docs/images/roadmap.png)
-
-## The Arc plugins
-
-| Plugin | What it does |
-|---|---|
-| `plugins/arc-hoh` | Harness of Harness. Every task goes through propose, freeze and an independent accept gate. Each step is written to a hash-chained ledger. The Trace tab in the right sidebar shows the ledger, newest first, with the chain check, and the memory brief the agent reads. |
-| `plugins/arc-theme` | The cream and warm dark skin, with Geist type, ink icons and short motion: menus, dialogs, panels, lists and toasts move with GSAP-style ease curves, on transform and opacity only, so the graphics card does the work. Reduced motion in Windows turns it off. |
-
-The memory brief and the gate verdicts use a Cammut memory server through a local gateway at `127.0.0.1:7424`. Without one, the plugin keeps working and the brief stays empty.
-
-## Build and install (Windows)
-
-You need Node.js 22.19 or newer and an installed copy of the original app, version 0.2.1-rc.5 (see [Credit](#credit-and-licence)).
-
-1. Copy `app.asar`, `app-update.yml`, `icon.png` and `tray.ico` from the `resources` folder of the original app into `pristine\`.
-2. Check them against `pristine/SHA256SUMS.txt`.
-3. Run `node tools/build.mjs`. The build stops if a patch does not find its text.
-4. Run `node test/build-check.mjs build/app.asar <scratch folder>`.
-5. Close the app. Run `install.cmd`. To undo, run `install.cmd rollback`.
-6. Copy `plugins/arc-hoh` and `plugins/arc-theme` into `~/.arc/profiles/<profile>/node_modules`.
-7. Run `node tools/lean-profile.mjs apply`. A plugin loads only when the bundle list names it, and this step adds both. It stops, and changes nothing, if a plugin is missing from a profile, so copy them into both `web` and `desktop`. `restore` undoes it. The original lists are saved per data home (`--home`, `ARC_HOME` or the default), so each home restores its own.
-
-Set `ARC_RESOURCES` or `ARC_APP_DIR` when the app is installed somewhere else.
+Set `ARC_RESOURCES` or `ARC_APP_DIR` when your base installation lives outside the default folder.
 
 ## Checks
 
 | Check | Command |
 |---|---|
-| Build check (hashes, every patch, brand files) | `node test/build-check.mjs build/app.asar <scratch>` |
-| Every screen in first run, dark and light, in a throwaway data home | `node test/ui-crawl.mjs --lean [--plugin plugins/arc-hoh]` |
-| No old brand wording | `node test/ui-strings.mjs`, `node test/independent-scan.mjs` |
-| No connection to the original vendor | `node test/no-deepseek-net.mjs --live` |
-| The scans really find things (on the original archive) | `node test/positive-control.mjs` |
-| The desktop app with real clicks and a real model reply | `node test/desktop-journey.mjs --mode settings`, then `reply`, then `retry` |
-| Plugin tests | `node --test plugins/arc-hoh/test/hoh.test.mjs`, `node --test plugins/arc-theme/test/theme.test.mjs` |
-| Privacy scan before a push | `node scripts/privacy-scan.mjs` |
+| Full Node suite (syntax, kit, all 6 plugins, benchmarks, native transition, privacy self-test) | `npm test` |
+| Rust zero-dependency validator suite | `cargo test --manifest-path native/arc-validators/Cargo.toml` |
+| Archive check (15,013 manifest hashes, brand rules, positive control) | `npm run test:archive` |
+| Headless three-phase screen crawl (first run, dark, light) | `node test/ui-crawl.mjs --lean` |
+| Live network isolation trace | `node test/no-deepseek-net.mjs --live` |
+| Real desktop journey (Settings, live model reply, gateway retry) | `node test/desktop-journey.mjs --mode settings` |
+| Repository privacy and deny-list scan | `npm run scan` |
 
 ## Project health
 
-| | |
+| Document | Purpose |
 |---|---|
-| [Contributing](CONTRIBUTING.md) | How to change the kit and what to run |
-| [Security policy](SECURITY.md) | How to report a problem privately |
-| [Code of conduct](CODE_OF_CONDUCT.md) | How we work together |
-| [Changelog](CHANGELOG.md) | What changed, and when |
-| [Citation](CITATION.cff) | How to cite Arc Harness |
-| [Wiki pages](wiki/Home.md) | Install, keys, Cammut server, tests and FAQ |
+| [Contributing](CONTRIBUTING.md) | Patch rules, coding standards, and pre-push checks |
+| [Security policy](SECURITY.md) | Private vulnerability reporting |
+| [Code of conduct](CODE_OF_CONDUCT.md) | Community standards |
+| [Changelog](CHANGELOG.md) | Versioned release history (`0.1.0` to `0.5.0`) |
+| [Citation](CITATION.cff) | Metadata for citing Arc Harness `0.5.0` |
+| [Wiki](wiki/Home.md) | Setup guides, Cammut connection, memory policy, and architecture notes |
 
-CI actions are pinned to full commit SHAs, and Dependabot keeps them current.
+GitHub Actions workflows pin every action to a 40-character commit SHA. Every push and pull request runs both the Node 24 suite and the Rust validator suite.
 
-## Known limits
+## Limits
 
-- The app keeps its data in `~/.arc` (set `ARC_HOME` to move it). The first install copies the old `~/.dsh` there with Arc names in settings, profiles, plugins and skills. Conversations, logs and keys are copied byte for byte. `~/.dsh` stays as it was, so `install.cmd rollback` gets the original app back with its data.
-- The installed app still uses the original program file name, install folder and Start menu name.
-- The design-token prefixes `dsw-` and `ds-` of the original interface stay, as do real model names in the third-party model catalog.
-- The plugin manager is switched off in the lean core, so plugins are installed by copying.
-- The local gateway and its Google Vertex route are a separate small program. They are not in this repository yet.
-- On a network that drops large uploads, model calls need a local proxy. If the proxy stops, requests fail until it returns, and the app shows its retries.
-- Only Windows is tested.
+- User data lives in `~/.arc` (override with `ARC_HOME`). First install copies `~/.dsh` into `~/.arc` while leaving `~/.dsh` untouched for `install.cmd rollback`.
+- In-place `install.cmd` updates `resources/app.asar` inside the existing app folder. Use `node tools/package.mjs` with `rcedit` and Inno Setup to build `Arc Harness.exe`.
+- Internal CSS variable prefixes (`dsw-` and `ds-`) and third-party model identifiers in the upstream provider catalog stay unchanged for compatibility.
+- The local gateway (`127.0.0.1:7424`) and Cammut server run as separate processes. `lib/native/cammut-gateway.mjs` provides the loopback host module for Phase 6.
+- Automated live checks run on Windows; macOS and Linux builds are untested.
 
-## Credit and licence
+## Credit
 
-Arc Harness is built on [DeepSeek Harness](NOTICE.md) 0.2.1-rc.5, which is MIT licensed. Arc Harness is an independent project and is not affiliated with its publisher.
+Arc Harness builds on [DeepSeek Harness](NOTICE.md) 0.2.1-rc.5 under the MIT License. Arc Harness is an independent open-source project and has no affiliation with the upstream publisher.
 
-The code here is MIT (`LICENSE`). The AS cube logo is an exception. `NOTICE.md` and `THIRD_PARTY_LICENSES/` hold the licence texts.
+Code in this repository is licensed under MIT (`LICENSE`). Geist and Geist Mono are licensed under the SIL Open Font License 1.1 (`THIRD_PARTY_LICENSES/`). The AS cube emblem is excluded from the MIT grant, as noted in `NOTICE.md`.

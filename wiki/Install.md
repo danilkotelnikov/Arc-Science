@@ -29,9 +29,9 @@ This page takes you from nothing to a patched app. It has no model keys in it ye
    The tool swaps in the new archive and the new icons and deletes the update feed file `app-update.yml`.
    It moves the original side folder `app.asar.unpacked` to `pristine/` and puts an Arc copy in its place. It renames the command and skill files of the installed runtime, so `dsh.cmd` becomes `arc.cmd`. It keeps the originals in `pristine/runtime`.
    It copies your old data folder `~/.dsh` to `~/.arc`. The section "The data folder" below explains this.
-9. Start the app from its usual shortcut. The installed app keeps the original program file name, install folder and Start menu name.
-10. Install the two Arc plugins. Use the app's own plugin command, or copy `plugins/arc-hoh` and `plugins/arc-theme` into `~/.arc/profiles/<profile>/node_modules`. The plugin manager is switched off in the lean core, so copying is the usual way.
-11. Close the app and run `node tools/lean-profile.mjs apply`. It keeps four bundles in the profile: `@arc-harness/arc-base`, `@arc-harness/arc-web-app`, `arc-theme` and `arc-hoh`. Run `node tools/lean-profile.mjs restore` to undo it. A plugin loads only when the bundle list names it, and this step adds both. It stops, and changes nothing, if a plugin is missing from a profile. Copy the plugins into both `web` and `desktop`.
+9. Start the app from its shortcut, or run `node tools/package.mjs [--rcedit <rcedit-x64.exe>] [--iscc <ISCC.exe>]` to stage `Arc Harness.exe` and build `build/Arc-Harness-Setup-0.5.0.exe` from `installer/arc-harness.iss`.
+10. Copy the Arc plugins (`plugins/arc-hoh`, `plugins/arc-theme`, `plugins/arc-core`, `plugins/arc-mode`, `plugins/arc-molecullage`, `plugins/arc-mermaid`) into `~/.arc/profiles/web/node_modules` and `~/.arc/profiles/desktop/node_modules`.
+11. Close the app and run `node tools/lean-profile.mjs apply`. It activates `@arc-harness/arc-base`, `@arc-harness/arc-web-app`, `arc-theme`, `arc-hoh`, and every optional Arc plugin installed in `node_modules`. Run `node tools/lean-profile.mjs restore` to undo it.
 
 ## The data folder
 

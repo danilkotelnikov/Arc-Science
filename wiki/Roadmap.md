@@ -1,23 +1,21 @@
 # Roadmap
 
-Status: Partly. Filled squares are built. Everything else is planned, and the order can change.
+Status: Partly. Phases 0, 1, 1b, 2, 3, and 4 run in version 0.5.0; Phase 5 benchmark runners and Phase 6 native and installer modules are built, while the public benchmark run and upstream source fork remain planned.
 
-![Road map: phases 0 to 6, with built and planned steps](images/roadmap.png)
-
-## The order
+## Order
 
 The app works first, then claims, then proof. Nothing new goes in unless the app opens, Settings works and a real model replies. `test/desktop-journey.mjs` checks that.
 
 | Phase | What | State | Proof |
 |---|---|---|---|
-| 0. Working basics | The gateway restarts itself and passes long requests. Google Vertex replies. Running labels shine from one gradient. | Done | The desktop journey |
-| 1. Lean Arc Harness | Coding view row removed, Trace tab, crawl in three phases, install with undo. | Done | Crawl and gate reports |
-| 1b. App look | Built-in plugins leave Settings. One unified C2 console joins Research, Memory, Molecullage and Prose with Servers, Keys, Apps and Audit. | Planned before phase 4 UI | Console and desktop journey tests |
-| 2. Memory upgrade | Search in two languages with a reranker, living notes, advice records, chat export import, daily agent digest, nightly merge, and one-time SSH server deploy. | Runs alongside | Recall measured before and after; WSL deploy test |
-| 3. Claims and rating | A tree of branches, a claim graph, a small local rater, source reliability, a budget per branch, decision records, checkpoint and resume, and training from verdicts. | Built on local branches for 3.0, 3.1, 3.2, 3.4 and 3.5; rater choice and training next | Tests on recorded sessions, then calibration |
-| 4. Research session, Arc Kit, Shelf and Workshop | Shared `arc-core` MCP and skills, built-in read routes, three panes, a decision map, a consent dialog, the Cammut client tab, the Shelf reference library, Workshop toolpacks, and the 4.7 Molecullage workspace (`arc-molecullage`). | Molecullage 231-source library, eight-domain atlas, 56-rule anti-overplating gate and `arc-molecullage` plugin built; full workspace UI planned | End-to-end tests and `qa_figure` checks |
-| 5. Benchmark proof | Startup speed baseline, headless `arc` benchmark runner, one public benchmark and a Brier calibration score. We say "better" only after this. | Planned | Score against published agents, same budget |
-| 6. Native and public | The gateway security fix is built. Next come no packages at run time, Rust parts, weekly policy and Shelf freshness proposals, an updater, a first-run wizard and releases. | Planned, one part built | Hashes and a clean-clone build |
+| 0. Working basics | The gateway restarts itself and passes long requests. Google Vertex replies with `thought_signature` replay. Choreographed 7.4 s startup intro with `Skip intro`. Running labels shine from one gradient. | Built | `build-check.mjs` and `desktop-journey.mjs` |
+| 1. Lean Arc Harness | Coding view row removed, Trace tab, crawl in three phases, install with undo. | Built | Crawl and gate reports |
+| 1b. App look | Built-in plugins leave Settings. One unified C2 console joins Research, Memory, Molecullage and Prose with Servers, Keys, Apps and Audit. | Built (`arc-core` 0.2.0) | `plugins/arc-core/test/ui-panel.test.mjs` |
+| 2. Memory upgrade | Five-label note policy, secret rejection, near-twin supersede, fail-open Cammut breaker, and TOFU SSH server deploy. | Built (`arc-core` 0.2.0) | `plugins/arc-core/test/core.test.mjs` |
+| 3. Claims and rating | Held-out patch replay gate, Bayesian hypothesis tree, claim graph, Dawid-Skene source reliability, branch budgets, decision checkpoints, and Brier-calibrated Intuition Router. | Built (`arc-hoh` 0.4.0) | `plugins/arc-hoh/test/*.test.mjs` |
+| 4. Research session, Arc Kit, Shelf and Workshop | Shared `arc-core` MCP and skills, built-in read routes, three panes, decision map, 30-day consent dialog, Shelf reference library, Workshop toolpacks, `arc-molecullage` studio, and `arc-mermaid` chat diagram renderer. | Built (`0.5.0`) | `npm test` across all six plugins |
+| 5. Benchmark proof | Startup speed baseline (`tools/measure-start.mjs`) and headless benchmark runner (`tools/bench-runner.mjs`) built; public benchmark campaign open. | Runners built; public run planned | Score against published agents, same budget |
+| 6. Native and public | Windows installer (`tools/package.mjs`, `installer/arc-harness.iss`), vendored bundle license audit, loopback `127.0.0.1` Cammut gateway, settings-only profile pruner, and Rust `native/arc-validators` built; upstream source fork open. | Core slices N0–N9 built; source fork planned | `native-transition.test.mjs` and `cargo test` |
 
 ## Arc Kit, Shelf and Workshop
 
@@ -71,13 +69,13 @@ The public release comes last, because it needs the source fork, the client tab 
 - A first run for any user. A wizard asks for the address of your memory server and your API keys.
 - A default memory policy, shipped as a documented file.
 
-## What is already done
+## Built in 0.5.0
 
-- The kit that patches the original archive, with patches 1 to 17 and its checks. See [Build from source](Build-from-source).
+- The archive build kit (`tools/build.mjs`) with patches 1 to 17, including Google `thought_signature` tool continuity and the 7.4-second choreographed AS cube intro. See [Build from source](Build-from-source).
 - The clean-room rename: packages `@arc-harness/arc-*`, the runtime folder `arc/`, the command `arc`, the data folder `~/.arc` and the variable `ARC_HOME`.
-- The lean core and the lean profile with four bundles.
-- The plugins `arc-hoh` (Harness of Harness, with the Trace tab) and `arc-theme` (the cream and warm dark skin).
-- This repository, with the wiki, the privacy scan, a changelog, a citation file and a CI workflow in `.github/workflows/ci.yml`.
+- Six built-in Arc plugins: `arc-hoh` (`0.4.0`), `arc-core` (`0.2.0`), `arc-theme` (`0.6.0`), `arc-mode` (`0.2.0`), `arc-molecullage` (`0.1.0`), and `arc-mermaid` (`0.2.0`).
+- Windows installer staging (`tools/package.mjs`, `installer/arc-harness.iss`), benchmark runners (`tools/measure-start.mjs`, `tools/bench-runner.mjs`), Phase 6 native transition modules (`lib/native/`), and zero-dependency Rust validators (`native/arc-validators`).
+- This repository, with the wiki, privacy scan, changelog, citation file and SHA-pinned Node + Rust CI in `.github/workflows/ci.yml`.
 
 ## What is not decided
 

@@ -33,10 +33,14 @@ The file `brandtext/lean-profile.json` lists each bundle that leaves the profile
 
 | Plugin | What it does |
 |---|---|
-| `plugins/arc-hoh` | Harness of Harness. The cycle, the ledger and the Trace tab. See [A review checklist](How-we-check-our-work). |
-| `plugins/arc-theme` | The cream and warm dark skin, with Geist type, ink icons and short motion. See [Look and feel](Look-and-feel). |
+| `plugins/arc-hoh` | Harness of Harness (`0.4.0`): propose/freeze/accept gate, patch replay gate, hypothesis tree, claim graph, Dawid-Skene reliability, branch budgets, Intuition Router, ledger, and Trace tab. |
+| `plugins/arc-core` | Arc Kit MCP server (`0.2.0`), C2 unified console (Research, Memory, Molecullage, Prose), 30-day consent grants, Shelf search, Workshop toolpacks, and SSH memory server deployment. |
+| `plugins/arc-theme` | Three themes (`0.6.0`: Arc Harness paper, Black and white, Radium) with Geist fonts, 24 px menu backdrop blur, Settings copy map, and the 7.4 s skippable startup intro. |
+| `plugins/arc-mode` | Advanced settings section (`0.2.0`) with the Arc Harness mode switch, installed hooks and skills inventory, and benchmark tables. |
+| `plugins/arc-molecullage` | Molecullage workspace (`0.1.0`) backed by the 231-source library, eight-domain atlas, and five-gate anti-overplating check. |
+| `plugins/arc-mermaid` | Mermaid diagram renderer (`0.2.0`) for flowcharts, state diagrams, and sequence diagrams in chat code blocks, gated by Molecullage layout checks. |
 
-To install one, copy the folder into `~/.arc/profiles/<profile>/node_modules`. Then add its name to `arc.profile.bundles` in the `package.json` of that profile, because a plugin loads only when that list names it. For `arc-hoh` and `arc-theme`, `node tools/lean-profile.mjs apply` does this.
+To install plugins, copy the folders into `~/.arc/profiles/<profile>/node_modules` and run `node tools/lean-profile.mjs apply`. The tool adds `arc-theme` and `arc-hoh` plus every optional Arc plugin (`arc-core`, `arc-mode`, `arc-molecullage`, `arc-mermaid`) present in `node_modules`.
 
 ## Why the package model is a problem
 

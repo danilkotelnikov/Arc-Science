@@ -35,11 +35,9 @@ The original app started in System. The build changes that one default and leave
 
 ## The cream paper skin
 
-The plugin `plugins/arc-theme` gives the interface its paper look. The paper is `#faf9f6` and the sidebar is `#f4f2ed`. Cards have 10 pixel corners. Controls have 8 pixel corners.
-The primary color is a dark brown, `#54453c`. The dark set is based on `#171614`. There is no blue.
+The plugin `plugins/arc-theme` (`0.6.0`) provides three themes selectable in Settings, General, Theme: **Arc Harness** (cream paper `#faf9f6`, sidebar `#f4f2ed`, primary `#54453c`, warm dark `#171614`, 10 px cards and 8 px controls), **Black and white**, and **Radium**. None carry blue.
 
-The plugin also adds short motion: menus, dialogs, panels, lists and toasts move on transform and opacity only. Reduced motion in Windows turns it off.
-The plugin has no setting. It follows the light or dark mode of the app.
+The plugin also adds transform-only motion with 24 px menu backdrop blur, normalizes Settings labels, and plays a 7.4-second choreographed AS cube startup intro with an immediate `Skip intro` (`Esc`) control (`window.arcPlayIntro()` replays it on demand). Reduced motion in Windows disables animations.
 
 A build from this kit does not carry the skin. You install the plugin. See [Install](Install) and [Plugins and why the package model goes away](Plugins-and-why-the-package-model-goes-away).
 

@@ -1,77 +1,69 @@
 # Changelog
 
-All notable changes to Arc Harness are listed here. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). The build kit is at 0.1.0, and each plugin has its own version in its `package.json`.
+All notable changes to Arc Harness are listed here. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). The kit is at version `0.5.0`, and each built-in plugin carries its own `package.json` version.
 
-## [Unreleased]
+## [0.5.0] - 2026-11-10
 
 ### Added
 
-- Pull request automation: `@claude` in a pull request comment asks for an edit or a fix, and `pr-screen` reviews each pull request from this repository. Haiku screens, Sonnet fixes critical findings for at most three rounds, and Argon reviews first when it is turned on. Nothing merges by itself.
-- Phase 3 modules in `plugins/arc-hoh`: replay patch gate (`lib/replay.js`), hypothesis tree (`lib/tree.js`), claim graph (`lib/claims.js`), Dawid-Skene source reliability (`lib/reliability.js`), and branch budget (`lib/budget.js`).
-- `plugins/arc-core` 0.1.0 (`K1`): MCP server with `shelf.search`, `claim.record`, `gate.check`, `toolpack.load`, `memory.retain` and `memory.recall`.
-- `plugins/arc-mode` 0.1.0: Advanced settings page with the Arc Harness mode switch, installed hooks and skills list, and measured benchmark table.
-- `plugins/arc-molecullage` 0.1.0: Molecullage workspace replacing the earlier separate Molecules and BioArt workspaces, backed by the 231-source library, eight-domain atlas and 56-rule anti-overplating check.
-- `tools/package.mjs` and `installer/arc-harness.iss`: Windows installer staging and Inno Setup definition.
-- `tools/measure-start.mjs` (`B1`): startup and memory baseline runner.
+- `plugins/arc-mermaid` `0.2.0`: deterministic Mermaid diagram engine for `flowchart`, `stateDiagram`, and `sequenceDiagram` blocks in chat, with layered layout, Diagram/Source toggle, SVG and PNG export, and Molecullage layout and colour-vision gate checks (64 tests).
+- Google Gemini and Vertex AI `thought_signature` continuity (`tools/build.mjs` patch `15b`): captures `extra_content.google.thought_signature` on streamed tool calls and replays it in `convertMessages`, with a `"skip_thought_signature_validator"` fallback on unsigned historical turns.
+- Choreographed startup intro and immediate window reveal (`tools/build.mjs` patch `15c` and `plugins/arc-theme` `0.6.0`): shows `mainWindow` as soon as the boot page loads and runs a 5-stage, 7.4-second AS cube wireframe-to-solid turn and character clip-mask animation with `Skip intro` (`Esc`, `Space`, or `Enter`) and `window.arcPlayIntro()` replay.
+- `brandtext/lean-profile.json` and `tools/lean-profile.mjs`: automatically activate installed optional Arc plugins (`arc-core`, `arc-mode`, `arc-molecullage`, `arc-mermaid`) alongside `arc-theme` and `arc-hoh`.
+- `brandtext/upstream-manifest.json`: registers all six built-in Arc plugins (`arc-core`, `arc-hoh`, `arc-mermaid`, `arc-mode`, `arc-molecullage`, `arc-theme`) in the Phase 6 vendored bundler and `THIRD_PARTY_NOTICES` generator.
 
 ### Changed
 
-- `plugins/arc-theme` 0.5.0: three skins (`Arc Harness`, `Black and white`, `Radium`) with Geist type.
-- All plugin and add-on titles follow Sentence case with space delimiters, while package identifiers use lowercase `arc-*` hyphenated names.
-- `plugins/arc-hoh` Trace view and `plugins/arc-mode` Advanced settings view add loading states, capitalized verdict badges and tabular numerals.
-- `plugins/arc-hoh` `hoh_gate` accepts frozen candidate hashes with or without a leading `sha256:` prefix.
+- `plugins/arc-theme` `0.6.0`: sets `will-change: transform` on menu motion rules and adds `24px` backdrop blur (`--dsw-menu-backdrop-filter`) with opaque surface fills so menus blur the page behind them; adds runtime `COPY` Settings label normalization.
+- `plugins/arc-mode` `0.2.0`: refines Settings copy for open and private benchmark sections (`Open benchmark results`, `Missing`, `Loading…`).
+- `plugins/arc-hoh` bumped to `0.4.0`, `plugins/arc-core` bumped to `0.2.0`, and `native/arc-validators` bumped to `0.5.0`.
+- `.github/workflows/ci.yml`: runs the complete `npm test` suite across all six plugins, build kit, benchmark self-tests, and native transition tests, followed by `cargo test` on `native/arc-validators` and `privacy-scan.mjs`.
+- `README.md` and `wiki/` pages rewritten to document all six plugins, the C2 console, Rust validators, installer tools, and release `0.5.0`; desktop screenshots framed with dual-contrast mats so every image passes `ghfit.py` across GitHub Light, Dark, and Dimmed themes.
 
 ### Removed
 
-- The "What the build changes" table is gone from the README.
-- Settings no longer shows a Built-in plugins page. The plugins stay built in and keep working.
-- Separate Molecules and BioArt workspace plans are retired and unified under Molecullage (`arc-molecullage`).
+- Purged November 4 debug-progress narrative and failed-run screenshots (`task-run.png`, `task-memory.png`, `task-approval.png`), retired Built-in plugins screenshot (`light-settings-plugins.png`), and stale white-background November 4 raster schematics (`roadmap.png`, `arc-build.png`, `request-flow.png`, `hoh-cycle.png`).
+- Pruned merged temporary worktrees and stale merged feature branches so `main` is the clean active branch.
+
+## [0.4.0] - 2026-11-09
+
+### Added
+
+- Unified C2 console UI (`plugins/arc-core/ui/panel.js` and `lib/console.js`): joins Research, Memory, Molecullage, and Prose workspaces with Servers, Keys, Apps, and Audit panels, three-pane Research session view, 30-day consent dialog, and local prose rule detector.
+- Phase 6 Arc Native and Rust transition slices `N0` to `N9` (`lib/native/` and `native/arc-validators`): pinned upstream manifest diffing, runtime package-manager and registry probe guards, vendored plugin license auditor, loopback `127.0.0.1` Cammut gateway with Bearer auth, settings-only profile pruner, deterministic Cordis module-table generator, and zero-dependency Rust crate (`sha256`, `arc_rules`, `arc_scan`, `arc_hook`, `vector_assets`, `seal_guard`, `grants_net`).
+- Intuition Router and decision checkpoints (`plugins/arc-hoh/lib/intuition.js`): `DEC-xxxx` schema validation, 13-state task graph checkpoint/resume, and Brier-calibrated routing.
+- `tools/bench-runner.mjs`: deterministic headless benchmark harness with self-test suite.
+
+## [0.3.0] - 2026-11-08
+
+### Added
+
+- `plugins/arc-core` `0.1.0`: shared Arc Kit MCP server (`shelf.search`, `claim.record`, `gate.check`, `toolpack.load`, `memory.retain`, `memory.recall`), five-label memory policy, Shelf reference search, Workshop signal router, and TOFU SSH memory deployment (`lib/deploy.js`).
+- `plugins/arc-molecullage` `0.1.0`: Molecullage workspace backed by the 231-source library, eight-domain software atlas, and five-gate anti-overplating check.
+- `plugins/arc-mode` `0.1.0`: Advanced settings page with the Arc Harness mode switch, installed hooks and skills inventory, and measured benchmark tables.
+- `tools/package.mjs` and `installer/arc-harness.iss`: Windows installer staging (`Arc Harness.exe`) and Inno Setup definition.
+- `tools/measure-start.mjs`: startup latency and memory baseline runner.
+
+### Changed
+
+- `plugins/arc-theme` `0.5.0`: provides three themes (`Arc Harness`, `Black and white`, `Radium`) with Geist typography and a Theme selector in General settings.
+- Unified all plugin titles to Sentence case with space delimiters.
+- `plugins/arc-hoh`: `hoh_gate` accepts frozen candidate hashes with or without a leading `sha256:` prefix.
+
+### Removed
+
+- Switched off the Built-in plugins settings screen in `tools/build.mjs` patch 14; built-in plugins stay active in the host.
+- Retired separate Molecules and BioArt workspace plans in favor of `arc-molecullage`.
+
+## [0.2.0] - 2026-11-06
+
+### Added
+
+- Phase 3 verification modules in `plugins/arc-hoh`: held-out patch replay gate (`lib/replay.js`), Bayesian hypothesis tree (`lib/tree.js`), claim graph (`lib/claims.js`), Dawid-Skene source reliability (`lib/reliability.js`), and branch budget allocator (`lib/budget.js`).
+- Pull request review workflows (`.github/workflows/claude.yml` and `pr-screen.yml`) with fork refusal, trusted-comment filtering, and bounded fix rounds.
 
 ## [0.1.0] - 2026-11-05
 
 ### Added
 
-- Clean room: every internal name moves to Arc. Packages are `@arc-harness/arc-*`, the runtime folder is `arc/`, and the data folder is `~/.arc` with the variable `ARC_HOME`.
-- Workflow clips and the intro film in `media/`.
-- The first install copies the old data folder to `~/.arc` with Arc names, and leaves the old folder as it was.
-- Changelog, citation file, wiki pages, `npm test` scripts, editor settings and Dependabot updates for GitHub Actions.
-- A wiki page on how the system works, a road map with a picture, a request-flow schematic and new screens from the running app.
-- A desktop journey test with real clicks: `test/desktop-journey.mjs`, modes `settings`, `reply`, `retry` and `shots`.
-
-### Changed
-
-- Settings shows the read-only Built-in plugins section again. The plugin manager stays off.
-- Running labels shine from one gradient on the text. The original sliding second copy looked torn.
-- The plugins are renamed: `dsh-hoh` is now `arc-hoh`, and `dsh-theme-pair` is now `arc-theme`.
-- GitHub Actions are pinned to full commit SHAs.
-- The lean profile tool refuses to list a plugin that is not installed, and a refused apply changes nothing.
-- The README opens with an animated header that plays once, with a still copy for readers who turn animation off. The tile and name sit on a dark band with a cream edge, so the band shows on every GitHub theme.
-- The slogan is now "Predict the future with the flow of your thoughts". It is page text under the header, and `docs/images/social-preview.png` carries it too.
-- The session screenshot moved from the top of the README to Screens.
-- The README shows a real task: the gate refusals, the shared memory answer, the permission card, and a table of what runs in the app today.
-- `test/header.test.mjs` guards the header files. Arc Harness wrote it in that task, an independent read added more checks, and `npm test` runs it.
-- `test/desktop-journey.mjs` has a `task` mode. It never answers a permission prompt.
-- The upstream project is credited once, in the README. `NOTICE.md` keeps the licence text.
-- The repository history starts at the Arc Harness build kit. The retired Arc Science desktop app is no longer in this repository.
-
-### Fixed
-
-- The Harness of Harness ledger stays in use across the upgrade: `arc-hoh` keeps a ledger in the original data folder until `~/.arc` has its own, and it honours `DSH_HOME`.
-- `DSH_HOH_RETAIN=0` and `DSH_HOH_BRIEF=0` count as opt-outs again.
-- The lean profile keeps one undo list per data home, so restoring one home cannot write the list of another.
-- A `~/.arc` that holds only the ledger no longer hides the profiles in `~/.dsh`.
-- The data-home copy stops when two names map to one target, and private folders and files stay private.
-- The first install copies the data before it replaces the app, and a failed copy leaves nothing behind.
-- A text file that is not UTF-8 keeps its bytes in the data copy.
-- The runtime rollback list is saved before each change.
-- A data copy cannot go inside its own source, and a file that cannot be linked is copied.
-- CI runs the build kit tests and the test home self-test.
-
-## Build kit, first public state (2026-11-03)
-
-### Added
-
-- Build patches 1 to 15: brand, no vendor connections, cream look, Thinking label, lean core, no coding view row.
-- Install and rollback, lean profile tool, and the checks: build check, screen crawl in three phases, word scans, network trace, positive control.
-- `plugins/dsh-hoh` 0.3.0: propose, freeze and accept gate with a hash-chained ledger, and a Trace tab in the right sidebar.
-- `plugins/dsh-theme-pair` 0.4.0: the cream and warm dark skin with Geist.
+- Clean-room internal rename (`@arc-harness/arc-*`, `arc/`, `~/.arc`, `ARC_HOME`), reversible data-home migration, workflow clips in `media/`, `test/desktop-journey.mjs`, `test/header.test.mjs`, wiki pages, `CITATION.cff`, and SHA-pinned GitHub Actions CI.

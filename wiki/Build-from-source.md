@@ -55,6 +55,8 @@ Every patch counts the places it changed. If the count is not what the patch exp
 | Running label | Shows "Thinking" and "Thinking for 2s" in place of "Deep diving". |
 | Lean core | Switches off ten browser rows: the plugin manager and its pages, Automation tasks, trajectories, skills, account, subagent settings, the Agent presets page and the mode picker. |
 | Coding view row | Removes the "Show coding view" row from General settings. |
+| Gemini tool signatures | Captures and replays `extra_content.google.thought_signature` on streamed and parallel tool calls in `pi-ai`. |
+| Startup intro | Reveals `mainWindow` immediately on launch and plays the 7.4 s skippable AS cube choreography. |
 | Data folder | Moves the data folder to `~/.arc` and its variable to `ARC_HOME`. |
 | Clean room | Moves every internal name to Arc. See "Internal names" below. |
 | Manifest | Updates the size and hash of every changed file in the runtime manifest. |

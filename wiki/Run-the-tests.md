@@ -17,19 +17,22 @@ Pictures and a report go to `_scratch/journey`, or to the folder you name with `
 
 ```
 npm test
+cargo test --manifest-path native/arc-validators/Cargo.toml
 ```
 
-This runs five steps. It needs Node.js 22.19 or newer and no archive.
+`npm test` runs without the original archive on Node.js 22.19 or newer, and `cargo test` checks the zero-dependency Rust crate.
 
 | Check | What it proves |
 |---|---|
 | `scripts/check-syntax.mjs` | Every `.mjs` and `.cjs` file parses. |
 | `lib/arcnames.mjs` | The rename map gives the right Arc names. |
-| `test/iconcolor.test.mjs` | Blue and violet colors go. Status colors, neutrals and non-colors stay. A second pass changes nothing. |
-| `node --test plugins/arc-hoh/test/hoh.test.mjs plugins/arc-theme/test/theme.test.mjs` | The two Arc plugins pass their own tests. The Harness of Harness tests cover the ledger chain, the accept gate, the brief filter, the prompt sections and the Trace data. The theme tests cover the tokens, the embedded fonts, the grey rule for blue and the reduced-motion rule. |
-| `scripts/privacy-scan.mjs --self-test` | The privacy scan finds what it should and ignores placeholders. |
+| `test/iconcolor.test.mjs` and `test/header.test.mjs` | Blue and violet icon fills are recolored, and `docs/images/header.svg` and `header-still.svg` stay safe. |
+| `node --test plugins/*/test/*.test.mjs` | All six Arc plugins (`arc-hoh`, `arc-core`, `arc-theme`, `arc-mode`, `arc-molecullage`, `arc-mermaid`) pass their unit, gate, UI, and layout tests. |
+| `test/package.test.mjs`, `test/lean-profile.test.mjs`, `test/arcunpacked.test.mjs`, `test/workflows.test.mjs`, `test/native-transition.test.mjs` | Installer staging, per-home undo lists, unpacked copy links, workflow security invariants, and Phase 6 native transition slices N0–N9 hold. |
+| `tools/measure-start.mjs --self-test`, `tools/bench-runner.mjs --self-test`, `lib/testhome.mjs --selftest`, `scripts/privacy-scan.mjs --self-test` | Startup timer, headless benchmark runner, throwaway test home, and privacy scanner pass self-checks. |
+| `cargo test --manifest-path native/arc-validators/Cargo.toml` | Rust SHA-256, prose rules, secret/path scans, hook guards, SVG vector bounds, network grants, and seal guards match golden vectors. |
 
-GitHub Actions runs a similar list on every push and pull request, with Node.js 24. The file is `.github/workflows/ci.yml`. It runs the syntax check, the rename map check, the icon color test, the two plugin tests, the privacy scan self-test and the privacy scan of the repository.
+GitHub Actions runs `npm test`, `cargo test --manifest-path native/arc-validators/Cargo.toml`, and `node scripts/privacy-scan.mjs` on every push and pull request in `.github/workflows/ci.yml`.
 
 ## Tests that need the original archive and a build
 

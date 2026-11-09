@@ -27,7 +27,8 @@ Read [Credits and licenses](Credits-and-licenses) for the credit.
 | English only | The Chinese texts of the app are replaced by their English twins where a twin exists. A few Chinese words can remain in code comments or in keys that have no twin. |
 | Lean core | The Plugins page, Automation tasks, trajectories, skills, account, subagent and agent preset screens are switched off. |
 | Arc names inside | The data folder is `~/.arc`, its variable is `ARC_HOME`, the runtime folder is `arc/` and the command is `arc`. |
-| Two Arc plugins | `arc-hoh` adds the Harness of Harness cycle and a Trace tab. `arc-theme` adds the skin. |
+| Six Arc plugins | `arc-hoh` runs Harness of Harness and Trace; `arc-core` runs Arc Kit MCP and the C2 console; `arc-theme` sets the paper, dark, Black and white, and Radium themes plus the startup intro; `arc-mode` adds the Advanced page; `arc-molecullage` adds the figure studio; `arc-mermaid` draws chat diagrams. |
+| Native validators and installer | `native/arc-validators` checks hashes, prose rules, secret scans, and seals in Rust, and `tools/package.mjs` stages the Windows installer. |
 
 The wiki page [Build from source](Build-from-source) lists every patch.
 
