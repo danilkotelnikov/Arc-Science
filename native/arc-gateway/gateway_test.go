@@ -320,3 +320,109 @@ func TestThoughtSignatureRoundTrip(t *testing.T) {
 		t.Fatalf("not injected: %s", marshal(body))
 	}
 }
+
+// --- review fixes ---
+
+func TestCutUpstreamAbortsReply(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, buf, _ := w.(http.Hijacker).Hijack()
+		buf.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 100\r\nContent-Type: application/json\r\n\r\n{\"partial\":")
+		buf.Flush()
+		c.Close()
+	}))
+	defer up.Close()
+	cfg := defaultConfig()
+	cfg.Routes = []Route{{Prefix: "/c/v1", Target: up.URL, Auth: "none"}}
+	ts, _ := setup(t, cfg)
+	defer ts.Close()
+	r := do(t, ts, "GET", "/c/v1/models", "", nil)
+	if _, err := io.ReadAll(r.Body); err == nil {
+		t.Fatal("a cut upstream answer reached the client as a complete one")
+	}
+}
+
+func TestDotDotPathRefused(t *testing.T) {
+	hits := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
+	defer up.Close()
+	cfg := defaultConfig()
+	cfg.Routes = []Route{{Prefix: "/p/v1", Target: up.URL, Auth: "none"}}
+	ts, _ := setup(t, cfg)
+	defer ts.Close()
+	if r := do(t, ts, "GET", "/p/v1/%2e%2e/secret", "", nil); r.StatusCode != 400 || hits != 0 {
+		t.Fatalf("status %d, upstream hits %d", r.StatusCode, hits)
+	}
+}
+
+func TestCammutNoRetryAfterRequestWentOut(t *testing.T) {
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		c, _, _ := w.(http.Hijacker).Hijack()
+		c.Close() // took the request, then died without an answer
+	}))
+	defer first.Close()
+	second := 0
+	up2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { second++; io.WriteString(w, "{}") }))
+	defer up2.Close()
+	cfg := defaultConfig()
+	cfg.Cammut.Upstreams = []string{first.URL, up2.URL}
+	ts, _ := setup(t, cfg)
+	defer ts.Close()
+	r := do(t, ts, "POST", "/cammut/mcp", `{"jsonrpc":"2.0","id":1,"method":"tools/call"}`, nil)
+	if r.StatusCode != 502 || second != 0 {
+		t.Fatalf("status %d, second upstream got %d request(s)", r.StatusCode, second)
+	}
+}
+
+func TestOversizeBodyGives413(t *testing.T) {
+	cfg := defaultConfig()
+	ts, _ := setup(t, cfg)
+	defer ts.Close()
+	if r := do(t, ts, "POST", "/cammut/mcp", strings.Repeat("x", 32<<20+1), nil); r.StatusCode != 413 {
+		t.Fatalf("got %d", r.StatusCode)
+	}
+}
+
+func TestUntouchedBodyKeepsCallerBytes(t *testing.T) {
+	var got string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { b, _ := io.ReadAll(r.Body); got = string(b) }))
+	defer up.Close()
+	cfg := defaultConfig()
+	cfg.Routes = []Route{{Prefix: "/k/v1", Target: up.URL, Auth: "none"}}
+	ts, _ := setup(t, cfg)
+	defer ts.Close()
+	in := `{"z":1,"a":"<b>","model":"x"}`
+	do(t, ts, "POST", "/k/v1/embeddings", in, nil)
+	if got != in {
+		t.Fatalf("sent %s", got)
+	}
+}
+
+func TestSignatureOrderSurvivesRestart(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "sigs.json")
+	s := newSigStore(p)
+	for i := 0; i < 50; i++ {
+		s.remember(fmt.Sprint("id", i), "s")
+	}
+	s.save()
+	s2 := newSigStore(p)
+	for i := 0; i < 50; i++ {
+		if s2.order[i] != fmt.Sprint("id", i) {
+			t.Fatalf("order lost at %d: %v", i, s2.order[:5])
+		}
+	}
+}
+
+func TestBrokenConfigIsNotOverwritten(t *testing.T) {
+	t.Setenv("ARC_HOME", t.TempDir())
+	_ = os.WriteFile(configPath(), []byte(`{"routes": [ broken`), 0o600)
+	if _, err := SaveSettings(map[string]any{"temperature": 0.2}); err == nil {
+		t.Fatal("saved over a broken gateway.json")
+	}
+	if b, _ := os.ReadFile(configPath()); string(b) != `{"routes": [ broken` {
+		t.Fatalf("file changed: %s", b)
+	}
+	if err := SaveRef("K", "a\nb"); err == nil {
+		t.Fatal("multi-line key value accepted")
+	}
+}

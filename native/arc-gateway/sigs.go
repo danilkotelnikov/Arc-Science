@@ -25,13 +25,21 @@ type sigStore struct {
 
 func newSigStore(path string) *sigStore {
 	s := &sigStore{m: map[string]string{}, path: path}
-	var raw map[string]string
-	if b, err := os.ReadFile(path); err == nil && json.Unmarshal(b, &raw) == nil {
-		for k, v := range raw {
-			if k != "" && v != "" {
-				s.order = append(s.order, k)
-				s.m[k] = v
+	b, _ := os.ReadFile(path)
+	var pairs [][2]string // saved oldest first, so trimming drops the oldest after a restart too
+	if json.Unmarshal(b, &pairs) != nil {
+		var old map[string]string // the node gateway saved a plain map
+		_ = json.Unmarshal(b, &old)
+		for k, v := range old {
+			pairs = append(pairs, [2]string{k, v})
+		}
+	}
+	for _, p := range pairs {
+		if p[0] != "" && p[1] != "" {
+			if _, ok := s.m[p[0]]; !ok {
+				s.order = append(s.order, p[0])
 			}
+			s.m[p[0]] = p[1]
 		}
 	}
 	return s
@@ -63,11 +71,15 @@ func (s *sigStore) remember(id, sig string) {
 
 func (s *sigStore) save() {
 	s.mu.Lock()
-	b, _ := json.Marshal(s.m)
+	pairs := make([][2]string, 0, len(s.order))
+	for _, id := range s.order {
+		pairs = append(pairs, [2]string{id, s.m[id]})
+	}
+	b, _ := json.Marshal(pairs)
 	s.timer = nil
 	s.mu.Unlock()
 	_ = os.MkdirAll(filepath.Dir(s.path), 0o700)
-	_ = os.WriteFile(s.path, b, 0o600)
+	_ = writeAtomic(s.path, b)
 }
 
 var googleModel = regexp.MustCompile(`(?i)^(google/|gemini)`)

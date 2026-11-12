@@ -113,7 +113,10 @@ func SaveSettings(patch map[string]any) (Config, error) {
 	defer cfgMu.Unlock()
 	raw := map[string]any{}
 	if b, err := os.ReadFile(configPath()); err == nil {
-		_ = json.Unmarshal(b, &raw)
+		// a broken file is never overwritten: the routes in it would be lost
+		if err := json.Unmarshal(b, &raw); err != nil {
+			return Config{}, fmt.Errorf("gateway.json does not parse, fix it by hand first: %w", err)
+		}
 	}
 	for _, k := range []string{"defaultReasoningEffort", "forceReasoningEffort", "temperature", "maxTokens"} {
 		if v, ok := patch[k]; ok {
@@ -124,10 +127,19 @@ func SaveSettings(patch map[string]any) (Config, error) {
 	if err := os.MkdirAll(Home(), 0o700); err != nil {
 		return Config{}, err
 	}
-	if err := os.WriteFile(configPath(), b, 0o600); err != nil {
+	if err := writeAtomic(configPath(), b); err != nil {
 		return Config{}, err
 	}
 	return LoadConfig(), nil
+}
+
+// writeAtomic writes beside the target and renames, so a crash never leaves half a file.
+func writeAtomic(path string, b []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // Credentials: .credentials.yaml holds a "refs:" block of NAME: value lines (the format the desktop app writes).
@@ -168,6 +180,9 @@ func SaveRef(key, val string) error {
 	if val == "" || strings.Contains(val, "***") || !regexp.MustCompile(`^[A-Za-z0-9_]+$`).MatchString(key) {
 		return nil
 	}
+	if strings.ContainsAny(val, "\r\n") {
+		return fmt.Errorf("a key value must be one line")
+	}
 	raw := "version: 1\nrecords: {}\nrefs:\n"
 	if b, err := os.ReadFile(credPath()); err == nil {
 		raw = string(b)
@@ -178,7 +193,7 @@ func SaveRef(key, val string) error {
 	} else {
 		raw = strings.TrimRight(raw, "\r\n") + "\n  " + key + ": " + val + "\n"
 	}
-	return os.WriteFile(credPath(), []byte(raw), 0o600)
+	return writeAtomic(credPath(), []byte(raw))
 }
 
 // CammutAuth returns the Authorization header for Cammut from the configured JSON file, if any.

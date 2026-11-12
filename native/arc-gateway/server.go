@@ -27,7 +27,7 @@ type Server struct {
 	sigs      *sigStore
 	vertex    *vertexAuth
 	api       *http.Client // AI providers: no total timeout (answers stream for minutes)
-	cammut    *http.Client // Cammut: headers must arrive within 60 s
+	cammut    *http.Client // Cammut: headers must arrive within 300 s
 	tokenHash [32]byte
 	started   time.Time
 	logUsage  func(line []byte)
@@ -36,8 +36,7 @@ type Server struct {
 
 func newTransport() *http.Transport {
 	return &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		TLSHandshakeTimeout:   10 * time.Second,
 		MaxIdleConns:          64,
 		MaxIdleConnsPerHost:   16,
@@ -49,7 +48,7 @@ func newTransport() *http.Transport {
 
 func NewServer(cfgFn func() Config) *Server {
 	ct := newTransport()
-	ct.ResponseHeaderTimeout = 60 * time.Second
+	ct.ResponseHeaderTimeout = 300 * time.Second
 	s := &Server{
 		cfgFn:   cfgFn,
 		sigs:    newSigStore(filepath.Join(Home(), "thought-signatures.json")),
@@ -100,6 +99,37 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 var dropReq = map[string]bool{"host": true, "connection": true, "content-length": true, "x-arc-gateway-token": true,
 	"accept-encoding": true, "keep-alive": true, "proxy-connection": true, "te": true, "trailer": true, "transfer-encoding": true, "upgrade": true}
 var dropResp = map[string]bool{"content-encoding": true, "transfer-encoding": true, "content-length": true, "connection": true}
+
+// readBody reads the whole request body. Too large gives 413; a broken upload gives 400.
+func readBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, bool) {
+	b, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "request body broke off"})
+		return nil, false
+	}
+	if int64(len(b)) > limit {
+		writeJSON(w, 413, map[string]string{"error": "request body too large"})
+		return nil, false
+	}
+	return b, true
+}
+
+// isDialError is true when the connection never opened, so the request surely did not reach that upstream.
+func isDialError(err error) bool {
+	var op *net.OpError
+	return errors.As(err, &op) && op.Op == "dial"
+}
+
+// subPath returns the still-encoded path after prefix, or false when a segment climbs with "..".
+func subPath(r *http.Request, prefix string) (string, bool) {
+	p := strings.TrimPrefix(r.URL.EscapedPath(), prefix)
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." || strings.EqualFold(seg, "%2e%2e") || strings.EqualFold(seg, ".%2e") || strings.EqualFold(seg, "%2e.") {
+			return "", false
+		}
+	}
+	return p, true
+}
 
 func copyReqHeaders(r *http.Request) http.Header {
 	h := http.Header{}
@@ -192,11 +222,18 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request, cfg Config
 
 // handleCammut forwards to Cammut, adds its Authorization, and slims memory answers.
 func (s *Server) handleCammut(w http.ResponseWriter, r *http.Request, cfg Config) {
-	sub := strings.TrimPrefix(r.URL.Path, "/cammut")
+	sub, ok := subPath(r, "/cammut")
+	if !ok {
+		writeJSON(w, 400, map[string]string{"error": "bad path"})
+		return
+	}
 	if sub == "" {
 		sub = "/mcp"
 	}
-	body, _ := io.ReadAll(io.LimitReader(r.Body, 32<<20))
+	body, ok := readBody(w, r, 32<<20)
+	if !ok {
+		return
+	}
 	g := cfg.Cammut.Governor
 	cr := capResult{Body: body}
 	if r.Method == http.MethodPost && len(body) > 0 {
@@ -229,6 +266,10 @@ func (s *Server) handleCammut(w http.ResponseWriter, r *http.Request, cfg Config
 		up = nil
 		if r.Context().Err() != nil {
 			return
+		}
+		// Only a connection that never opened is tried elsewhere; a request that went out may have run.
+		if !isDialError(err) {
+			break
 		}
 	}
 	if up == nil {
@@ -276,6 +317,7 @@ func queryOf(r *http.Request) string {
 }
 
 // stream copies the answer and flushes each chunk, so streamed tokens reach the client at once.
+// A broken upstream aborts the reply, so the client sees a cut answer, never a short "complete" one.
 func stream(w http.ResponseWriter, body io.Reader, onChunk func([]byte)) {
 	fl, _ := w.(http.Flusher)
 	buf := make([]byte, 32<<10)
@@ -292,8 +334,11 @@ func stream(w http.ResponseWriter, body io.Reader, onChunk func([]byte)) {
 				onChunk(buf[:n])
 			}
 		}
-		if err != nil {
+		if err == io.EOF {
 			return
+		}
+		if err != nil {
+			panic(http.ErrAbortHandler)
 		}
 	}
 }
@@ -313,7 +358,12 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, cfg Config)
 		http.NotFound(w, r)
 		return
 	}
-	sub := doubled.Replace(strings.TrimPrefix(r.URL.Path, rt.Prefix))
+	raw, ok := subPath(r, rt.Prefix)
+	if !ok {
+		writeJSON(w, 400, map[string]string{"error": "bad path"})
+		return
+	}
+	sub := doubled.Replace(raw)
 	target := rt.Target
 	if rt.Auth == "vertex" && target == "" {
 		loc := rt.VertexLocation
@@ -349,7 +399,10 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, cfg Config)
 		}
 	}
 
-	body, _ := io.ReadAll(io.LimitReader(r.Body, 64<<20))
+	body, ok := readBody(w, r, 64<<20)
+	if !ok {
+		return
+	}
 	var parsed map[string]any
 	var preCache []byte
 	cache := cfg.PromptCaching
@@ -357,8 +410,12 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, cfg Config)
 		if rt.Anthropic && strings.HasSuffix(sub, "/messages") && cache.Enabled {
 			body, _ = applyAnthropicCache(body, true, cache.TTL)
 		} else if !rt.Anthropic && json.Unmarshal(body, &parsed) == nil && parsed != nil {
+			snapshot := marshal(parsed)
 			s.tuneRequest(parsed, cfg, rt)
-			before := []byte(marshal(parsed))
+			before := body // nothing changed: send the caller's own bytes, key order intact
+			if after := marshal(parsed); after != snapshot {
+				before = []byte(after)
+			}
 			body = before
 			if strings.HasSuffix(sub, "/chat/completions") && cache.Enabled {
 				if nb, ok := applyAnthropicCache(before, false, cache.TTL); ok {
@@ -405,8 +462,9 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, cfg Config)
 	defer up.Body.Close()
 
 	if rt.NormalizeModels && r.Method == http.MethodGet && sub == "/models" && up.StatusCode == 200 {
+		rawList, rerr := io.ReadAll(up.Body)
 		var j map[string]any
-		if json.NewDecoder(up.Body).Decode(&j) == nil {
+		if rerr == nil && json.Unmarshal(rawList, &j) == nil {
 			for _, m := range asList(j["data"]) {
 				if m["id"] == nil {
 					m["id"] = m["model"]
@@ -418,6 +476,13 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, cfg Config)
 			writeJSON(w, 200, j)
 			return
 		}
+		if rerr != nil {
+			panic(http.ErrAbortHandler)
+		}
+		copyRespHeaders(w, up)
+		w.WriteHeader(up.StatusCode)
+		_, _ = w.Write(rawList)
+		return
 	}
 	copyRespHeaders(w, up)
 	w.WriteHeader(up.StatusCode)

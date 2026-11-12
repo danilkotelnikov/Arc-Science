@@ -82,6 +82,8 @@ func serve() int {
 func supervise() int {
 	lock, err := net.Listen("tcp", "127.0.0.1:7423")
 	if err != nil {
+		openLog()
+		log.Printf("run: port 7423 is taken, so another gateway keeper runs already; leaving (%v)", err)
 		return 0
 	}
 	defer lock.Close()
