@@ -20,5 +20,8 @@ jobs:
         run: npm test
       - name: Rust native validators
         run: cargo test --manifest-path native/arc-validators/Cargo.toml
+      - name: Go gateway (arc-gateway)
+        working-directory: native/arc-gateway
+        run: go vet ./... && go test ./...
       - name: Privacy scan, generic patterns
         run: node scripts/privacy-scan.mjs

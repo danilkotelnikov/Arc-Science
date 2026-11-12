@@ -25,3 +25,6 @@ __pycache__/
 /brandtext/lean-profile.undo.json
 target/
 
+
+# arc-gateway build output
+native/arc-gateway/*.exe

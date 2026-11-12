@@ -1,0 +1,19 @@
+{
+  "port": 7424,
+  "routes": [
+    { "prefix": "/anthropic", "target": "https://api.anthropic.com", "keyRef": "ANTHROPIC_API_KEY", "anthropic": true },
+    { "prefix": "/openai/v1", "target": "https://api.openai.com/v1", "keyRef": "OPENAI_API_KEY" },
+    { "prefix": "/vertex/v1", "auth": "vertex", "vertexProject": "your-project", "vertexLocation": "global" }
+  ],
+  "cammut": {
+    "upstreams": ["http://127.0.0.1:7421"],
+    "authFile": "",
+    "governor": { "enabled": true, "maxChars": 9000, "maxTokensCap": 1500, "minScoreRatio": 0.8, "minKeep": 3, "swapRate": 0, "usageLog": false }
+  },
+  "defaultReasoningEffort": "high",
+  "forceReasoningEffort": "",
+  "temperature": null,
+  "maxTokens": null,
+  "autoFallbackNoReasoning": true,
+  "promptCaching": { "enabled": true, "autoFallbackNoCache": true, "ttl": "" }
+}
