@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="../../releases"><img alt="Release 0.5.0" src="https://img.shields.io/badge/release-0.5.0-54453c"></a>
-  <a href="../../actions/workflows/ci.yml"><img alt="Checks" src="https://img.shields.io/badge/checks-Node%2024%20%2B%20Rust-54453c"></a>
+  <a href="../../actions/workflows/ci.yml"><img alt="Checks" src="https://img.shields.io/badge/checks-Node%2024%20%2B%20Rust%20%2B%20Go-54453c"></a>
   <a href="LICENSE"><img alt="Licence: MIT" src="https://img.shields.io/badge/licence-MIT-54453c"></a>
   <a href="#install"><img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows-54453c"></a>
   <a href="SECURITY.md"><img alt="Security policy" src="https://img.shields.io/badge/security-policy-54453c"></a>
@@ -46,6 +46,7 @@ This repository holds the build kit, six Arc plugins, the C2 console, Windows in
 | **Gemini tool continuity** | `tools/build.mjs` captures and replays `extra_content.google.thought_signature` on streamed and parallel tool calls for multi-turn Vertex AI and Gemini sessions. |
 | **Zero vendor telemetry** | Build patches disable vendor sign-in, telemetry rows, and update feeds; static and live traces check all three. |
 | **Rust native guards** | `native/arc-validators` checks SHA-256 digests, prose rules, secret scans, SVG icon bounds, network grants, and seal boundaries with zero external crates. |
+| **Local gateway** | `native/arc-gateway` is one Windows program between the app and the model providers. It adds keys, Anthropic cache marks and Gemini signatures, and opens one door to Cammut. It starts at logon and restarts itself. |
 
 ## Architecture
 
