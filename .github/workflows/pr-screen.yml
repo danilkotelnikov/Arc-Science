@@ -78,7 +78,7 @@ jobs:
             --model claude-fable-5-2
             --effort max
             --max-turns 4
-            --allowedTools Read,Grep,Glob,Bash(node:tools/lean-gate.mjs*)
+            --allowedTools Read,Grep,Glob,Bash(node tools/lean-gate.mjs*)
           prompt: |
             Perform a surgical read-only Lean formalization and invariant audit on the changed formal files in this PR.
             Check against rules LG1-LG12, banned axioms (sorry, admit, native_decide, axiom, unsafe, implemented_by, extern), and run `node tools/lean-gate.mjs` if available.

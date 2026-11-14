@@ -51,6 +51,8 @@ test('G7.2 / G7.5: 9-dim SI+bit+usd unit algebra and typed prose drift detector'
   assert.equal(verifyRenderedProse(rec, 'PR diff <= 180000 bytes (caveat: binary patches included)').state, 'fail_text_drift');
   assert.equal(verifyRenderedProse(rec, 'PR diff <= 160000 bytes').state, 'fail_text_drift');
   assert.equal(verifyRenderedProse({ subject: 'Budget', value: 10, unit: 'usd' }, 'Budget <= 10 usd').state, 'pass');
+  assert.equal(verifyRenderedProse({ subject: 'Budget', value: 10, unit: 'usd' }, 'Budget <= 10 usd/KB').state, 'fail_text_drift');
+  assert.equal(compareQuantities(quantity(1, 'm'), 'toString', quantity(2, 'm')).state, 'fail_invalid_op');
   const sci = { subject: 'Drift', comparator: '<=', value: 1e-7, unit: 'm' };
   assert.equal(verifyRenderedProse(sci, renderTypedRecord(sci)).state, 'pass');
   assert.equal(verifyRenderedProse(sci, 'Drift <= 2e-7 m').state, 'fail_text_drift');

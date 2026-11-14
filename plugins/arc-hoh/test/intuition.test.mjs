@@ -58,12 +58,20 @@ test('G8.2 Stage-0 role router classifies 20 tasks deterministically with zero e
 
 test('G8.3 propensity logger enforces 0.2 cheap, 0.05 failed_check, and 0 stop shares', () => {
   assert.deepEqual(EXPLORATION_SHARES, { cheap: 0.2, failed_check: 0.05, stop: 0, safety: 0 });
-  const cheap = logPropensityDecision({ contextId: 'c1', candidates: ['T0', 'T1'], baselineAction: 'T0', chosenAction: 'T1', mode: 'cheap' });
+  const cheap = logPropensityDecision({ contextId: 'c1', candidates: ['T0', 'T1'], baselineAction: 'T0', chosenAction: 'T1', loggingPropensity: 0.1, mode: 'cheap' });
   assert.equal(cheap.ok, true);
   assert.equal(cheap.exploring, true);
   assert.ok(Math.abs(cheap.propensity - 0.1) < 1e-6);
 
-  const failed = logPropensityDecision({ contextId: 'c2', candidates: ['T0', 'T1'], baselineAction: 'T0', chosenAction: 'T1', mode: 'failed_check' });
+  const missingProp = logPropensityDecision({ contextId: 'c1b', candidates: ['T0', 'T1'], baselineAction: 'T0', chosenAction: 'T1', mode: 'cheap' });
+  assert.equal(missingProp.state, 'fail_missing_propensity');
+
+  const sampled = Array.from({ length: 1000 }, (_, i) => logPropensityDecision({ contextId: `s-${i}`, candidates: ['A', 'B'], baselineAction: 'A', seed: i + 1, mode: 'cheap' }));
+  const bRate = sampled.filter((r) => r.action === 'B').length / sampled.length;
+  assert.ok(bRate > 0.05 && bRate < 0.16, `expected ~0.10 exploration rate, got ${bRate}`);
+  assert.ok(sampled.every((r) => r.propensity === (r.action === 'A' ? 0.9 : 0.1)));
+
+  const failed = logPropensityDecision({ contextId: 'c2', candidates: ['T0', 'T1'], baselineAction: 'T0', chosenAction: 'T1', loggingPropensity: 0.025, mode: 'failed_check' });
   assert.ok(Math.abs(failed.propensity - 0.025) < 1e-6);
 
   const stopped = logPropensityDecision({ contextId: 'c3', candidates: ['T0', 'T1'], baselineAction: 'T0', chosenAction: 'T1', mode: 'stop' });
@@ -142,6 +150,7 @@ test('G8.7 R009 non-escalation guard blocks minted consent tokens and privilege 
   assert.equal(enforceConsentNonEscalation({ route: 'T0', consentToken: 'abc-token' }).state, 'fail_r009_escalation');
   assert.equal(enforceConsentNonEscalation({ route: 'T0', bypassGate: true }).rule, 'R009');
   assert.equal(enforceConsentNonEscalation({ spendCapUsd: 25 }).state, 'fail_r009_escalation');
+  assert.equal(enforceConsentNonEscalation({ spendCapUsd: 1000000, spendApproved: true }).state, 'fail_r009_escalation');
 });
 
 test('G8.1 & G8.8 training manifest checks models.tsv registry and rejects private sources on public bases', () => {

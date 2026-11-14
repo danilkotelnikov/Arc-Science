@@ -129,6 +129,7 @@ const ESCALATION_KEYS = Object.freeze([
   'overrideR006',
   'overrideR009',
   'raiseSpendCap',
+  'spendApproved',
 ]);
 
 /** Verify that a router or learned policy output never claims permissions or bypasses R009/R006 (G8.7). */
@@ -143,7 +144,7 @@ export function enforceConsentNonEscalation(decision) {
   if (typeof decision.consentToken === 'string' && decision.consentToken.trim().length > 0) {
     violations.push('minted consentToken');
   }
-  if (typeof decision.spendCapUsd === 'number' && decision.spendCapUsd > 0 && decision.spendApproved !== true) {
+  if (typeof decision.spendCapUsd === 'number' && decision.spendCapUsd > 0) {
     violations.push('unapproved spendCapUsd escalation');
   }
   return violations.length
@@ -193,7 +194,7 @@ export function routeTaskStage0(task = {}) {
 }
 
 /** Log a stochastic/bandit propensity record under spec 13.11 exploration caps (G8.3). */
-export function logPropensityDecision({ contextId, candidates = [], baselineAction, chosenAction, mode = 'cheap' } = {}) {
+export function logPropensityDecision({ contextId, candidates = [], baselineAction, chosenAction, loggingPropensity, seed, mode = 'cheap' } = {}) {
   if (!Array.isArray(candidates) || candidates.length === 0) {
     return { ok: false, state: 'fail_no_candidates', error: 'candidates must be a non-empty array' };
   }
@@ -202,14 +203,25 @@ export function logPropensityDecision({ contextId, candidates = [], baselineActi
   }
   const exploreShare = EXPLORATION_SHARES[mode];
   const base = baselineAction && candidates.includes(baselineAction) ? baselineAction : candidates[0];
-  const picked = exploreShare === 0 ? base : (chosenAction ?? base);
-  if (!candidates.includes(picked)) {
-    return { ok: false, state: 'fail_unknown_action', error: `chosenAction ${picked} not in candidates` };
-  }
   const k = candidates.length;
-  const propensity = exploreShare === 0
-    ? 1.0
-    : (picked === base ? (1 - exploreShare) + (exploreShare / k) : exploreShare / k);
+  let picked = base;
+  let propensity = 1.0;
+  if (exploreShare > 0) {
+    if (chosenAction != null) {
+      if (!candidates.includes(chosenAction)) {
+        return { ok: false, state: 'fail_unknown_action', error: `chosenAction ${chosenAction} not in candidates` };
+      }
+      if (typeof loggingPropensity !== 'number' || !Number.isFinite(loggingPropensity) || loggingPropensity <= 0 || loggingPropensity > 1) {
+        return { ok: false, state: 'fail_missing_propensity', error: 'external chosenAction requires loggingPropensity in (0, 1]' };
+      }
+      picked = chosenAction;
+      propensity = loggingPropensity;
+    } else {
+      const rng = seed != null ? seededPrng(seed) : Math.random;
+      picked = rng() < exploreShare ? candidates[Math.floor(rng() * k)] : base;
+      propensity = picked === base ? (1 - exploreShare) + (exploreShare / k) : exploreShare / k;
+    }
+  }
   if (!(propensity > 0 && propensity <= 1)) {
     return { ok: false, state: 'fail_bad_propensity', error: 'propensity must lie in (0, 1]' };
   }
@@ -291,6 +303,9 @@ export function evaluatePolicyIPS(rows, candidatePolicyFn, options = {}) {
     weights.push(w);
     rewards.push(Number(r.reward ?? 0));
     baselines.push(Number(r.baselineReward ?? r.reward ?? 0));
+    if (Number.isFinite(maxMeanTokens) && (r.candidateTokens == null && r.tokens == null || !Number.isFinite(Number(r.candidateTokens ?? r.tokens)))) {
+      return { ok: false, state: 'blocked_rows', reason: 'missing_token_cost', autoApplied: false };
+    }
     tokenCosts.push(Number(r.candidateTokens ?? r.tokens ?? 0));
   }
 

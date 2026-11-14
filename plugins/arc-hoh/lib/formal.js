@@ -99,7 +99,7 @@ export function compareQuantities(a, op, b) {
     '>=': a.value >= b.value,
     '>': a.value > b.value,
   };
-  if (!(op in ops)) return { ok: false, state: 'fail_invalid_op', detail: `unsupported op: ${op}` };
+  if (!Object.prototype.hasOwnProperty.call(ops, op)) return { ok: false, state: 'fail_invalid_op', detail: `unsupported op: ${op}` };
   return { ok: ops[op], state: ops[op] ? 'pass' : 'fail_comparison' };
 }
 
@@ -118,7 +118,7 @@ export function verifyRenderedProse(rec, proseText) {
   const text = String(proseText || '');
   const escapedSub = rec.subject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const escapedUnit = rec.unit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const m = new RegExp(`${escapedSub}\\s+(<=|>=|==|!=|<|>)\\s+([-+]?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?)\\s+${escapedUnit}(?![A-Za-z0-9_])`).exec(text);
+  const m = new RegExp(`${escapedSub}\\s+(<=|>=|==|!=|<|>)\\s+([-+]?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?)\\s+${escapedUnit}(?![A-Za-z0-9_/])`).exec(text);
   if (!m) {
     return { ok: false, state: 'fail_text_drift', expected, detail: 'missing subject/comparator/value/unit tuple' };
   }
