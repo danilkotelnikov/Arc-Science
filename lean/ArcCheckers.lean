@@ -216,36 +216,51 @@ theorem net_voi_decision_rule (riskBefore riskAfter cost : Nat)
     cost < riskBefore - riskAfter := by
   omega
 
-def pairOkNat (bFam cFam bTier minTier : Nat) : Bool :=
-  (bFam != cFam) && (minTier ≤ bTier)
+def pairOkNat (bFam cFam bTier minBTier cTier minCTier : Nat) (formalOk : Bool) : Bool :=
+  (bFam != cFam) && (minBTier ≤ bTier) && (minCTier ≤ cTier) && formalOk
 
-theorem cross_family_pair_sound (bFam cFam bTier minTier : Nat)
-    (h : pairOkNat bFam cFam bTier minTier = true) :
-    bFam ≠ cFam ∧ minTier ≤ bTier := by
+theorem cross_family_pair_sound (bFam cFam bTier minBTier cTier minCTier : Nat) (formalOk : Bool)
+    (h : pairOkNat bFam cFam bTier minBTier cTier minCTier formalOk = true) :
+    bFam ≠ cFam ∧ minBTier ≤ bTier ∧ minCTier ≤ cTier ∧ formalOk = true := by
   simp [pairOkNat] at h
-  exact h
+  rcases h with ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩
+  exact ⟨h1, h2, h3, h4⟩
 
-def allowExitNat (taint citations checksOk : Nat) : Bool :=
-  (taint < 3) && (1 ≤ citations) && (checksOk == 1)
+def allowExitNat (taint citations checksOk crossFam needsYes : Nat) : Bool :=
+  (taint < 3) && (1 ≤ citations) && (checksOk == 1) && ((taint != 2) || (crossFam == 1)) && (needsYes == 0)
 
-theorem decision_exit_guard_monotone (t1 t2 citations checksOk : Nat)
-    (h : allowExitNat (max t1 t2) citations checksOk = true) :
-    allowExitNat t1 citations checksOk = true := by
+theorem decision_exit_guard_monotone (t1 t2 citations checksOk crossFam needsYes : Nat)
+    (h : allowExitNat (max t1 t2) citations checksOk crossFam needsYes = true) :
+    allowExitNat t1 citations checksOk crossFam needsYes = true := by
   simp [allowExitNat] at h ⊢
-  omega
+  rcases h with ⟨⟨⟨⟨ht, hc⟩, hchk⟩, hcf⟩, hny⟩
+  refine ⟨⟨⟨⟨by omega, hc⟩, hchk⟩, ?_⟩, hny⟩
+  rcases hcf with hne | hcf1
+  · left; intro heq; apply hne; omega
+  · right; exact hcf1
 
-theorem secret_taint_blocks_exit (t1 citations checksOk : Nat) :
-    allowExitNat (max t1 3) citations checksOk = false := by
+theorem secret_taint_blocks_exit (t1 citations checksOk crossFam needsYes : Nat) :
+    allowExitNat (max t1 3) citations checksOk crossFam needsYes = false := by
+  have hlt : ¬ (max t1 3 < 3) := by omega
+  simp [allowExitNat, hlt]
+
+theorem untrusted_web_requires_cross_family (citations checksOk needsYes : Nat) :
+    allowExitNat 2 citations checksOk 0 needsYes = false := by
   simp [allowExitNat]
-  omega
 
-example : pairOkNat 1 2 2 1 = true ∧ pairOkNat 1 1 2 1 = false := by decide
-example : allowExitNat (max 0 3) 2 1 = false := by decide
+theorem operator_gate_blocks_exit (taint citations checksOk crossFam : Nat) :
+    allowExitNat taint citations checksOk crossFam 1 = false := by
+  simp [allowExitNat]
+
+example : pairOkNat 1 2 2 1 2 1 true = true ∧ pairOkNat 1 1 2 1 2 1 true = false := by decide
+example : allowExitNat (max 0 3) 2 1 1 0 = false ∧ allowExitNat 2 1 1 0 0 = false := by decide
 
 #print axioms voi_concavity_min
 #print axioms net_voi_decision_rule
 #print axioms cross_family_pair_sound
 #print axioms decision_exit_guard_monotone
 #print axioms secret_taint_blocks_exit
+#print axioms untrusted_web_requires_cross_family
+#print axioms operator_gate_blocks_exit
 
 end ArcCheckers
