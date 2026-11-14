@@ -40,7 +40,7 @@ export function stage(from, to) {
 }
 
 function run(exe, args) {
-  const r = spawnSync(exe, args, { encoding: 'utf8', stdio: 'inherit' });
+  const r = spawnSync(exe, args, { encoding: 'utf8', stdio: 'inherit', windowsHide: true });
   if (r.status !== 0) throw new Error(`${path.basename(exe)} failed with exit code ${r.status}`);
 }
 

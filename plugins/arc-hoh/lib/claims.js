@@ -11,7 +11,7 @@
 const expit = (x) => 1 / (1 + Math.exp(-x));
 const KINDS = new Set(['claim', 'evidence', 'source', 'experiment']);
 // The evidence levels of policy section 11, strongest first.
-export const LEVELS = Object.freeze(['measured', 'published', 'simulated', 'architecture', 'target']);
+export const LEVELS = Object.freeze(['machine-checked', 'measured', 'published', 'simulated', 'architecture', 'target']);
 const name = (x) => typeof x === 'string' && x !== '';
 
 export const createGraph = () => ({ nodes: new Map(), feeds: new Map(), inputs: new Map(), refused: [] });
@@ -82,7 +82,7 @@ function checkNode(g, ev) {
   if (g.nodes.has(ev.id)) return 'this node already exists';
   if (!KINDS.has(ev.kind)) return `unknown kind: ${ev.kind}`;
   if (ev.kind === 'evidence') {
-    if (!LEVELS.includes(ev.level)) return 'evidence needs a level: measured, published, simulated, architecture or target';
+    if (!LEVELS.includes(ev.level)) return 'evidence needs a level: machine-checked, measured, published, simulated, architecture or target';
     if (ev.level === 'published' && !(name(ev.doi) && /^10\.\d{4,9}\/\S+$/.test(ev.doi))) return 'published evidence needs a DOI';
   } else if (ev.level !== undefined || ev.doi !== undefined) return 'only evidence has a level or a DOI';
   if (ev.group !== undefined && !name(ev.group)) return 'a group must be a text name';
@@ -114,7 +114,7 @@ export function applyEvent(g, ev) {
   if (ev.type === 'node') {
     const problem = checkNode(g, ev);
     if (problem) return refuse(problem);
-    const n = { id: ev.id, kind: ev.kind, text: ev.text, level: ev.level, doi: ev.doi, group: ev.group, rung: ev.rung, numbers: ev.numbers ?? [], status: 'open', own: 1, trust: 1, q: 0.5 };
+    const n = { id: ev.id, kind: ev.kind, text: ev.text, level: ev.level, doi: ev.doi, group: ev.group, rung: ev.rung, leanReceipt: ev.leanReceipt ?? null, numbers: ev.numbers ?? [], status: 'open', own: 1, trust: 1, q: 0.5 };
     g.nodes.set(ev.id, n);
     return { touched: [ev.id] };
   }
@@ -247,8 +247,16 @@ export function evaluateEvidenceEngine(g, claimId, opts = {}) {
     }
   }
 
-  const activeSupports = supportNodes.filter((n) => n.status !== 'retracted' && n.trust > 0);
-  const passedL1 = activeSupports.length > 0 && retractedSources.length === 0 && card.q > 0.5;
+  const unverifiedFormal = supportNodes
+    .filter((n) => n.level === 'machine-checked' && n.leanReceipt?.state !== 'pass')
+    .map((n) => n.id);
+  const activeSupports = supportNodes.filter(
+    (n) =>
+      n.status !== 'retracted' &&
+      n.trust > 0 &&
+      (n.level !== 'machine-checked' || n.leanReceipt?.state === 'pass'),
+  );
+  const passedL1 = activeSupports.length > 0 && retractedSources.length === 0 && unverifiedFormal.length === 0 && card.q > 0.5;
 
   const evidenceNumbers = new Set();
   for (const evNode of activeSupports) {
@@ -270,9 +278,12 @@ export function evaluateEvidenceEngine(g, claimId, opts = {}) {
     passedL2,
     passedL3,
     retractedSources,
+    unverifiedFormal,
     untracedNumbers,
     falsifier,
     nullModel,
   };
 }
+
+export { verifyClaimDag } from './formal.js';
 

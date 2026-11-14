@@ -48,3 +48,114 @@ export function closeStage(tree, p, stage) {
   const events = ranked.slice(places).filter((b) => !b.pinned).map((b) => ({ type: 'state', branch: b.id, to: 'parked', reason: `dropped at stage ${stage + 1} of ${p.stages.length}, score ${b.q.toFixed(3)}` }));
   return { keep, events };
 }
+
+
+function normalizeFileKey(file) {
+  if (typeof file !== 'string' || !file.trim()) return '';
+  return file.trim().replaceAll('\\', '/').toLowerCase();
+}
+
+/** Exclusive per-file write lease table and integrator-only commit guard (G2.5). */
+export class FileLeaseTable {
+  constructor() {
+    this.leases = new Map();
+  }
+
+  acquire(file, role, agentId) {
+    const key = normalizeFileKey(file);
+    if (!key || typeof role !== 'string' || !role.trim() || typeof agentId !== 'string' || !agentId.trim()) {
+      return { ok: false, state: 'fail_bad_lease_args', error: 'file, role, and agentId are required' };
+    }
+    const existing = this.leases.get(key);
+    if (existing && existing.agentId !== agentId) {
+      return { ok: false, state: 'fail_lease_conflict', file: key, holder: existing };
+    }
+    const lease = { file: key, role: role.trim(), agentId: agentId.trim(), acquiredAt: new Date().toISOString() };
+    this.leases.set(key, lease);
+    return { ok: true, state: 'pass', lease };
+  }
+
+  release(file, agentId) {
+    const key = normalizeFileKey(file);
+    const existing = this.leases.get(key);
+    if (!existing) return { ok: true, state: 'pass', released: false };
+    if (existing.agentId !== agentId) {
+      return { ok: false, state: 'fail_not_holder', file: key, holder: existing.agentId };
+    }
+    this.leases.delete(key);
+    return { ok: true, state: 'pass', released: true };
+  }
+
+  holderOf(file) {
+    return this.leases.get(normalizeFileKey(file)) || null;
+  }
+
+  assertIntegratorCommit(role) {
+    const clean = typeof role === 'string' ? role.trim().toLowerCase() : '';
+    if (clean !== 'integrator') {
+      return { ok: false, state: 'fail_non_integrator_commit', rule: 'LG-crew-commit', role: clean || null };
+    }
+    return { ok: true, state: 'pass', role: 'integrator' };
+  }
+}
+
+/** Enforce cross-family builder/checker separation and prohibit self-review under R006 (G2.6). */
+export function checkCrossFamilyVerdict({ builderFamily, checkerFamily, builderId, checkerId, verdict } = {}) {
+  const bFam = typeof builderFamily === 'string' ? builderFamily.trim().toLowerCase() : '';
+  const cFam = typeof checkerFamily === 'string' ? checkerFamily.trim().toLowerCase() : '';
+  const bId = typeof builderId === 'string' ? builderId.trim() : '';
+  const cId = typeof checkerId === 'string' ? checkerId.trim() : '';
+
+  if (!bFam || !cFam || !bId || !cId) {
+    return { ok: false, state: 'fail_missing_provenance', rule: 'R006' };
+  }
+  if (bId === cId) {
+    return { ok: false, state: 'fail_self_review', rule: 'R006', builderId: bId, checkerId: cId };
+  }
+  if (bFam === cFam) {
+    return { ok: false, state: 'fail_same_family_verdict', rule: 'R006', builderFamily: bFam, checkerFamily: cFam };
+  }
+  return {
+    ok: true,
+    state: 'pass',
+    rule: 'R006',
+    builderFamily: bFam,
+    checkerFamily: cFam,
+    builderId: bId,
+    checkerId: cId,
+    verdict: verdict ?? 'verified',
+  };
+}
+
+/** Validate explicit maxTokens limit and record role/route token accounting row (G2.7). */
+export function enforceSubagentCall({ role, route, maxTokens, usage = {} } = {}) {
+  if (typeof role !== 'string' || !role.trim() || typeof route !== 'string' || !route.trim()) {
+    return { ok: false, state: 'fail_bad_subagent_meta', error: 'role and route are required' };
+  }
+  if (!Number.isInteger(maxTokens) || maxTokens <= 0) {
+    return { ok: false, state: 'fail_missing_max_tokens', error: 'every subagent call requires a positive integer maxTokens limit' };
+  }
+  const inputTokens = Number(usage.inputTokens ?? 0);
+  const outputTokens = Number(usage.outputTokens ?? 0);
+  const cachedTokens = Number(usage.cachedTokens ?? 0);
+  if (![inputTokens, outputTokens, cachedTokens].every((v) => Number.isFinite(v) && v >= 0)) {
+    return { ok: false, state: 'fail_invalid_usage', error: 'token counts must be non-negative numbers' };
+  }
+  if (outputTokens > maxTokens) {
+    return { ok: false, state: 'fail_over_max_tokens', outputTokens, maxTokens };
+  }
+  return {
+    ok: true,
+    state: 'pass',
+    row: {
+      role: role.trim(),
+      route: route.trim(),
+      maxTokens,
+      inputTokens,
+      outputTokens,
+      cachedTokens,
+      totalTokens: inputTokens + outputTokens,
+      recordedAt: new Date().toISOString(),
+    },
+  };
+}
