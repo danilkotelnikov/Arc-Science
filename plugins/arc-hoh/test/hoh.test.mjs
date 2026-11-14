@@ -315,6 +315,22 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   assert.equal(opBlocked.routing.outcome, 'ask_operator');
   assert.match(decide.output.render({}, opBlocked)[0].text, /ask_operator/);
 
+  const pairBlocked = await decide.execute({
+    goal: 'bad-pair',
+    probability: 0.95,
+    minTier: 'unknown_tier',
+    taint: 'clean',
+    citations: ['doi:10.1000/test'],
+    checksPassed: true,
+  }, reviewer);
+  assert.equal(pairBlocked.ok, false);
+  assert.equal(pairBlocked.pair.ok, false);
+  assert.equal(pairBlocked.pair.state, 'fail_unknown_tier');
+  assert.equal(pairBlocked.packet.allowExit, false);
+  assert.equal(pairBlocked.packet.action, 'block_pairing');
+  assert.equal(pairBlocked.packet.route, null);
+  assert.equal(pairBlocked.packet.checkerRoute, null);
+
   const off = makeTools((def) => def, { ARC_HOME: d, ARC_HOH_RETAIN: '0' }, { retain: async () => { throw new Error('must not be called'); } });
   const r = await off[2].execute({ ...base, candidate: fr2.candidate }, reviewer);
   assert.equal(r.retained, false);

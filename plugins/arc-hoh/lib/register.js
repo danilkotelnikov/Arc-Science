@@ -240,7 +240,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
         requiresHumanYes: args.requiresHumanYes === true,
         needsOperator: args.needsOperator === true || args.requiresHumanYes === true,
         crossFamilyVerified: args.crossFamilyVerified === true,
-        pair: pair.ok ? pair : null,
+        pair,
       };
       const res = emitDecisionPacket(safeInput);
       const packet = res.packet || {
@@ -255,8 +255,8 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
         calibratedProbability: 0.5,
         expectedVoi: 0,
         netValue: 0,
-        route: pair.builder?.route ?? null,
-        checkerRoute: pair.checker?.route ?? null,
+        route: pair.ok ? pair.builder?.route ?? null : null,
+        checkerRoute: pair.ok ? pair.checker?.route ?? null : null,
         citations: [],
         checkEvidence: { ok: false, crossFamilyOk: false, summary: '' },
         permissionGranted: false,
@@ -264,7 +264,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
         issuedAt: new Date().toISOString(),
       };
       const routing = res.routing || { ok: false, outcome: 'abstain', reason: packet.reason, permissionGranted: false, autoApplied: false };
-      return { ok: res.ok === true, packet, routing, pair };
+      return { ok: res.ok === true && pair.ok === true, packet, routing, pair };
     },
     presentCall: (args) => ({ card: 'generic', title: 'Decision router', kind: 'other', rawInput: { goal: args.goal } }),
   });

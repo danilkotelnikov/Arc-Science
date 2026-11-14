@@ -274,7 +274,7 @@ function runModelWithFallback({ arcCmd, model, family, prompt, timeoutMs = 18000
 
   const viaMerge = runArcHeadless({ arcCmd, provider: 'merge', model: `anthropic/${model}`, reasoningEffort: 'low', prompt, timeoutMs });
   attempts.push({ provider: viaMerge.provider, model: viaMerge.model, ok: viaMerge.ok, durationMs: viaMerge.durationMs, error: viaMerge.errorMessage || viaMerge.spawnError });
-  return { ...viaMerge, attempts };
+  return { ...viaMerge, durationMs: direct.durationMs + viaMerge.durationMs, attempts };
 }
 
 export function runLiveArcValidation({ arcCmd = DEFAULT_ARC_CMD } = {}) {

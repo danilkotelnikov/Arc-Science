@@ -792,6 +792,15 @@ export function decideExitAction(input = {}) {
   if (effectiveTaint === 'untrusted_web' && !crossFamilyVerified) {
     return { ok: false, action: 'block_tainted', effectiveTaint, allowExit: false, reason: 'untrusted_web requires cross-family verification' };
   }
+  if (input.pair && input.pair.ok === false) {
+    return {
+      ok: false,
+      action: 'block_pairing',
+      effectiveTaint,
+      allowExit: false,
+      reason: input.pair.reason || input.pair.state || 'builder/checker pairing failed',
+    };
+  }
   if (!checksPassed || !(citationCount >= 1)) {
     return { ok: false, action: 'block_unverified', effectiveTaint, allowExit: false, reason: 'exit requires passing checks and >= 1 verified citation' };
   }
@@ -818,6 +827,7 @@ export function emitDecisionPacket(input = {}) {
     citations,
     checksPassed: input.checksPassed === true,
     crossFamilyVerified: crossFamilyOk,
+    pair: input.pair,
   });
   const routing = routeOptimalDecision({ ...input, needsOperator });
   let outcome = routing.ok ? routing.outcome : 'abstain';
@@ -836,8 +846,8 @@ export function emitDecisionPacket(input = {}) {
     calibratedProbability: routing.ok ? routing.calibratedProbability : clampProb(input.probability ?? 0.5),
     expectedVoi: routing.ok ? routing.expectedVoi : 0,
     netValue: routing.ok ? routing.netValue : 0,
-    route: input.route || (input.pair?.builder?.route ?? null),
-    checkerRoute: input.checkerRoute || (input.pair?.checker?.route ?? null),
+    route: input.route || (input.pair?.ok ? input.pair.builder?.route ?? null : null),
+    checkerRoute: input.checkerRoute || (input.pair?.ok ? input.pair.checker?.route ?? null : null),
     citations,
     checkEvidence: {
       ok: input.checksPassed === true,
@@ -849,7 +859,7 @@ export function emitDecisionPacket(input = {}) {
     issuedAt: input.issuedAt || new Date().toISOString(),
   };
   const validation = validateDecisionPacket(packet);
-  return { ok: validation.ok, packet, exitGuard, routing, validation };
+  return { ok: validation.ok && (input.pair == null || input.pair.ok === true), packet, exitGuard, routing, validation };
 }
 
 /** Validate a cammut.decision/0 packet against schema, R009, taint lattice, and exit invariants. */
