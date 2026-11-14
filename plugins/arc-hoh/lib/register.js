@@ -216,7 +216,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
       render: (_args, v) => {
         const pkt = v?.packet || {};
         const route = v?.routing || {};
-        return [{ type: 'text', text: `${pkt.action || 'blocked'} (allowExit=${Boolean(pkt.allowExit)}, outcome=${route.outcome || 'abstain'}, taint=${pkt.effectiveTaint || 'secret_risk'})` }];
+        return [{ type: 'text', text: `${pkt.action || 'blocked'} (allowExit=${Boolean(pkt.allowExit)}, outcome=${pkt.outcome || route.outcome || 'abstain'}, taint=${pkt.effectiveTaint || 'secret_risk'})` }];
       },
     },
     async execute(args) {

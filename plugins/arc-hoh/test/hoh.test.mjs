@@ -300,6 +300,8 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   assert.equal(webBlocked.ok, true);
   assert.equal(webBlocked.packet.allowExit, false);
   assert.equal(webBlocked.packet.action, 'block_tainted');
+  assert.equal(webBlocked.packet.outcome, 'abstain');
+  assert.match(decide.output.render({}, webBlocked)[0].text, /outcome=abstain/);
 
   const opBlocked = await decide.execute({
     goal: 'op-required',
