@@ -13,10 +13,11 @@ const CALL_RE = /\b([A-Za-z_$][\w$]*)\s*\(/g;
 const REGEX_PREFIX_CHARS = new Set(['\0', '(', '[', '{', ',', ';', ':', '!', '?', '&', '|', '=', '+', '-', '*', '/', '%', '^', '~', '<', '>']);
 const REGEX_PREFIX_WORDS = new Set(['return', 'case', 'throw', 'in', 'of', 'typeof', 'void', 'delete', 'yield', 'await', 'new', 'else', 'do']);
 
-function stripCommentsAndStrings(src) {
+function stripCommentsAndStrings(src, keepStrings = false) {
   const out = src.split('');
   const n = src.length;
   const blank = (i) => { if (src[i] !== '\n' && src[i] !== '\r') out[i] = ' '; };
+  const blankLit = (i) => { if (!keepStrings) blank(i); };
   let mode = 'code';
   let q = '';
   let inClass = false;
@@ -33,44 +34,40 @@ function stripCommentsAndStrings(src) {
       blank(i);
       if (ch === '*' && nx === '/') { blank(i + 1); i += 1; mode = 'code'; }
     } else if (mode === 'str') {
-      blank(i);
-      if (ch === '\\') { if (i + 1 < n) { blank(i + 1); i += 1; } }
+      blankLit(i);
+      if (ch === '\\') { if (i + 1 < n) { blankLit(i + 1); i += 1; } }
       else if (ch === q) { mode = 'code'; prevNonSpace = q; prevWord = ''; }
     } else if (mode === 'regex') {
-      blank(i);
+      blankLit(i);
       if (ch === '\n' || ch === '\r') { mode = 'code'; inClass = false; prevNonSpace = '/'; prevWord = ''; }
-      else if (ch === '\\') { if (i + 1 < n && src[i + 1] !== '\n' && src[i + 1] !== '\r') { blank(i + 1); i += 1; } }
+      else if (ch === '\\') { if (i + 1 < n && src[i + 1] !== '\n' && src[i + 1] !== '\r') { blankLit(i + 1); i += 1; } }
       else if (ch === '[' && !inClass) inClass = true;
       else if (ch === ']' && inClass) inClass = false;
       else if (ch === '/' && !inClass) { mode = 'code'; prevNonSpace = ')'; prevWord = ''; }
     } else if (mode === 'tpl') {
-      blank(i);
-      if (ch === '\\') { if (i + 1 < n) { blank(i + 1); i += 1; } }
-      else if (ch === '$' && nx === '{') { blank(i + 1); i += 1; tplStack.push(1); mode = 'code'; prevNonSpace = '{'; prevWord = ''; }
+      blankLit(i);
+      if (ch === '\\') { if (i + 1 < n) { blankLit(i + 1); i += 1; } }
+      else if (ch === '$' && nx === '{') { blankLit(i + 1); i += 1; tplStack.push(1); mode = 'code'; prevNonSpace = '{'; prevWord = ''; }
       else if (ch === '`') { mode = 'code'; prevNonSpace = '`'; prevWord = ''; }
     } else if (ch === '/' && nx === '/') {
       blank(i); blank(i + 1); i += 1; mode = 'line';
     } else if (ch === '/' && nx === '*') {
       blank(i); blank(i + 1); i += 1; mode = 'block';
     } else if (ch === '/' && (REGEX_PREFIX_CHARS.has(prevNonSpace) || REGEX_PREFIX_WORDS.has(prevWord))) {
-      blank(i); inClass = false; mode = 'regex';
+      blankLit(i); inClass = false; mode = 'regex';
     } else if (ch === '\'' || ch === '"') {
-      blank(i); q = ch; mode = 'str';
+      blankLit(i); q = ch; mode = 'str';
     } else if (ch === '`') {
-      blank(i); mode = 'tpl';
+      blankLit(i); mode = 'tpl';
     } else {
       if (tplStack.length > 0 && ch === '{') {
         tplStack[tplStack.length - 1] += 1;
       } else if (tplStack.length > 0 && ch === '}') {
         tplStack[tplStack.length - 1] -= 1;
-        if (tplStack[tplStack.length - 1] === 0) { tplStack.pop(); blank(i); mode = 'tpl'; continue; }
+        if (tplStack[tplStack.length - 1] === 0) { tplStack.pop(); blankLit(i); mode = 'tpl'; continue; }
       }
       if (!/\s/.test(ch)) {
-        if (/[A-Za-z0-9_$]/.test(ch)) {
-          prevWord = /[A-Za-z0-9_$]/.test(src[i - 1] || '') ? prevWord + ch : ch;
-        } else {
-          prevWord = '';
-        }
+        prevWord = /[A-Za-z0-9_$]/.test(ch) ? (/[A-Za-z0-9_$]/.test(src[i - 1] || '') ? prevWord + ch : ch) : '';
         prevNonSpace = ch;
       }
     }
@@ -84,8 +81,9 @@ function findChildProcessBindings(src) {
   const addNamedList = (body, sep) => {
     const sepRe = sep === ':' ? '\\s*:\\s*' : `\\s+${sep}\\s+`;
     for (const part of body.split(',')) {
-      const m = new RegExp(`^\\s*([A-Za-z_$][\\w$]*)(?:${sepRe}([A-Za-z_$][\\w$]*))?\\s*$`).exec(part);
-      if (m && SPAWN_APIS.has(m[1])) localFns.add(m[2] || m[1]);
+      const m = new RegExp(`^\\s*(?:([A-Za-z_$][\\w$]*)|['"]([A-Za-z_$][\\w$]*)['"])(?:${sepRe}([A-Za-z_$][\\w$]*))?\\s*$`).exec(part);
+      const api = m && (m[1] || m[2]);
+      if (api && SPAWN_APIS.has(api)) localFns.add(m[3] || api);
     }
   };
   let m;
@@ -121,47 +119,69 @@ function walkJsFiles(rootDir, relDir, out) {
   }
 }
 
-function extractCallSnippet(src, startIdx) {
+function findCallEnd(src, startIdx) {
   let depth = 0;
-  for (let i = startIdx; i < src.length && i < startIdx + 2000; i++) {
-    const ch = src[i];
-    if (ch === '(') depth += 1;
-    else if (ch === ')') {
-      depth -= 1;
-      if (depth <= 0) return src.slice(startIdx, i + 1);
-    }
+  for (let i = startIdx; i < src.length; i++) {
+    if (src[i] === '(') depth += 1;
+    else if (src[i] === ')' && --depth <= 0) return i;
   }
-  return src.slice(startIdx, startIdx + 600);
+  return -1;
 }
 
-function hasTopLevelWindowsHide(callBody) {
-  let parenDepth = 0;
-  let braceDepth = 0;
-  let bracketDepth = 0;
-  let topLevelObjChars = '';
-  for (let i = 0; i < callBody.length; i += 1) {
-    const ch = callBody[i];
-    if (ch === '(') {
-      parenDepth += 1;
-    } else if (ch === ')') {
-      parenDepth = Math.max(0, parenDepth - 1);
-    } else if (parenDepth === 1) {
-      if (ch === '[' && braceDepth === 1) {
-        bracketDepth += 1;
-      } else if (ch === ']' && bracketDepth > 0) {
-        bracketDepth = Math.max(0, bracketDepth - 1);
-      } else if (ch === '{' && bracketDepth === 0) {
-        braceDepth += 1;
-        if (braceDepth === 1) topLevelObjChars += '{';
-      } else if (ch === '}' && bracketDepth === 0) {
-        if (braceDepth === 1) topLevelObjChars += '}';
-        braceDepth = Math.max(0, braceDepth - 1);
-      } else if (braceDepth === 1 && bracketDepth === 0) {
-        topLevelObjChars += ch;
-      }
+function splitTop(s, from, to) {
+  const out = [];
+  let p = 0, b = 0, k = 0, start = from;
+  for (let i = from; i < to; i++) {
+    const c = s[i];
+    if (c === '(') p++; else if (c === ')') p--;
+    else if (c === '{') b++; else if (c === '}') b--;
+    else if (c === '[') k++; else if (c === ']') k--;
+    else if (c === ',' && p === 0 && b === 0 && k === 0) { out.push([start, i]); start = i + 1; }
+  }
+  out.push([start, to]);
+  return out;
+}
+
+function topColon(s, from, to) {
+  let p = 0, b = 0, k = 0;
+  for (let i = from; i < to; i++) {
+    const c = s[i];
+    if (c === '(') p++; else if (c === ')') p--;
+    else if (c === '{') b++; else if (c === '}') b--;
+    else if (c === '[') k++; else if (c === ']') k--;
+    else if (c === ':' && p === 0 && b === 0 && k === 0) return i;
+  }
+  return -1;
+}
+
+function hasEffectiveWindowsHide(fnName, codeOnly, codeWithStrings, openIdx) {
+  const closeIdx = findCallEnd(codeOnly, openIdx);
+  if (closeIdx < 0) return false;
+  const args = splitTop(codeOnly, openIdx + 1, closeIdx);
+  if (args.length < 2) return false;
+  const optRange = (fnName === 'exec' || fnName === 'execSync') ? args[1]
+    : (codeOnly.slice(args[1][0], args[1][1]).trim().startsWith('{') ? args[1] : args[2]);
+  if (!optRange) return false;
+  const optTrim = codeOnly.slice(optRange[0], optRange[1]).trim();
+  if (!optTrim.startsWith('{') || !optTrim.endsWith('}')) return false;
+  const bStart = codeOnly.indexOf('{', optRange[0]);
+  const bEnd = codeOnly.lastIndexOf('}', optRange[1] - 1);
+  let effective = false;
+  for (const [ps, pe] of splitTop(codeOnly, bStart + 1, bEnd)) {
+    const clean = codeOnly.slice(ps, pe).trim();
+    if (!clean) continue;
+    if (clean.startsWith('...') || clean.startsWith('[')) { effective = false; continue; }
+    const colon = topColon(codeOnly, ps, pe);
+    if (colon < 0) {
+      if (/\bwindowsHide\b/.test(codeWithStrings.slice(ps, pe))) effective = false;
+      continue;
+    }
+    const key = codeWithStrings.slice(ps, colon).trim();
+    if (key === 'windowsHide' || key === "'windowsHide'" || key === '"windowsHide"') {
+      effective = codeOnly.slice(colon + 1, pe).trim() === 'true';
     }
   }
-  return /[{,]\s*windowsHide\s*:\s*true\b/.test(topLevelObjChars);
+  return effective;
 }
 
 /** Check all JS child_process spawn sites (with explicit R012 exemptions) and Go CREATE_NO_WINDOW (G6.4/G6.6). */
@@ -176,14 +196,15 @@ export function auditWindowlessSpawns(rootDir) {
   for (const rel of files) {
     const src = fs.readFileSync(path.join(rootDir, rel), 'utf8');
     if (!src.includes('child_process')) continue;
-    const { namespaces, localFns } = findChildProcessBindings(src);
     const codeOnly = stripCommentsAndStrings(src);
+    const codeWithStrings = stripCommentsAndStrings(src, true);
+    const { namespaces, localFns } = findChildProcessBindings(codeWithStrings);
     CALL_RE.lastIndex = 0;
     let m;
     while ((m = CALL_RE.exec(codeOnly)) !== null) {
       const fnName = m[1];
       const before = codeOnly.slice(Math.max(0, m.index - 64), m.index);
-      const beforeRaw = src.slice(Math.max(0, m.index - 64), m.index);
+      const beforeRaw = codeWithStrings.slice(Math.max(0, m.index - 64), m.index);
       if (/\bfunction\s+$/.test(before)) continue;
       const memberMatch = /([A-Za-z_$][\w$]*)\.\s*$/.exec(before);
       const inlineRequire = /\brequire\s*\(\s*['"](?:node:)?child_process['"]\s*\)\.\s*$/.test(beforeRaw);
@@ -196,13 +217,12 @@ export function auditWindowlessSpawns(rootDir) {
       }
       checkedCalls += 1;
       const openIdx = codeOnly.indexOf('(', m.index);
-      const callBody = extractCallSnippet(codeOnly, openIdx);
       const line = src.slice(0, m.index).split(/\r?\n/).length;
       if (R012_EXEMPT.has(rel)) {
         exempt.push({ file: rel, line, call: fnName, status: 'exempt_r012' });
         continue;
       }
-      if (!hasTopLevelWindowsHide(callBody)) {
+      if (!hasEffectiveWindowsHide(fnName, codeOnly, codeWithStrings, openIdx)) {
         violations.push({ file: rel, line, call: fnName });
       }
     }
@@ -248,7 +268,7 @@ function runSelfTest() {
     fs.mkdirSync(path.join(tmp, 'native', 'arc-gateway'), { recursive: true });
     fs.writeFileSync(
       path.join(tmp, 'scripts', 'good.mjs'),
-      "import { spawnSync } from 'node:child_process';\nspawnSync('node', ['-v'], { encoding: 'utf8', windowsHide: true });\n",
+      "import { /* c */ spawnSync } from 'node:child_process';\nspawnSync('node', ['-v'], { ...{}, encoding: 'utf8', 'windowsHide': true });\n",
     );
     fs.writeFileSync(
       path.join(tmp, 'scripts', 'good-ns.mjs'),
@@ -291,11 +311,11 @@ function runSelfTest() {
 
     fs.writeFileSync(
       path.join(tmp, 'scripts', 'bad-regex-env.cjs'),
-      "const { spawn: launch } = require('node:child_process');\nconst re = /don't/;\nlaunch('node', ['-v'], { env: { windowsHide: true } });\n",
+      "const { spawn: launch } = require('node:child_process');\nconst re = /don't/;\nlaunch('node', ['-v'], { env: { windowsHide: true } });\nlaunch('node', ['-v'], { windowsHide: true, ...{} });\nlaunch('node', ['-v'], { windowsHide: true, windowsHide: false });\n",
     );
     const failRegexEnv = auditWindowlessSpawns(tmp);
     assert.equal(failRegexEnv.state, 'fail_unhidden_spawn');
-    assert.equal(failRegexEnv.violations[0].file, 'scripts/bad-regex-env.cjs');
+    assert.equal(failRegexEnv.violations.length, 3);
     fs.rmSync(path.join(tmp, 'scripts', 'bad-regex-env.cjs'));
 
     fs.writeFileSync(
