@@ -194,11 +194,14 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
         },
       },
       minTier: { type: 'string', description: 'Minimum builder capability tier (T0-T3).' },
+      minCheckerTier: { type: 'string', description: 'Minimum checker capability tier (T0-T3).' },
       needsFormal: { type: 'boolean', description: 'Whether formal reasoning capability is required.' },
       taint: { type: 'string', description: 'Information-flow taint level (clean, tool_output, untrusted_web, secret_risk).' },
       citations: { ...strList, description: 'Verified citations supporting the decision.' },
       checksPassed: { type: 'boolean', description: 'Whether deterministic verification passed.' },
+      crossFamilyVerified: { type: 'boolean', description: 'Whether an independent cross-family verification ledger/verdict actually completed.' },
       requiresHumanYes: { type: 'boolean', description: 'Whether explicit operator approval is required.' },
+      needsOperator: { type: 'boolean', description: 'Alias indicating operator approval is required.' },
     },
     output: {
       schema: {
@@ -210,23 +213,58 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
           pair: { type: 'object', additionalProperties: true, required: true },
         },
       },
-      render: (_args, v) => [{ type: 'text', text: `${v.packet.action} (allowExit=${v.packet.allowExit}, outcome=${v.routing.outcome}, taint=${v.packet.effectiveTaint})` }],
+      render: (_args, v) => {
+        const pkt = v?.packet || {};
+        const route = v?.routing || {};
+        return [{ type: 'text', text: `${pkt.action || 'blocked'} (allowExit=${Boolean(pkt.allowExit)}, outcome=${route.outcome || 'abstain'}, taint=${pkt.effectiveTaint || 'secret_risk'})` }];
+      },
     },
     async execute(args) {
-      const pair = pairBuilderAndChecker({ minTier: args.minTier, needsFormal: args.needsFormal });
-      const routing = routeOptimalDecision({
-        id: args.goal,
+      const pair = pairBuilderAndChecker({
+        minTier: args.minTier,
+        minCheckerTier: args.minCheckerTier,
+        needsFormal: args.needsFormal,
+      });
+      const safeInput = {
+        goal: args.goal,
         probability: args.probability,
         cfp: args.cfp,
         cfn: args.cfn,
         checks: args.checks,
-      });
-      const res = emitDecisionPacket({
-        ...args,
-        pair,
-        crossFamilyVerified: pair.ok,
-      });
-      return { ok: res.ok, packet: res.packet, routing, pair };
+        minTier: args.minTier,
+        minCheckerTier: args.minCheckerTier,
+        needsFormal: args.needsFormal,
+        ...(Object.hasOwn(args, 'taint') ? { taint: args.taint } : {}),
+        citations: args.citations,
+        checksPassed: args.checksPassed === true,
+        requiresHumanYes: args.requiresHumanYes === true,
+        needsOperator: args.needsOperator === true || args.requiresHumanYes === true,
+        crossFamilyVerified: args.crossFamilyVerified === true,
+        pair: pair.ok ? pair : null,
+      };
+      const res = emitDecisionPacket(safeInput);
+      const packet = res.packet || {
+        schema: 'cammut.decision/0',
+        id: 'DEC-BLOCKED',
+        goal: typeof args.goal === 'string' && args.goal.trim() ? args.goal.trim() : 'unspecified',
+        action: 'block_escalation',
+        allowExit: false,
+        effectiveTaint: 'secret_risk',
+        reason: (res.violations || []).join('; ') || res.state || 'decision_blocked',
+        outcome: 'abstain',
+        calibratedProbability: 0.5,
+        expectedVoi: 0,
+        netValue: 0,
+        route: pair.builder?.route ?? null,
+        checkerRoute: pair.checker?.route ?? null,
+        citations: [],
+        checkEvidence: { ok: false, crossFamilyOk: false, summary: '' },
+        permissionGranted: false,
+        autoApplied: false,
+        issuedAt: new Date().toISOString(),
+      };
+      const routing = res.routing || { ok: false, outcome: 'abstain', reason: packet.reason, permissionGranted: false, autoApplied: false };
+      return { ok: res.ok === true, packet, routing, pair };
     },
     presentCall: (args) => ({ card: 'generic', title: 'Decision router', kind: 'other', rawInput: { goal: args.goal } }),
   });

@@ -289,6 +289,32 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   assert.equal(dec.packet.allowExit, true);
   assert.equal(dec.pair.builder.family === dec.pair.checker.family, false);
 
+  const webBlocked = await decide.execute({
+    goal: 'web-unverified',
+    probability: 0.9,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+  }, reviewer);
+  assert.equal(webBlocked.ok, true);
+  assert.equal(webBlocked.packet.allowExit, false);
+  assert.equal(webBlocked.packet.action, 'block_tainted');
+
+  const opBlocked = await decide.execute({
+    goal: 'op-required',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:work.txt'],
+    checksPassed: true,
+    requiresHumanYes: true,
+  }, reviewer);
+  assert.equal(opBlocked.packet.allowExit, false);
+  assert.equal(opBlocked.packet.action, 'ask_operator');
+  assert.equal(opBlocked.routing.outcome, 'ask_operator');
+  assert.match(decide.output.render({}, opBlocked)[0].text, /ask_operator/);
+
   const off = makeTools((def) => def, { ARC_HOME: d, ARC_HOH_RETAIN: '0' }, { retain: async () => { throw new Error('must not be called'); } });
   const r = await off[2].execute({ ...base, candidate: fr2.candidate }, reviewer);
   assert.equal(r.retained, false);
