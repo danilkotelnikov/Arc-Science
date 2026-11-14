@@ -1,6 +1,8 @@
 // arc-hoh intuition (2026-11-09): System One fast router and Brier calibration (roadmap 3.3 & 5.2, Slice D2).
 // Routes each prompt to one of five typed outcomes, logs probability guesses in [0, 1],
 // enforces R009 (never grants permissions or overrides deterministic checks), and computes Brier score.
+import { loss, voi } from './tree.js';
+import { checkCrossFamilyVerdict } from './budget.js';
 
 export const INTUITION_OUTCOMES = Object.freeze([
   'answer_now',
@@ -426,4 +428,411 @@ export function checkTrainingManifest(manifest, knownModelsSet) {
   }
 
   return { ok: true, state: 'pass', checkedModels: modelRefs.length };
+}
+
+const PLATT_EPS = 1e-6;
+
+function probToLogit(p) {
+  const c = Math.min(1 - PLATT_EPS, Math.max(PLATT_EPS, clampProb(p)));
+  return Math.log(c / (1 - c));
+}
+
+function sigmoid(z) {
+  if (z >= 0) {
+    const e = Math.exp(-z);
+    return 1 / (1 + e);
+  }
+  const e = Math.exp(z);
+  return e / (1 + e);
+}
+
+/** Fit L2-regularized Platt logistic scaler q = sigmoid(a * logit(p) + b) via damped Newton steps. */
+export function fitPlattScaler(records = [], options = {}) {
+  const resolved = (records || []).filter(
+    (r) => r && typeof r.probability === 'number' && Number.isFinite(r.probability) && (r.actual === 0 || r.actual === 1),
+  );
+  if (resolved.length === 0) {
+    return { a: 1, b: 0, count: 0, l2: 0.01, converged: false };
+  }
+  const l2 = typeof options.l2 === 'number' && options.l2 > 0 ? options.l2 : 0.05;
+  const maxIter = Number.isInteger(options.maxIter) && options.maxIter > 0 ? options.maxIter : 40;
+  let a = 1;
+  let b = 0;
+  let converged = false;
+
+  for (let iter = 0; iter < maxIter; iter += 1) {
+    let gA = l2 * (a - 1);
+    let gB = l2 * b;
+    let hAA = l2;
+    let hBB = l2;
+    let hAB = 0;
+    for (const r of resolved) {
+      const z = probToLogit(r.probability);
+      const q = sigmoid(a * z + b);
+      const w = Math.max(1e-9, q * (1 - q));
+      const err = q - r.actual;
+      gA += err * z;
+      gB += err;
+      hAA += w * z * z;
+      hBB += w;
+      hAB += w * z;
+    }
+    const det = hAA * hBB - hAB * hAB;
+    if (!(det > 1e-12)) break;
+    const dA = (hBB * gA - hAB * gB) / det;
+    const dB = (hAA * gB - hAB * gA) / det;
+    const stepScale = Math.min(1, 2 / Math.max(1e-9, Math.hypot(dA, dB)));
+    a -= stepScale * dA;
+    b -= stepScale * dB;
+    if (Math.hypot(stepScale * dA, stepScale * dB) < 1e-6) {
+      converged = true;
+      break;
+    }
+  }
+  return { a, b, count: resolved.length, l2, converged };
+}
+
+/** Apply a fitted Platt scaler to a raw probability in [0, 1]. */
+export function applyPlattScaler(probability, scaler = { a: 1, b: 0 }) {
+  const a = scaler && typeof scaler.a === 'number' && Number.isFinite(scaler.a) ? scaler.a : 1;
+  const b = scaler && typeof scaler.b === 'number' && Number.isFinite(scaler.b) ? scaler.b : 0;
+  return clampProb(sigmoid(a * probToLogit(probability) + b));
+}
+
+/** Compute Brier Skill Score (1 - Brier / Brier_ref) against sample climatology base rate. */
+export function brierSkillScore(records = []) {
+  const resolved = (records || []).filter(
+    (r) => r && typeof r.probability === 'number' && Number.isFinite(r.probability) && (r.actual === 0 || r.actual === 1),
+  );
+  if (resolved.length === 0) return null;
+  const brier = brierScore(resolved);
+  const baseRate = resolved.reduce((acc, r) => acc + r.actual, 0) / resolved.length;
+  const refBrier = baseRate * (1 - baseRate);
+  if (refBrier <= 1e-12) return null;
+  return 1 - brier / refBrier;
+}
+
+/** Fit 2-fold out-of-fold Platt scalers to score calibration honestly without in-sample optimism. */
+export function crossFitPlatt2Fold(records = [], options = {}) {
+  const resolved = (records || []).filter(
+    (r) => r && typeof r.probability === 'number' && Number.isFinite(r.probability) && (r.actual === 0 || r.actual === 1),
+  );
+  const rawBrier = brierScore(resolved);
+  const rawBss = brierSkillScore(resolved);
+  if (resolved.length < 2) {
+    return {
+      ok: true,
+      count: resolved.length,
+      rawBrier,
+      oofBrier: null,
+      rawBss,
+      bss: null,
+      scaler: fitPlattScaler(resolved, options),
+      foldScalers: [],
+      predictions: [],
+    };
+  }
+  const fold0Train = resolved.filter((_, idx) => idx % 2 === 1);
+  const fold1Train = resolved.filter((_, idx) => idx % 2 === 0);
+  const scalerEven = fitPlattScaler(fold0Train, options);
+  const scalerOdd = fitPlattScaler(fold1Train, options);
+  const predictions = resolved.map((r, idx) => {
+    const scaler = idx % 2 === 0 ? scalerEven : scalerOdd;
+    return {
+      ...r,
+      rawProbability: r.probability,
+      probability: applyPlattScaler(r.probability, scaler),
+      fold: idx % 2,
+    };
+  });
+  return {
+    ok: true,
+    count: resolved.length,
+    rawBrier,
+    oofBrier: brierScore(predictions),
+    rawBss,
+    bss: brierSkillScore(predictions),
+    scaler: fitPlattScaler(resolved, options),
+    foldScalers: [scalerEven, scalerOdd],
+    predictions,
+  };
+}
+
+/** Bayes-optimal decision router maximizing net VOI and VOI/cost efficiency (spec 13.15). */
+export function routeOptimalDecision(input = {}) {
+  const esc = enforceConsentNonEscalation(input);
+  if (!esc.ok) {
+    return { ok: false, state: esc.state, rule: 'R009', permissionGranted: false, autoApplied: false, violations: esc.violations };
+  }
+  const id = typeof input.id === 'string' && input.id.trim() ? input.id.trim() : 'dec-1';
+  const rawProbability = clampProb(input.priorProbability ?? input.probability ?? 0.5);
+  const q = input.plattScaler ? applyPlattScaler(rawProbability, input.plattScaler) : rawProbability;
+  const cfp = typeof input.cfp === 'number' && Number.isFinite(input.cfp) && input.cfp > 0 ? input.cfp : 1;
+  const cfn = typeof input.cfn === 'number' && Number.isFinite(input.cfn) && input.cfn > 0 ? input.cfn : 1;
+  const baseLoss = loss(q, cfp, cfn);
+  const canVerify = input.canVerify !== false;
+  const needsOperator = Boolean(input.needsOperator);
+  const cheapCostThreshold = typeof input.cheapCostThreshold === 'number' && input.cheapCostThreshold > 0 ? input.cheapCostThreshold : 0.2;
+  const answerLossThreshold = typeof input.answerLossThreshold === 'number' && input.answerLossThreshold > 0 ? input.answerLossThreshold : 0.15;
+
+  const rawChecks = Array.isArray(input.checks) ? input.checks : [];
+  const scoredChecks = rawChecks
+    .filter((c) => c && typeof c.s === 'number' && typeof c.e === 'number' && c.s > 0 && c.s <= 1 && c.e > 0 && c.e <= 1 && c.s + c.e > 1 && typeof c.cost === 'number' && c.cost > 0)
+    .map((c) => {
+      const expectedVoi = voi(q, c, cfp, cfn);
+      const netValue = expectedVoi - c.cost;
+      const voiPerCost = expectedVoi / c.cost;
+      return {
+        id: String(c.id || 'check'),
+        s: c.s,
+        e: c.e,
+        cost: c.cost,
+        decisive: c.decisive === true,
+        expectedVoi,
+        netValue,
+        voiPerCost,
+      };
+    })
+    .sort((x, y) => (y.voiPerCost - x.voiPerCost) || (y.netValue - x.netValue) || (x.cost - y.cost));
+
+  const bestCheck = scoredChecks[0] || null;
+  let outcome = 'open_tree_hoh';
+  let reason = 'expected_risk_exceeds_direct_act';
+
+  if (needsOperator) {
+    outcome = 'ask_operator';
+    reason = 'operator_approval_required';
+  } else if (!canVerify && q < 0.25) {
+    outcome = 'abstain';
+    reason = 'unverifiable_low_confidence';
+  } else if (bestCheck && bestCheck.netValue > 0) {
+    outcome = bestCheck.cost <= cheapCostThreshold ? 'run_one_cheap_check' : 'open_tree_hoh';
+    reason = bestCheck.cost <= cheapCostThreshold ? 'positive_net_voi_cheap_check' : 'positive_net_voi_tree_check';
+  } else if (baseLoss <= answerLossThreshold && q >= 0.5) {
+    outcome = 'answer_now';
+    reason = 'calibrated_loss_below_threshold';
+  } else if (q < 0.25) {
+    outcome = 'abstain';
+    reason = 'no_positive_voi_check_low_prob';
+  }
+
+  return {
+    ok: true,
+    id,
+    outcome,
+    reason,
+    rawProbability,
+    calibratedProbability: q,
+    baseLoss,
+    bestCheck,
+    scoredChecks,
+    expectedVoi: bestCheck ? bestCheck.expectedVoi : 0,
+    netValue: bestCheck ? bestCheck.netValue : 0,
+    voiPerCost: bestCheck ? bestCheck.voiPerCost : 0,
+    permissionGranted: false,
+    autoApplied: false,
+  };
+}
+
+const ROUTE_SPECS = Object.freeze([
+  { route: 'gemini-4-hydrogen', family: 'google', tier: 'T0', tierRank: 0, cost: 1, formal: false, legacy: false },
+  { route: 'claude-haiku-5-5', family: 'anthropic', tier: 'T0', tierRank: 0, cost: 1.5, formal: false, legacy: false },
+  { route: 'gemini-4-argon', family: 'google', tier: 'T1', tierRank: 1, cost: 3, formal: false, legacy: false },
+  { route: 'claude-sonnet-5-5', family: 'anthropic', tier: 'T1', tierRank: 1, cost: 4, formal: false, legacy: false },
+  { route: 'gemini-4-carbon', family: 'google', tier: 'T2', tierRank: 2, cost: 8, formal: true, legacy: false },
+  { route: 'claude-opus-5-5', family: 'anthropic', tier: 'T2', tierRank: 2, cost: 10, formal: true, legacy: false },
+  { route: 'claude-fable-5-2', family: 'anthropic', tier: 'T3', tierRank: 3, cost: 12, formal: true, legacy: false },
+  { route: 'gemini-3.8-flash', family: 'google', tier: 'T0', tierRank: 0, cost: 0.8, formal: false, legacy: true, year: 2026, legacyReason: '2026 legacy fallback' },
+]);
+
+const TIER_RANK = Object.freeze({ T0: 0, T1: 1, T2: 2, T3: 3 });
+
+/** Pick lowest-cost builder and cross-family checker satisfying capability and R006 isolation. */
+export function pairBuilderAndChecker(input = {}) {
+  const esc = enforceConsentNonEscalation(input);
+  if (!esc.ok) {
+    return { ok: false, state: esc.state, rule: 'R009', permissionGranted: false, autoApplied: false, violations: esc.violations };
+  }
+  const minBuilderRank = TIER_RANK[input.minTier] ?? (input.needsFormal ? 2 : 1);
+  const minCheckerRank = TIER_RANK[input.minCheckerTier] ?? (input.needsFormal ? 2 : 1);
+  const allowLegacy = input.allowLegacy === true;
+  const needsFormal = Boolean(input.needsFormal);
+
+  const eligible = (spec, minRank, reqFormal) =>
+    spec.tierRank >= minRank && (!reqFormal || spec.formal) && (allowLegacy || !spec.legacy);
+
+  let builder = null;
+  if (typeof input.builderRoute === 'string' && input.builderRoute.trim()) {
+    const requested = ROUTE_SPECS.find((s) => s.route === input.builderRoute.trim());
+    if (!requested) return { ok: false, state: 'fail_unknown_builder_route', route: input.builderRoute };
+    if (!eligible(requested, minBuilderRank, needsFormal)) {
+      return { ok: false, state: 'fail_builder_capability', route: requested.route };
+    }
+    builder = requested;
+  } else {
+    const builders = ROUTE_SPECS.filter((s) => eligible(s, minBuilderRank, needsFormal)).sort((a, b) => a.cost - b.cost);
+    builder = builders[0] || null;
+  }
+  if (!builder) return { ok: false, state: 'fail_no_builder' };
+
+  let checker = null;
+  if (typeof input.checkerRoute === 'string' && input.checkerRoute.trim()) {
+    const requested = ROUTE_SPECS.find((s) => s.route === input.checkerRoute.trim());
+    if (!requested) return { ok: false, state: 'fail_unknown_checker_route', route: input.checkerRoute };
+    checker = requested;
+  } else {
+    const checkers = ROUTE_SPECS
+      .filter((s) => s.family !== builder.family && eligible(s, minCheckerRank, needsFormal))
+      .sort((a, b) => a.cost - b.cost);
+    checker = checkers[0] || ROUTE_SPECS.filter((s) => s.family !== builder.family && (!s.legacy || allowLegacy)).sort((a, b) => a.cost - b.cost)[0] || null;
+  }
+  if (!checker) return { ok: false, state: 'fail_no_cross_family_checker' };
+
+  const crossFamilyCheck = checkCrossFamilyVerdict({
+    builderFamily: builder.family,
+    checkerFamily: checker.family,
+    builderId: input.builderId || `builder:${builder.route}`,
+    checkerId: input.checkerId || `checker:${checker.route}`,
+    verdict: input.verdict ?? 'paired',
+  });
+  if (!crossFamilyCheck.ok) {
+    return {
+      ok: false,
+      state: crossFamilyCheck.state,
+      rule: crossFamilyCheck.rule,
+      builder,
+      checker,
+      crossFamilyCheck,
+      permissionGranted: false,
+      autoApplied: false,
+    };
+  }
+
+  return {
+    ok: true,
+    state: 'pass',
+    builder,
+    checker,
+    crossFamilyCheck,
+    estimatedRelativeCost: builder.cost + checker.cost,
+    permissionGranted: false,
+    autoApplied: false,
+  };
+}
+
+export const TAINT_LEVELS = Object.freeze(['clean', 'tool_output', 'untrusted_web', 'secret_risk']);
+
+/** Least upper bound (supremum) on the information-flow taint lattice; unknown levels fail closed to secret_risk. */
+export function joinTaint(...levels) {
+  let maxRank = 0;
+  for (const lvl of levels) {
+    if (lvl == null) continue;
+    const idx = TAINT_LEVELS.indexOf(String(lvl).trim());
+    if (idx < 0) return 'secret_risk';
+    if (idx > maxRank) maxRank = idx;
+  }
+  return TAINT_LEVELS[maxRank];
+}
+
+/** Deterministic exit guard: refuses tainted, secret-risk, operator-gated, or uncited exits. */
+export function decideExitAction(input = {}) {
+  const esc = enforceConsentNonEscalation(input);
+  if (!esc.ok) {
+    return { ok: false, action: 'block_escalation', rule: 'R009', effectiveTaint: 'secret_risk', allowExit: false, reason: esc.violations.join('; ') };
+  }
+  const levels = Array.isArray(input.taints) ? input.taints : [input.taint ?? 'clean'];
+  const effectiveTaint = input.hasSecret ? 'secret_risk' : joinTaint(...levels);
+  const citationCount = Array.isArray(input.citations) ? input.citations.length : Number(input.citationCount ?? 0);
+  const checksPassed = input.checksPassed === true;
+  const crossFamilyVerified = input.crossFamilyVerified === true;
+
+  if (effectiveTaint === 'secret_risk') {
+    return { ok: false, action: 'block_secret', effectiveTaint, allowExit: false, reason: 'secret_risk taint blocks exit' };
+  }
+  if (input.requiresHumanYes === true) {
+    return { ok: false, action: 'ask_operator', effectiveTaint, allowExit: false, reason: 'operator approval required (needs_yes)' };
+  }
+  if (effectiveTaint === 'untrusted_web' && !crossFamilyVerified) {
+    return { ok: false, action: 'block_tainted', effectiveTaint, allowExit: false, reason: 'untrusted_web requires cross-family verification' };
+  }
+  if (!checksPassed || !(citationCount >= 1)) {
+    return { ok: false, action: 'block_unverified', effectiveTaint, allowExit: false, reason: 'exit requires passing checks and >= 1 verified citation' };
+  }
+  return { ok: true, action: 'emit_decision', effectiveTaint, allowExit: true, reason: 'exit guards satisfied' };
+}
+
+/** Build and self-validate a cammut.decision/0 packet with VOI routing and taint-guarded exit control. */
+export function emitDecisionPacket(input = {}) {
+  const esc = enforceConsentNonEscalation(input);
+  if (!esc.ok) {
+    return { ok: false, state: esc.state, rule: 'R009', violations: esc.violations, permissionGranted: false };
+  }
+  const citations = Array.isArray(input.citations) ? input.citations.filter((c) => typeof c === 'string' && c.trim()) : [];
+  const crossFamilyOk = input.crossFamilyVerified === true || Boolean(input.pair && input.pair.ok);
+  const exitGuard = decideExitAction({
+    taint: input.taint,
+    taints: input.taints,
+    hasSecret: input.hasSecret === true,
+    requiresHumanYes: input.requiresHumanYes === true,
+    citations,
+    checksPassed: input.checksPassed === true,
+    crossFamilyVerified: crossFamilyOk,
+  });
+  const routing = routeOptimalDecision(input);
+  const packet = {
+    schema: 'cammut.decision/0',
+    id: typeof input.id === 'string' && input.id.trim() ? input.id.trim() : 'DEC-0001',
+    goal: typeof input.goal === 'string' && input.goal.trim() ? input.goal.trim() : 'unspecified',
+    action: exitGuard.action,
+    allowExit: exitGuard.allowExit,
+    effectiveTaint: exitGuard.effectiveTaint,
+    reason: exitGuard.reason,
+    outcome: routing.ok ? routing.outcome : 'abstain',
+    calibratedProbability: routing.ok ? routing.calibratedProbability : clampProb(input.probability ?? 0.5),
+    expectedVoi: routing.ok ? routing.expectedVoi : 0,
+    netValue: routing.ok ? routing.netValue : 0,
+    route: input.route || (input.pair?.builder?.route ?? null),
+    checkerRoute: input.checkerRoute || (input.pair?.checker?.route ?? null),
+    citations,
+    checkEvidence: {
+      ok: input.checksPassed === true,
+      crossFamilyOk,
+      summary: typeof input.checkSummary === 'string' ? input.checkSummary.slice(0, 240) : '',
+    },
+    permissionGranted: false,
+    autoApplied: false,
+    issuedAt: input.issuedAt || new Date().toISOString(),
+  };
+  const validation = validateDecisionPacket(packet);
+  return { ok: validation.ok, packet, exitGuard, routing, validation };
+}
+
+/** Validate a cammut.decision/0 packet against schema, R009, taint lattice, and exit invariants. */
+export function validateDecisionPacket(packet) {
+  if (!packet || typeof packet !== 'object') {
+    return { ok: false, errors: ['decision packet must be an object'] };
+  }
+  const errors = [];
+  if (packet.schema !== 'cammut.decision/0') errors.push('schema must equal cammut.decision/0');
+  if (typeof packet.id !== 'string' || !packet.id.trim()) errors.push('id must be a non-empty string');
+  if (typeof packet.goal !== 'string' || !packet.goal.trim()) errors.push('goal must be a non-empty string');
+  if (typeof packet.action !== 'string' || !packet.action.trim()) errors.push('action must be a non-empty string');
+  if (!TAINT_LEVELS.includes(packet.effectiveTaint)) errors.push('effectiveTaint must belong to TAINT_LEVELS');
+  if (typeof packet.calibratedProbability !== 'number' || !Number.isFinite(packet.calibratedProbability) || packet.calibratedProbability < 0 || packet.calibratedProbability > 1) {
+    errors.push('calibratedProbability must lie in [0, 1]');
+  }
+  if (!Array.isArray(packet.citations)) errors.push('citations must be an array');
+  const esc = enforceConsentNonEscalation(packet);
+  if (!esc.ok) errors.push(...esc.violations);
+
+  if (packet.allowExit === true) {
+    if (packet.action !== 'emit_decision') errors.push('allowExit=true requires action=emit_decision');
+    if (packet.effectiveTaint === 'secret_risk') errors.push('allowExit=true forbidden under secret_risk');
+    if (!Array.isArray(packet.citations) || packet.citations.length < 1) errors.push('allowExit=true requires >= 1 citation');
+    if (!packet.checkEvidence || packet.checkEvidence.ok !== true) errors.push('allowExit=true requires passing checkEvidence');
+    if (packet.effectiveTaint === 'untrusted_web' && packet.checkEvidence?.crossFamilyOk !== true) {
+      errors.push('allowExit=true under untrusted_web requires crossFamilyOk');
+    }
+  }
+  return { ok: errors.length === 0, errors };
 }

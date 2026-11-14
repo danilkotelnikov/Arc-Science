@@ -2,6 +2,7 @@
 import { appendLedger, checkDigest, clip, goalEvents, hashFiles, lastEvent, ledgerFile, optedOut, verifyLedger, decideGate } from './gates.js';
 import { CONTRACT, briefText } from './contract.js';
 import { retainNote } from './brief.js';
+import { routeOptimalDecision, pairBuilderAndChecker, emitDecisionPacket } from './intuition.js';
 
 const strList = { type: 'array', items: { type: 'string' } };
 
@@ -169,7 +170,68 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
     presentCall: () => ({ card: 'generic', title: 'Verify HoH ledger', kind: 'other', rawInput: {} }),
   });
 
-  return [propose, freeze, gate, verify];
+  const decide = defineTool({
+    name: 'hoh_decide',
+    description: 'Compute calibrated VOI/cost routing, cross-family builder/checker pairing, and a taint-guarded cammut.decision/0 packet.',
+    parameters: {
+      goal: { type: 'string', required: true, description: 'Task goal name.' },
+      probability: { type: 'number', description: 'Prior or calibrated success probability in [0, 1].' },
+      cfp: { type: 'number', description: 'False-positive loss weight.' },
+      cfn: { type: 'number', description: 'False-negative loss weight.' },
+      checks: {
+        type: 'array',
+        description: 'Candidate checks with id, s, e, and cost.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string', required: true },
+            s: { type: 'number', required: true },
+            e: { type: 'number', required: true },
+            cost: { type: 'number', required: true },
+            decisive: { type: 'boolean' },
+          },
+        },
+      },
+      minTier: { type: 'string', description: 'Minimum builder capability tier (T0-T3).' },
+      needsFormal: { type: 'boolean', description: 'Whether formal reasoning capability is required.' },
+      taint: { type: 'string', description: 'Information-flow taint level (clean, tool_output, untrusted_web, secret_risk).' },
+      citations: { ...strList, description: 'Verified citations supporting the decision.' },
+      checksPassed: { type: 'boolean', description: 'Whether deterministic verification passed.' },
+      requiresHumanYes: { type: 'boolean', description: 'Whether explicit operator approval is required.' },
+    },
+    output: {
+      schema: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          ok: { type: 'boolean', required: true },
+          packet: { type: 'object', additionalProperties: true, required: true },
+          routing: { type: 'object', additionalProperties: true, required: true },
+          pair: { type: 'object', additionalProperties: true, required: true },
+        },
+      },
+      render: (_args, v) => [{ type: 'text', text: `${v.packet.action} (allowExit=${v.packet.allowExit}, outcome=${v.routing.outcome}, taint=${v.packet.effectiveTaint})` }],
+    },
+    async execute(args) {
+      const pair = pairBuilderAndChecker({ minTier: args.minTier, needsFormal: args.needsFormal });
+      const routing = routeOptimalDecision({
+        id: args.goal,
+        probability: args.probability,
+        cfp: args.cfp,
+        cfn: args.cfn,
+        checks: args.checks,
+      });
+      const res = emitDecisionPacket({
+        ...args,
+        pair,
+        crossFamilyVerified: pair.ok,
+      });
+      return { ok: res.ok, packet: res.packet, routing, pair };
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Decision router', kind: 'other', rawInput: { goal: args.goal } }),
+  });
+
+  return [propose, freeze, gate, verify, decide];
 }
 
 /** Prompt sections. getBrief returns the current Cammut brief text. */

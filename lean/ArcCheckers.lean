@@ -205,4 +205,47 @@ example : ipsSupportOk (fun i => if i < 2 then 50 else 0) (fun i => if i = 0 the
 #print axioms ips_score_support
 #print axioms ips_zero_propensity_violates_support
 
+/-! ## 6. `optimal_decision_rules`: Scaled Bayes VOI non-negativity, pairing, and taint exit guard -/
+
+theorem voi_concavity_min (a1 b1 a2 b2 : Nat) :
+    min a1 b1 + min a2 b2 ≤ min (a1 + a2) (b1 + b2) := by
+  omega
+
+theorem net_voi_decision_rule (riskBefore riskAfter cost : Nat)
+    (h : riskAfter + cost < riskBefore) :
+    cost < riskBefore - riskAfter := by
+  omega
+
+def pairOkNat (bFam cFam bTier minTier : Nat) : Bool :=
+  (bFam != cFam) && (minTier ≤ bTier)
+
+theorem cross_family_pair_sound (bFam cFam bTier minTier : Nat)
+    (h : pairOkNat bFam cFam bTier minTier = true) :
+    bFam ≠ cFam ∧ minTier ≤ bTier := by
+  simp [pairOkNat] at h
+  exact h
+
+def allowExitNat (taint citations checksOk : Nat) : Bool :=
+  (taint < 3) && (1 ≤ citations) && (checksOk == 1)
+
+theorem decision_exit_guard_monotone (t1 t2 citations checksOk : Nat)
+    (h : allowExitNat (max t1 t2) citations checksOk = true) :
+    allowExitNat t1 citations checksOk = true := by
+  simp [allowExitNat] at h ⊢
+  omega
+
+theorem secret_taint_blocks_exit (t1 citations checksOk : Nat) :
+    allowExitNat (max t1 3) citations checksOk = false := by
+  simp [allowExitNat]
+  omega
+
+example : pairOkNat 1 2 2 1 = true ∧ pairOkNat 1 1 2 1 = false := by decide
+example : allowExitNat (max 0 3) 2 1 = false := by decide
+
+#print axioms voi_concavity_min
+#print axioms net_voi_decision_rule
+#print axioms cross_family_pair_sound
+#print axioms decision_exit_guard_monotone
+#print axioms secret_taint_blocks_exit
+
 end ArcCheckers

@@ -20,8 +20,8 @@ if (!/var SKINS = \{\s*"v0"/.test(src)) { console.log('already converted: no v0 
 // 1. archive the old plugin once
 const archive = path.join(here, '_legacy-skins-20261101.tar.xz');
 if (!fs.existsSync(archive)) {
-  const r = spawnSync('tar', ['--force-local', '-cJf', archive, '-C', path.dirname(plugin), 'arc-theme'], { encoding: 'utf8' });
-  if (r.status !== 0) throw new Error('archive failed: ' + r.stderr);
+  const r = spawnSync('tar', ['--force-local', '-cJf', archive, '-C', path.dirname(plugin), 'arc-theme'], { encoding: 'utf8', windowsHide: true });
+  if (r.error || r.status !== 0) throw new Error('archive failed: ' + (r.error?.message || r.stderr || `exit ${r.status}`));
 }
 
 // 2. read the Radium skin (a warm paper palette) and re-map it to the C2 values
