@@ -31,6 +31,11 @@ const UNIT_PRESETS = {
   'tokens/s': [0, 0, -1, 0, 0, 0, 0, 1, 0],
 };
 
+const UNIT_FACTORS = { mm: 1e-3, ms: 1e-3, bytes: 8, KB: 8000, 'usd/KB': 1 / 8000 };
+function canonicalUnitId(dims, scale = 1) {
+  return `${dims.join(',')}@${Number(scale.toPrecision(12))}`;
+}
+
 function resolveDims(unitSpec) {
   if (Array.isArray(unitSpec)) {
     if (unitSpec.length !== UNIT_DIMS.length || !unitSpec.every(Number.isInteger)) {
@@ -53,9 +58,10 @@ export function quantity(value, unitSpec, label = null) {
     throw new Error(`Quantity value must be finite number, got ${String(value)}`);
   }
   const dims = resolveDims(unitSpec);
-  const unitId = typeof unitSpec === 'string' ? unitSpec : dims.join(',');
-  const unitLabel = label || unitId;
-  return { value, dims, unitId, unitLabel };
+  const unitScale = typeof unitSpec === 'string' ? (UNIT_FACTORS[unitSpec] ?? 1) : 1;
+  const unitId = canonicalUnitId(dims, unitScale);
+  const unitLabel = label || (typeof unitSpec === 'string' ? unitSpec : dims.join(','));
+  return { value, dims, unitScale, unitId, unitLabel };
 }
 
 export function addQuantities(a, b) {
@@ -63,32 +69,21 @@ export function addQuantities(a, b) {
   if (!sameDims(a.dims, b.dims) || a.unitLabel !== b.unitLabel || canonicalMismatch) {
     return { ok: false, state: 'fail_unit_mismatch', detail: `cannot add ${a.unitLabel} and ${b.unitLabel}` };
   }
-  return { ok: true, state: 'pass', quantity: { value: a.value + b.value, dims: [...a.dims], unitId: a.unitId || a.unitLabel, unitLabel: a.unitLabel } };
+  const unitScale = a.unitScale ?? 1;
+  return { ok: true, state: 'pass', quantity: { value: a.value + b.value, dims: [...a.dims], unitScale, unitId: a.unitId || canonicalUnitId(a.dims, unitScale), unitLabel: a.unitLabel } };
 }
 
 export function mulQuantities(a, b, label = `${a.unitLabel}*${b.unitLabel}`) {
-  return {
-    ok: true,
-    state: 'pass',
-    quantity: {
-      value: a.value * b.value,
-      dims: a.dims.map((v, i) => v + b.dims[i]),
-      unitLabel: label,
-    },
-  };
+  const dims = a.dims.map((v, i) => v + b.dims[i]);
+  const unitScale = (a.unitScale ?? 1) * (b.unitScale ?? 1);
+  return { ok: true, state: 'pass', quantity: { value: a.value * b.value, dims, unitScale, unitId: canonicalUnitId(dims, unitScale), unitLabel: label } };
 }
 
 export function divQuantities(a, b, label = `${a.unitLabel}/${b.unitLabel}`) {
   if (b.value === 0) return { ok: false, state: 'fail_div_zero', detail: 'divisor value is zero' };
-  return {
-    ok: true,
-    state: 'pass',
-    quantity: {
-      value: a.value / b.value,
-      dims: a.dims.map((v, i) => v - b.dims[i]),
-      unitLabel: label,
-    },
-  };
+  const dims = a.dims.map((v, i) => v - b.dims[i]);
+  const unitScale = (a.unitScale ?? 1) / (b.unitScale ?? 1);
+  return { ok: true, state: 'pass', quantity: { value: a.value / b.value, dims, unitScale, unitId: canonicalUnitId(dims, unitScale), unitLabel: label } };
 }
 
 export function compareQuantities(a, op, b) {
@@ -123,14 +118,15 @@ export function verifyRenderedProse(rec, proseText) {
   const text = String(proseText || '');
   const escapedSub = rec.subject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const escapedUnit = rec.unit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const m = new RegExp(`${escapedSub}\\s+(<=|>=|==|!=|<|>)\\s+([-+]?\\d+(?:\\.\\d+)?)\\s+${escapedUnit}(?![A-Za-z0-9_])`).exec(text);
+  const m = new RegExp(`${escapedSub}\\s+(<=|>=|==|!=|<|>)\\s+([-+]?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?)\\s+${escapedUnit}(?![A-Za-z0-9_])`).exec(text);
   if (!m) {
     return { ok: false, state: 'fail_text_drift', expected, detail: 'missing subject/comparator/value/unit tuple' };
   }
   if (m[1] !== comparator) {
     return { ok: false, state: 'fail_text_drift', expected, detail: `comparator drifted: ${m[1]} vs ${comparator}` };
   }
-  if (Math.abs(Number(m[2]) - rec.value) > 1e-9) {
+  const tol = Math.abs(rec.value) > 0 && Math.abs(rec.value) < 1e-6 ? Math.abs(rec.value) * 1e-6 : 1e-9;
+  if (Math.abs(Number(m[2]) - rec.value) > tol) {
     return { ok: false, state: 'fail_text_drift', expected, detail: `value drifted: ${m[2]} vs ${rec.value}` };
   }
   if (rec.caveat && !text.includes(rec.caveat)) {
@@ -184,23 +180,21 @@ export function verifyClaimDag(nodes, { leanReceipts = {} } = {}) {
         const state = receipt && receipt.state === 'pass_core_only' ? 'fail_partial_receipt' : 'fail_unverified_formal';
         return { ok: false, state, detail: `${node.id} lacks strict pass receipt` };
       }
-      if (receipt.claimId && receipt.claimId !== node.id) {
-        return { ok: false, state: 'fail_receipt_mismatch', detail: `receipt ${node.leanReceiptId} bound to ${receipt.claimId}` };
-      }
-      const allowedThms = Array.isArray(receipt.theorems) ? receipt.theorems : receipt.theorem ? [receipt.theorem] : null;
-      if (node.theorem && allowedThms && !allowedThms.includes(node.theorem)) {
-        return { ok: false, state: 'fail_receipt_mismatch', detail: `receipt ${node.leanReceiptId} does not cover ${node.theorem}` };
-      }
       const multiClaims = Array.isArray(receipt.claimIds) ? receipt.claimIds : null;
-      if (multiClaims && !multiClaims.includes(node.id)) {
-        return { ok: false, state: 'fail_receipt_mismatch', detail: `receipt ${node.leanReceiptId} excludes ${node.id}` };
-      }
       if (!multiClaims && node.leanReceiptId) {
         const prev = usedReceipts.get(node.leanReceiptId);
         if (prev && prev !== node.id) {
           return { ok: false, state: 'fail_receipt_replay', detail: `receipt ${node.leanReceiptId} already bound to ${prev}` };
         }
         usedReceipts.set(node.leanReceiptId, node.id);
+      }
+      const claimBound = multiClaims ? multiClaims.includes(node.id) : receipt.claimId === node.id;
+      if (!claimBound) {
+        return { ok: false, state: 'fail_receipt_mismatch', detail: `receipt ${node.leanReceiptId} is not bound to ${node.id}` };
+      }
+      const allowedThms = Array.isArray(receipt.theorems) ? receipt.theorems : receipt.theorem ? [receipt.theorem] : null;
+      if (!node.theorem || !allowedThms || !allowedThms.includes(node.theorem)) {
+        return { ok: false, state: 'fail_receipt_mismatch', detail: `receipt ${node.leanReceiptId} does not cover ${node.theorem}` };
       }
     }
     for (const depId of node.deps || []) {
@@ -222,7 +216,10 @@ export function verifySceneGraph(panel) {
     return { ok: false, state: 'fail_canvas_height', detail: `invalid heightMm: ${String(heightMm)}` };
   }
   for (const b of boxes) {
-    if (b.fontPt !== undefined && b.fontPt < 6.5) {
+    if (!b || ['xMm', 'yMm', 'wMm', 'hMm'].some((k) => typeof b[k] !== 'number' || !Number.isFinite(b[k]))) {
+      return { ok: false, state: 'fail_out_of_bounds', detail: `${b?.id || 'box'} has invalid geometry` };
+    }
+    if (b.fontPt !== undefined && (typeof b.fontPt !== 'number' || !Number.isFinite(b.fontPt) || b.fontPt < 6.5)) {
       return { ok: false, state: 'fail_type_floor', detail: `${b.id} fontPt ${b.fontPt} < 6.5` };
     }
     if (b.wMm <= 0 || b.hMm <= 0 || b.xMm < 0 || b.yMm < 0 || b.xMm + b.wMm > widthMm + 1e-9 || b.yMm + b.hMm > heightMm + 1e-9) {

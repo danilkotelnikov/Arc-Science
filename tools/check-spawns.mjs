@@ -44,6 +44,20 @@ function extractCallSnippet(src, startIdx) {
   return src.slice(startIdx, startIdx + 600);
 }
 
+function findChildProcessNamespaces(src) {
+  const namespaces = new Set();
+  const patterns = [
+    /\bimport\s+([A-Za-z_$][\w$]*)(?:\s*,\s*\{[^}]*\})?\s+from\s+['"](?:node:)?child_process['"]/g,
+    /\bimport\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['"](?:node:)?child_process['"]/g,
+    /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*['"](?:node:)?child_process['"]\s*\)/g,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(src)) !== null) namespaces.add(m[1]);
+  }
+  return namespaces;
+}
+
 /** Check all JS child_process spawn sites (with explicit R012 exemptions) and Go CREATE_NO_WINDOW (G6.4/G6.6). */
 export function auditWindowlessSpawns(rootDir) {
   const files = [];
@@ -56,11 +70,19 @@ export function auditWindowlessSpawns(rootDir) {
   for (const rel of files) {
     const src = fs.readFileSync(path.join(rootDir, rel), 'utf8');
     if (!src.includes('child_process')) continue;
+    const cpNamespaces = findChildProcessNamespaces(src);
     SPAWN_RE.lastIndex = 0;
     let m;
     while ((m = SPAWN_RE.exec(src)) !== null) {
-      const before = src.slice(Math.max(0, m.index - 24), m.index);
-      if (/\bfunction\s+$/.test(before) || /\.\s*$/.test(before)) continue;
+      const before = src.slice(Math.max(0, m.index - 64), m.index);
+      if (/\bfunction\s+$/.test(before)) continue;
+      const memberMatch = /([A-Za-z_$][\w$]*)\.\s*$/.exec(before);
+      const inlineRequire = /\brequire\s*\(\s*['"](?:node:)?child_process['"]\s*\)\.\s*$/.test(before);
+      if (memberMatch) {
+        if (!cpNamespaces.has(memberMatch[1])) continue;
+      } else if (/\.\s*$/.test(before) && !inlineRequire) {
+        continue;
+      }
       checkedCalls += 1;
       const openIdx = src.indexOf('(', m.index);
       const callBody = extractCallSnippet(src, openIdx);
@@ -117,12 +139,25 @@ function runSelfTest() {
       "import { spawnSync } from 'node:child_process';\nspawnSync('node', ['-v'], { encoding: 'utf8', windowsHide: true });\n",
     );
     fs.writeFileSync(
+      path.join(tmp, 'scripts', 'good-ns.mjs'),
+      "import * as cp from 'node:child_process';\nconst reMatch = /a/.exec('a');\ncp.spawn('node', ['-v'], { encoding: 'utf8', windowsHide: true });\n",
+    );
+    fs.writeFileSync(
       path.join(tmp, 'native', 'arc-gateway', 'hide_windows.go'),
       'package main\nconst flag = "CREATE_NO_WINDOW"\n',
     );
     const passRes = auditWindowlessSpawns(tmp);
     assert.equal(passRes.state, 'pass');
-    assert.equal(passRes.checkedCalls, 1);
+    assert.equal(passRes.checkedCalls, 2);
+
+    fs.writeFileSync(
+      path.join(tmp, 'scripts', 'bad-ns.mjs'),
+      "import cp from 'node:child_process';\ncp.spawn('node', ['-v'], { encoding: 'utf8' });\n",
+    );
+    const failNs = auditWindowlessSpawns(tmp);
+    assert.equal(failNs.state, 'fail_unhidden_spawn');
+    assert.equal(failNs.violations[0].file, 'scripts/bad-ns.mjs');
+    fs.rmSync(path.join(tmp, 'scripts', 'bad-ns.mjs'));
 
     fs.writeFileSync(
       path.join(tmp, 'scripts', 'bad.mjs'),

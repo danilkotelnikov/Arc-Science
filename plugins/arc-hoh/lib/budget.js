@@ -3,6 +3,7 @@
 // a larger share. The paper proves its guarantee for rewards with one fixed distribution per branch. Our checks differ in
 // strength and cost, so here the guarantee is a heuristic. Each stage can add only its own share, so total spending
 // stays inside the budget whoever the operator keeps. A share a branch leaves unspent is not carried over.
+import path from 'node:path';
 import { ACTIVE } from './tree.js';
 
 /** The stages for n branches. Each stage has { stage, branches, perBranch, keep }. */
@@ -52,7 +53,11 @@ export function closeStage(tree, p, stage) {
 
 function normalizeFileKey(file) {
   if (typeof file !== 'string' || !file.trim()) return '';
-  return file.trim().replaceAll('\\', '/').toLowerCase();
+  const raw = file.trim().replaceAll('\\', '/');
+  if (raw.startsWith('/') || /^[a-zA-Z]:/.test(raw)) return '';
+  const norm = path.posix.normalize(raw).replace(/^\.\//, '').toLowerCase();
+  if (!norm || norm === '.' || norm === '..' || norm.startsWith('../')) return '';
+  return norm;
 }
 
 /** Exclusive per-file write lease table and integrator-only commit guard (G2.5). */
@@ -63,23 +68,28 @@ export class FileLeaseTable {
 
   acquire(file, role, agentId) {
     const key = normalizeFileKey(file);
-    if (!key || typeof role !== 'string' || !role.trim() || typeof agentId !== 'string' || !agentId.trim()) {
+    const id = typeof agentId === 'string' ? agentId.trim() : '';
+    if (!key || typeof role !== 'string' || !role.trim() || !id) {
       return { ok: false, state: 'fail_bad_lease_args', error: 'file, role, and agentId are required' };
     }
     const existing = this.leases.get(key);
-    if (existing && existing.agentId !== agentId) {
+    if (existing && existing.agentId !== id) {
       return { ok: false, state: 'fail_lease_conflict', file: key, holder: existing };
     }
-    const lease = { file: key, role: role.trim(), agentId: agentId.trim(), acquiredAt: new Date().toISOString() };
+    const lease = { file: key, role: role.trim(), agentId: id, acquiredAt: new Date().toISOString() };
     this.leases.set(key, lease);
     return { ok: true, state: 'pass', lease };
   }
 
   release(file, agentId) {
     const key = normalizeFileKey(file);
+    const id = typeof agentId === 'string' ? agentId.trim() : '';
+    if (!key || !id) {
+      return { ok: false, state: 'fail_bad_lease_args', error: 'file and agentId are required' };
+    }
     const existing = this.leases.get(key);
     if (!existing) return { ok: true, state: 'pass', released: false };
-    if (existing.agentId !== agentId) {
+    if (existing.agentId !== id) {
       return { ok: false, state: 'fail_not_holder', file: key, holder: existing.agentId };
     }
     this.leases.delete(key);

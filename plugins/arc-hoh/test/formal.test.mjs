@@ -51,25 +51,51 @@ test('G7.2 / G7.5: 9-dim SI+bit+usd unit algebra and typed prose drift detector'
   assert.equal(verifyRenderedProse(rec, 'PR diff <= 180000 bytes (caveat: binary patches included)').state, 'fail_text_drift');
   assert.equal(verifyRenderedProse(rec, 'PR diff <= 160000 bytes').state, 'fail_text_drift');
   assert.equal(verifyRenderedProse({ subject: 'Budget', value: 10, unit: 'usd' }, 'Budget <= 10 usd').state, 'pass');
+  const sci = { subject: 'Drift', comparator: '<=', value: 1e-7, unit: 'm' };
+  assert.equal(verifyRenderedProse(sci, renderTypedRecord(sci)).state, 'pass');
+  assert.equal(verifyRenderedProse(sci, 'Drift <= 2e-7 m').state, 'fail_text_drift');
   assert.equal(addQuantities(quantity(10, 'mm', 'len'), quantity(10, 'm', 'len')).state, 'fail_unit_mismatch');
+  assert.equal(
+    compareQuantities(mulQuantities(quantity(10, 'mm', 'len'), quantity(1, '1'), 'len').quantity, '==', quantity(10, 'm', 'len')).state,
+    'fail_unit_mismatch',
+  );
+  assert.equal(
+    compareQuantities(divQuantities(quantity(10, 'mm'), quantity(2, 's'), 'm/s').quantity, '==', quantity(5, 'm/s')).state,
+    'fail_unit_mismatch',
+  );
+  assert.equal(compareQuantities(prod.quantity, '==', quantity(6, 'usd')).state, 'pass');
 });
 
 test('G3.5 / G7.3: Evidence DAG blocks machine-checked without strict pass receipt and stops escalation', () => {
   const passReceipts = {
-    'r-ok': { state: 'pass' },
-    'r-partial': { state: 'pass_core_only' },
+    'r-ok': { state: 'pass', claimId: 'axiom1', theorem: 'ax_thm' },
+    'r-replay': { state: 'pass', claimId: 'c1', theorem: 'thm1' },
+    'r-unbound': { state: 'pass' },
+    'r-partial': { state: 'pass_core_only', claimId: 'claim2', theorem: 'thm2' },
   };
   const okDag = verifyClaimDag(
     [
-      { id: 'axiom1', level: 'machine-checked', deps: [], leanReceiptId: 'r-ok' },
+      { id: 'axiom1', level: 'machine-checked', deps: [], leanReceiptId: 'r-ok', theorem: 'ax_thm' },
       { id: 'claim1', level: 'measured', deps: ['axiom1'] },
     ],
     { leanReceipts: passReceipts },
   );
   assert.equal(okDag.state, 'pass');
 
+  const unbound = verifyClaimDag(
+    [{ id: 'c3', level: 'machine-checked', deps: [], leanReceiptId: 'r-unbound', theorem: 'thm3' }],
+    { leanReceipts: passReceipts },
+  );
+  assert.equal(unbound.state, 'fail_receipt_mismatch');
+
+  const noThm = verifyClaimDag(
+    [{ id: 'axiom1', level: 'machine-checked', deps: [], leanReceiptId: 'r-ok' }],
+    { leanReceipts: passReceipts },
+  );
+  assert.equal(noThm.state, 'fail_receipt_mismatch');
+
   const partial = verifyClaimDag(
-    [{ id: 'claim2', level: 'machine-checked', deps: [], leanReceiptId: 'r-partial' }],
+    [{ id: 'claim2', level: 'machine-checked', deps: [], leanReceiptId: 'r-partial', theorem: 'thm2' }],
     { leanReceipts: passReceipts },
   );
   assert.equal(partial.state, 'fail_partial_receipt');
@@ -91,8 +117,8 @@ test('G3.5 / G7.3: Evidence DAG blocks machine-checked without strict pass recei
 
   const replay = verifyClaimDag(
     [
-      { id: 'c1', level: 'machine-checked', deps: [], leanReceiptId: 'r-ok', theorem: 'thm1' },
-      { id: 'c2', level: 'machine-checked', deps: [], leanReceiptId: 'r-ok', theorem: 'thm2' },
+      { id: 'c1', level: 'machine-checked', deps: [], leanReceiptId: 'r-replay', theorem: 'thm1' },
+      { id: 'c2', level: 'machine-checked', deps: [], leanReceiptId: 'r-replay', theorem: 'thm2' },
     ],
     { leanReceipts: passReceipts },
   );
@@ -129,6 +155,7 @@ test('G7.4: Visual scene graph enforces Nature canvas mm dimensions, overlaps, a
     ],
   };
   assert.equal(verifySceneGraph(validPanel).state, 'pass');
+  assert.equal(verifySceneGraph({ widthMm: 89, heightMm: 60, boxes: [{ id: 'a' }] }).state, 'fail_out_of_bounds');
   assert.equal(verifySceneGraph({ ...validPanel, widthMm: 150 }).state, 'fail_canvas_width');
   assert.equal(
     verifySceneGraph({ ...validPanel, boxes: [{ id: 'tiny', xMm: 2, yMm: 2, wMm: 20, hMm: 10, fontPt: 6.0 }] }).state,

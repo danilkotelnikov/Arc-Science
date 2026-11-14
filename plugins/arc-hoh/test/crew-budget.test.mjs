@@ -35,6 +35,15 @@ test('G2.5 exclusive file lease blocks concurrent writer and enforces integrator
   assert.equal(table.release('plugins/arc-hoh/lib/claims.js', 'agent-a').ok, true);
   assert.equal(table.acquire('plugins/arc-hoh/lib/claims.js', 'builder', 'agent-b').ok, true);
 
+  assert.equal(table.acquire('./plugins/arc-hoh/lib/claims.js', 'builder', 'agent-c').state, 'fail_lease_conflict');
+  assert.equal(table.acquire('plugins/arc-hoh/../arc-hoh/lib/claims.js', 'builder', 'agent-c').state, 'fail_lease_conflict');
+  assert.equal(table.acquire('../outside.js', 'builder', 'agent-c').state, 'fail_bad_lease_args');
+  assert.equal(table.acquire('/abs/claims.js', 'builder', 'agent-c').state, 'fail_bad_lease_args');
+
+  assert.equal(table.acquire('plugins/arc-hoh/lib/ws.js', 'builder', '  agent-ws  ').ok, true);
+  assert.equal(table.acquire('plugins/arc-hoh/lib/ws.js', 'builder', 'agent-ws').ok, true);
+  assert.equal(table.release('plugins/arc-hoh/lib/ws.js', ' agent-ws ').released, true);
+
   assert.equal(table.assertIntegratorCommit('integrator').state, 'pass');
   assert.equal(table.assertIntegratorCommit('builder').state, 'fail_non_integrator_commit');
 });

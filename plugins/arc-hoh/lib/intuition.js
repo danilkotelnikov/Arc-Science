@@ -161,7 +161,7 @@ export function routeTaskStage0(task = {}) {
   const requestedRole = typeof task.role === 'string' ? task.role.trim() : '';
   const kind = typeof task.kind === 'string' ? task.kind.trim() : 'build';
 
-  let role = requestedRole && STAGE0_ROLE_TABLE.roles[requestedRole] ? requestedRole : 'builder';
+  let role = requestedRole && Object.hasOwn(STAGE0_ROLE_TABLE.roles, requestedRole) ? requestedRole : 'builder';
   if (!requestedRole) {
     if (kind === 'lookup' || kind === 'scan' || kind === 'archive') role = 'scout';
     else if (kind === 'plan' || kind === 'frame' || kind === 'orchestrate') role = 'lead';
@@ -283,6 +283,9 @@ export function evaluatePolicyIPS(rows, candidatePolicyFn, options = {}) {
   const tokenCosts = [];
   for (const r of rows) {
     const cand = candidatePolicyFn(r);
+    if ((actionCounts[cand] || 0) < minActionTries) {
+      return { ok: false, state: 'blocked_rows', reason: 'candidate_action_floor_unmet', action: cand, count: actionCounts[cand] || 0, minActionTries, actionCounts, autoApplied: false };
+    }
     const match = cand === r.action;
     const w = match ? Math.min(clipRatio, 1 / r.propensity) : 0;
     weights.push(w);
@@ -299,7 +302,7 @@ export function evaluatePolicyIPS(rows, candidatePolicyFn, options = {}) {
   const ipsMean = weights.reduce((s, w, i) => s + w * rewards[i], 0) / weightSum;
   const baselineMean = meanOf(baselines);
   const diffPoint = ipsMean - baselineMean;
-  const meanTokens = meanOf(tokenCosts);
+  const meanTokens = weights.reduce((s, w, i) => s + w * tokenCosts[i], 0) / weightSum;
 
   if (Number.isFinite(maxMeanTokens) && meanTokens > maxMeanTokens) {
     return {
@@ -396,7 +399,10 @@ export function checkTrainingManifest(manifest, knownModelsSet) {
     if (manifest.base_private !== false || manifest.teacher_private !== false) {
       return { ok: false, state: 'fail_private_manifest', reason: 'base_private and teacher_private must be false' };
     }
-    const badSources = (Array.isArray(manifest.data) ? manifest.data : []).filter((d) => !d || d.private !== false);
+    if (!Array.isArray(manifest.data) || manifest.data.length === 0) {
+      return { ok: false, state: 'fail_private_manifest', reason: 'data must be a non-empty array' };
+    }
+    const badSources = manifest.data.filter((d) => !d || d.private !== false);
     if (badSources.length) {
       return { ok: false, state: 'fail_private_manifest', reason: 'private data source in public student manifest', badSources };
     }

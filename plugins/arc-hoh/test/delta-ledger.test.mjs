@@ -42,6 +42,18 @@ test('G1.4-G1.7 snapshotTreeHashes, delta diff, R012 protected hash guard, and t
     const tampered = { ...row, postTreeHash: '0'.repeat(64) };
     assert.equal(verifyDeltaPair(tampered, pre, post).state, 'fail_delta_tampered');
 
+    const tamperedDiff = { ...row, diff: { ...row.diff, added: [] } };
+    assert.equal(verifyDeltaPair(tamperedDiff, pre, post).state, 'fail_delta_tampered');
+
+    const symPath = path.join(dir, 'src', 'link.js');
+    try {
+      fs.symlinkSync(path.join(dir, 'src', 'app.js'), symPath);
+      assert.throws(() => snapshotTreeHashes(dir), /Unsupported symbolic link/);
+      fs.rmSync(symPath, { force: true });
+    } catch (err) {
+      if (err?.code !== 'EPERM') throw err;
+    }
+
     fs.writeFileSync(path.join(dir, 'protected.txt'), 'broken');
     const badPost = snapshotTreeHashes(dir);
     const blocked = recordDeltaRow({

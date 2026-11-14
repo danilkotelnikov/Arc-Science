@@ -14,6 +14,8 @@ function walkSortedFiles(rootDir, currentDir, excludeSet, out) {
     } else if (ent.isFile()) {
       const rel = path.relative(rootDir, abs).replaceAll('\\', '/');
       out.push({ rel, abs });
+    } else if (ent.isSymbolicLink()) {
+      throw new Error(`Unsupported symbolic link: ${abs}`);
     }
   }
 }
@@ -114,6 +116,9 @@ export function verifyDeltaPair(row, preSnapshot, postSnapshot) {
     return { ok: false, state: 'fail_delta_tampered', reason: 'tree hash mismatch' };
   }
   const recomputedDiff = computeDeltaDiff(preSnapshot, postSnapshot);
+  if (JSON.stringify(row.diff) !== JSON.stringify(recomputedDiff)) {
+    return { ok: false, state: 'fail_delta_tampered', reason: 'row diff mismatch' };
+  }
   const recomputedDigest = crypto
     .createHash('sha256')
     .update(JSON.stringify({ id: row.id, preTreeHash: row.preTreeHash, postTreeHash: row.postTreeHash, diff: recomputedDiff }))

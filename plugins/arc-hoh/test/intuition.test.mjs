@@ -73,6 +73,9 @@ test('G8.3 propensity logger enforces 0.2 cheap, 0.05 failed_check, and 0 stop s
 
   const badMode = logPropensityDecision({ candidates: ['T0'], mode: 'reckless' });
   assert.equal(badMode.state, 'fail_unknown_mode');
+  const protoRole = routeTaskStage0({ id: 't-proto', role: 'constructor' });
+  assert.equal(protoRole.role, 'builder');
+  assert.equal(typeof protoRole.route, 'string');
 });
 
 test('G8.4-G8.6 IPS evaluator enforces 200-row & 10-try floors, paired bootstrap, Holm alpha, and token caps', () => {
@@ -103,6 +106,22 @@ test('G8.4-G8.6 IPS evaluator enforces 200-row & 10-try floors, paired bootstrap
 
   const overCap = evaluatePolicyIPS(strongRows, () => 'B', { maxMeanTokens: 800 });
   assert.equal(overCap.state, 'fail_token_cap');
+
+  const rareCand = evaluatePolicyIPS(
+    mkRows(210, (i) => ({ action: i % 2 ? 'B' : 'A', propensity: 0.5, reward: 1 })),
+    (r) => (r.action === 'B' ? 'B' : 'UNSEEN'),
+  );
+  assert.equal(rareCand.state, 'blocked_rows');
+  assert.equal(rareCand.reason, 'candidate_action_floor_unmet');
+
+  const weightedRows = mkRows(210, (i) => ({
+    action: i % 2 ? 'B' : 'A',
+    propensity: 0.5,
+    reward: i % 2 ? 0.9 : 0.4,
+    baselineReward: 0.4,
+    candidateTokens: i % 2 ? 1500 : 100,
+  }));
+  assert.equal(evaluatePolicyIPS(weightedRows, () => 'B', { maxMeanTokens: 1000 }).state, 'fail_token_cap');
 
   const holmStrict = evaluatePolicyIPS(strongRows, () => 'B', { totalTests: 5, rank: 1, alpha: 0.05 });
   assert.equal(holmStrict.adjustedAlpha, 0.01);
@@ -148,4 +167,6 @@ test('G8.1 & G8.8 training manifest checks models.tsv registry and rejects priva
     data: [{ name: 'bank_notes', private: true }],
   };
   assert.equal(checkTrainingManifest(leakyManifest, known).state, 'fail_private_manifest');
+  assert.equal(checkTrainingManifest({ ...goodManifest, data: 'invalid' }, known).state, 'fail_private_manifest');
+  assert.equal(checkTrainingManifest({ ...goodManifest, data: [] }, known).state, 'fail_private_manifest');
 });
