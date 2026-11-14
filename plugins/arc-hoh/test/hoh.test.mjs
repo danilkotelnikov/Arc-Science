@@ -246,8 +246,8 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   const env = { ARC_HOME: d };
   const notes = [];
   const tools = makeTools((def) => def, env, { retain: async (n) => { notes.push(n); return true; } });
-  assert.deepEqual(tools.map((t) => t.name), ['hoh_propose', 'hoh_freeze', 'hoh_gate', 'hoh_verify_ledger']);
-  const [propose, freeze, gate, verify] = tools;
+  assert.deepEqual(tools.map((t) => t.name), ['hoh_propose', 'hoh_freeze', 'hoh_gate', 'hoh_verify_ledger', 'hoh_decide']);
+  const [propose, freeze, gate, verify, decide] = tools;
   const lead = { agent: { id: 'lead-1' } }, reviewer = { agent: { id: 'rev-1' } };
   const f = path.join(d, 'work.txt'); await writeFile(f, 'candidate one');
 
@@ -276,6 +276,18 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   assert.equal((await gate.execute({ ...base, candidate: fr2.candidate }, reviewer)).verdict, 'accepted');
   const v = await verify.execute({}, {});
   assert.equal(v.ok, true);
+  const dec = await decide.execute({
+    goal: 'demo',
+    probability: 0.9,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:work.txt'],
+    checksPassed: true,
+  }, reviewer);
+  assert.equal(dec.ok, true);
+  assert.equal(dec.packet.schema, 'cammut.decision/0');
+  assert.equal(dec.packet.allowExit, true);
+  assert.equal(dec.pair.builder.family === dec.pair.checker.family, false);
 
   const off = makeTools((def) => def, { ARC_HOME: d, ARC_HOH_RETAIN: '0' }, { retain: async () => { throw new Error('must not be called'); } });
   const r = await off[2].execute({ ...base, candidate: fr2.candidate }, reviewer);

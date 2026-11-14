@@ -26,7 +26,13 @@ const STAGE = '_stage';
 const archive = path.join(here, ARCHIVE);
 const stage = path.join(here, STAGE);
 const norm = (p) => p.replace(/\\/g, '/');
-const tar = (...a) => spawnSync('tar', a, { cwd: here, encoding: 'utf8' });
+const tar = (...a) => spawnSync('tar', a, { cwd: here, encoding: 'utf8', windowsHide: true });
+const checkTar = (r) => {
+  if (r.error || r.status !== 0) {
+    console.error(r.error?.message || r.stderr || `tar failed with status ${r.status}`);
+    process.exit(1);
+  }
+};
 
 function* walk(dir, depth = 0) {
   let ents;
@@ -45,7 +51,7 @@ if (args.includes('--restore')) {
   fs.rmSync(stage, { recursive: true, force: true });
   fs.mkdirSync(stage, { recursive: true });
   const r = tar('-xJf', ARCHIVE, '-C', STAGE);
-  if (r.status) { console.error(r.stderr); process.exit(1); }
+  checkTar(r);
   let n = 0, changedSince = 0;
   // A file whose hash differs from the committed list was edited after the rewrite: it is left alone unless --force is given,
   // so a restore never wipes newer work. A path with .. is refused: the list is read from an archive.
@@ -78,7 +84,7 @@ if (args.includes('--manifest')) {
   fs.rmSync(stage, { recursive: true, force: true });
   fs.mkdirSync(stage, { recursive: true });
   const r = tar('-xJf', ARCHIVE, '-C', STAGE);
-  if (r.status) { console.error(r.stderr); process.exit(1); }
+  checkTar(r);
   const files = {};
   for (const rel of JSON.parse(fs.readFileSync(path.join(stage, 'list.json'), 'utf8'))) {
     const target = path.join(path.parse(os.homedir()).root, rel);
@@ -200,7 +206,7 @@ fs.mkdirSync(stage, { recursive: true });
 let rels = [];
 if (fs.existsSync(archive)) {
   const x = tar('-xJf', ARCHIVE, '-C', STAGE);
-  if (x.status) { console.error(x.stderr); process.exit(1); }
+  checkTar(x);
   rels = JSON.parse(fs.readFileSync(path.join(stage, 'list.json'), 'utf8'));
 }
 const have = new Set(rels);
@@ -215,7 +221,7 @@ for (const c of changed) {
 fs.writeFileSync(path.join(stage, 'list.json'), JSON.stringify(rels));
 // the new archive gets a temporary name; the old one is replaced only after tar succeeded
 const t = tar('-cJf', 'new-' + ARCHIVE, '-C', STAGE, 'list.json', 'files');
-if (t.status) { console.error(t.stderr); process.exit(1); }
+checkTar(t);
 fs.renameSync(path.join(here, 'new-' + ARCHIVE), archive);
 fs.rmSync(stage, { recursive: true, force: true });
 

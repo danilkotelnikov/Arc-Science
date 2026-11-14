@@ -17,6 +17,17 @@ import {
   enforceConsentNonEscalation,
   parseModelsTsv,
   checkTrainingManifest,
+  fitPlattScaler,
+  applyPlattScaler,
+  crossFitPlatt2Fold,
+  brierSkillScore,
+  routeOptimalDecision,
+  pairBuilderAndChecker,
+  TAINT_LEVELS,
+  joinTaint,
+  decideExitAction,
+  emitDecisionPacket,
+  validateDecisionPacket,
 } from '../lib/intuition.js';
 
 const MODELS_TSV_PATH = process.env.ARC_MODELS_TSV || path.join(os.homedir(), 'arc-harness', 'shared', 'models.tsv');
@@ -193,4 +204,113 @@ test('G8.1 & G8.8 training manifest checks models.tsv registry and rejects priva
   assert.equal(checkTrainingManifest(leakyManifest, known).state, 'fail_private_manifest');
   assert.equal(checkTrainingManifest({ ...goodManifest, data: 'invalid' }, known).state, 'fail_private_manifest');
   assert.equal(checkTrainingManifest({ ...goodManifest, data: [] }, known).state, 'fail_private_manifest');
+});
+
+test('2-fold Platt calibration and Brier Skill Score improve overconfident forecasts', () => {
+  const overconfident = [
+    { probability: 0.95, actual: 1 },
+    { probability: 0.95, actual: 1 },
+    { probability: 0.95, actual: 0 },
+    { probability: 0.95, actual: 0 },
+    { probability: 0.85, actual: 1 },
+    { probability: 0.85, actual: 0 },
+    { probability: 0.15, actual: 0 },
+    { probability: 0.15, actual: 1 },
+  ];
+  const scaler = fitPlattScaler(overconfident);
+  assert.ok(scaler.count === 8 && scaler.a < 1);
+  const adjusted = applyPlattScaler(0.95, scaler);
+  assert.ok(adjusted < 0.95 && adjusted > 0.5);
+
+  const cv = crossFitPlatt2Fold(overconfident);
+  assert.equal(cv.ok, true);
+  assert.equal(cv.predictions.length, 8);
+  assert.ok(cv.oofBrier < cv.rawBrier, `expected oofBrier (${cv.oofBrier}) < rawBrier (${cv.rawBrier})`);
+  assert.ok(brierSkillScore([{ probability: 0.9, actual: 1 }, { probability: 0.1, actual: 0 }]) > 0.9);
+  assert.equal(brierSkillScore([{ probability: 0.5, actual: 1 }]), null);
+});
+
+test('routeOptimalDecision maximizes VOI/cost and enforces R009', () => {
+  const highUnc = routeOptimalDecision({
+    id: 'd-voi',
+    probability: 0.55,
+    checks: [
+      { id: 'slow', s: 0.9, e: 0.9, cost: 0.25 },
+      { id: 'fast', s: 0.9, e: 0.9, cost: 0.05 },
+    ],
+  });
+  assert.equal(highUnc.ok, true);
+  assert.equal(highUnc.outcome, 'run_one_cheap_check');
+  assert.equal(highUnc.bestCheck.id, 'fast');
+  assert.ok(highUnc.netValue > 0 && highUnc.voiPerCost > 1);
+
+  const sure = routeOptimalDecision({ id: 'd-sure', probability: 0.95, checks: [{ id: 'pricey', s: 0.8, e: 0.8, cost: 0.4 }] });
+  assert.equal(sure.outcome, 'answer_now');
+
+  const blocked = routeOptimalDecision({ grantPermission: true, probability: 0.95 });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.rule, 'R009');
+});
+
+test('pairBuilderAndChecker enforces cross-family pairing, minimum cost, and R006 failures', () => {
+  const t1 = pairBuilderAndChecker({ minTier: 'T1' });
+  assert.equal(t1.ok, true);
+  assert.equal(t1.builder.route, 'gemini-4-argon');
+  assert.equal(t1.checker.route, 'claude-sonnet-5-5');
+
+  const formal = pairBuilderAndChecker({ needsFormal: true, minTier: 'T3' });
+  assert.equal(formal.ok, true);
+  assert.equal(formal.builder.route, 'claude-fable-5-2');
+  assert.equal(formal.checker.route, 'gemini-4-carbon');
+
+  const sameFamily = pairBuilderAndChecker({ builderRoute: 'claude-sonnet-5-5', checkerRoute: 'claude-haiku-5-5' });
+  assert.equal(sameFamily.ok, false);
+  assert.equal(sameFamily.state, 'fail_same_family_verdict');
+
+  const selfReview = pairBuilderAndChecker({ builderRoute: 'claude-sonnet-5-5', checkerRoute: 'gemini-4-argon', builderId: 'a1', checkerId: 'a1' });
+  assert.equal(selfReview.ok, false);
+  assert.equal(selfReview.state, 'fail_self_review');
+});
+
+test('taint lattice, exit guard, and cammut.decision/0 packet enforce strict fail-closed invariants', () => {
+  assert.deepEqual(TAINT_LEVELS, ['clean', 'tool_output', 'untrusted_web', 'secret_risk']);
+  assert.equal(joinTaint('clean', 'tool_output'), 'tool_output');
+  assert.equal(joinTaint('tool_output', 'untrusted_web'), 'untrusted_web');
+  assert.equal(joinTaint('clean', 'unknown_source'), 'secret_risk');
+
+  const okRes = emitDecisionPacket({
+    id: 'DEC-100',
+    goal: 'verify-patch',
+    probability: 0.9,
+    taint: 'tool_output',
+    citations: ['file:plugins/arc-hoh/lib/intuition.js'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  });
+  assert.equal(okRes.ok, true);
+  assert.equal(okRes.packet.schema, 'cammut.decision/0');
+  assert.equal(okRes.packet.allowExit, true);
+  assert.equal(okRes.packet.action, 'emit_decision');
+
+  const secretRes = emitDecisionPacket({
+    id: 'DEC-101',
+    goal: 'leak-check',
+    taints: ['clean', 'secret_risk'],
+    citations: ['file:ok.js'],
+    checksPassed: true,
+  });
+  assert.equal(secretRes.ok, true);
+  assert.equal(secretRes.packet.allowExit, false);
+  assert.equal(secretRes.packet.action, 'block_secret');
+
+  const webUnverified = decideExitAction({ taint: 'untrusted_web', citations: ['url:a'], checksPassed: true, crossFamilyVerified: false });
+  assert.equal(webUnverified.allowExit, false);
+  assert.equal(webUnverified.action, 'block_tainted');
+
+  const forged = validateDecisionPacket({
+    ...okRes.packet,
+    effectiveTaint: 'secret_risk',
+    allowExit: true,
+  });
+  assert.equal(forged.ok, false);
 });
