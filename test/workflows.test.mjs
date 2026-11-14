@@ -25,7 +25,7 @@ test('only people with write access start a comment run', () => {
   assert.match(claude, /\["OWNER","MEMBER","COLLABORATOR"\]/);
   for (const text of [claude, screen]) assert.doesNotMatch(text, /allowed_non_write_users/);
   assert.doesNotMatch(claude, /allowed_bots/);
-  assert.equal(screen.match(/allowed_bots: claude\[bot\]\n/g).length, 2, 'one named bot, never a wildcard');
+  assert.equal(screen.match(/allowed_bots: claude\[bot\]\n/g).length, 3, 'one named bot per claude-code-action step, never a wildcard');
   assert.doesNotMatch(screen, /allowed_bots: ['"]?\*/);
 });
 
