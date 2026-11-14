@@ -198,7 +198,7 @@ export function logPropensityDecision({ contextId, candidates = [], baselineActi
   if (!Array.isArray(candidates) || candidates.length === 0) {
     return { ok: false, state: 'fail_no_candidates', error: 'candidates must be a non-empty array' };
   }
-  if (!(mode in EXPLORATION_SHARES)) {
+  if (!Object.hasOwn(EXPLORATION_SHARES, mode)) {
     return { ok: false, state: 'fail_unknown_mode', error: `unknown exploration mode: ${mode}` };
   }
   const exploreShare = EXPLORATION_SHARES[mode];
@@ -219,7 +219,8 @@ export function logPropensityDecision({ contextId, candidates = [], baselineActi
     } else {
       const rng = seed != null ? seededPrng(seed) : Math.random;
       picked = rng() < exploreShare ? candidates[Math.floor(rng() * k)] : base;
-      propensity = picked === base ? (1 - exploreShare) + (exploreShare / k) : exploreShare / k;
+      const pickedCount = candidates.filter((c) => c === picked).length;
+      propensity = (picked === base ? 1 - exploreShare : 0) + (exploreShare * pickedCount) / k;
     }
   }
   if (!(propensity > 0 && propensity <= 1)) {
@@ -233,7 +234,7 @@ export function logPropensityDecision({ contextId, candidates = [], baselineActi
     exploring: exploreShare > 0 && picked !== base,
     baselineAction: base,
     action: picked,
-    propensity: Number(propensity.toFixed(6)),
+    propensity,
     permissionGranted: false,
     autoApplied: false,
   };

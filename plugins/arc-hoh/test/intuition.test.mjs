@@ -69,7 +69,18 @@ test('G8.3 propensity logger enforces 0.2 cheap, 0.05 failed_check, and 0 stop s
   const sampled = Array.from({ length: 1000 }, (_, i) => logPropensityDecision({ contextId: `s-${i}`, candidates: ['A', 'B'], baselineAction: 'A', seed: i + 1, mode: 'cheap' }));
   const bRate = sampled.filter((r) => r.action === 'B').length / sampled.length;
   assert.ok(bRate > 0.05 && bRate < 0.16, `expected ~0.10 exploration rate, got ${bRate}`);
-  assert.ok(sampled.every((r) => r.propensity === (r.action === 'A' ? 0.9 : 0.1)));
+  assert.ok(sampled.every((r) => Math.abs(r.propensity - (r.action === 'A' ? 0.9 : 0.1)) < 1e-9));
+
+  const dupSampled = Array.from({ length: 300 }, (_, i) => logPropensityDecision({ contextId: `d-${i}`, candidates: ['A', 'B', 'B'], baselineAction: 'A', seed: i + 1, mode: 'cheap' }));
+  assert.ok(dupSampled.some((r) => r.action === 'B'));
+  assert.ok(dupSampled.filter((r) => r.action === 'B').every((r) => Math.abs(r.propensity - (0.2 * 2) / 3) < 1e-9));
+
+  const tiny = logPropensityDecision({ contextId: 'tiny', candidates: ['T0', 'T1'], baselineAction: 'T0', chosenAction: 'T1', loggingPropensity: 1e-7, mode: 'cheap' });
+  assert.equal(tiny.ok, true);
+  assert.equal(tiny.propensity, 1e-7);
+
+  const protoMode = logPropensityDecision({ candidates: ['T0'], mode: '__proto__' });
+  assert.equal(protoMode.state, 'fail_unknown_mode');
 
   const failed = logPropensityDecision({ contextId: 'c2', candidates: ['T0', 'T1'], baselineAction: 'T0', chosenAction: 'T1', loggingPropensity: 0.025, mode: 'failed_check' });
   assert.ok(Math.abs(failed.propensity - 0.025) < 1e-6);

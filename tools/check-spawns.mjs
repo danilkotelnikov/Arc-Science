@@ -11,11 +11,12 @@ const SPAWN_APIS = new Set(['spawn', 'spawnSync', 'exec', 'execSync', 'execFile'
 const CALL_RE = /\b([A-Za-z_$][\w$]*)\s*\(/g;
 
 function stripCommentsAndStrings(src) {
-  const out = [...src];
+  const out = src.split('');
   const n = src.length;
   const blank = (i) => { if (src[i] !== '\n' && src[i] !== '\r') out[i] = ' '; };
   let mode = 'code';
   let q = '';
+  const tplStack = [];
   for (let i = 0; i < n; i++) {
     const ch = src[i];
     const nx = src[i + 1];
@@ -29,12 +30,24 @@ function stripCommentsAndStrings(src) {
       blank(i);
       if (ch === '\\') { if (i + 1 < n) { blank(i + 1); i += 1; } }
       else if (ch === q) mode = 'code';
+    } else if (mode === 'tpl') {
+      blank(i);
+      if (ch === '\\') { if (i + 1 < n) { blank(i + 1); i += 1; } }
+      else if (ch === '$' && nx === '{') { blank(i + 1); i += 1; tplStack.push(1); mode = 'code'; }
+      else if (ch === '`') mode = 'code';
     } else if (ch === '/' && nx === '/') {
       blank(i); blank(i + 1); i += 1; mode = 'line';
     } else if (ch === '/' && nx === '*') {
       blank(i); blank(i + 1); i += 1; mode = 'block';
-    } else if (ch === '\'' || ch === '"' || ch === '`') {
+    } else if (ch === '\'' || ch === '"') {
       blank(i); q = ch; mode = 'str';
+    } else if (ch === '`') {
+      blank(i); mode = 'tpl';
+    } else if (tplStack.length > 0 && ch === '{') {
+      tplStack[tplStack.length - 1] += 1;
+    } else if (tplStack.length > 0 && ch === '}') {
+      tplStack[tplStack.length - 1] -= 1;
+      if (tplStack[tplStack.length - 1] === 0) { tplStack.pop(); blank(i); mode = 'tpl'; }
     }
   }
   return out.join('');
@@ -210,6 +223,15 @@ function runSelfTest() {
     assert.equal(failNs.state, 'fail_unhidden_spawn');
     assert.equal(failNs.violations[0].file, 'scripts/bad-ns.mjs');
     fs.rmSync(path.join(tmp, 'scripts', 'bad-ns.mjs'));
+
+    fs.writeFileSync(
+      path.join(tmp, 'scripts', 'bad-tpl-unicode.mjs'),
+      "import { execSync } from 'node:child_process';\nconst tag = '\u{1F680}';\nconst msg = `v: ${execSync('node -v', { encoding: 'utf8' })}`;\n",
+    );
+    const failTpl = auditWindowlessSpawns(tmp);
+    assert.equal(failTpl.state, 'fail_unhidden_spawn');
+    assert.equal(failTpl.violations[0].file, 'scripts/bad-tpl-unicode.mjs');
+    fs.rmSync(path.join(tmp, 'scripts', 'bad-tpl-unicode.mjs'));
 
     fs.writeFileSync(
       path.join(tmp, 'native', 'arc-gateway', 'hide_windows.go'),
