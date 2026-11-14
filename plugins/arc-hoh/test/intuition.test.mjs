@@ -287,6 +287,17 @@ test('pairBuilderAndChecker enforces cross-family pairing, strict tiers/capabili
   assert.equal(formal.builder.route, 'claude-fable-5-2');
   assert.equal(formal.checker.route, 'gemini-4-carbon');
 
+  const checkerOnly = pairBuilderAndChecker({ checkerRoute: 'gemini-4-carbon' });
+  assert.equal(checkerOnly.ok, true);
+  assert.equal(checkerOnly.builder.route, 'claude-sonnet-5-5');
+  assert.equal(checkerOnly.checker.route, 'gemini-4-carbon');
+
+  const jointMin = pairBuilderAndChecker({ minTier: 'T1', minCheckerTier: 'T2' });
+  assert.equal(jointMin.ok, true);
+  assert.equal(jointMin.builder.route, 'claude-sonnet-5-5');
+  assert.equal(jointMin.checker.route, 'gemini-4-carbon');
+  assert.equal(jointMin.estimatedRelativeCost, 12);
+
   assert.equal(pairBuilderAndChecker({ needsFormal: true, minTier: 'T3', minCheckerTier: 'T3' }).state, 'fail_no_cross_family_checker');
   assert.equal(pairBuilderAndChecker({ builderRoute: 'gemini-4-carbon', checkerRoute: 'claude-haiku-5-5', needsFormal: true }).state, 'fail_checker_capability');
   assert.equal(pairBuilderAndChecker({ minTier: 't3' }).state, 'fail_unknown_tier');

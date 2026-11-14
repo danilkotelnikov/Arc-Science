@@ -688,35 +688,52 @@ export function pairBuilderAndChecker(input = {}) {
   const eligible = (spec, minRank, reqFormal) =>
     spec.tierRank >= minRank && (!reqFormal || spec.formal) && (allowLegacy || !spec.legacy);
 
-  let builder = null;
-  if (typeof input.builderRoute === 'string' && input.builderRoute.trim()) {
+  const hasExplicitBuilder = typeof input.builderRoute === 'string' && input.builderRoute.trim().length > 0;
+  let builders;
+  if (hasExplicitBuilder) {
     const requested = ROUTE_SPECS.find((s) => s.route === input.builderRoute.trim());
     if (!requested) return { ok: false, state: 'fail_unknown_builder_route', route: input.builderRoute };
     if (!eligible(requested, minBuilderRank, needsFormal)) {
       return { ok: false, state: 'fail_builder_capability', route: requested.route };
     }
-    builder = requested;
+    builders = [requested];
   } else {
-    const builders = ROUTE_SPECS.filter((s) => eligible(s, minBuilderRank, needsFormal)).sort((a, b) => a.cost - b.cost);
-    builder = builders[0] || null;
+    builders = ROUTE_SPECS.filter((s) => eligible(s, minBuilderRank, needsFormal));
   }
-  if (!builder) return { ok: false, state: 'fail_no_builder' };
+  if (builders.length === 0) return { ok: false, state: 'fail_no_builder' };
 
-  let checker = null;
-  if (typeof input.checkerRoute === 'string' && input.checkerRoute.trim()) {
+  const hasExplicitChecker = typeof input.checkerRoute === 'string' && input.checkerRoute.trim().length > 0;
+  let checkers;
+  if (hasExplicitChecker) {
     const requested = ROUTE_SPECS.find((s) => s.route === input.checkerRoute.trim());
     if (!requested) return { ok: false, state: 'fail_unknown_checker_route', route: input.checkerRoute };
     if (!eligible(requested, minCheckerRank, needsFormal)) {
       return { ok: false, state: 'fail_checker_capability', route: requested.route };
     }
-    checker = requested;
+    checkers = [requested];
   } else {
-    const checkers = ROUTE_SPECS
-      .filter((s) => s.family !== builder.family && eligible(s, minCheckerRank, needsFormal))
-      .sort((a, b) => a.cost - b.cost);
-    checker = checkers[0] || null;
+    checkers = ROUTE_SPECS.filter((s) => eligible(s, minCheckerRank, needsFormal));
   }
-  if (!checker) return { ok: false, state: 'fail_no_cross_family_checker' };
+
+  const pairs = [];
+  for (const b of builders) {
+    for (const c of checkers) {
+      if (b.family !== c.family) pairs.push({ builder: b, checker: c, totalCost: b.cost + c.cost });
+    }
+  }
+  pairs.sort((p1, p2) => (p1.totalCost - p2.totalCost) || (p1.builder.cost - p2.builder.cost) || (p1.checker.cost - p2.checker.cost));
+
+  let builder = null;
+  let checker = null;
+  if (pairs.length > 0) {
+    builder = pairs[0].builder;
+    checker = pairs[0].checker;
+  } else if (hasExplicitBuilder && hasExplicitChecker) {
+    builder = builders[0];
+    checker = checkers[0];
+  } else {
+    return { ok: false, state: 'fail_no_cross_family_checker' };
+  }
 
   const crossFamilyCheck = checkCrossFamilyVerdict({
     builderFamily: builder.family,
