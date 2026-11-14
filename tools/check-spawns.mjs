@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const SCAN_DIRS = ['lib', 'plugins', 'scripts', 'tools'];
 const R012_EXEMPT = new Set(['tools/build.mjs', 'tools/install.mjs']);
 const SPAWN_APIS = new Set(['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync']);
-const CALL_RE = /\b([A-Za-z_$][\w$]*)\s*\(/g;
+const CALL_RE = /(?<![\w$])([A-Za-z_$][\w$]*)\s*(?:\?\.\s*)?\(/g;
 
 const REGEX_PREFIX_CHARS = new Set(['\0', '(', '[', '{', ',', ';', ':', '!', '?', '&', '|', '=', '+', '-', '*', '/', '%', '^', '~', '<', '>']);
 const REGEX_PREFIX_WORDS = new Set(['return', 'case', 'throw', 'in', 'of', 'typeof', 'void', 'delete', 'yield', 'await', 'new', 'else', 'do']);
@@ -23,6 +23,8 @@ function stripCommentsAndStrings(src, keepStrings = false) {
   let inClass = false;
   let prevNonSpace = '\0';
   let prevWord = '';
+  let afterCond = false;
+  const parenStack = [];
   const tplStack = [];
   for (let i = 0; i < n; i++) {
     const ch = src[i];
@@ -36,37 +38,39 @@ function stripCommentsAndStrings(src, keepStrings = false) {
     } else if (mode === 'str') {
       blankLit(i);
       if (ch === '\\') { if (i + 1 < n) { blankLit(i + 1); i += 1; } }
-      else if (ch === q) { mode = 'code'; prevNonSpace = q; prevWord = ''; }
+      else if (ch === q) { mode = 'code'; prevNonSpace = q; prevWord = ''; afterCond = false; }
     } else if (mode === 'regex') {
       blankLit(i);
-      if (ch === '\n' || ch === '\r') { mode = 'code'; inClass = false; prevNonSpace = '/'; prevWord = ''; }
+      if (ch === '\n' || ch === '\r') { mode = 'code'; inClass = false; prevNonSpace = '/'; prevWord = ''; afterCond = false; }
       else if (ch === '\\') { if (i + 1 < n && src[i + 1] !== '\n' && src[i + 1] !== '\r') { blankLit(i + 1); i += 1; } }
       else if (ch === '[' && !inClass) inClass = true;
       else if (ch === ']' && inClass) inClass = false;
-      else if (ch === '/' && !inClass) { mode = 'code'; prevNonSpace = ')'; prevWord = ''; }
+      else if (ch === '/' && !inClass) { mode = 'code'; prevNonSpace = ')'; prevWord = ''; afterCond = false; }
     } else if (mode === 'tpl') {
-      blankLit(i);
-      if (ch === '\\') { if (i + 1 < n) { blankLit(i + 1); i += 1; } }
-      else if (ch === '$' && nx === '{') { blankLit(i + 1); i += 1; tplStack.push(1); mode = 'code'; prevNonSpace = '{'; prevWord = ''; }
-      else if (ch === '`') { mode = 'code'; prevNonSpace = '`'; prevWord = ''; }
+      if (ch === '\\') { blankLit(i); if (i + 1 < n) { blankLit(i + 1); i += 1; } }
+      else if (ch === '$' && nx === '{') { blankLit(i); i += 1; tplStack.push(1); mode = 'code'; prevNonSpace = '{'; prevWord = ''; afterCond = false; }
+      else { blankLit(i); if (ch === '`') { mode = 'code'; prevNonSpace = '`'; prevWord = ''; afterCond = false; } }
     } else if (ch === '/' && nx === '/') {
       blank(i); blank(i + 1); i += 1; mode = 'line';
     } else if (ch === '/' && nx === '*') {
       blank(i); blank(i + 1); i += 1; mode = 'block';
-    } else if (ch === '/' && (REGEX_PREFIX_CHARS.has(prevNonSpace) || REGEX_PREFIX_WORDS.has(prevWord))) {
-      blankLit(i); inClass = false; mode = 'regex';
+    } else if (ch === '/' && (REGEX_PREFIX_CHARS.has(prevNonSpace) || REGEX_PREFIX_WORDS.has(prevWord) || afterCond)) {
+      blankLit(i); inClass = false; mode = 'regex'; afterCond = false;
     } else if (ch === '\'' || ch === '"') {
-      blankLit(i); q = ch; mode = 'str';
+      blankLit(i); q = ch; mode = 'str'; afterCond = false;
     } else if (ch === '`') {
-      blankLit(i); mode = 'tpl';
+      blankLit(i); mode = 'tpl'; afterCond = false;
     } else {
       if (tplStack.length > 0 && ch === '{') {
         tplStack[tplStack.length - 1] += 1;
       } else if (tplStack.length > 0 && ch === '}') {
         tplStack[tplStack.length - 1] -= 1;
-        if (tplStack[tplStack.length - 1] === 0) { tplStack.pop(); blankLit(i); mode = 'tpl'; continue; }
+        if (tplStack[tplStack.length - 1] === 0) { tplStack.pop(); mode = 'tpl'; continue; }
       }
       if (!/\s/.test(ch)) {
+        if (ch === '(') { parenStack.push(prevWord === 'if' || prevWord === 'while' || prevWord === 'for' || prevWord === 'with'); afterCond = false; }
+        else if (ch === ')') afterCond = Boolean(parenStack.pop());
+        else afterCond = false;
         prevWord = /[A-Za-z0-9_$]/.test(ch) ? (/[A-Za-z0-9_$]/.test(src[i - 1] || '') ? prevWord + ch : ch) : '';
         prevNonSpace = ch;
       }
@@ -77,13 +81,13 @@ function stripCommentsAndStrings(src, keepStrings = false) {
 
 function findChildProcessBindings(src) {
   const namespaces = new Set();
-  const localFns = new Set();
+  const localFns = new Map();
   const addNamedList = (body, sep) => {
     const sepRe = sep === ':' ? '\\s*:\\s*' : `\\s+${sep}\\s+`;
     for (const part of body.split(',')) {
       const m = new RegExp(`^\\s*(?:([A-Za-z_$][\\w$]*)|['"]([A-Za-z_$][\\w$]*)['"])(?:${sepRe}([A-Za-z_$][\\w$]*))?\\s*$`).exec(part);
       const api = m && (m[1] || m[2]);
-      if (api && SPAWN_APIS.has(api)) localFns.add(m[3] || api);
+      if (api && SPAWN_APIS.has(api)) localFns.set(m[3] || api, api);
     }
   };
   let m;
@@ -206,59 +210,30 @@ export function auditWindowlessSpawns(rootDir) {
       const before = codeOnly.slice(Math.max(0, m.index - 64), m.index);
       const beforeRaw = codeWithStrings.slice(Math.max(0, m.index - 64), m.index);
       if (/\bfunction\s+$/.test(before)) continue;
-      const memberMatch = /([A-Za-z_$][\w$]*)\.\s*$/.exec(before);
-      const inlineRequire = /\brequire\s*\(\s*['"](?:node:)?child_process['"]\s*\)\.\s*$/.test(beforeRaw);
-      if (memberMatch) {
-        if (!SPAWN_APIS.has(fnName) || !namespaces.has(memberMatch[1])) continue;
-      } else if (inlineRequire) {
-        if (!SPAWN_APIS.has(fnName)) continue;
-      } else if (/\.\s*$/.test(before) || !localFns.has(fnName)) {
-        continue;
-      }
+      const memberMatch = /([A-Za-z_$][\w$]*)\s*(?:\?\.|\.)\s*$/.exec(before);
+      const inlineRequire = /(?<![\w$])require\s*\(\s*['"](?:node:)?child_process['"]\s*\)\s*(?:\?\.|\.)\s*$/.test(beforeRaw);
+      let origApi = '';
+      if (memberMatch) origApi = SPAWN_APIS.has(fnName) && namespaces.has(memberMatch[1]) ? fnName : '';
+      else if (inlineRequire) origApi = SPAWN_APIS.has(fnName) ? fnName : '';
+      else if (!/(?:\?\.|\.)\s*$/.test(before) && localFns.has(fnName)) origApi = localFns.get(fnName);
+      if (!origApi) continue;
       checkedCalls += 1;
-      const openIdx = codeOnly.indexOf('(', m.index);
+      const openIdx = m.index + m[0].length - 1;
       const line = src.slice(0, m.index).split(/\r?\n/).length;
       if (R012_EXEMPT.has(rel)) {
         exempt.push({ file: rel, line, call: fnName, status: 'exempt_r012' });
         continue;
       }
-      if (!hasEffectiveWindowsHide(fnName, codeOnly, codeWithStrings, openIdx)) {
-        violations.push({ file: rel, line, call: fnName });
-      }
+      if (!hasEffectiveWindowsHide(origApi, codeOnly, codeWithStrings, openIdx)) violations.push({ file: rel, line, call: fnName });
     }
   }
 
   const hideGoPath = path.join(rootDir, 'native', 'arc-gateway', 'hide_windows.go');
   const goCode = fs.existsSync(hideGoPath) ? stripCommentsAndStrings(fs.readFileSync(hideGoPath, 'utf8')) : '';
   const goHasHide = /SysProcAttr\s*\{[\s\S]*\bCreationFlags\s*:\s*(?:0x0*8000000\b|[\w.]*CREATE_NO_WINDOW\b)/.test(goCode);
-  if (!goHasHide) {
-    return {
-      ok: false,
-      state: 'fail_missing_create_no_window',
-      checkedCalls,
-      exempt,
-      violations,
-      goHasHide,
-    };
-  }
-  if (violations.length > 0) {
-    return {
-      ok: false,
-      state: 'fail_unhidden_spawn',
-      checkedCalls,
-      exempt,
-      violations,
-      goHasHide,
-    };
-  }
-  return {
-    ok: true,
-    state: 'pass',
-    checkedCalls,
-    exempt,
-    violations: [],
-    goHasHide,
-  };
+  if (!goHasHide) return { ok: false, state: 'fail_missing_create_no_window', checkedCalls, exempt, violations, goHasHide };
+  if (violations.length > 0) return { ok: false, state: 'fail_unhidden_spawn', checkedCalls, exempt, violations, goHasHide };
+  return { ok: true, state: 'pass', checkedCalls, exempt, violations: [], goHasHide };
 }
 
 function runSelfTest() {
@@ -266,65 +241,33 @@ function runSelfTest() {
   try {
     fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true });
     fs.mkdirSync(path.join(tmp, 'native', 'arc-gateway'), { recursive: true });
-    fs.writeFileSync(
-      path.join(tmp, 'scripts', 'good.mjs'),
-      "import { /* c */ spawnSync } from 'node:child_process';\nspawnSync('node', ['-v'], { ...{}, encoding: 'utf8', 'windowsHide': true });\n",
-    );
-    fs.writeFileSync(
-      path.join(tmp, 'scripts', 'good-ns.mjs'),
-      "import * as cp from 'node:child_process';\nconst reMatch = /a/.exec('a');\ncp.spawn('node', ['-v'], { encoding: 'utf8', windowsHide: true });\n",
-    );
-    fs.writeFileSync(
-      path.join(tmp, 'native', 'arc-gateway', 'hide_windows.go'),
-      'package main\nfunc hide(c *Cmd) { c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000} }\n',
-    );
+    fs.writeFileSync(path.join(tmp, 'scripts', 'good.mjs'),
+      "import { /* c */ spawnSync as exec } from 'node:child_process';\nexec(`node ${1, 2}`, ['-v'], { ...{}, encoding: 'utf8', 'windowsHide': true });\n");
+    fs.writeFileSync(path.join(tmp, 'scripts', 'good-ns.mjs'),
+      "import * as cp from 'node:child_process';\nconst reMatch = /a/.exec('a');\ncp.spawn('node', ['-v'], { encoding: 'utf8', windowsHide: true });\n");
+    fs.writeFileSync(path.join(tmp, 'native', 'arc-gateway', 'hide_windows.go'),
+      'package main\nfunc hide(c *Cmd) { c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000} }\n');
     const passRes = auditWindowlessSpawns(tmp);
     assert.equal(passRes.state, 'pass');
     assert.equal(passRes.checkedCalls, 2);
 
-    fs.writeFileSync(
-      path.join(tmp, 'scripts', 'bad-alias.mjs'),
-      "import { spawnSync as launch } from 'node:child_process';\nlaunch('node', ['-v'], { encoding: 'utf8' }); // windowsHide: true\n",
-    );
-    const failAlias = auditWindowlessSpawns(tmp);
-    assert.equal(failAlias.state, 'fail_unhidden_spawn');
-    assert.equal(failAlias.violations[0].file, 'scripts/bad-alias.mjs');
-    fs.rmSync(path.join(tmp, 'scripts', 'bad-alias.mjs'));
+    const checkBad = (rel, code, expected = 1) => {
+      const p = path.join(tmp, 'scripts', rel);
+      fs.writeFileSync(p, code);
+      const r = auditWindowlessSpawns(tmp);
+      assert.equal(r.state, 'fail_unhidden_spawn');
+      assert.equal(r.violations.length, expected);
+      assert.equal(r.violations[0].file, `scripts/${rel}`);
+      fs.rmSync(p);
+    };
+    checkBad('bad-alias.mjs', "import { spawnSync as launch } from 'node:child_process';\nlaunch('node', ['-v'], { encoding: 'utf8' }); // windowsHide: true\n");
+    checkBad('bad-ns.mjs', "import cp from 'node:child_process';\ncp.spawn('node', ['-v'], { encoding: 'utf8', note: 'windowsHide: true' });\n");
+    checkBad('bad-tpl.mjs', "import { execSync } from 'node:child_process';\nconst t='\u{1F680}',m=`v:${execSync('node -v',{encoding:'utf8'})}`;\n");
+    checkBad('bad-edge.cjs', "const { spawn: $spawn } = require('node:child_process');\nconst cp = require('node:child_process');\nif (1) /don't/;\n$spawn('node', ['-v'], { env: { windowsHide: true } });\n$spawn('node', ['-v'], { windowsHide: true, ...{} });\n$spawn('node', ['-v'], { windowsHide: true, windowsHide: false });\ncp?.spawn('node', ['-v'], {});\n", 4);
 
-    fs.writeFileSync(
-      path.join(tmp, 'scripts', 'bad-ns.mjs'),
-      "import cp from 'node:child_process';\ncp.spawn('node', ['-v'], { encoding: 'utf8', note: 'windowsHide: true' });\n",
-    );
-    const failNs = auditWindowlessSpawns(tmp);
-    assert.equal(failNs.state, 'fail_unhidden_spawn');
-    assert.equal(failNs.violations[0].file, 'scripts/bad-ns.mjs');
-    fs.rmSync(path.join(tmp, 'scripts', 'bad-ns.mjs'));
-
-    fs.writeFileSync(
-      path.join(tmp, 'scripts', 'bad-tpl-unicode.mjs'),
-      "import { execSync } from 'node:child_process';\nconst tag = '\u{1F680}';\nconst msg = `v: ${execSync('node -v', { encoding: 'utf8' })}`;\n",
-    );
-    const failTpl = auditWindowlessSpawns(tmp);
-    assert.equal(failTpl.state, 'fail_unhidden_spawn');
-    assert.equal(failTpl.violations[0].file, 'scripts/bad-tpl-unicode.mjs');
-    fs.rmSync(path.join(tmp, 'scripts', 'bad-tpl-unicode.mjs'));
-
-    fs.writeFileSync(
-      path.join(tmp, 'scripts', 'bad-regex-env.cjs'),
-      "const { spawn: launch } = require('node:child_process');\nconst re = /don't/;\nlaunch('node', ['-v'], { env: { windowsHide: true } });\nlaunch('node', ['-v'], { windowsHide: true, ...{} });\nlaunch('node', ['-v'], { windowsHide: true, windowsHide: false });\n",
-    );
-    const failRegexEnv = auditWindowlessSpawns(tmp);
-    assert.equal(failRegexEnv.state, 'fail_unhidden_spawn');
-    assert.equal(failRegexEnv.violations.length, 3);
-    fs.rmSync(path.join(tmp, 'scripts', 'bad-regex-env.cjs'));
-
-    fs.writeFileSync(
-      path.join(tmp, 'native', 'arc-gateway', 'hide_windows.go'),
-      'package main\n// c.SysProcAttr = &syscall.SysProcAttr{CreationFlags: CREATE_NO_WINDOW}\n',
-    );
-    const failGo = auditWindowlessSpawns(tmp);
-    assert.equal(failGo.state, 'fail_missing_create_no_window');
-
+    fs.writeFileSync(path.join(tmp, 'native', 'arc-gateway', 'hide_windows.go'),
+      'package main\n// c.SysProcAttr = &syscall.SysProcAttr{CreationFlags: CREATE_NO_WINDOW}\n');
+    assert.equal(auditWindowlessSpawns(tmp).state, 'fail_missing_create_no_window');
     console.log('check-spawns self-test: PASS');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
