@@ -54,6 +54,10 @@ test('G8.2 Stage-0 role router classifies 20 tasks deterministically with zero e
   const refused = routeTaskStage0({ id: 'bad', kind: 'build', grantPermission: true });
   assert.equal(refused.ok, false);
   assert.equal(refused.state, 'fail_r009_escalation');
+
+  const mixedCaseCheck = routeTaskStage0({ id: 'c-case', kind: 'check', builderFamily: 'Anthropic' });
+  assert.equal(mixedCaseCheck.ok, true);
+  assert.equal(mixedCaseCheck.family, 'google');
 });
 
 test('G8.3 propensity logger enforces 0.2 cheap, 0.05 failed_check, and 0 stop shares', () => {

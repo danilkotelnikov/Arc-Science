@@ -10,12 +10,18 @@ const R012_EXEMPT = new Set(['tools/build.mjs', 'tools/install.mjs']);
 const SPAWN_APIS = new Set(['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync']);
 const CALL_RE = /\b([A-Za-z_$][\w$]*)\s*\(/g;
 
+const REGEX_PREFIX_CHARS = new Set(['\0', '(', '[', '{', ',', ';', ':', '!', '?', '&', '|', '=', '+', '-', '*', '/', '%', '^', '~', '<', '>']);
+const REGEX_PREFIX_WORDS = new Set(['return', 'case', 'throw', 'in', 'of', 'typeof', 'void', 'delete', 'yield', 'await', 'new', 'else', 'do']);
+
 function stripCommentsAndStrings(src) {
   const out = src.split('');
   const n = src.length;
   const blank = (i) => { if (src[i] !== '\n' && src[i] !== '\r') out[i] = ' '; };
   let mode = 'code';
   let q = '';
+  let inClass = false;
+  let prevNonSpace = '\0';
+  let prevWord = '';
   const tplStack = [];
   for (let i = 0; i < n; i++) {
     const ch = src[i];
@@ -29,25 +35,44 @@ function stripCommentsAndStrings(src) {
     } else if (mode === 'str') {
       blank(i);
       if (ch === '\\') { if (i + 1 < n) { blank(i + 1); i += 1; } }
-      else if (ch === q) mode = 'code';
+      else if (ch === q) { mode = 'code'; prevNonSpace = q; prevWord = ''; }
+    } else if (mode === 'regex') {
+      blank(i);
+      if (ch === '\n' || ch === '\r') { mode = 'code'; inClass = false; prevNonSpace = '/'; prevWord = ''; }
+      else if (ch === '\\') { if (i + 1 < n && src[i + 1] !== '\n' && src[i + 1] !== '\r') { blank(i + 1); i += 1; } }
+      else if (ch === '[' && !inClass) inClass = true;
+      else if (ch === ']' && inClass) inClass = false;
+      else if (ch === '/' && !inClass) { mode = 'code'; prevNonSpace = ')'; prevWord = ''; }
     } else if (mode === 'tpl') {
       blank(i);
       if (ch === '\\') { if (i + 1 < n) { blank(i + 1); i += 1; } }
-      else if (ch === '$' && nx === '{') { blank(i + 1); i += 1; tplStack.push(1); mode = 'code'; }
-      else if (ch === '`') mode = 'code';
+      else if (ch === '$' && nx === '{') { blank(i + 1); i += 1; tplStack.push(1); mode = 'code'; prevNonSpace = '{'; prevWord = ''; }
+      else if (ch === '`') { mode = 'code'; prevNonSpace = '`'; prevWord = ''; }
     } else if (ch === '/' && nx === '/') {
       blank(i); blank(i + 1); i += 1; mode = 'line';
     } else if (ch === '/' && nx === '*') {
       blank(i); blank(i + 1); i += 1; mode = 'block';
+    } else if (ch === '/' && (REGEX_PREFIX_CHARS.has(prevNonSpace) || REGEX_PREFIX_WORDS.has(prevWord))) {
+      blank(i); inClass = false; mode = 'regex';
     } else if (ch === '\'' || ch === '"') {
       blank(i); q = ch; mode = 'str';
     } else if (ch === '`') {
       blank(i); mode = 'tpl';
-    } else if (tplStack.length > 0 && ch === '{') {
-      tplStack[tplStack.length - 1] += 1;
-    } else if (tplStack.length > 0 && ch === '}') {
-      tplStack[tplStack.length - 1] -= 1;
-      if (tplStack[tplStack.length - 1] === 0) { tplStack.pop(); blank(i); mode = 'tpl'; }
+    } else {
+      if (tplStack.length > 0 && ch === '{') {
+        tplStack[tplStack.length - 1] += 1;
+      } else if (tplStack.length > 0 && ch === '}') {
+        tplStack[tplStack.length - 1] -= 1;
+        if (tplStack[tplStack.length - 1] === 0) { tplStack.pop(); blank(i); mode = 'tpl'; continue; }
+      }
+      if (!/\s/.test(ch)) {
+        if (/[A-Za-z0-9_$]/.test(ch)) {
+          prevWord = /[A-Za-z0-9_$]/.test(src[i - 1] || '') ? prevWord + ch : ch;
+        } else {
+          prevWord = '';
+        }
+        prevNonSpace = ch;
+      }
     }
   }
   return out.join('');
@@ -57,8 +82,9 @@ function findChildProcessBindings(src) {
   const namespaces = new Set();
   const localFns = new Set();
   const addNamedList = (body, sep) => {
+    const sepRe = sep === ':' ? '\\s*:\\s*' : `\\s+${sep}\\s+`;
     for (const part of body.split(',')) {
-      const m = new RegExp(`^\\s*([A-Za-z_$][\\w$]*)(?:\\s+${sep}\\s+([A-Za-z_$][\\w$]*))?\\s*$`).exec(part);
+      const m = new RegExp(`^\\s*([A-Za-z_$][\\w$]*)(?:${sepRe}([A-Za-z_$][\\w$]*))?\\s*$`).exec(part);
       if (m && SPAWN_APIS.has(m[1])) localFns.add(m[2] || m[1]);
     }
   };
@@ -108,6 +134,36 @@ function extractCallSnippet(src, startIdx) {
   return src.slice(startIdx, startIdx + 600);
 }
 
+function hasTopLevelWindowsHide(callBody) {
+  let parenDepth = 0;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let topLevelObjChars = '';
+  for (let i = 0; i < callBody.length; i += 1) {
+    const ch = callBody[i];
+    if (ch === '(') {
+      parenDepth += 1;
+    } else if (ch === ')') {
+      parenDepth = Math.max(0, parenDepth - 1);
+    } else if (parenDepth === 1) {
+      if (ch === '[' && braceDepth === 1) {
+        bracketDepth += 1;
+      } else if (ch === ']' && bracketDepth > 0) {
+        bracketDepth = Math.max(0, bracketDepth - 1);
+      } else if (ch === '{' && bracketDepth === 0) {
+        braceDepth += 1;
+        if (braceDepth === 1) topLevelObjChars += '{';
+      } else if (ch === '}' && bracketDepth === 0) {
+        if (braceDepth === 1) topLevelObjChars += '}';
+        braceDepth = Math.max(0, braceDepth - 1);
+      } else if (braceDepth === 1 && bracketDepth === 0) {
+        topLevelObjChars += ch;
+      }
+    }
+  }
+  return /[{,]\s*windowsHide\s*:\s*true\b/.test(topLevelObjChars);
+}
+
 /** Check all JS child_process spawn sites (with explicit R012 exemptions) and Go CREATE_NO_WINDOW (G6.4/G6.6). */
 export function auditWindowlessSpawns(rootDir) {
   const files = [];
@@ -146,7 +202,7 @@ export function auditWindowlessSpawns(rootDir) {
         exempt.push({ file: rel, line, call: fnName, status: 'exempt_r012' });
         continue;
       }
-      if (!/[,{]\s*windowsHide\s*:\s*true\b/.test(callBody)) {
+      if (!hasTopLevelWindowsHide(callBody)) {
         violations.push({ file: rel, line, call: fnName });
       }
     }
@@ -232,6 +288,15 @@ function runSelfTest() {
     assert.equal(failTpl.state, 'fail_unhidden_spawn');
     assert.equal(failTpl.violations[0].file, 'scripts/bad-tpl-unicode.mjs');
     fs.rmSync(path.join(tmp, 'scripts', 'bad-tpl-unicode.mjs'));
+
+    fs.writeFileSync(
+      path.join(tmp, 'scripts', 'bad-regex-env.cjs'),
+      "const { spawn: launch } = require('node:child_process');\nconst re = /don't/;\nlaunch('node', ['-v'], { env: { windowsHide: true } });\n",
+    );
+    const failRegexEnv = auditWindowlessSpawns(tmp);
+    assert.equal(failRegexEnv.state, 'fail_unhidden_spawn');
+    assert.equal(failRegexEnv.violations[0].file, 'scripts/bad-regex-env.cjs');
+    fs.rmSync(path.join(tmp, 'scripts', 'bad-regex-env.cjs'));
 
     fs.writeFileSync(
       path.join(tmp, 'native', 'arc-gateway', 'hide_windows.go'),

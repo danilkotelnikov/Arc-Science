@@ -171,10 +171,11 @@ export function routeTaskStage0(task = {}) {
     else if (kind === 'check' || kind === 'review') role = 'checker';
   }
 
+  const builderFamily = typeof task.builderFamily === 'string' ? task.builderFamily.trim().toLowerCase() : '';
   let spec = STAGE0_ROLE_TABLE.roles[role];
-  if (task.builderFamily && spec.family === task.builderFamily && (kind === 'check' || kind === 'review' || role === 'checker')) {
-    role = task.builderFamily === 'anthropic' ? 'builder' : 'checker';
-    spec = task.builderFamily === 'anthropic'
+  if (builderFamily && spec.family === builderFamily && (kind === 'check' || kind === 'review' || role === 'checker')) {
+    role = builderFamily === 'anthropic' ? 'builder' : 'checker';
+    spec = builderFamily === 'anthropic'
       ? { role: 'checker', tier: 'T1', route: STAGE0_ROLE_TABLE.T1.primary, family: 'google' }
       : STAGE0_ROLE_TABLE.roles.checker;
   }
