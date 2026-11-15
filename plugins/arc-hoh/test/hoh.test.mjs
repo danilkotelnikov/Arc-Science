@@ -551,6 +551,53 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   assert.equal(idOnlyWebBlocked.packet.allowExit, false);
   assert.equal(idOnlyWebBlocked.packet.action, 'block_tainted');
 
+  // Aggregator providers (e.g. provider='vertex' or 'anthropic') without attested family or model return null family.
+  const provOnlyVertex = { agent: { id: 'v1', provider: 'vertex' } };
+  const provOnlyAnth = { agent: { id: 'a1', provider: 'anthropic' } };
+  const pvFile = path.join(d, 'provonly.txt');
+  await writeFile(pvFile, 'provider only test');
+  await propose.execute({ goal: 'cf-provonly', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, provOnlyVertex);
+  const frPv = await freeze.execute({ goal: 'cf-provonly', files: [pvFile] }, provOnlyVertex);
+  await gate.execute({ goal: 'cf-provonly', ...goodGate(frPv.candidate) }, provOnlyAnth);
+  const provOnlyBlocked = await decide.execute({
+    goal: 'cf-provonly',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, provOnlyAnth);
+  assert.equal(provOnlyBlocked.packet.allowExit, false);
+  assert.equal(provOnlyBlocked.packet.action, 'block_tainted');
+
+  // Malformed taint fails closed for that single call without permanently poisoning subsequent clean calls.
+  const typoGoal = 'cf-typo-taint';
+  const typoFile = path.join(d, 'typo.txt');
+  await writeFile(typoFile, 'typo non-poisoning check');
+  await propose.execute({ goal: typoGoal, hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, geminiLead);
+  const frTypo = await freeze.execute({ goal: typoGoal, files: [typoFile] }, geminiLead);
+  await gate.execute({ goal: typoGoal, ...goodGate(frTypo.candidate) }, claudeReviewer);
+  const typoBlocked = await decide.execute({
+    goal: typoGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'tool-output',
+    citations: ['file:typo.txt'],
+    checksPassed: true,
+  }, claudeReviewer);
+  assert.equal(typoBlocked.packet.allowExit, false);
+  assert.equal(typoBlocked.packet.action, 'block_secret');
+  const cleanAfterTypo = await decide.execute({
+    goal: typoGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:typo.txt'],
+    checksPassed: true,
+  }, claudeReviewer);
+  assert.equal(cleanAfterTypo.packet.allowExit, true);
+
   // Editing the frozen file invalidates the prior gate immediately (TOCTOU rehash guard).
   await writeFile(cfFile, 'mutated after gate');
   const toctouBlocked = await decide.execute({

@@ -30,14 +30,13 @@ function inferKnownFamily(id) {
   return families.size === 1 ? [...families][0] : null;
 }
 
-/** Derive runtime model family solely from host-attested family/model/provider metadata, never ids or caller args. */
+/** Derive runtime model family solely from host-attested family or model metadata, never providers, ids, or caller args. */
 function callerFamilyOf(exec) {
   const a = exec && exec.agent;
   if (!a || typeof a !== 'object') return null;
   const levels = [
     [a.family, a.session?.family],
     [a.model, a.session?.model],
-    [a.provider, a.session?.provider],
   ];
   for (const fields of levels) {
     const vals = fields.filter((v) => typeof v === 'string' && v.trim() !== '');
@@ -418,14 +417,12 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
         const routing = res.routing
           ? (overallOk ? res.routing : { ...res.routing, ok: false, outcome: 'abstain', reason: packet.reason })
           : { ok: false, outcome: 'abstain', reason: packet.reason, permissionGranted: false, autoApplied: false };
-        const hasTaintArg = Object.hasOwn(rawArgs, 'taint') && rawArgs.taint !== undefined;
-        const invalidTaintProvided = hasTaintArg && explicitTaint === null;
         const hasSecretFlag = Object.hasOwn(rawArgs, 'hasSecret') && rawArgs.hasSecret !== undefined && rawArgs.hasSecret !== false;
         const packetTaint = res.packet && TAINT_LEVELS.includes(res.packet.effectiveTaint) ? res.packet.effectiveTaint : null;
         const observedSignals = [];
         if (explicitTaint) observedSignals.push(explicitTaint);
-        if (hasSecretFlag || invalidTaintProvided) observedSignals.push('secret_risk');
-        if ((hasTaintArg || hasSecretFlag) && packetTaint) observedSignals.push(packetTaint);
+        if (hasSecretFlag) observedSignals.push('secret_risk');
+        if ((explicitTaint !== null || hasSecretFlag) && packetTaint) observedSignals.push(packetTaint);
         const persistedTaint = observedSignals.length > 0 ? joinTaint(...observedSignals) : null;
         await append({
           type: 'decide',
