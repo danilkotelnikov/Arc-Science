@@ -16,6 +16,7 @@
   },
   "files": [
     "lib",
+    "roles",
     "cordis.patch.yml",
     "README.md",
     "icon.svg",
@@ -23,7 +24,7 @@
     "docs/policy.md"
   ],
   "scripts": {
-    "test": "node --test test/hoh.test.mjs test/replay.test.mjs test/tree.test.mjs test/claims.test.mjs test/reliability.test.mjs test/budget.test.mjs"
+    "test": "node --test test/hoh.test.mjs test/replay.test.mjs test/tree.test.mjs test/claims.test.mjs test/reliability.test.mjs test/budget.test.mjs test/formal.test.mjs test/intuition.test.mjs test/crew-budget.test.mjs test/delta-ledger.test.mjs"
   },
   "arc": {
     "bundle": {

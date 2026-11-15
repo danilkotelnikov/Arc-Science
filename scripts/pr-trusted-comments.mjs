@@ -15,7 +15,7 @@ export function render(rows) {
 }
 
 function fetchAll(route) {
-  const r = spawnSync('gh', ['api', '--paginate', '--slurp', route], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync('gh', ['api', '--paginate', '--slurp', route], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, windowsHide: true });
   if (r.status !== 0) throw new Error(`gh api ${route}: ${r.stderr}`);
   return JSON.parse(r.stdout).flat();
 }

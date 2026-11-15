@@ -14,7 +14,7 @@ const walk = (dir) => {
     if (e.isDirectory()) { if (!SKIP.has(e.name)) walk(p); continue; }
     if (!/\.(mjs|cjs)$/.test(e.name)) continue;
     n++;
-    const r = spawnSync(process.execPath, ['--check', p], { encoding: 'utf8' });
+    const r = spawnSync(process.execPath, ['--check', p], { encoding: 'utf8', windowsHide: true });
     if (r.status !== 0) { bad++; console.log(`FAIL ${path.relative(root, p)}\n${r.stderr}`); }
   }
 };
