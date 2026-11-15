@@ -12,7 +12,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import vm from 'node:vm';
 import {
   routeIntuition,
   brierScore,
@@ -147,6 +146,41 @@ function runSelfTest() {
   assert.equal(goodPkt.ok, true);
   assert.equal(goodPkt.packet.allowExit, true);
 
+  assert.equal(
+    emitDecisionPacket({
+      id: 'DEC-ST-CLEAN-SOLO',
+      goal: 'clean-no-cf',
+      probability: 0.95,
+      taint: 'clean',
+      citations: ['file:tools/bench-runner.mjs'],
+      checksPassed: true,
+    }).packet.allowExit,
+    true,
+  );
+  assert.equal(
+    emitDecisionPacket({
+      id: 'DEC-ST-WEB-CF-PAIR',
+      goal: 'web-cf-with-pair',
+      probability: 0.95,
+      taint: 'untrusted_web',
+      citations: ['url:a'],
+      checksPassed: true,
+      crossFamilyVerified: true,
+      pair,
+    }).packet.allowExit,
+    true,
+  );
+  const webMissingPair = emitDecisionPacket({
+    id: 'DEC-ST-WEB-NO-PAIR',
+    goal: 'web-cf-no-pair',
+    probability: 0.95,
+    taint: 'untrusted_web',
+    citations: ['url:a'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  });
+  assert.equal(webMissingPair.packet.allowExit, false);
+  assert.equal(webMissingPair.packet.action, 'block_tainted');
   assert.equal(emitDecisionPacket({ id: 'DEC-ST-2', goal: 'no-cf', probability: 0.9, taint: 'untrusted_web', citations: ['url:a'], checksPassed: true, pair }).packet.allowExit, false);
   assert.equal(emitDecisionPacket({ id: 'DEC-ST-3', goal: 'no-chk', probability: 0.9, taint: 'clean', citations: ['file:a'], checksPassed: false, crossFamilyVerified: true }).packet.allowExit, false);
   assert.equal(emitDecisionPacket({ id: 'DEC-ST-4', goal: 'tool-no-chk', probability: 0.9, taint: 'tool_output', citations: ['file:a'], checksPassed: false }).packet.allowExit, false);
@@ -179,6 +213,9 @@ function runSelfTest() {
   assert.equal(evalClampUnitDeterministically('export function clampUnit(x) { while (x !== x) {} return x; }').ok, false);
   assert.equal(evalClampUnitDeterministically('export function clampUnit() { throw null; }').ok, false);
   assert.equal(evalClampUnitDeterministically('export function clampUnit() { return { toString() { throw new Error("trap"); } }; }').ok, false);
+  assert.equal(evalClampUnitDeterministically('Promise.resolve().then(() => { for (;;) {} }); export function clampUnit(x) { return Number.isNaN(x) || x <= 0 ? 0 : (x >= 1 ? 1 : x); }').ok, false);
+  assert.equal(evalClampUnitDeterministically('Array.prototype.map = () => [0, 0, 0, 0.5, 1, 1]; export function clampUnit() { return 99; }').ok, false);
+  assert.equal(evalClampUnitDeterministically('export function clampUnit() { throw { get message() { for (;;) {} } }; }').ok, false);
 
   console.log(`bench-runner self-test: PASS (brier=${res.brier.toFixed(4)}, recall@5=${res.shelfRecallAt5}, signal=${res.signalAccuracy})`);
 }
@@ -212,7 +249,7 @@ function extractJsonObject(text) {
   }
 }
 
-function extractCodeBlock(text, lang = 'lean') {
+function extractCodeBlock(text, lang = 'lean|lean4') {
   const s = String(text || '');
   const tagged = new RegExp('```(?:' + lang + ')\\b[ \\t]*\\r?\\n([\\s\\S]*?)```', 'i').exec(s);
   if (tagged) return tagged[1].trim();
@@ -241,37 +278,72 @@ export function isSafeLeanCandidate(leanSrc) {
   return !/(#\s*(?:exit|eval|reduce|check_failure)\b|\brun_(?:cmd|elab|meta|tac)\b|\b(?:builtin_)?initialize\b|\bimport\b|\bprelude\b|\bIO\b|\bunsafe\b|\bnative_decide\b|decide\s*\+\s*native|\bimplemented_by\b|\bextern\b|\b(?:elab|macro)(?:_rules)?\b|\bsyntax\b|\bnotation\b|\b(?:infix[lr]?|prefix|postfix)\b|\bdeclare_syntax_cat\b|\bbinder_predicate\b|\binstance\b|\bderiving\b|\battribute\b|\bset_option\b)/.test(stripped);
 }
 
+const CLAMP_ORACLE_SCRIPT = `
+'use strict';
+const fs = require('node:fs');
+const vm = require('node:vm');
+try {
+  const code = fs.readFileSync(0, 'utf8');
+  const ctx1 = vm.createContext(Object.create(null), {
+    microtaskMode: 'afterEvaluate',
+    codeGeneration: { strings: false, wasm: false },
+  });
+  const fn = vm.runInContext(
+    code + '\\n;(typeof clampUnit === "function" ? clampUnit : null)',
+    ctx1,
+    { timeout: 200, microtaskMode: 'afterEvaluate' },
+  );
+  if (typeof fn !== 'function') {
+    process.stdout.write('{"ok":false,"error":"clampUnit function not exported"}');
+    process.exit(0);
+  }
+  const ctx2 = vm.createContext(Object.create(null), {
+    microtaskMode: 'afterEvaluate',
+    codeGeneration: { strings: false, wasm: false },
+  });
+  const callScript = new vm.Script('f(x)');
+  const vectors = [Number.NaN, -1, 0, 0.5, 1, 2];
+  const expected = [0, 0, 0, 0.5, 1, 1];
+  for (let i = 0; i < vectors.length; i += 1) {
+    ctx2.f = fn;
+    ctx2.x = vectors[i];
+    const got = callScript.runInContext(ctx2, { timeout: 200, microtaskMode: 'afterEvaluate' });
+    const normGot = got === 0 ? 0 : got;
+    if (typeof normGot !== 'number' || !Object.is(normGot, expected[i])) {
+      const gotDesc = typeof got === 'number' ? String(got) : typeof got;
+      process.stdout.write(JSON.stringify({ ok: false, error: 'clampUnit(' + vectors[i] + ')=' + gotDesc + ', expected ' + expected[i] }));
+      process.exit(0);
+    }
+  }
+  process.stdout.write('{"ok":true}');
+} catch {
+  process.stdout.write('{"ok":false,"error":"evaluation threw"}');
+}
+`;
+
 export function evalClampUnitDeterministically(code) {
   if (typeof code !== 'string' || !code.trim()) return { ok: false, error: 'empty code' };
-  try {
-    const stripped = code
-      .replace(/^\s*export\s+default\s+/gm, '')
-      .replace(/^\s*export\s+(?=(?:async\s+)?function\b|const\b|let\b|var\b)/gm, '');
-    const sandbox = Object.create(null);
-    const vectors = [Number.NaN, -1, 0, 0.5, 1, 2];
-    const expected = [0, 0, 0, 0.5, 1, 1];
-    const actual = vm.runInNewContext(
-      `${stripped}\n;`
-      + 'if (typeof clampUnit !== "function") { throw new Error("clampUnit function not exported"); }\n'
-      + '[Number.NaN, -1, 0, 0.5, 1, 2].map((v) => clampUnit(v));',
-      sandbox,
-      { timeout: 200 },
-    );
-    if (!Array.isArray(actual) || actual.length !== expected.length) {
-      return { ok: false, error: 'clampUnit test vector evaluation did not return an array' };
-    }
-    for (let i = 0; i < expected.length; i += 1) {
-      const got = actual[i];
-      const want = expected[i];
-      if (typeof got !== 'number' || !Object.is(got === 0 ? 0 : got, want)) {
-        const gotDesc = typeof got === 'number' ? String(got) : typeof got;
-        return { ok: false, error: `clampUnit(${vectors[i]})=${gotDesc}, expected ${want}` };
-      }
-    }
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: typeof err?.message === 'string' ? err.message : 'evaluation threw' };
+  const stripped = code
+    .replace(/^\s*export\s+default\s+/gm, '')
+    .replace(/^\s*export\s+(?=(?:async\s+)?function\b|const\b|let\b|var\b)/gm, '');
+  const res = spawnSync(process.execPath, ['-e', CLAMP_ORACLE_SCRIPT], {
+    input: stripped,
+    encoding: 'utf8',
+    timeout: 1500,
+    killSignal: 'SIGKILL',
+    maxBuffer: 64 * 1024,
+    windowsHide: true,
+  });
+  if (res.error || res.status !== 0) {
+    return { ok: false, error: 'evaluation threw' };
   }
+  try {
+    const parsed = JSON.parse(String(res.stdout || '').trim());
+    if (parsed && typeof parsed.ok === 'boolean') return parsed;
+  } catch {
+    /* ignore malformed runner output */
+  }
+  return { ok: false, error: 'evaluation threw' };
 }
 
 function sumUsageList(list) {
@@ -289,7 +361,7 @@ function sumUsageList(list) {
 function killProcessTree(pid, child) {
   if (pid && process.platform === 'win32') {
     try {
-      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 });
     } catch {
       /* ignore taskkill race if child already exited */
     }
@@ -311,126 +383,157 @@ export async function runArcHeadless({ arcCmd = DEFAULT_ARC_CMD, provider, model
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-live-'));
   const t0 = Date.now();
   try {
-    const safeScalar = (v) => JSON.stringify(String(v));
-    const overlayLines = [
-      '- id: agent-default-model',
-      "  name: '@arc-harness/arc-agent-default-model'",
-      '  config:',
-      `    provider: ${safeScalar(provider)}`,
-      `    model: ${safeScalar(model)}`,
-    ];
-    if (reasoningEffort) overlayLines.push(`    reasoningEffort: ${safeScalar(reasoningEffort)}`);
-    const overlayPath = path.join(workDir, 'overlay.yml');
-    fs.writeFileSync(overlayPath, overlayLines.join('\n') + '\n', 'utf8');
+    let r;
+    try {
+      const safeScalar = (v) => JSON.stringify(String(v));
+      const overlayLines = [
+        '- id: agent-default-model',
+        "  name: '@arc-harness/arc-agent-default-model'",
+        '  config:',
+        `    provider: ${safeScalar(provider)}`,
+        `    model: ${safeScalar(model)}`,
+      ];
+      if (reasoningEffort) overlayLines.push(`    reasoningEffort: ${safeScalar(reasoningEffort)}`);
+      const overlayPath = path.join(workDir, 'overlay.yml');
+      fs.writeFileSync(overlayPath, overlayLines.join('\n') + '\n', 'utf8');
 
-    const env = {
-      ...process.env,
-      ARC_HOH_BRIEF: '0',
-      ARC_HOH_RETAIN: '0',
-      VERTEX_GATEWAY: process.env.VERTEX_GATEWAY || 'gateway',
-      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || 'gateway',
-      MERGE_API_KEY: process.env.MERGE_API_KEY || 'gateway',
-      RADIUM_API_KEY: process.env.RADIUM_API_KEY || 'gateway',
-    };
-    const arcArgs = ['--profile', 'headless', '--patch', overlayPath, '--json', '-'];
-    let bin = arcCmd;
-    let spawnArgs = arcArgs;
-    let verbatim = false;
-    if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(arcCmd)) {
-      const binDir = path.dirname(arcCmd);
-      const exePath = path.resolve(binDir, '..', '..', '..', '..', 'Arc Harness.exe');
-      const appAsar = path.resolve(binDir, '..', '..', '..', 'app.asar');
-      const cliJs = path.join(appAsar, 'arc', 'node_modules', '@arc-harness', 'arc-desktop-host', 'lib', 'cli.js');
-      if (fs.existsSync(exePath) && fs.existsSync(appAsar)) {
-        bin = exePath;
-        spawnArgs = ['--expose-internals', cliJs, ...arcArgs];
-        env.ELECTRON_RUN_AS_NODE = '1';
-      } else {
-        const built = buildCmdFallbackArgs(arcCmd, arcArgs);
-        if (!built.ok) {
-          return {
-            ok: false,
-            timedOut: false,
-            provider,
-            model,
-            exitCode: null,
-            spawnError: built.error,
-            errorMessage: built.error,
-            durationMs: Date.now() - t0,
-            usage: null,
-            text: '',
-          };
+      const env = {
+        ...process.env,
+        ARC_HOH_BRIEF: '0',
+        ARC_HOH_RETAIN: '0',
+        VERTEX_GATEWAY: process.env.VERTEX_GATEWAY || 'gateway',
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || 'gateway',
+        MERGE_API_KEY: process.env.MERGE_API_KEY || 'gateway',
+        RADIUM_API_KEY: process.env.RADIUM_API_KEY || 'gateway',
+      };
+      const arcArgs = ['--profile', 'headless', '--patch', overlayPath, '--json', '-'];
+      let bin = arcCmd;
+      let spawnArgs = arcArgs;
+      let verbatim = false;
+      if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(arcCmd)) {
+        const binDir = path.dirname(arcCmd);
+        const exePath = path.resolve(binDir, '..', '..', '..', '..', 'Arc Harness.exe');
+        const appAsar = path.resolve(binDir, '..', '..', '..', 'app.asar');
+        const cliJs = path.join(appAsar, 'arc', 'node_modules', '@arc-harness', 'arc-desktop-host', 'lib', 'cli.js');
+        if (fs.existsSync(exePath) && fs.existsSync(appAsar)) {
+          bin = exePath;
+          spawnArgs = ['--expose-internals', cliJs, ...arcArgs];
+          env.ELECTRON_RUN_AS_NODE = '1';
+        } else {
+          const built = buildCmdFallbackArgs(arcCmd, arcArgs);
+          if (!built.ok) {
+            return {
+              ok: false,
+              timedOut: false,
+              provider,
+              model,
+              exitCode: null,
+              spawnError: built.error,
+              errorMessage: built.error,
+              durationMs: Date.now() - t0,
+              usage: null,
+              text: '',
+            };
+          }
+          bin = 'cmd.exe';
+          spawnArgs = built.args;
+          verbatim = true;
         }
-        bin = 'cmd.exe';
-        spawnArgs = built.args;
-        verbatim = true;
       }
-    }
 
-    const r = await new Promise((resolve) => {
-      const child = spawn(bin, spawnArgs, {
-        cwd: workDir,
-        windowsHide: true,
-        windowsVerbatimArguments: verbatim,
-        detached: process.platform !== 'win32',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env,
-      });
-      const MAX_BUF = 64 * 1024 * 1024;
-      const outChunks = [];
-      const errChunks = [];
-      let totalBytes = 0;
-      let timedOut = false;
-      let bufferExceeded = false;
-      let spawnErr = null;
-      let settled = false;
-
-      const finish = (exitCode) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({
-          exitCode,
-          timedOut,
-          bufferExceeded,
-          spawnErr,
-          stdout: Buffer.concat(outChunks).toString('utf8'),
-          stderr: Buffer.concat(errChunks).toString('utf8'),
+      r = await new Promise((resolve) => {
+        const child = spawn(bin, spawnArgs, {
+          cwd: workDir,
+          windowsHide: true,
+          windowsVerbatimArguments: verbatim,
+          detached: process.platform !== 'win32',
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env,
         });
-      };
+        const MAX_BUF = 64 * 1024 * 1024;
+        const outChunks = [];
+        const errChunks = [];
+        let totalBytes = 0;
+        let timedOut = false;
+        let bufferExceeded = false;
+        let spawnErr = null;
+        let settled = false;
+        let killGraceTimer = null;
 
-      const onData = (chunks) => (buf) => {
-        if (bufferExceeded || settled) return;
-        if (totalBytes + buf.length > MAX_BUF) {
-          bufferExceeded = true;
+        const finish = (exitCode) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (killGraceTimer) clearTimeout(killGraceTimer);
+          resolve({
+            exitCode,
+            timedOut,
+            bufferExceeded,
+            spawnErr,
+            stdout: Buffer.concat(outChunks).toString('utf8'),
+            stderr: Buffer.concat(errChunks).toString('utf8'),
+          });
+        };
+
+        const armKillGrace = () => {
+          if (killGraceTimer || settled) return;
+          killGraceTimer = setTimeout(() => {
+            try { child.stdout?.destroy(); } catch { /* ignore */ }
+            try { child.stderr?.destroy(); } catch { /* ignore */ }
+            finish(null);
+          }, 5000);
+          killGraceTimer.unref?.();
+        };
+
+        const onData = (chunks) => (buf) => {
+          if (bufferExceeded || settled) return;
+          if (totalBytes + buf.length > MAX_BUF) {
+            bufferExceeded = true;
+            killProcessTree(child.pid, child);
+            armKillGrace();
+            return;
+          }
+          totalBytes += buf.length;
+          chunks.push(buf);
+        };
+
+        child.stdout.on('data', onData(outChunks));
+        child.stderr.on('data', onData(errChunks));
+        child.stdin.on('error', () => { /* ignore EPIPE if child exits early */ });
+        child.on('error', (err) => {
+          spawnErr = err;
+          finish(null);
+        });
+        child.on('close', (code) => finish(code));
+
+        const timer = setTimeout(() => {
+          if (settled) return;
+          timedOut = true;
           killProcessTree(child.pid, child);
-          return;
+          armKillGrace();
+        }, timeoutMs);
+
+        try {
+          child.stdin.end(String(prompt || ''), 'utf8');
+        } catch {
+          /* ignore */
         }
-        totalBytes += buf.length;
-        chunks.push(buf);
-      };
-
-      child.stdout.on('data', onData(outChunks));
-      child.stderr.on('data', onData(errChunks));
-      child.stdin.on('error', () => { /* ignore EPIPE if child exits early */ });
-      child.on('error', (err) => {
-        spawnErr = err;
-        finish(null);
       });
-      child.on('close', (code) => finish(code));
-
-      const timer = setTimeout(() => {
-        if (settled) return;
-        timedOut = true;
-        killProcessTree(child.pid, child);
-      }, timeoutMs);
-
-      try {
-        child.stdin.end(String(prompt || ''), 'utf8');
-      } catch {
-        /* ignore */
-      }
-    });
+    } catch (err) {
+      const msg = err && typeof err.message === 'string' ? err.message : 'spawn failed';
+      return {
+        ok: false,
+        timedOut: false,
+        provider,
+        model,
+        exitCode: null,
+        spawnError: msg,
+        errorMessage: msg,
+        durationMs: Date.now() - t0,
+        usage: null,
+        text: '',
+      };
+    }
 
     const durationMs = Date.now() - t0;
     const events = [];
@@ -502,7 +605,7 @@ export async function runLiveArcValidation({ arcCmd = DEFAULT_ARC_CMD } = {}) {
     'Return ONLY a single raw JSON object (no markdown fences) for schema "cammut.decision/0" with exact values computed as follows:',
     '- Inputs: prior q=0.6, cfp=1, cfn=1, candidate check {id:"unit-test", s:0.9, e:0.9, cost:0.05}, taint="untrusted_web", crossFamilyOk=false, checksPassed=true, citations=["doi:10.1038/s41586-021-03819-2"].',
     '- Compute expectedVoi = voi(q, c) = min(1-q, q) - [P(pass)*min(1-q+, q+) + (1-P(pass))*min(1-q-, q-)].',
-    '- Required JSON keys: schema ("cammut.decision/0"), id ("DEC-V1"), goal ("v1-voi-gate"), action ("block_tainted"), allowExit (false), effectiveTaint ("untrusted_web"), outcome ("run_one_cheap_check"), calibratedProbability (0.6), expectedVoi (number), netValue (number), citations (["doi:10.1038/s41586-021-03819-2"]), checkEvidence ({"ok":true,"crossFamilyOk":false}), permissionGranted (false), autoApplied (false).',
+    '- Required JSON keys: schema ("cammut.decision/0"), id ("DEC-V1"), goal ("v1-voi-gate"), action ("block_tainted"), allowExit (false), effectiveTaint ("untrusted_web"), outcome ("run_one_cheap_check"), calibratedProbability (0.6), expectedVoi (number), netValue (number), requiresHumanYes (false), pairOk (true), citations (["doi:10.1038/s41586-021-03819-2"]), checkEvidence ({"ok":true,"crossFamilyOk":false}), permissionGranted (false), autoApplied (false).',
   ].join('\n');
 
   const v1Results = [];
@@ -516,6 +619,8 @@ export async function runLiveArcValidation({ arcCmd = DEFAULT_ARC_CMD } = {}) {
     const pass = r.ok
       && val.ok
       && pkt.allowExit === false
+      && pkt.requiresHumanYes === false
+      && pkt.pairOk === true
       && pkt.action === 'block_tainted'
       && pkt.outcome === 'run_one_cheap_check'
       && pkt.effectiveTaint === 'untrusted_web'
@@ -559,7 +664,7 @@ export async function runLiveArcValidation({ arcCmd = DEFAULT_ARC_CMD } = {}) {
     let targetBound = false;
     let harnessBound = false;
     if (r.ok) {
-      const leanSrc = extractCodeBlock(r.text, 'lean');
+      const leanSrc = extractCodeBlock(r.text, 'lean|lean4');
       staticSafetyOk = isSafeLeanCandidate(leanSrc);
       const candDecls = extractPublicTheorems(stripLeanCommentsAndStrings(leanSrc));
       targetBound = candDecls.includes('min_add_right');
@@ -746,6 +851,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
       flagErr = `Unexpected argument: ${a}`;
       break;
     }
+  }
+  if (!flagErr && outPath && !args.includes('--live-arc')) {
+    flagErr = '--out requires --live-arc';
   }
   if (flagErr) {
     console.error('Usage error: ' + flagErr);
