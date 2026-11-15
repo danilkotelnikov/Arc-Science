@@ -399,85 +399,139 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   assert.equal(unknownFamWebBlocked.packet.allowExit, false);
   assert.equal(unknownFamWebBlocked.packet.action, 'block_tainted');
 
-  // Fresh goal with cross-family gate agents (with underscore separator), propose-after-gate, TOCTOU, and non-poisoning omitted taint.
-  const cfFile = path.join(d, 'cf.txt');
-  await writeFile(cfFile, 'cross family candidate');
-  await propose.execute({ goal: 'cf', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, lead);
-  const cfFr = await freeze.execute({ goal: 'cf', files: [cfFile] }, lead);
-  const cfGate = await gate.execute({
-    goal: 'cf',
-    ...goodGate(cfFr.candidate),
+  // Free-text builder/reviewer strings cannot spoof cross-family when runtime exec lacks distinct known families.
+  const spoofFile = path.join(d, 'spoof.txt');
+  await writeFile(spoofFile, 'spoof candidate');
+  await propose.execute({ goal: 'spoof', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, lead);
+  const spFr = await freeze.execute({ goal: 'spoof', files: [spoofFile] }, lead);
+  await gate.execute({
+    goal: 'spoof',
+    ...goodGate(spFr.candidate),
     builder: 'gemini-4-argon',
     reviewer: 'claude_sonnet_5_5',
   }, reviewer);
+  const spoofWebBlocked = await decide.execute({
+    goal: 'spoof',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, reviewer);
+  assert.equal(spoofWebBlocked.packet.allowExit, false);
+  assert.equal(spoofWebBlocked.packet.action, 'block_tainted');
+
+  // Fresh goal with runtime exec cross-family metadata, propose-after-gate, TOCTOU, non-poisoning omitted taint, re-freeze monotonicity, and spaced goal key.
+  const geminiLead = { agent: { id: 'lead-gemini', provider: 'vertex', model: 'google/gemini-4-argon' } };
+  const claudeReviewer = { agent: { id: 'rev-claude', provider: 'anthropic', model: 'claude-sonnet-5-5' } };
+  const cfGoal = 'cf spaced ';
+  const cfFile = path.join(d, 'cf.txt');
+  await writeFile(cfFile, 'cross family candidate');
+  await propose.execute({ goal: cfGoal, hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, geminiLead);
+  const cfFr = await freeze.execute({ goal: cfGoal, files: [cfFile] }, geminiLead);
+  const cfGate = await gate.execute({ goal: cfGoal, ...goodGate(cfFr.candidate) }, claudeReviewer);
   assert.equal(cfGate.verdict, 'accepted');
 
   // Omitted taint fails closed on that call only without poisoning subsequent clean calls on the same goal.
   const omittedTaint = await decide.execute({
-    goal: 'cf',
+    goal: cfGoal,
     probability: 0.95,
     minTier: 'T1',
     citations: ['file:cf.txt'],
     checksPassed: true,
-  }, reviewer);
+  }, claudeReviewer);
   assert.equal(omittedTaint.packet.allowExit, false);
   assert.equal(omittedTaint.packet.action, 'block_secret');
 
   const cfCleanAfterOmit = await decide.execute({
-    goal: 'cf',
+    goal: cfGoal,
     probability: 0.95,
     minTier: 'T1',
     taint: 'clean',
     citations: ['file:cf.txt'],
     checksPassed: true,
-  }, reviewer);
+  }, claudeReviewer);
   assert.equal(cfCleanAfterOmit.packet.allowExit, true);
 
   const cfWebAllowed = await decide.execute({
-    goal: 'cf',
+    goal: cfGoal,
     probability: 0.95,
     minTier: 'T1',
     taint: 'untrusted_web',
     citations: ['url:verified'],
     checksPassed: true,
     crossFamilyVerified: true,
-  }, reviewer);
+  }, claudeReviewer);
   assert.equal(cfWebAllowed.ok, true);
   assert.equal(cfWebAllowed.packet.allowExit, true);
   assert.equal(cfWebAllowed.packet.checkEvidence.crossFamilyOk, true);
 
+  // Re-freezing preserves prior untrusted_web taint monotonically (no reset at freeze boundary).
+  const cfFrRefreeze = await freeze.execute({ goal: cfGoal, files: [cfFile] }, geminiLead);
+  await gate.execute({ goal: cfGoal, ...goodGate(cfFrRefreeze.candidate) }, claudeReviewer);
+  const cleanAfterRefreeze = await decide.execute({
+    goal: cfGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:cf.txt'],
+    checksPassed: true,
+    crossFamilyVerified: false,
+  }, claudeReviewer);
+  assert.equal(cleanAfterRefreeze.packet.effectiveTaint, 'untrusted_web');
+  assert.equal(cleanAfterRefreeze.packet.allowExit, false);
+
+  // Explicit secret_risk on an R009-blocked call is persisted to goal history.
+  await decide.execute({
+    goal: cfGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'secret_risk',
+    grantPermission: true,
+    citations: ['file:cf.txt'],
+    checksPassed: true,
+  }, claudeReviewer);
+  const afterBlockedSecret = await decide.execute({
+    goal: cfGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:cf.txt'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, claudeReviewer);
+  assert.equal(afterBlockedSecret.packet.effectiveTaint, 'secret_risk');
+  assert.equal(afterBlockedSecret.packet.allowExit, false);
+
   // Editing the frozen file invalidates the prior gate immediately (TOCTOU rehash guard).
   await writeFile(cfFile, 'mutated after gate');
   const toctouBlocked = await decide.execute({
-    goal: 'cf',
+    goal: cfGoal,
     probability: 0.95,
     minTier: 'T1',
     taint: 'untrusted_web',
     citations: ['url:verified'],
     checksPassed: true,
     crossFamilyVerified: true,
-  }, reviewer);
+  }, claudeReviewer);
   assert.equal(toctouBlocked.packet.allowExit, false);
-  assert.equal(toctouBlocked.packet.action, 'block_tainted');
 
   // Adding a newer hoh_propose after an accepted gate also invalidates gate freshness until a new gate is accepted.
-  const cfFr2 = await freeze.execute({ goal: 'cf', files: [cfFile] }, lead);
-  const cfGate2 = await gate.execute({
-    goal: 'cf',
-    ...goodGate(cfFr2.candidate),
-    builder: 'gemini-4-argon',
-    reviewer: 'claude_sonnet_5_5',
-  }, reviewer);
-  assert.equal(cfGate2.verdict, 'accepted');
-  await propose.execute({ goal: 'cf', hypothesis: 'h2', boundary: 'b', checks: ['node test.js', 'node extra.js'], probes: ['empty'] }, lead);
+  const cfFile2 = path.join(d, 'cf2.txt');
+  await writeFile(cfFile2, 'fresh goal v2');
+  await propose.execute({ goal: 'cf2', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, geminiLead);
+  const cfFr2 = await freeze.execute({ goal: 'cf2', files: [cfFile2] }, geminiLead);
+  await gate.execute({ goal: 'cf2', ...goodGate(cfFr2.candidate) }, claudeReviewer);
+  await propose.execute({ goal: 'cf2', hypothesis: 'h2', boundary: 'b', checks: ['node test.js', 'node extra.js'], probes: ['empty'] }, geminiLead);
   const staleAfterPropose = await decide.execute({
-    goal: 'cf',
+    goal: 'cf2',
     probability: 0.95,
     minTier: 'T1',
     taint: 'clean',
-    citations: ['file:cf.txt'],
+    citations: ['file:cf2.txt'],
     checksPassed: true,
-  }, reviewer);
+  }, claudeReviewer);
   assert.equal(staleAfterPropose.packet.allowExit, false);
   assert.equal(staleAfterPropose.packet.action, 'block_unverified');
 

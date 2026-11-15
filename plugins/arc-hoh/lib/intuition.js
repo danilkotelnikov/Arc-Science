@@ -604,7 +604,11 @@ export function crossFitPlatt2Fold(records = [], options = {}) {
   };
 }
 
-/** Bayes-optimal decision router maximizing net VOI and asymmetric positive-action loss (spec 13.15). */
+/**
+ * Bayes-optimal decision router maximizing net VOI and scale-invariant positive-action loss (spec 13.15).
+ * Check costs must use the same loss units as cfp and cfn; positiveLoss is normalized by 0.5 * (cfp + cfn)
+ * before thresholding against answerLossThreshold so uniform scaling of (cfp, cfn) preserves routing decisions.
+ */
 export function routeOptimalDecision(input = {}) {
   const esc = enforceConsentNonEscalation(input);
   if (!esc.ok) {
@@ -629,6 +633,7 @@ export function routeOptimalDecision(input = {}) {
   const cfn = typeof inp.cfn === 'number' && Number.isFinite(inp.cfn) && inp.cfn > 0 ? inp.cfn : 1;
   const baseLoss = loss(q, cfp, cfn);
   const positiveLoss = cfp * (1 - q);
+  const normalizedPositiveLoss = positiveLoss / (0.5 * (cfp + cfn));
   const answerCutoff = cfp / (cfp + cfn);
   const canVerify = inp.canVerify !== false;
   const needsOperator = normalizeFailClosedFlag(inp.needsOperator) || normalizeFailClosedFlag(inp.requiresHumanYes);
@@ -665,7 +670,7 @@ export function routeOptimalDecision(input = {}) {
   } else if (bestCheck && bestCheck.netValue > 0) {
     outcome = bestCheck.cost <= cheapCostThreshold ? 'run_one_cheap_check' : 'open_tree_hoh';
     reason = bestCheck.cost <= cheapCostThreshold ? 'positive_net_voi_cheap_check' : 'positive_net_voi_tree_check';
-  } else if (positiveLoss <= answerLossThreshold && q >= answerCutoff) {
+  } else if (normalizedPositiveLoss <= answerLossThreshold && q >= answerCutoff) {
     outcome = 'answer_now';
     reason = 'calibrated_loss_below_threshold';
   } else if (!canVerify || q < Math.min(0.25, answerCutoff)) {
@@ -694,14 +699,14 @@ export function routeOptimalDecision(input = {}) {
 }
 
 const ROUTE_SPECS = Object.freeze([
-  { route: 'gemini-4-hydrogen', family: 'google', tier: 'T0', tierRank: 0, cost: 1, formal: false, legacy: false },
-  { route: 'claude-haiku-5-5', family: 'anthropic', tier: 'T0', tierRank: 0, cost: 1.5, formal: false, legacy: false },
-  { route: 'gemini-4-argon', family: 'google', tier: 'T1', tierRank: 1, cost: 3, formal: false, legacy: false },
-  { route: 'claude-sonnet-5-5', family: 'anthropic', tier: 'T1', tierRank: 1, cost: 4, formal: false, legacy: false },
-  { route: 'gemini-4-carbon', family: 'google', tier: 'T2', tierRank: 2, cost: 8, formal: true, legacy: false },
-  { route: 'claude-opus-5-5', family: 'anthropic', tier: 'T2', tierRank: 2, cost: 10, formal: true, legacy: false },
-  { route: 'claude-fable-5-2', family: 'anthropic', tier: 'T3', tierRank: 3, cost: 12, formal: true, legacy: false },
-  { route: 'gemini-3.8-flash', family: 'google', tier: 'T0', tierRank: 0, cost: 0.8, formal: false, legacy: true, year: 2026, legacyReason: '2026 legacy fallback' },
+  Object.freeze({ route: 'gemini-4-hydrogen', family: 'google', tier: 'T0', tierRank: 0, cost: 1, formal: false, legacy: false }),
+  Object.freeze({ route: 'claude-haiku-5-5', family: 'anthropic', tier: 'T0', tierRank: 0, cost: 1.5, formal: false, legacy: false }),
+  Object.freeze({ route: 'gemini-4-argon', family: 'google', tier: 'T1', tierRank: 1, cost: 3, formal: false, legacy: false }),
+  Object.freeze({ route: 'claude-sonnet-5-5', family: 'anthropic', tier: 'T1', tierRank: 1, cost: 4, formal: false, legacy: false }),
+  Object.freeze({ route: 'gemini-4-carbon', family: 'google', tier: 'T2', tierRank: 2, cost: 8, formal: true, legacy: false }),
+  Object.freeze({ route: 'claude-opus-5-5', family: 'anthropic', tier: 'T2', tierRank: 2, cost: 10, formal: true, legacy: false }),
+  Object.freeze({ route: 'claude-fable-5-2', family: 'anthropic', tier: 'T3', tierRank: 3, cost: 12, formal: true, legacy: false }),
+  Object.freeze({ route: 'gemini-3.8-flash', family: 'google', tier: 'T0', tierRank: 0, cost: 0.8, formal: false, legacy: true, year: 2026, legacyReason: '2026 legacy fallback' }),
 ]);
 
 const TIER_RANK = Object.freeze({ T0: 0, T1: 1, T2: 2, T3: 3 });
@@ -809,8 +814,8 @@ export function pairBuilderAndChecker(input = {}) {
   return {
     ok: true,
     state: 'pass',
-    builder,
-    checker,
+    builder: { ...builder },
+    checker: { ...checker },
     crossFamilyCheck,
     estimatedRelativeCost: builder.cost + checker.cost,
     permissionGranted: false,
@@ -820,23 +825,32 @@ export function pairBuilderAndChecker(input = {}) {
 
 export const TAINT_LEVELS = Object.freeze(['clean', 'tool_output', 'untrusted_web', 'secret_risk']);
 
+function resolveKnownRouteSpec(route) {
+  if (typeof route !== 'string') return null;
+  const trimmed = route.trim();
+  if (!trimmed) return null;
+  return ROUTE_SPECS.find((s) => s.route === trimmed) || null;
+}
+
+function normalizeFamilyName(family) {
+  return typeof family === 'string' ? family.trim().toLowerCase() : '';
+}
+
 function isVerifiedCrossFamilyPair(pair) {
-  return Boolean(
-    pair
-    && typeof pair === 'object'
-    && !Array.isArray(pair)
-    && pair.ok === true
-    && pair.crossFamilyCheck?.ok === true
-    && typeof pair.builder?.family === 'string'
-    && typeof pair.checker?.family === 'string'
-    && pair.builder.family.trim() !== ''
-    && pair.checker.family.trim() !== ''
-    && pair.builder.family !== pair.checker.family
-    && typeof pair.builder?.route === 'string'
-    && pair.builder.route.trim() !== ''
-    && typeof pair.checker?.route === 'string'
-    && pair.checker.route.trim() !== '',
-  );
+  if (!pair || typeof pair !== 'object' || Array.isArray(pair)) return false;
+  if (pair.ok !== true || pair.crossFamilyCheck?.ok !== true) return false;
+  const bSpec = resolveKnownRouteSpec(pair.builder?.route);
+  const cSpec = resolveKnownRouteSpec(pair.checker?.route);
+  if (!bSpec || !cSpec || bSpec.family === cSpec.family) return false;
+  if (normalizeFamilyName(pair.builder?.family) !== bSpec.family) return false;
+  if (normalizeFamilyName(pair.checker?.family) !== cSpec.family) return false;
+  if (normalizeFamilyName(pair.crossFamilyCheck?.builderFamily) !== bSpec.family) return false;
+  if (normalizeFamilyName(pair.crossFamilyCheck?.checkerFamily) !== cSpec.family) return false;
+  if (pair.builder?.formal !== undefined && pair.builder.formal !== bSpec.formal) return false;
+  if (pair.checker?.formal !== undefined && pair.checker.formal !== cSpec.formal) return false;
+  if (pair.builder?.tierRank !== undefined && pair.builder.tierRank !== bSpec.tierRank) return false;
+  if (pair.checker?.tierRank !== undefined && pair.checker.tierRank !== cSpec.tierRank) return false;
+  return true;
 }
 
 /** Least upper bound (supremum) on the information-flow taint lattice; empty or unknown/null entries fail closed to secret_risk. */
@@ -955,7 +969,7 @@ export function emitDecisionPacket(input = {}) {
   const checkerRoute = pairValid
     ? (hasPair ? input.pair.checker.route : (typeof input.checkerRoute === 'string' && input.checkerRoute.trim() ? input.checkerRoute.trim() : null))
     : null;
-  const packet = {
+  let packet = {
     schema: 'cammut.decision/0',
     id: typeof input.id === 'string' && input.id.trim() ? input.id.trim() : 'DEC-0001',
     goal: typeof input.goal === 'string' && input.goal.trim() ? input.goal.trim() : 'unspecified',
@@ -982,6 +996,18 @@ export function emitDecisionPacket(input = {}) {
     issuedAt: input.issuedAt || new Date().toISOString(),
   };
   const validation = validateDecisionPacket(packet);
+  if (!validation.ok || !pairValid) {
+    packet = {
+      ...packet,
+      allowExit: false,
+      action: !pairValid ? 'block_pairing' : 'block_invalid_packet',
+      outcome: packet.outcome === 'answer_now' ? 'abstain' : packet.outcome,
+      route: pairValid ? packet.route : null,
+      checkerRoute: pairValid ? packet.checkerRoute : null,
+      pairOk: pairValid,
+      reason: validation.errors.join('; ') || packet.reason || 'invalid decision packet',
+    };
+  }
   return { ok: validation.ok && pairValid, packet, exitGuard, routing, validation };
 }
 
@@ -1032,10 +1058,10 @@ export function validateDecisionPacket(packet) {
         if (packet.checkEvidence?.crossFamilyOk !== true) {
           errors.push('allowExit=true under untrusted_web requires crossFamilyOk');
         }
-        const hasBuilderRoute = typeof packet.route === 'string' && packet.route.trim().length > 0;
-        const hasCheckerRoute = typeof packet.checkerRoute === 'string' && packet.checkerRoute.trim().length > 0;
-        if (!hasBuilderRoute || !hasCheckerRoute || packet.route.trim() === packet.checkerRoute.trim()) {
-          errors.push('allowExit=true under untrusted_web requires distinct builder and checker routes');
+        const bSpec = resolveKnownRouteSpec(packet.route);
+        const cSpec = resolveKnownRouteSpec(packet.checkerRoute);
+        if (!bSpec || !cSpec || bSpec.family === cSpec.family) {
+          errors.push('allowExit=true under untrusted_web requires known routes from distinct model families');
         }
       }
     }

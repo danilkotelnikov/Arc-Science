@@ -317,6 +317,10 @@ test('routeOptimalDecision maximizes net VOI, respects asymmetric loss, and bloc
   assert.equal(largeCv.scaler.usable, true);
   const usedLarge = routeOptimalDecision({ probability: 0.95, plattScaler: largeCv.scaler });
   assert.equal(usedLarge.scalerApplied, true);
+
+  // Uniform scaling of loss weights keeps answer_now invariant.
+  assert.notEqual(routeOptimalDecision({ id: 'coin-small', probability: 0.5, cfp: 0.1, cfn: 0.1 }).outcome, 'answer_now');
+  assert.equal(routeOptimalDecision({ id: 'sure-large', probability: 0.95, cfp: 10, cfn: 10 }).outcome, 'answer_now');
 });
 
 test('pairBuilderAndChecker enforces cross-family pairing, strict tiers/capabilities, and R006 failures', () => {
@@ -515,4 +519,32 @@ test('taint lattice, exit guard, and cammut.decision/0 packet enforce strict fai
   assert.equal(validateDecisionPacket({ ...webWithPair.packet, requiresHumanYes: true }).ok, false);
   assert.equal(validateDecisionPacket({ ...webWithPair.packet, pairOk: false }).ok, false);
   assert.equal(validateDecisionPacket({ ...webWithPair.packet, checkerRoute: webWithPair.packet.route }).ok, false);
+
+  // Mislabeled family tags on real same-family routes must fail closed, including case/whitespace variants.
+  const spoofedFam = emitDecisionPacket({
+    id: 'DEC-109',
+    goal: 'web-spoofed-family-label',
+    probability: 0.95,
+    taint: 'untrusted_web',
+    citations: ['url:a'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+    pair: {
+      ok: true,
+      crossFamilyCheck: { ok: true, builderFamily: 'a', checkerFamily: 'b' },
+      builder: { family: 'a', route: 'claude-opus-5-5' },
+      checker: { family: 'b', route: 'claude-fable-5-2' },
+    },
+  });
+  assert.equal(spoofedFam.ok, false);
+  assert.equal(spoofedFam.packet.allowExit, false);
+  assert.equal(spoofedFam.packet.action, 'block_pairing');
+  assert.equal(spoofedFam.packet.outcome, 'abstain');
+
+  // Mutating returned pair objects must not corrupt future ROUTE_SPECS lookups.
+  const cleanPair = pairBuilderAndChecker({ minTier: 'T1' });
+  cleanPair.checker.family = 'mutated';
+  const freshPair = pairBuilderAndChecker({ minTier: 'T1' });
+  assert.equal(freshPair.ok, true);
+  assert.equal(freshPair.checker.family, 'anthropic');
 });
