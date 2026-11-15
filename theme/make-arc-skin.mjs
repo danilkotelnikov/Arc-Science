@@ -23,7 +23,7 @@ if (!fs.existsSync(archive)) {
   const tmpArchiveName = '_legacy-skins-20261101.tmp.tar.xz';
   const tmpArchive = path.join(here, tmpArchiveName);
   fs.rmSync(tmpArchive, { force: true });
-  const r = spawnSync('tar', ['-cJf', tmpArchiveName, '-C', path.dirname(plugin), 'arc-theme'], {
+  const r = spawnSync('tar', ['-cJf', tmpArchiveName, '-C', path.resolve(path.dirname(plugin)), 'arc-theme'], {
     cwd: here,
     encoding: 'utf8',
     windowsHide: true,

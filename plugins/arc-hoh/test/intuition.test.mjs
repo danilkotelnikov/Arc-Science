@@ -275,6 +275,26 @@ test('routeOptimalDecision maximizes net VOI, respects asymmetric loss, and bloc
   const blocked = routeOptimalDecision({ grantPermission: true, probability: 0.95 });
   assert.equal(blocked.ok, false);
   assert.equal(blocked.rule, 'R009');
+
+  assert.equal(routeOptimalDecision({ probability: 0.95, requiresHumanYes: true }).outcome, 'ask_operator');
+  assert.equal(routeOptimalDecision({ probability: 0.95, needsOperator: 'true' }).outcome, 'ask_operator');
+
+  const tinyPlatt = fitPlattScaler([{ probability: 0.5, actual: 1 }, { probability: 0.5, actual: 0 }]);
+  assert.equal(tinyPlatt.usable, false);
+  const ignoredTiny = routeOptimalDecision({ probability: 0.5, plattScaler: { ...tinyPlatt, b: 2.5, converged: true } });
+  assert.equal(ignoredTiny.scalerApplied, false);
+  assert.equal(ignoredTiny.calibratedProbability, 0.5);
+  assert.notEqual(ignoredTiny.outcome, 'answer_now');
+
+  const twentySamples = Array.from({ length: 24 }, (_, idx) => ({
+    probability: idx % 2 === 0 ? 0.9 : 0.1,
+    actual: idx % 2 === 0 ? 1 : 0,
+  }));
+  const largeCv = crossFitPlatt2Fold(twentySamples);
+  assert.equal(largeCv.usable, true);
+  assert.equal(largeCv.scaler.usable, true);
+  const usedLarge = routeOptimalDecision({ probability: 0.95, plattScaler: largeCv.scaler });
+  assert.equal(usedLarge.scalerApplied, true);
 });
 
 test('pairBuilderAndChecker enforces cross-family pairing, strict tiers/capabilities, and R006 failures', () => {
@@ -386,4 +406,39 @@ test('taint lattice, exit guard, and cammut.decision/0 packet enforce strict fai
   assert.equal(validateDecisionPacket({ ...okRes.packet, allowExit: false }).ok, false);
   assert.equal(validateDecisionPacket({ ...okRes.packet, citations: [''] }).ok, false);
   assert.equal(validateDecisionPacket({ ...okRes.packet, permissionGranted: true }).ok, false);
+  assert.equal(validateDecisionPacket({ ...okRes.packet, outcome: 'bogus_outcome' }).ok, false);
+  assert.equal(validateDecisionPacket({ ...okRes.packet, netValue: Number.NaN }).ok, false);
+  assert.equal(validateDecisionPacket({ ...okRes.packet, outcome: 'ask_operator' }).ok, false);
+
+  assert.equal(decideExitAction({ taint: 'clean', taints: 'untrusted_web', citations: ['file:ok.js'], checksPassed: true }).effectiveTaint, 'secret_risk');
+  assert.equal(decideExitAction({ taint: 'clean', hasSecret: 1, citations: ['file:ok.js'], checksPassed: true }).action, 'block_secret');
+  assert.equal(decideExitAction({ taint: 'clean', needsOperator: 'true', citations: ['file:ok.js'], checksPassed: true }).action, 'ask_operator');
+  assert.equal(decideExitAction({ taint: 'clean', pair: {}, citations: ['file:ok.js'], checksPassed: true }).action, 'block_pairing');
+
+  const badPairPkt = emitDecisionPacket({
+    id: 'DEC-104',
+    goal: 'malformed-pair',
+    probability: 0.95,
+    taint: 'clean',
+    citations: ['file:ok.js'],
+    checksPassed: true,
+    pair: {},
+  });
+  assert.equal(badPairPkt.ok, false);
+  assert.equal(badPairPkt.packet.allowExit, false);
+  assert.equal(badPairPkt.packet.action, 'block_pairing');
+
+  const nonAnswerDeferred = emitDecisionPacket({
+    id: 'DEC-105',
+    goal: 'defer-check',
+    probability: 0.6,
+    checks: [{ id: 'c1', s: 0.9, e: 0.9, cost: 0.05 }],
+    taint: 'clean',
+    citations: ['file:ok.js'],
+    checksPassed: true,
+  });
+  assert.equal(nonAnswerDeferred.ok, true);
+  assert.equal(nonAnswerDeferred.packet.allowExit, false);
+  assert.equal(nonAnswerDeferred.packet.outcome, 'run_one_cheap_check');
+  assert.equal(nonAnswerDeferred.packet.action, 'run_one_cheap_check');
 });
