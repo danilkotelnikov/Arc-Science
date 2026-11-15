@@ -2,6 +2,7 @@
 // 5 seats, 3-pane Research session, Decision map, 30-day consent grants, Prose detector, live
 // Cammut/HoH/Molecullage read routes) and 7 proposal-only update loops with ~/.arc state preservation
 // (Slices U1, U2, Phase 1b.2-1b.3, Phase 4.1-4.8 N7a-N7e).
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -293,6 +294,8 @@ function readLocalMolecullageSafe(molecullageRoot) {
     section: String(s.section || ''),
     licenceClass: String(s.licenceClass || ''),
     use: String(s.use || '').slice(0, 120),
+    url: String(s.url || ''),
+    doi: String(s.doi || ''),
   }));
   return {
     available: sources.length > 0,
@@ -395,7 +398,8 @@ async function recallCammutMemory(gatewayHost, query, opts = {}, fetchImpl) {
   if (!fetchImpl) return { ok: false, error: 'Fetch unavailable', items: [] };
   try {
     const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(2500) : undefined;
-    const tags = Array.isArray(opts.tags) && opts.tags.length > 0 ? opts.tags : ['project:Omniverso'];
+    const defaultTag = process.env.ARC_PROJECT_TAG || 'project:arc-harness';
+    const tags = Array.isArray(opts.tags) && opts.tags.length > 0 ? opts.tags : [defaultTag];
     const budget = typeof opts.budget === 'string' && opts.budget ? opts.budget : 'low';
     const res = await fetchImpl(`http://${gatewayHost}/cammut/mcp`, {
       method: 'POST',
@@ -446,17 +450,59 @@ async function recallCammutMemory(gatewayHost, query, opts = {}, fetchImpl) {
   }
 }
 
+async function retainCammutMemory(gatewayHost, content, opts = {}, fetchImpl) {
+  if (!fetchImpl || !content) return { ok: false, error: 'Fetch unavailable' };
+  try {
+    const sig = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(1500) : undefined;
+    const tags = Array.isArray(opts.tags) && opts.tags.length ? opts.tags : [process.env.ARC_PROJECT_TAG || 'project:arc-harness', 'source:arc-console'];
+    const pl = { jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name: 'cammut_call', arguments: { tool: 'hindsight/retain', arguments: { content: sStr(content, 600), context: sStr(opts.context || 'arc-console review', 120), tags } } } };
+    const res = await fetchImpl(`http://${gatewayHost}/cammut/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify(pl), signal: sig });
+    const p = parseMcpTextBody(await res.text()), e = p?.error || (p?.result?.isError ? { message: 'rpc-tool-error' } : null);
+    return { ok: Boolean(res.ok && p && !e), error: e ? sStr(e.message || 'rpc-error', 120) : (!p ? 'Invalid MCP reply' : null) };
+  } catch (err) { return { ok: false, error: sStr(err?.message || 'Cammut retain failed', 120) }; }
+}
+const CONSOLE_TARGET_TYPES = new Set(['session', 'branch', 'claim', 'evidence', 'source', 'release']);
+const VERDICT_MAP = Object.freeze(Object.assign(Object.create(null), { approve: 'Approve', revise: 'Revise', hold: 'Hold' }));
+const VALID_VERDICT_LABELS = new Set(['Approve', 'Revise', 'Hold']);
+const sStr = (v, n) => redactSecretText(String(v ?? '')).trim().slice(0, n);
+const normTarget = (tt, tid, fb) => ({ tType: CONSOLE_TARGET_TYPES.has(String(tt || 'session').trim().toLowerCase()) ? String(tt || 'session').trim().toLowerCase() : 'session', tId: sStr(tid || fb, 120) || String(fb).slice(0, 120) });
+const capMap = (o, max = 200) => { const ks = Object.keys(o); if (ks.length > max) for (const k of ks.slice(0, ks.length - max)) delete o[k]; };
+function readConsoleNotesSafe(f) {
+  const empty = { notes: [], verdicts: Object.create(null), molecullagePins: [] }, raw = f ? readJsonSafe(f) : null;
+  if (!raw || typeof raw !== 'object') return empty;
+  const isR = (x) => x && typeof x === 'object' && typeof x.id === 'string', verdicts = Object.create(null);
+  if (raw.verdicts && typeof raw.verdicts === 'object' && !Array.isArray(raw.verdicts)) {
+    for (const [k, v] of Object.entries(raw.verdicts)) if (v && typeof v === 'object' && !Array.isArray(v) && VALID_VERDICT_LABELS.has(v.verdict)) verdicts[k] = v;
+  }
+  capMap(verdicts, 200);
+  return { notes: Array.isArray(raw.notes) ? raw.notes.filter(isR).slice(-200) : [], verdicts, molecullagePins: Array.isArray(raw.molecullagePins) ? raw.molecullagePins.filter(isR).slice(-200) : [] };
+}
+
 export function createResearchSessionStore(opts = {}) {
   const nowFn = typeof opts.now === 'function' ? opts.now : () => Date.now();
   const gatewayHost = typeof opts.gatewayHost === 'string' && opts.gatewayHost.trim() ? opts.gatewayHost.trim() : '127.0.0.1:7424';
   const arcHome = typeof opts.arcHome === 'string' && opts.arcHome.trim() ? opts.arcHome : path.join(os.homedir(), '.arc');
   const molecullageRoot = typeof opts.molecullageRoot === 'string' && opts.molecullageRoot.trim() ? opts.molecullageRoot : path.join(os.homedir(), 'Molecullage');
   const liveEnabled = opts.live !== false;
-  const fetchImpl = typeof opts.fetch === 'function'
-    ? opts.fetch
-    : (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null);
+  const notesFile = typeof opts.notesFile === 'string' && opts.notesFile.trim() ? opts.notesFile.trim()
+    : (typeof opts.arcHome === 'string' && opts.arcHome.trim() ? path.join(opts.arcHome.trim(), 'console-notes.json')
+      : (opts.persist === false || !liveEnabled ? '' : path.join(arcHome, 'console-notes.json')));
+  const fetchImpl = typeof opts.fetch === 'function' ? opts.fetch : (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null);
   const state = createC2ConsoleState();
   const sessionId = typeof opts.sessionId === 'string' && opts.sessionId.trim() ? opts.sessionId.trim() : 'session-arc-science-01';
+  const persisted = (opts.notesFile || opts.arcHome || opts.persist === true || liveEnabled) ? readConsoleNotesSafe(notesFile) : { notes: [], verdicts: {}, molecullagePins: [] };
+  const notes = [...persisted.notes], verdicts = { ...persisted.verdicts }, molecullagePins = [...persisted.molecullagePins];
+
+  function saveConsoleNotesSafe() {
+    if (!notesFile) return false;
+    try {
+      fs.mkdirSync(path.dirname(notesFile), { recursive: true });
+      const tmp = `${notesFile}.tmp-${process.pid}-${crypto.randomUUID()}`;
+      fs.writeFileSync(tmp, `${JSON.stringify({ notes, verdicts, molecullagePins }, null, 2)}\n`, 'utf8');
+      fs.renameSync(tmp, notesFile);
+      return true;
+    } catch { return false; }
+  }
 
   const seatAssignments = Array.isArray(opts.seatAssignments)
     ? opts.seatAssignments.map((s) => ({ ...s }))
@@ -530,6 +576,9 @@ export function createResearchSessionStore(opts = {}) {
     { id: 'ev-1', atMs: nowFn(), kind: 'session-open', summary: 'Opened Research session head' },
     { id: 'ev-2', atMs: nowFn(), kind: 'tree-eval', summary: 'Scored 3 branches by support and value of information' },
   ];
+  let evSeq = timeline.length;
+  const nextEvId = () => `ev-${++evSeq}`;
+  const pushTimeline = (ev) => { timeline.push({ id: nextEvId(), ...ev }); if (timeline.length > 200) timeline.splice(0, timeline.length - 200); };
 
   const decisions = branches.map((b) => ({
     branchId: b.id,
@@ -602,8 +651,7 @@ export function createResearchSessionStore(opts = {}) {
     }
     const target = state.ladderRungs.find((r) => r.id === rungId);
     target.active = Boolean(enabled);
-    timeline.push({
-      id: `ev-${timeline.length + 1}`,
+    pushTimeline({
       atMs: nowFn(),
       kind: 'operator-switch',
       summary: `${rungId} set to ${target.active ? 'on' : 'off'}`,
@@ -620,20 +668,54 @@ export function createResearchSessionStore(opts = {}) {
       return { ok: false, error: `Unknown branch: ${String(branchId)}` };
     }
     branch.decision = action;
+    const cleanNote = redactSecretText(String(note || '').trim()).slice(0, 600);
+    if (cleanNote) {
+      branch.note = cleanNote;
+    }
     const entry = {
       branchId: branch.id,
       action,
-      note: String(note || '').trim(),
+      note: cleanNote,
       recordedAtMs: nowFn(),
     };
     decisions.push(entry);
-    timeline.push({
-      id: `ev-${timeline.length + 1}`,
+    pushTimeline({
       atMs: entry.recordedAtMs,
       kind: 'decision',
       summary: `${branch.title}: ${action}`,
     });
     return { ok: true, decision: entry, branch: { ...branch } };
+  }
+
+  async function recordReview({ tType, tId, cleanText, cleanVerdict, kind, summary, retainText, retainCtx, retain }) {
+    const atMs = nowFn(), key = `${tType}:${tId}`; let entry = null;
+    if (cleanText) { entry = { id: `note-${crypto.randomUUID()}`, atMs, targetType: tType, targetId: tId, text: cleanText, verdict: cleanVerdict, author: 'owner' }; notes.push(entry); if (notes.length > 200) notes.splice(0, notes.length - 200); }
+    if (cleanVerdict) { verdicts[key] = { targetType: tType, targetId: tId, verdict: cleanVerdict, note: cleanText, atMs, author: 'owner' }; capMap(verdicts, 200); }
+    const saved = saveConsoleNotesSafe(); pushTimeline({ atMs, kind, summary });
+    const retained = retain === true && liveEnabled && fetchImpl ? await retainCammutMemory(gatewayHost, retainText, { context: retainCtx }, fetchImpl) : { ok: false, skipped: true };
+    return { ok: true, saved, key, entry, retained, notes: notes.slice(-50).map((n) => ({ ...n })), verdicts: { ...verdicts } };
+  }
+  async function addNote({ targetType = 'session', targetId = '', text = '', note = '', verdict = '', retain = false } = {}) {
+    const cleanText = sStr(text || note, 600); if (!cleanText) return { ok: false, error: 'Note text is required' };
+    const { tType, tId } = normTarget(targetType, targetId, sessionId), vRaw = String(verdict ?? '').trim().toLowerCase();
+    if (vRaw && !VERDICT_MAP[vRaw]) return { ok: false, error: `Unknown review verdict: ${String(verdict).slice(0, 40)}` };
+    const cleanVerdict = vRaw ? VERDICT_MAP[vRaw] : '', r = await recordReview({ tType, tId, cleanText, cleanVerdict, kind: 'owner-note', summary: `Note on ${tId}: ${cleanText.slice(0, 64)}`, retainText: `[arc-console] ${tType}:${tId}${cleanVerdict ? ` (${cleanVerdict})` : ''} - ${cleanText}`, retainCtx: `arc-console ${tType} note`, retain });
+    return { ok: true, saved: r.saved, note: { ...r.entry }, notes: r.notes, verdicts: r.verdicts, retained: r.retained };
+  }
+  async function annotateVerdict({ targetType = 'branch', targetId = '', verdict = '', note = '', retain = false } = {}) {
+    const cleanVerdict = VERDICT_MAP[String(verdict ?? '').trim().toLowerCase()];
+    if (!cleanVerdict) return { ok: false, error: `Unknown review verdict: ${String(verdict).slice(0, 40)}` };
+    const { tType, tId } = normTarget(targetType, targetId, sessionId), cleanText = sStr(note, 600), r = await recordReview({ tType, tId, cleanText, cleanVerdict, kind: 'owner-verdict', summary: `${tType}:${tId} marked ${cleanVerdict}`, retainText: `[arc-console] ${tType}:${tId} verdict ${cleanVerdict}${cleanText ? `: ${cleanText}` : ''}`, retainCtx: `arc-console ${tType} verdict`, retain });
+    return { ok: true, saved: r.saved, key: r.key, review: { ...verdicts[r.key] }, verdicts: r.verdicts, notes: r.notes, retained: r.retained };
+  }
+  function toggleMolecullagePin({ source, sourceId, id, title = '', name = '', section = '', doi = '', url = '' } = {}) {
+    const srcObj = source && typeof source === 'object' ? source : {}, targetId = sStr(srcObj.id || sourceId || id, 120);
+    if (!targetId) return { ok: false, error: 'Source id is required' };
+    const idx = molecullagePins.findIndex((p) => p.id === targetId); let pinned = false;
+    if (idx >= 0) molecullagePins.splice(idx, 1);
+    else { const rawUrl = sStr(srcObj.url || url, 200); molecullagePins.push({ id: targetId, name: sStr(srcObj.name || name || title || targetId, 120), section: sStr(srcObj.section || section, 60), doi: sStr(srcObj.doi || doi, 120), url: /^https?:\/\/\S+$/i.test(rawUrl) ? rawUrl : '', pinnedAtMs: nowFn() }); if (molecullagePins.length > 200) molecullagePins.splice(0, molecullagePins.length - 200); pinned = true; }
+    const saved = saveConsoleNotesSafe(); pushTimeline({ atMs: nowFn(), kind: 'molecullage-pin', summary: `${pinned ? 'Pinned' : 'Unpinned'} source ${targetId}` });
+    return { ok: true, saved, pinned, id: targetId, pins: molecullagePins.map((p) => ({ ...p })) };
   }
 
   function applyConsent({ appId, scopes = [], mode = 'Grant for 30 days' } = {}) {
@@ -649,7 +731,7 @@ export function createResearchSessionStore(opts = {}) {
       const existing = grants.get(key);
       if (existing) existing.grant.revoke();
       grants.delete(key);
-      timeline.push({ id: `ev-${timeline.length + 1}`, atMs: nowMs, kind: 'consent-revoke', summary: `Revoked ${key}` });
+      pushTimeline({ atMs: nowMs, kind: 'consent-revoke', summary: `Revoked ${key}` });
       return { ok: true, appId: key, mode: 'Revoke', active: false };
     }
     const ttlDays = mode === 'Single action' ? 0 : 30;
@@ -660,7 +742,7 @@ export function createResearchSessionStore(opts = {}) {
       ttlDays: ttlDays === 0 ? 1 / 1440 : 30,
     });
     grants.set(key, { grant, mode });
-    timeline.push({ id: `ev-${timeline.length + 1}`, atMs: nowMs, kind: 'consent-grant', summary: `${mode} for ${key}` });
+    pushTimeline({ atMs: nowMs, kind: 'consent-grant', summary: `${mode} for ${key}` });
     return {
       ok: true,
       appId: key,
@@ -696,8 +778,7 @@ export function createResearchSessionStore(opts = {}) {
 
   function rewriteProseDraft() {
     proseText = rewriteFormulaicProse(proseText);
-    timeline.push({
-      id: `ev-${timeline.length + 1}`,
+    pushTimeline({
       atMs: nowFn(),
       kind: 'prose-rewrite',
       summary: 'Rewrote draft to plain direct sentences locally',
@@ -767,8 +848,7 @@ export function createResearchSessionStore(opts = {}) {
     const res = await recallCammutMemory(gatewayHost, q, searchOpts, fetchImpl);
     liveState.memoryResults = res.items || [];
     liveState.memoryError = res.error || null;
-    timeline.push({
-      id: `ev-${timeline.length + 1}`,
+    pushTimeline({
       atMs: nowFn(),
       kind: 'memory-recall',
       summary: `Recalled ${liveState.memoryResults.length} shared memory notes for "${q.slice(0, 48)}"`,
@@ -882,7 +962,13 @@ export function createResearchSessionStore(opts = {}) {
         frozen: liveState.molecullageData.frozen,
         query: liveState.molecullageQuery,
         items: liveState.molecullageMatches,
+        pins: molecullagePins.map((p) => ({ ...p })),
       },
+      notes: {
+        ok: true,
+        items: notes.slice(-50).map((n) => ({ ...n })),
+      },
+      verdicts: { ...verdicts },
       prose: {
         ok: true,
         text: proseText,
@@ -903,6 +989,9 @@ export function createResearchSessionStore(opts = {}) {
     toggleSettings,
     setOperatorSwitch,
     recordDecision,
+    addNote,
+    annotateVerdict,
+    toggleMolecullagePin,
     applyConsent,
     listActiveGrants,
     updateProseDraft,
@@ -924,9 +1013,17 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
     routePath = u.pathname;
     if (reqOrPath.method === 'POST' && typeof reqOrPath.text === 'function') {
       const raw = await reqOrPath.text();
-      payload = raw ? JSON.parse(raw) : {};
+      if (raw && raw.trim()) {
+        try {
+          const parsed = JSON.parse(raw);
+          payload = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        } catch {
+          return { ok: false, status: 400, error: 'Invalid JSON body' };
+        }
+      }
     }
   }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) payload = {};
 
   const clean = routePath.replace(/^\/+/, '');
   if (clean === 'api/arc-core/session/head') return store.head();
@@ -946,11 +1043,19 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
     if (payload.kind === 'connector') return store.selectConnector(payload.connector);
     if (payload.kind === 'settings') return store.toggleSettings(payload.open);
     if (payload.kind === 'decision') return store.recordDecision(payload);
+    if (payload.kind === 'note' || payload.kind === 'comment') return store.addNote(payload);
+    if (payload.kind === 'verdict') return store.annotateVerdict(payload);
+    if (payload.kind === 'molecullage-pin') return store.toggleMolecullagePin(payload);
     if (payload.kind === 'consent') return store.applyConsent(payload);
     if (payload.kind === 'prose') return store.updateProseDraft(payload.text);
     if (payload.kind === 'prose-rewrite') return store.rewriteProseDraft();
     if (payload.kind === 'operator-switch') return store.setOperatorSwitch(payload.rungId, payload.enabled);
-    if (payload.kind === 'memory-search' && typeof store.searchMemory === 'function') return store.searchMemory(payload.query, payload);
+    if (payload.kind === 'memory-search' && typeof store.searchMemory === 'function') {
+      return store.searchMemory(payload.query, {
+        ...(Number.isInteger(payload.limit) ? { limit: payload.limit } : {}),
+        ...(Array.isArray(payload.tags) ? { tags: payload.tags.slice(0, 10) } : {}),
+      });
+    }
     if (payload.kind === 'molecullage-search' && typeof store.searchMolecullage === 'function') return store.searchMolecullage(payload.query);
     if (payload.kind === 'refresh' && typeof store.refreshLive === 'function') {
       await store.refreshLive(true);

@@ -741,7 +741,7 @@ test('the prompt sections carry the contract and the brief inside a tag', () => 
 });
 
 // 0.3.0: the Trace tab reads the ledger through traceView
-import { traceView } from '../lib/trace.js';
+import { traceView, handleTraceAction, registerTraceRoutes } from '../lib/trace.js';
 
 test('traceView lists the newest events first with a short summary, and reports the chain', async () => {
   const d = await tmp(); const f = path.join(d, 'ledger.jsonl');
@@ -790,7 +790,12 @@ test('trace client renders Decision packet cards with exit-ready and hold pills'
   const vm = await import('node:vm');
   const clientCode = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8');
   let captured = null;
-  const h = (tag, props, ...children) => ({ tag, props: props || {}, children: children.flat() });
+  const h = (type, props, ...children) => ({
+    tag: type,
+    type,
+    props: props || {},
+    children: children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false),
+  });
   const sandbox = {
     window: { __ModuleLoader__: { load: (def) => { captured = def; } } },
     fetch: async () => ({ ok: true, json: async () => ({}) }),
@@ -842,4 +847,70 @@ test('trace client renders Decision packet cards with exit-ready and hold pills'
   const holdCard = findByAttr(holdTree, 'data-hoh-decision-card', 'true');
   assert.ok(holdCard && holdCard.children.some((c) => textOf(c) === 'DEC-0001'));
   assert.ok(!holdText.includes('\u00b7'));
+});
+
+test('0.4.0: handleTraceAction appends owner reviews, redacts secrets, retains non-blockingly, and links to traceView', async () => {
+  const d = await tmp(), f = path.join(d, 'ledger.jsonl'), tr = (b, o = {}) => handleTraceAction(b, { ledgerPath: f, ...o }), eq = assert.equal;
+  await appendLedger(f, { type: 'propose', goal: 'dock', hypothesis: 'h', checks: ['c1'] });
+  await appendLedger(f, { type: 'decide', goal: 'dock', id: 'DEC-10', action: 'ship_pr', allowExit: true, outcome: 'ready', effectiveTaint: 'trusted_local', gateSeq: 1 });
+  const bad = await tr({ action: 'unknown' }), miss = await tr({ action: 'verdict', targetSeq: 999, verdict: 'approve' });
+  eq(bad.ok, false); eq(bad.status, 400); eq((await tr({ action: 'comment', targetSeq: 2, note: '   ' })).ok, false); eq(miss.ok, false); eq(miss.status, 404);
+  const rc = [], tok = 'sk-' + 'secret1234567890abcdef';
+  const rCmt = await tr({ action: 'comment', targetSeq: 2, note: `Key ${tok}`, retain: true }, { env: { ARC_HOH_PROJECT_TAG: 'project:arc-harness' }, retain: async (p) => (rc.push(p), true) });
+  eq(rCmt.ok, true); eq(rCmt.retained, true); eq(rCmt.entry.caller, 'owner'); assert.ok(!rCmt.entry.note.includes(tok)); eq(rc.length, 1); assert.ok(rc[0].tags.includes('hoh:review'));
+  const rVer = await tr({ action: 'verdict', targetSeq: 2, verdict: 'revise', note: 'Add scale', retain: true }, { retainTimeoutMs: 25, retain: () => new Promise(() => {}) });
+  eq(rVer.ok, true); eq(rVer.retained, false); eq((await verifyLedger(f)).ok, true);
+  const trace = await traceView(f, () => 'brief'), dec = trace.items.find((x) => x.seq === 2);
+  eq(trace.chain.ok, true); eq(dec.reviewVerdict, 'revise'); eq(dec.reviewNotes.length, 2); eq(trace.reviews.bySeq['2'].verdict, 'revise');
+  const gA = await tr({ action: 'comment', goal: 'ga', note: 'Same' }), gB = await tr({ action: 'comment', goal: 'gb', note: 'Same' });
+  assert.notEqual(gA.seq, gB.seq);
+  eq((await tr({ action: 'retain', targetSeq: 2, verdict: 'revise', note: 'Add scale', retain: true }, { retain: async () => true })).retained, true);
+  await writeFile(f, (await readFile(f, 'utf8')) + JSON.stringify({ seq: 99, ts: '2026-11-15T00:00:00Z', type: 'gate', goal: 'bad', verdict: 'unmet', reasons: 'err' }) + '\n');
+  assert.ok((await traceView(f, () => 'brief')).items.some((x) => x.seq === 99));
+  await rm(d, { recursive: true });
+});
+
+test('0.4.0: registerTraceRoutes mounts /api/arc-hoh/action and /trace', async () => {
+  const routes = [], d = await tmp(), f = path.join(d, 'ledger.jsonl');
+  registerTraceRoutes({ inject: (deps, fn) => { if (deps.includes('connection')) fn({ get: (s) => s === 'connection' ? { fetch: { register: (c) => (routes.push(c), () => {}) } } : null, effect: (m) => m() }); } }, { brief: 'b' }, { ledgerPath: f });
+  assert.deepEqual(routes.map((r) => r.path), ['/api/arc-hoh/action', '/api/arc-hoh/trace']);
+  const j = await (await routes[0].fetch(new Request('http://127.0.0.1/api/arc-hoh/action', { method: 'POST', body: JSON.stringify({ action: 'comment', goal: 't', note: 'Saved' }) }))).json();
+  assert.equal(j.ok, true); assert.equal(j.entry.note, 'Saved');
+  await rm(d, { recursive: true });
+});
+
+test('0.4.0: trace client filters, edits, pauses polling while typing, pushes prompt to composer', async () => {
+  const vm = await import('node:vm'), code = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8'), eq = assert.equal;
+  assert.ok(!code.includes('\u00b7') && !code.includes('\u2022'));
+  assert.doesNotMatch(code, /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|(?<!var\(--)\b(blue|violet|purple|indigo)\b/i);
+  let cap, clip = '', cVal = '', evN = 0, acts = [], iv = 0, cl = 0;
+  const cEl = { tagName: 'TEXTAREA', value: '', disabled: false, closest: () => null, getBoundingClientRect: () => ({ width: 300, height: 60 }), dispatchEvent: (e) => { if (e.type === 'input') evN += 1; }, focus: () => {} };
+  Object.defineProperty(cEl, 'value', { get: () => cVal, set: (v) => { cVal = v; }, configurable: true });
+  const pEl = { tagName: 'INPUT', value: 'internal', closest: (s) => (s === '[data-arc-plugin-pane="true"]' ? {} : null) };
+  const h = (type, props, ...ch) => ({ tag: type, type, props: props || {}, children: ch.flat(Infinity).filter((c) => c != null && c !== false) });
+  vm.runInNewContext(code, {
+    window: { __ModuleLoader__: { load: (def) => { cap = def; } } }, navigator: { clipboard: { writeText: (s) => ((clip = s), Promise.resolve()) } },
+    document: { querySelectorAll: () => [pEl, cEl] }, Event: class { constructor(type, opts) { this.type = type; this.opts = opts; } },
+    fetch: async (u, init) => u === 'api/arc-hoh/action' ? (acts.push(init?.body ? JSON.parse(init.body) : {}), { ok: true, json: async () => ({ ok: true, retained: false }) }) : { ok: true, json: async () => ({ ok: true, chain: { ok: true, entries: 2, badAt: 0 }, brief: 'Brief', items: [{ seq: 2, ts: '2026-11-15T10:05:00Z', type: 'decide', goal: 'dock', decision: { id: 'DEC-2', action: 'ship_pr', allowExit: true, outcome: 'ready', effectiveTaint: 'trusted_local', gateSeq: 1 }, summary: 'DEC-2' }, { seq: 1, ts: '2026-11-15T10:00:00Z', type: 'gate', goal: 'blk', summary: 'blocked: fail' }] }) },
+    setInterval: () => ++iv, clearInterval: () => { cl += 1; },
+  });
+  let states = [], si = 0, effects = [];
+  const plug = cap.factory((id) => id === 'react' ? { createElement: h, Fragment: 'fragment', useState: (i0) => { const k = si++; if (!(k in states)) states[k] = typeof i0 === 'function' ? i0() : i0; return [states[k], (v) => { states[k] = typeof v === 'function' ? v(states[k]) : v; }]; }, useEffect: (fn, deps) => effects.push({ fn, deps }) } : {});
+  const t = (k, p = {}) => String(plug.en[k] || k).replace(/\{(\w+)\}/g, (_, n) => (p[n] ?? ''));
+  const sItems = [{ seq: 1, type: 'gate', goal: 'a', summary: 'blocked: fail' }, { seq: 2, type: 'decide', goal: 'b', decision: { id: 'DEC-1', allowExit: true, outcome: 'ready' }, reviewVerdict: 'approve', summary: 'ok' }];
+  eq(plug.filterItems(sItems, 'all', '').length, 2); eq(plug.filterItems(sItems, 'decisions', '').length, 1); eq(plug.filterItems(sItems, 'blocked', '').length, 1); eq(plug.filterItems(sItems, 'needs-review', '').length, 1); eq(plug.filterItems(sItems, 'all', 'DEC-1').length, 1);
+  let clk; const all = (n) => (!n || typeof n !== 'object' ? [] : [n, ...(n.children || []).flatMap(all)]);
+  const nList = all(plug.Item({ it: sItems[1], t, commentDraft: 'Verify', onVerdict: (_it, v, note) => { clk = { v, note }; } }));
+  nList.find((n) => n.props?.['data-hoh-verdict'] === 'approve').props.onClick(); assert.deepEqual(clk, { v: 'approve', note: 'Verify' });
+  const chatBtn = nList.find((n) => n.props?.['data-hoh-use-chat'] === '2'); chatBtn.props.onClick();
+  assert.ok(cVal.includes('DEC-1') && cVal.includes('Verify')); eq(clip, ''); eq(evN, 1); eq(pEl.value, 'internal');
+  cEl.getBoundingClientRect = () => ({ width: 0, height: 0 }); chatBtn.props.onClick(); assert.ok(clip.includes('DEC-1'));
+  const Pane = plug.makePane(t), ren = () => { si = 0; effects = []; const rr = (n) => (!n || typeof n !== 'object' ? n : typeof n.type === 'function' ? rr(n.type(n.props)) : { ...n, children: (n.children || []).map(rr) }); return rr(Pane()); };
+  ren(); for (const ef of effects) { const clean = ef.fn(); if (typeof clean === 'function') clean(); }
+  await new Promise((r) => setTimeout(r, 10));
+  const pNodes = all(ren()), sIn = pNodes.find((n) => n.props?.['data-hoh-search'] === 'true'); assert.ok(sIn);
+  sIn.props.onFocus(); assert.ok(all(ren()).some((n) => n.props?.['data-hoh-polling-paused'] === 'true'));
+  pNodes.find((n) => n.props?.['data-hoh-verdict'] === 'hold').props.onClick();
+  await new Promise((r) => setTimeout(r, 10));
+  eq(acts[0].action, 'verdict'); eq(acts[0].verdict, 'hold'); assert.ok(iv >= 1 && cl >= 1);
 });
