@@ -78,7 +78,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
       if (!Array.isArray(args.checks) || args.checks.length === 0) throw new Error('hoh_propose needs at least one acceptance check');
       if (!Array.isArray(args.probes) || args.probes.length === 0) throw new Error('hoh_propose needs at least one probe');
       const { seq } = await appendLedger(file(), {
-        type: 'propose', goal: args.goal, caller: callerOf(exec), hypothesis: clip(args.hypothesis), boundary: clip(args.boundary),
+        type: 'propose', goal: args.goal, caller: callerOf(exec), callerFamily: callerFamilyOf(exec), hypothesis: clip(args.hypothesis), boundary: clip(args.boundary),
         checks: args.checks.map((c) => clip(c, 300)), digests: args.checks.map(checkDigest), probes: args.probes.map((c) => clip(c, 300)),
       });
       return { seq };
@@ -309,15 +309,43 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
           && gateRow.caller !== ''
           && freezeRow.caller !== gateRow.caller,
         );
+        const proposeRows = await goalEvents(ledgerPath, goalKey, 'propose');
+        const freezeRows = await goalEvents(ledgerPath, goalKey, 'freeze');
         const bFam = inferKnownFamily(freezeRow?.callerFamily);
         const rFam = inferKnownFamily(gateRow?.callerFamily);
-        const crossFamilyKnown = Boolean(bFam && rFam && bFam !== rFam);
+        const gateBuilderFam = inferKnownFamily(gateRow?.builder);
+        const gateReviewerFam = inferKnownFamily(gateRow?.reviewer);
+        const priorProposes = gateRow
+          ? proposeRows.filter((p) => Number.isInteger(p?.seq) && p.seq < gateRow.seq)
+          : [];
+        const sameCandidateFreezes = freezeRow
+          ? freezeRows.filter((f) => Number.isInteger(f?.seq) && f.seq <= freezeRow.seq && stripSha(f.candidate) === stripSha(freezeRow.candidate))
+          : [];
+        const crossFamilyKnown = Boolean(
+          rFam
+          && bFam && bFam !== rFam
+          && priorProposes.length > 0
+          && priorProposes.every((p) => {
+            const pf = inferKnownFamily(p?.callerFamily);
+            return Boolean(pf && pf !== rFam);
+          })
+          && sameCandidateFreezes.length > 0
+          && sameCandidateFreezes.every((f) => {
+            const ff = inferKnownFamily(f?.callerFamily);
+            return Boolean(ff && ff !== rFam);
+          })
+          && (!gateBuilderFam || gateBuilderFam !== rFam)
+          && (!gateReviewerFam || gateReviewerFam === rFam),
+        );
         const derivedChecksPassed = rawArgs.checksPassed === true && gateAcceptedAndFresh;
         const derivedCrossFamily = rawArgs.crossFamilyVerified === true && gateAcceptedAndFresh && crossFamilyKnown;
 
-        const explicitTaint = typeof rawArgs.taint === 'string' && TAINT_LEVELS.includes(rawArgs.taint.trim())
-          ? rawArgs.taint.trim()
+        const taintProvided = Object.hasOwn(rawArgs, 'taint') && rawArgs.taint !== undefined;
+        const normalizedTaint = typeof rawArgs.taint === 'string' ? rawArgs.taint.trim().toLowerCase() : null;
+        const explicitTaint = taintProvided && normalizedTaint !== null && TAINT_LEVELS.includes(normalizedTaint)
+          ? normalizedTaint
           : null;
+        const invalidTaintProvided = taintProvided && explicitTaint === null;
         const priorTaints = [];
         for (const d of priorDecides) {
           if (!d) continue;
@@ -421,8 +449,8 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
         const packetTaint = res.packet && TAINT_LEVELS.includes(res.packet.effectiveTaint) ? res.packet.effectiveTaint : null;
         const observedSignals = [];
         if (explicitTaint) observedSignals.push(explicitTaint);
-        if (hasSecretFlag) observedSignals.push('secret_risk');
-        if ((explicitTaint !== null || hasSecretFlag) && packetTaint) observedSignals.push(packetTaint);
+        if (hasSecretFlag || invalidTaintProvided) observedSignals.push('secret_risk');
+        if ((explicitTaint !== null || hasSecretFlag || invalidTaintProvided) && packetTaint) observedSignals.push(packetTaint);
         const persistedTaint = observedSignals.length > 0 ? joinTaint(...observedSignals) : null;
         await append({
           type: 'decide',
