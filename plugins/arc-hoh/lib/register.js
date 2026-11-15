@@ -1,7 +1,50 @@
 // arc-hoh 0.2.0 (2026-10-31): the tools and prompt sections. No arc imports here, so node can test it.
-import { appendLedger, checkDigest, clip, goalEvents, hashFiles, lastEvent, ledgerFile, optedOut, verifyLedger, decideGate } from './gates.js';
+import { appendLedger, checkDigest, clip, goalEvents, hashFiles, lastEvent, ledgerFile, optedOut, verifyLedger, decideGate, withLedger } from './gates.js';
 import { CONTRACT, briefText } from './contract.js';
 import { retainNote } from './brief.js';
+import { routeOptimalDecision, pairBuilderAndChecker, emitDecisionPacket, TAINT_LEVELS, joinTaint, enforceConsentNonEscalation } from './intuition.js';
+
+const stripSha = (id) => String(id ?? '').replace(/^sha256:/, '');
+const FAMILY_ALPHA_TOKENS = Object.freeze({
+  anthropic: new Set(['claude', 'fable', 'opus', 'sonnet', 'haiku', 'anthropic']),
+  google: new Set(['gemini', 'argon', 'carbon', 'hydrogen', 'google', 'vertex']),
+  openai: new Set(['gpt', 'openai', 'codex', 'sol', 'astra']),
+  zhipu: new Set(['glm', 'zhipu', 'zcode']),
+});
+const OPENAI_ALNUM_TOKENS = new Set(['o1', 'o3', 'o4']);
+
+function inferKnownFamily(id) {
+  const raw = String(id || '').toLowerCase();
+  if (!raw.trim()) return null;
+  const alphaTokens = raw.split(/[^a-z]+/).filter(Boolean);
+  const alnumTokens = raw.split(/[^a-z0-9]+/).filter(Boolean);
+  const families = new Set();
+  for (const tok of alphaTokens) {
+    for (const [fam, words] of Object.entries(FAMILY_ALPHA_TOKENS)) {
+      if (words.has(tok)) families.add(fam);
+    }
+  }
+  for (const tok of alnumTokens) {
+    if (OPENAI_ALNUM_TOKENS.has(tok)) families.add('openai');
+  }
+  return families.size === 1 ? [...families][0] : null;
+}
+
+/** Derive runtime model family solely from host-attested family or model metadata, never providers, ids, or caller args. */
+function callerFamilyOf(exec) {
+  const a = exec && exec.agent;
+  if (!a || typeof a !== 'object') return null;
+  const levels = [
+    [a.family, a.session?.family],
+    [a.model, a.session?.model],
+  ];
+  for (const fields of levels) {
+    const vals = fields.filter((v) => typeof v === 'string' && v.trim() !== '');
+    if (vals.length === 0) continue;
+    return inferKnownFamily(vals.join(' '));
+  }
+  return null;
+}
 
 const strList = { type: 'array', items: { type: 'string' } };
 
@@ -35,7 +78,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
       if (!Array.isArray(args.checks) || args.checks.length === 0) throw new Error('hoh_propose needs at least one acceptance check');
       if (!Array.isArray(args.probes) || args.probes.length === 0) throw new Error('hoh_propose needs at least one probe');
       const { seq } = await appendLedger(file(), {
-        type: 'propose', goal: args.goal, caller: callerOf(exec), hypothesis: clip(args.hypothesis), boundary: clip(args.boundary),
+        type: 'propose', goal: args.goal, caller: callerOf(exec), callerFamily: callerFamilyOf(exec), hypothesis: clip(args.hypothesis), boundary: clip(args.boundary),
         checks: args.checks.map((c) => clip(c, 300)), digests: args.checks.map(checkDigest), probes: args.probes.map((c) => clip(c, 300)),
       });
       return { seq };
@@ -60,7 +103,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
     async execute(args, exec) {
       if (!(await lastEvent(file(), args.goal, 'propose'))) throw new Error(`hoh_freeze: no proposal for goal "${args.goal}". Call hoh_propose first.`);
       const { candidate, files, paths } = await hashFiles(args.files);
-      const { seq } = await appendLedger(file(), { type: 'freeze', goal: args.goal, caller: callerOf(exec), candidate, files, paths });
+      const { seq } = await appendLedger(file(), { type: 'freeze', goal: args.goal, caller: callerOf(exec), callerFamily: callerFamilyOf(exec), candidate, files, paths });
       return { candidate, files, seq };
     },
     presentCall: (args) => ({ card: 'generic', title: 'Freeze candidate', kind: 'other', rawInput: args }),
@@ -136,6 +179,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
       const { verdict, reasons } = decideGate(args, { freeze: freezeRow, propose: proposeRow, fileCheck, caller });
       const { seq } = await appendLedger(file(), {
         type: 'gate', goal: args.goal, candidate: args.candidate, cycle: args.cycle, verdict, reasons, caller,
+        callerFamily: callerFamilyOf(exec),
         builder: args.builder, reviewer: args.reviewer, checks: (args.checks || []).map((c) => c.id),
       });
       let retained = false;
@@ -169,7 +213,267 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
     presentCall: () => ({ card: 'generic', title: 'Verify HoH ledger', kind: 'other', rawInput: {} }),
   });
 
-  return [propose, freeze, gate, verify];
+  const decide = defineTool({
+    name: 'hoh_decide',
+    description: 'Compute calibrated VOI/cost routing, cross-family builder/checker pairing, and a taint-guarded cammut.decision/0 packet.',
+    parameters: {
+      goal: { type: 'string', required: true, description: 'Task goal name.' },
+      probability: { type: 'number', description: 'Prior or calibrated success probability in [0, 1].' },
+      cfp: { type: 'number', description: 'False-positive loss weight.' },
+      cfn: { type: 'number', description: 'False-negative loss weight.' },
+      checks: {
+        type: 'array',
+        description: 'Candidate checks with id, s, e, and cost.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string', required: true },
+            s: { type: 'number', required: true },
+            e: { type: 'number', required: true },
+            cost: { type: 'number', required: true },
+            decisive: { type: 'boolean' },
+          },
+        },
+      },
+      minTier: { type: 'string', description: 'Minimum builder capability tier (T0-T3).' },
+      minCheckerTier: { type: 'string', description: 'Minimum checker capability tier (T0-T3).' },
+      needsFormal: { type: 'boolean', description: 'Whether formal reasoning capability is required.' },
+      taint: { type: 'string', description: 'Information-flow taint level (clean, tool_output, untrusted_web, secret_risk).' },
+      citations: { ...strList, description: 'Verified citations supporting the decision.' },
+      checksPassed: { type: 'boolean', description: 'Whether deterministic verification passed.' },
+      crossFamilyVerified: { type: 'boolean', description: 'Whether an independent cross-family verification ledger/verdict actually completed.' },
+      requiresHumanYes: { type: 'boolean', description: 'Whether explicit operator approval is required.' },
+      needsOperator: { type: 'boolean', description: 'Alias indicating operator approval is required.' },
+    },
+    output: {
+      schema: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          ok: { type: 'boolean', required: true },
+          packet: { type: 'object', additionalProperties: true, required: true },
+          routing: { type: 'object', additionalProperties: true, required: true },
+          pair: { type: 'object', additionalProperties: true, required: true },
+        },
+      },
+      render: (_args, v) => {
+        const pkt = v?.packet || {};
+        const route = v?.routing || {};
+        return [{ type: 'text', text: `${pkt.action || 'blocked'} (allowExit=${Boolean(pkt.allowExit)}, outcome=${pkt.outcome || route.outcome || 'abstain'}, taint=${pkt.effectiveTaint || 'secret_risk'})` }];
+      },
+    },
+    async execute(args, exec) {
+      const ledgerPath = file();
+      const rawArgs = args && typeof args === 'object' ? args : {};
+      const goalKey = typeof rawArgs.goal === 'string' && rawArgs.goal.trim() ? rawArgs.goal : 'unspecified';
+      const escCheck = enforceConsentNonEscalation(rawArgs);
+      return withLedger(ledgerPath, async (append) => {
+        const chain = await verifyLedger(ledgerPath);
+        const proposeRow = await lastEvent(ledgerPath, goalKey, 'propose');
+        const freezeRow = await lastEvent(ledgerPath, goalKey, 'freeze');
+        const gateRow = await lastEvent(ledgerPath, goalKey, 'gate');
+        const priorDecides = await goalEvents(ledgerPath, goalKey, 'decide');
+
+        let freezeIntact = false;
+        if (freezeRow && Array.isArray(freezeRow.paths) && freezeRow.paths.length > 0 && stripSha(freezeRow.candidate) !== '') {
+          try {
+            const now = await hashFiles(freezeRow.paths);
+            freezeIntact = stripSha(now.candidate) !== '' && stripSha(now.candidate) === stripSha(freezeRow.candidate);
+          } catch {
+            freezeIntact = false;
+          }
+        }
+
+        const gateAcceptedAndFresh = Boolean(
+          chain.ok
+          && freezeIntact
+          && proposeRow
+          && freezeRow
+          && gateRow
+          && gateRow.verdict === 'accepted'
+          && Number.isInteger(proposeRow.seq)
+          && Number.isInteger(freezeRow.seq)
+          && Number.isInteger(gateRow.seq)
+          && gateRow.seq > proposeRow.seq
+          && gateRow.seq > freezeRow.seq
+          && stripSha(gateRow.candidate) !== ''
+          && stripSha(gateRow.candidate) === stripSha(freezeRow.candidate)
+          && typeof gateRow.builder === 'string'
+          && typeof gateRow.reviewer === 'string'
+          && gateRow.builder.trim() !== ''
+          && gateRow.reviewer.trim() !== ''
+          && gateRow.builder.trim() !== gateRow.reviewer.trim()
+          && typeof freezeRow.caller === 'string'
+          && typeof gateRow.caller === 'string'
+          && freezeRow.caller !== ''
+          && gateRow.caller !== ''
+          && freezeRow.caller !== gateRow.caller,
+        );
+        const proposeRows = await goalEvents(ledgerPath, goalKey, 'propose');
+        const freezeRows = await goalEvents(ledgerPath, goalKey, 'freeze');
+        const bFam = inferKnownFamily(freezeRow?.callerFamily);
+        const rFam = inferKnownFamily(gateRow?.callerFamily);
+        const gateBuilderFam = inferKnownFamily(gateRow?.builder);
+        const gateReviewerFam = inferKnownFamily(gateRow?.reviewer);
+        const priorProposes = gateRow
+          ? proposeRows.filter((p) => Number.isInteger(p?.seq) && p.seq < gateRow.seq)
+          : [];
+        const sameCandidateFreezes = freezeRow
+          ? freezeRows.filter((f) => Number.isInteger(f?.seq) && f.seq <= freezeRow.seq && stripSha(f.candidate) === stripSha(freezeRow.candidate))
+          : [];
+        const crossFamilyKnown = Boolean(
+          rFam
+          && bFam && bFam !== rFam
+          && priorProposes.length > 0
+          && priorProposes.every((p) => {
+            const pf = inferKnownFamily(p?.callerFamily);
+            return Boolean(pf && pf !== rFam);
+          })
+          && sameCandidateFreezes.length > 0
+          && sameCandidateFreezes.every((f) => {
+            const ff = inferKnownFamily(f?.callerFamily);
+            return Boolean(ff && ff !== rFam);
+          })
+          && (!gateBuilderFam || gateBuilderFam !== rFam)
+          && (!gateReviewerFam || gateReviewerFam === rFam),
+        );
+        const derivedChecksPassed = rawArgs.checksPassed === true && gateAcceptedAndFresh;
+        const derivedCrossFamily = rawArgs.crossFamilyVerified === true && gateAcceptedAndFresh && crossFamilyKnown;
+
+        const taintProvided = Object.hasOwn(rawArgs, 'taint') && rawArgs.taint !== undefined;
+        const normalizedTaint = typeof rawArgs.taint === 'string' ? rawArgs.taint.trim().toLowerCase() : null;
+        const explicitTaint = taintProvided && normalizedTaint !== null && TAINT_LEVELS.includes(normalizedTaint)
+          ? normalizedTaint
+          : null;
+        const invalidTaintProvided = taintProvided && explicitTaint === null;
+        const priorTaints = [];
+        for (const d of priorDecides) {
+          if (!d) continue;
+          if (Object.hasOwn(d, 'observedTaint')) {
+            if (typeof d.observedTaint === 'string' && TAINT_LEVELS.includes(d.observedTaint)) {
+              priorTaints.push(d.observedTaint);
+            }
+          } else if (typeof d.effectiveTaint === 'string' && TAINT_LEVELS.includes(d.effectiveTaint)) {
+            priorTaints.push(d.effectiveTaint);
+          }
+        }
+
+        const pair = pairBuilderAndChecker({
+          minTier: rawArgs.minTier,
+          minCheckerTier: rawArgs.minCheckerTier,
+          needsFormal: rawArgs.needsFormal,
+        });
+        const r009Keys = [
+          'permissionGranted', 'grantPermission', 'bypassConsent', 'bypassGate',
+          'autoApplied', 'autoApply', 'overrideR006', 'overrideR009',
+          'raiseSpendCap', 'spendApproved', 'consentToken', 'spendCapUsd',
+        ];
+        const safeInput = {
+          goal: goalKey,
+          ...(Object.hasOwn(rawArgs, 'probability') ? { probability: rawArgs.probability } : {}),
+          ...(Object.hasOwn(rawArgs, 'cfp') ? { cfp: rawArgs.cfp } : {}),
+          ...(Object.hasOwn(rawArgs, 'cfn') ? { cfn: rawArgs.cfn } : {}),
+          ...(Object.hasOwn(rawArgs, 'checks') ? { checks: rawArgs.checks } : {}),
+          ...(Object.hasOwn(rawArgs, 'minTier') ? { minTier: rawArgs.minTier } : {}),
+          ...(Object.hasOwn(rawArgs, 'minCheckerTier') ? { minCheckerTier: rawArgs.minCheckerTier } : {}),
+          ...(Object.hasOwn(rawArgs, 'needsFormal') ? { needsFormal: rawArgs.needsFormal } : {}),
+          taint: explicitTaint ?? 'secret_risk',
+          taints: priorTaints,
+          ...(Object.hasOwn(rawArgs, 'citations') ? { citations: rawArgs.citations } : {}),
+          checksPassed: derivedChecksPassed,
+          crossFamilyVerified: derivedCrossFamily,
+          ...(Object.hasOwn(rawArgs, 'requiresHumanYes') ? { requiresHumanYes: rawArgs.requiresHumanYes } : {}),
+          ...(Object.hasOwn(rawArgs, 'needsOperator') ? { needsOperator: rawArgs.needsOperator } : {}),
+          ...(Object.hasOwn(rawArgs, 'hasSecret') ? { hasSecret: rawArgs.hasSecret } : {}),
+          pair,
+        };
+        for (const k of r009Keys) {
+          if (Object.hasOwn(rawArgs, k)) safeInput[k] = rawArgs[k];
+        }
+        const res = escCheck.ok ? emitDecisionPacket(safeInput) : {
+          ok: false,
+          state: escCheck.state,
+          rule: 'R009',
+          violations: escCheck.violations,
+          permissionGranted: false,
+        };
+        const overallOk = escCheck.ok && res.ok === true && pair.ok === true;
+        const needsOp = (Object.hasOwn(rawArgs, 'requiresHumanYes') && rawArgs.requiresHumanYes !== undefined && rawArgs.requiresHumanYes !== false)
+          || (Object.hasOwn(rawArgs, 'needsOperator') && rawArgs.needsOperator !== undefined && rawArgs.needsOperator !== false);
+        let packet = res.packet ? { ...res.packet } : {
+          schema: 'cammut.decision/0',
+          id: 'DEC-BLOCKED',
+          goal: goalKey,
+          action: 'block_escalation',
+          allowExit: false,
+          effectiveTaint: 'secret_risk',
+          reason: (res.violations || []).join('; ') || res.state || 'decision_blocked',
+          outcome: 'abstain',
+          calibratedProbability: 0.5,
+          expectedVoi: 0,
+          netValue: 0,
+          route: null,
+          checkerRoute: null,
+          requiresHumanYes: needsOp,
+          pairOk: Boolean(pair.ok),
+          citations: [],
+          checkEvidence: { ok: false, crossFamilyOk: false, summary: '' },
+          permissionGranted: false,
+          autoApplied: false,
+          issuedAt: new Date().toISOString(),
+        };
+        if (!overallOk) {
+          packet = {
+            ...packet,
+            action: escCheck.ok && !pair.ok ? 'block_pairing' : 'block_escalation',
+            allowExit: false,
+            outcome: packet.outcome === 'answer_now' ? 'abstain' : (packet.outcome || 'abstain'),
+            route: null,
+            checkerRoute: null,
+            pairOk: Boolean(pair.ok),
+            reason: packet.reason || pair.reason || pair.state || (res.violations || []).join('; ') || 'decision_blocked',
+          };
+        } else if (needsOp && packet.allowExit) {
+          packet = {
+            ...packet,
+            action: 'ask_operator',
+            allowExit: false,
+            outcome: 'ask_operator',
+            requiresHumanYes: true,
+          };
+        }
+        const routing = res.routing
+          ? (overallOk ? res.routing : { ...res.routing, ok: false, outcome: 'abstain', reason: packet.reason })
+          : { ok: false, outcome: 'abstain', reason: packet.reason, permissionGranted: false, autoApplied: false };
+        const hasSecretFlag = Object.hasOwn(rawArgs, 'hasSecret') && rawArgs.hasSecret !== undefined && rawArgs.hasSecret !== false;
+        const packetTaint = res.packet && TAINT_LEVELS.includes(res.packet.effectiveTaint) ? res.packet.effectiveTaint : null;
+        const observedSignals = [];
+        if (explicitTaint) observedSignals.push(explicitTaint);
+        if (hasSecretFlag || invalidTaintProvided) observedSignals.push('secret_risk');
+        if ((explicitTaint !== null || hasSecretFlag || invalidTaintProvided) && packetTaint) observedSignals.push(packetTaint);
+        const persistedTaint = observedSignals.length > 0 ? joinTaint(...observedSignals) : null;
+        await append({
+          type: 'decide',
+          goal: goalKey,
+          caller: callerOf(exec),
+          ok: overallOk,
+          id: packet.id,
+          action: packet.action,
+          allowExit: packet.allowExit,
+          outcome: packet.outcome,
+          effectiveTaint: packet.effectiveTaint,
+          observedTaint: persistedTaint,
+          checksPassed: derivedChecksPassed,
+          crossFamilyVerified: derivedCrossFamily,
+          gateSeq: gateRow?.seq ?? null,
+        });
+        return { ok: overallOk, packet, routing, pair };
+      });
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Decision router', kind: 'other', rawInput: { goal: args.goal } }),
+  });
+
+  return [propose, freeze, gate, verify, decide];
 }
 
 /** Prompt sections. getBrief returns the current Cammut brief text. */

@@ -32,7 +32,6 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@arc-harness/arc-client-ui-slots",
         "@arc-harness/arc-client-locale",
         "@arc-harness/arc-client-ui-settings"
       ]
@@ -41,7 +40,6 @@
   "peerDependencies": {
     "@arc-harness/arc-client-locale": "^0.2.1-rc.2",
     "@arc-harness/arc-client-ui-settings": "^0.2.1-rc.2",
-    "@arc-harness/arc-client-ui-slots": "^0.2.1-rc.2",
     "react": "^18.2.0"
   },
   "engines": {
