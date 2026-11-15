@@ -607,4 +607,37 @@ test('taint lattice, exit guard, and cammut.decision/0 packet enforce strict fai
   assert.equal(nonFormalRes.ok, false);
   assert.equal(nonFormalRes.packet.allowExit, false);
   assert.equal(nonFormalRes.packet.action, 'block_pairing');
+
+  // Absence of a pair must set pairOk=false and crossFamilyOk=false, and free-text or same-family routes must fail closed.
+  const noPairClean = emitDecisionPacket({
+    id: 'DEC-112',
+    goal: 'clean-no-pair-evidence',
+    probability: 0.95,
+    taint: 'clean',
+    citations: ['file:ok.js'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  });
+  assert.equal(noPairClean.ok, true);
+  assert.equal(noPairClean.packet.allowExit, true);
+  assert.equal(noPairClean.packet.pairOk, false);
+  assert.equal(noPairClean.packet.checkEvidence.crossFamilyOk, false);
+  assert.equal(noPairClean.packet.route, null);
+  assert.equal(noPairClean.packet.checkerRoute, null);
+  assert.equal(validateDecisionPacket({ ...noPairClean.packet, checkEvidence: { ok: true, crossFamilyOk: true } }).ok, false);
+
+  const noPairSameFam = emitDecisionPacket({
+    id: 'DEC-113',
+    goal: 'clean-same-fam-routes',
+    probability: 0.95,
+    taint: 'clean',
+    citations: ['file:ok.js'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+    route: 'claude-opus-5-5',
+    checkerRoute: 'claude-fable-5-2',
+  });
+  assert.equal(noPairSameFam.ok, false);
+  assert.equal(noPairSameFam.packet.allowExit, false);
+  assert.equal(noPairSameFam.packet.action, 'block_invalid_packet');
 });

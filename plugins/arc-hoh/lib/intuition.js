@@ -976,9 +976,7 @@ export function emitDecisionPacket(input = {}) {
     needsFormal: input.needsFormal,
     allowLegacy: input.allowLegacy,
   });
-  const crossFamilyOk = exitGuard.effectiveTaint === 'untrusted_web'
-    ? (input.crossFamilyVerified === true && hasPair && pairValid)
-    : (input.crossFamilyVerified === true && pairValid);
+  const crossFamilyOk = input.crossFamilyVerified === true && hasPair && pairValid;
   const routing = routeOptimalDecision({ ...input, needsOperator, requiresHumanYes: needsOperator });
   let outcome = routing.ok ? routing.outcome : 'abstain';
   let action = exitGuard.action;
@@ -993,12 +991,13 @@ export function emitDecisionPacket(input = {}) {
     action = outcome === 'ask_operator' ? 'ask_operator' : (outcome === 'abstain' ? 'block_uncertainty' : outcome);
     reason = routing.reason || 'routing outcome requires action before exit';
   }
-  const route = pairValid
-    ? (hasPair ? input.pair.builder.route : (typeof input.route === 'string' && input.route.trim() ? input.route.trim() : null))
-    : null;
-  const checkerRoute = pairValid
-    ? (hasPair ? input.pair.checker.route : (typeof input.checkerRoute === 'string' && input.checkerRoute.trim() ? input.checkerRoute.trim() : null))
-    : null;
+  const pairOkOut = hasPair && pairValid;
+  const route = pairOkOut
+    ? (resolveKnownRouteSpec(input.pair.builder.route)?.route || null)
+    : (pairValid ? (resolveKnownRouteSpec(input.route)?.route || null) : null);
+  const checkerRoute = pairOkOut
+    ? (resolveKnownRouteSpec(input.pair.checker.route)?.route || null)
+    : (pairValid ? (resolveKnownRouteSpec(input.checkerRoute)?.route || null) : null);
   let packet = {
     schema: 'cammut.decision/0',
     id: typeof input.id === 'string' && input.id.trim() ? input.id.trim() : 'DEC-0001',
@@ -1014,7 +1013,7 @@ export function emitDecisionPacket(input = {}) {
     route,
     checkerRoute,
     requiresHumanYes: needsOperator,
-    pairOk: pairValid,
+    pairOk: pairOkOut,
     citations,
     checkEvidence: {
       ok: input.checksPassed === true,
@@ -1034,7 +1033,7 @@ export function emitDecisionPacket(input = {}) {
       outcome: packet.outcome === 'answer_now' ? 'abstain' : packet.outcome,
       route: pairValid ? packet.route : null,
       checkerRoute: pairValid ? packet.checkerRoute : null,
-      pairOk: pairValid,
+      pairOk: pairOkOut,
       reason: validation.errors.join('; ') || packet.reason || 'invalid decision packet',
     };
   }
@@ -1073,6 +1072,19 @@ export function validateDecisionPacket(packet) {
   const esc = enforceConsentNonEscalation(packet);
   if (!esc.ok) errors.push(...esc.violations);
 
+  const bSpec = packet.route != null ? resolveKnownRouteSpec(packet.route) : null;
+  const cSpec = packet.checkerRoute != null ? resolveKnownRouteSpec(packet.checkerRoute) : null;
+  if (packet.route != null && !bSpec) errors.push('route must match a known model route');
+  if (packet.checkerRoute != null && !cSpec) errors.push('checkerRoute must match a known model route');
+  if (bSpec && cSpec && bSpec.family === cSpec.family) {
+    errors.push('route and checkerRoute must belong to distinct model families');
+  }
+  if (packet.checkEvidence?.crossFamilyOk === true) {
+    if (packet.pairOk !== true || !bSpec || !cSpec || bSpec.family === cSpec.family) {
+      errors.push('crossFamilyOk requires pairOk=true and known routes from distinct model families');
+    }
+  }
+
   if (typeof packet.allowExit === 'boolean') {
     if ((packet.allowExit === true) !== (packet.action === 'emit_decision')) {
       errors.push('allowExit=true must match action=emit_decision biconditionally');
@@ -1080,19 +1092,20 @@ export function validateDecisionPacket(packet) {
     if (packet.allowExit === true) {
       if (packet.outcome !== 'answer_now') errors.push('allowExit=true requires outcome=answer_now');
       if (packet.requiresHumanYes !== false) errors.push('allowExit=true requires requiresHumanYes=false');
-      if (packet.pairOk !== true) errors.push('allowExit=true requires pairOk=true');
       if (packet.effectiveTaint === 'secret_risk') errors.push('allowExit=true forbidden under secret_risk');
       if (!validCitations || packet.citations.length < 1) errors.push('allowExit=true requires >= 1 valid citation');
       if (!packet.checkEvidence || packet.checkEvidence.ok !== true) errors.push('allowExit=true requires passing checkEvidence');
       if (packet.effectiveTaint === 'untrusted_web') {
+        if (packet.pairOk !== true) errors.push('allowExit=true under untrusted_web requires pairOk=true');
         if (packet.checkEvidence?.crossFamilyOk !== true) {
           errors.push('allowExit=true under untrusted_web requires crossFamilyOk');
         }
-        const bSpec = resolveKnownRouteSpec(packet.route);
-        const cSpec = resolveKnownRouteSpec(packet.checkerRoute);
         if (!bSpec || !cSpec || bSpec.family === cSpec.family) {
           errors.push('allowExit=true under untrusted_web requires known routes from distinct model families');
         }
+      }
+      if (packet.pairOk === true && (!bSpec || !cSpec || bSpec.family === cSpec.family)) {
+        errors.push('allowExit=true with pairOk=true requires known routes from distinct model families');
       }
     }
   }
