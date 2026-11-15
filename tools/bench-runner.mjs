@@ -202,6 +202,8 @@ function runSelfTest() {
   assert.equal(isSafeLeanCandidate('elab_rules | `(x) => return .missing'), false);
   assert.equal(isSafeLeanCandidate('prefix:max "eq" => id'), false);
   assert.equal(isSafeLeanCandidate('deriving instance BEq for Nat'), false);
+  assert.equal(isSafeLeanCandidate('variable [Inhabited False]\ntheorem min_add_right (a b c : Nat) : min a b + c = min (a + c) (b + c) := (default : False).elim'), false);
+  assert.equal(isSafeLeanCandidate('include h in theorem x : True := trivial'), false);
 
   const cmdWrapped = buildCmdFallbackArgs('C:\\Program Files\\Arc Harness\\arc.cmd', ['--patch', 'C:\\Temp Dir\\overlay.yml']);
   assert.ok(cmdWrapped.ok && cmdWrapped.args[0] === '/d' && cmdWrapped.args[2] === '/c');
@@ -275,7 +277,7 @@ export function isSafeLeanCandidate(leanSrc) {
   if (!s.trim()) return false;
   const stripped = stripLeanCommentsAndStrings(s);
   if (!stripped.trim() || scanBannedTokens(stripped).length > 0) return false;
-  return !/(#\s*(?:exit|eval|reduce|check_failure)\b|\brun_(?:cmd|elab|meta|tac)\b|\b(?:builtin_)?initialize\b|\bimport\b|\bprelude\b|\bIO\b|\bunsafe\b|\bnative_decide\b|decide\s*\+\s*native|\bimplemented_by\b|\bextern\b|\b(?:elab|macro)(?:_rules)?\b|\bsyntax\b|\bnotation\b|\b(?:infix[lr]?|prefix|postfix)\b|\bdeclare_syntax_cat\b|\bbinder_predicate\b|\binstance\b|\bderiving\b|\battribute\b|\bset_option\b)/.test(stripped);
+  return !/(#\s*(?:exit|eval|reduce|check_failure)\b|\brun_(?:cmd|elab|meta|tac)\b|\b(?:builtin_)?initialize\b|\bimport\b|\bprelude\b|\bIO\b|\bunsafe\b|\bnative_decide\b|decide\s*\+\s*native|\bimplemented_by\b|\bextern\b|\b(?:elab|macro)(?:_rules)?\b|\bsyntax\b|\bnotation\b|\b(?:infix[lr]?|prefix|postfix)\b|\bdeclare_syntax_cat\b|\bbinder_predicate\b|\binstance\b|\bderiving\b|\battribute\b|\bset_option\b|\b(?:variable|include|omit|universe|class|structure)\b)/.test(stripped);
 }
 
 const CLAMP_ORACLE_SCRIPT = `
@@ -333,6 +335,7 @@ export function evalClampUnitDeterministically(code) {
     killSignal: 'SIGKILL',
     maxBuffer: 64 * 1024,
     windowsHide: true,
+    env: {},
   });
   if (res.error || res.status !== 0) {
     return { ok: false, error: 'evaluation threw' };
@@ -382,6 +385,9 @@ function killProcessTree(pid, child) {
 export async function runArcHeadless({ arcCmd = DEFAULT_ARC_CMD, provider, model, prompt, reasoningEffort = null, timeoutMs = 180000 } = {}) {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-live-'));
   const t0 = Date.now();
+  const resolvedArcCmd = (typeof arcCmd === 'string' && (path.isAbsolute(arcCmd) || arcCmd.includes('/') || arcCmd.includes('\\') || fs.existsSync(arcCmd)))
+    ? path.resolve(arcCmd)
+    : arcCmd;
   try {
     let r;
     try {
@@ -407,11 +413,11 @@ export async function runArcHeadless({ arcCmd = DEFAULT_ARC_CMD, provider, model
         RADIUM_API_KEY: process.env.RADIUM_API_KEY || 'gateway',
       };
       const arcArgs = ['--profile', 'headless', '--patch', overlayPath, '--json', '-'];
-      let bin = arcCmd;
+      let bin = resolvedArcCmd;
       let spawnArgs = arcArgs;
       let verbatim = false;
-      if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(arcCmd)) {
-        const binDir = path.dirname(arcCmd);
+      if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolvedArcCmd)) {
+        const binDir = path.dirname(resolvedArcCmd);
         const exePath = path.resolve(binDir, '..', '..', '..', '..', 'Arc Harness.exe');
         const appAsar = path.resolve(binDir, '..', '..', '..', 'app.asar');
         const cliJs = path.join(appAsar, 'arc', 'node_modules', '@arc-harness', 'arc-desktop-host', 'lib', 'cli.js');
@@ -420,7 +426,7 @@ export async function runArcHeadless({ arcCmd = DEFAULT_ARC_CMD, provider, model
           spawnArgs = ['--expose-internals', cliJs, ...arcArgs];
           env.ELECTRON_RUN_AS_NODE = '1';
         } else {
-          const built = buildCmdFallbackArgs(arcCmd, arcArgs);
+          const built = buildCmdFallbackArgs(resolvedArcCmd, arcArgs);
           if (!built.ok) {
             return {
               ok: false,
@@ -675,7 +681,7 @@ export async function runLiveArcValidation({ arcCmd = DEFAULT_ARC_CMD } = {}) {
           fs.writeFileSync(path.join(leanDir, 'V2Proof.lean'), leanSrc + '\n', 'utf8');
           gateReport = runLeanGate({ target: leanDir });
           if (gateReport.state === 'pass') {
-            const harnessSrc = `${leanSrc}\n\ntheorem arc_v2_spec_verification (a b c : _root_.Nat) :\n    @_root_.Eq _root_.Nat (_root_.Nat.add (_root_.Nat.min a b) c) (_root_.Nat.min (_root_.Nat.add a c) (_root_.Nat.add b c)) :=\n  _root_.min_add_right a b c\n\n#print axioms arc_v2_spec_verification\n`;
+            const harnessSrc = `${leanSrc}\n\ntheorem arc_v2_spec_verification :\n    ∀ a b c : _root_.Nat,\n      @_root_.Eq _root_.Nat (_root_.Nat.add (_root_.Nat.min a b) c) (_root_.Nat.min (_root_.Nat.add a c) (_root_.Nat.add b c)) :=\n  @_root_.min_add_right\n\n#print axioms arc_v2_spec_verification\n`;
             const harnessDecls = extractPublicTheorems(stripLeanCommentsAndStrings(harnessSrc));
             harnessBound = harnessDecls.includes('arc_v2_spec_verification') && harnessDecls.length === candDecls.length + 1;
             fs.writeFileSync(path.join(harnessDir, 'V2Harness.lean'), harnessSrc, 'utf8');
@@ -854,6 +860,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   }
   if (!flagErr && outPath && !args.includes('--live-arc')) {
     flagErr = '--out requires --live-arc';
+  }
+  if (!flagErr && args.includes('--self-test') && args.includes('--live-arc')) {
+    flagErr = '--self-test cannot be combined with --live-arc';
   }
   if (flagErr) {
     console.error('Usage error: ' + flagErr);

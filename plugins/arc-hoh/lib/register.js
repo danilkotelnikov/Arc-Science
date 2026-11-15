@@ -2,7 +2,7 @@
 import { appendLedger, checkDigest, clip, goalEvents, hashFiles, lastEvent, ledgerFile, optedOut, verifyLedger, decideGate, withLedger } from './gates.js';
 import { CONTRACT, briefText } from './contract.js';
 import { retainNote } from './brief.js';
-import { routeOptimalDecision, pairBuilderAndChecker, emitDecisionPacket, TAINT_LEVELS, enforceConsentNonEscalation } from './intuition.js';
+import { routeOptimalDecision, pairBuilderAndChecker, emitDecisionPacket, TAINT_LEVELS, joinTaint, enforceConsentNonEscalation } from './intuition.js';
 
 const stripSha = (id) => String(id ?? '').replace(/^sha256:/, '');
 const FAMILY_ALPHA_TOKENS = Object.freeze({
@@ -28,6 +28,16 @@ function inferKnownFamily(id) {
     if (OPENAI_ALNUM_TOKENS.has(tok)) families.add('openai');
   }
   return families.size === 1 ? [...families][0] : null;
+}
+
+/** Derive runtime model family solely from host-supplied exec.agent metadata, never caller args. */
+function callerFamilyOf(exec) {
+  const a = exec && exec.agent;
+  if (!a || typeof a !== 'object') return null;
+  const raw = [a.family, a.provider, a.model, a.session?.provider, a.session?.model, a.id, a.session?.id]
+    .filter((v) => typeof v === 'string' && v.trim() !== '')
+    .join(' ');
+  return inferKnownFamily(raw);
 }
 
 const strList = { type: 'array', items: { type: 'string' } };
@@ -87,7 +97,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
     async execute(args, exec) {
       if (!(await lastEvent(file(), args.goal, 'propose'))) throw new Error(`hoh_freeze: no proposal for goal "${args.goal}". Call hoh_propose first.`);
       const { candidate, files, paths } = await hashFiles(args.files);
-      const { seq } = await appendLedger(file(), { type: 'freeze', goal: args.goal, caller: callerOf(exec), candidate, files, paths });
+      const { seq } = await appendLedger(file(), { type: 'freeze', goal: args.goal, caller: callerOf(exec), callerFamily: callerFamilyOf(exec), candidate, files, paths });
       return { candidate, files, seq };
     },
     presentCall: (args) => ({ card: 'generic', title: 'Freeze candidate', kind: 'other', rawInput: args }),
@@ -163,6 +173,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
       const { verdict, reasons } = decideGate(args, { freeze: freezeRow, propose: proposeRow, fileCheck, caller });
       const { seq } = await appendLedger(file(), {
         type: 'gate', goal: args.goal, candidate: args.candidate, cycle: args.cycle, verdict, reasons, caller,
+        callerFamily: callerFamilyOf(exec),
         builder: args.builder, reviewer: args.reviewer, checks: (args.checks || []).map((c) => c.id),
       });
       let retained = false;
@@ -248,7 +259,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
     async execute(args, exec) {
       const ledgerPath = file();
       const rawArgs = args && typeof args === 'object' ? args : {};
-      const goalKey = typeof rawArgs.goal === 'string' && rawArgs.goal.trim() ? rawArgs.goal.trim() : 'unspecified';
+      const goalKey = typeof rawArgs.goal === 'string' && rawArgs.goal.trim() ? rawArgs.goal : 'unspecified';
       const escCheck = enforceConsentNonEscalation(rawArgs);
       return withLedger(ledgerPath, async (append) => {
         const chain = await verifyLedger(ledgerPath);
@@ -292,8 +303,8 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
           && gateRow.caller !== ''
           && freezeRow.caller !== gateRow.caller,
         );
-        const bFam = inferKnownFamily(gateRow?.builder);
-        const rFam = inferKnownFamily(gateRow?.reviewer);
+        const bFam = inferKnownFamily(freezeRow?.callerFamily);
+        const rFam = inferKnownFamily(gateRow?.callerFamily);
         const crossFamilyKnown = Boolean(bFam && rFam && bFam !== rFam);
         const derivedChecksPassed = rawArgs.checksPassed === true && gateAcceptedAndFresh;
         const derivedCrossFamily = rawArgs.crossFamilyVerified === true && gateAcceptedAndFresh && crossFamilyKnown;
@@ -301,10 +312,9 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
         const explicitTaint = typeof rawArgs.taint === 'string' && TAINT_LEVELS.includes(rawArgs.taint.trim())
           ? rawArgs.taint.trim()
           : null;
-        const minSeq = freezeRow && Number.isInteger(freezeRow.seq) ? freezeRow.seq : 0;
         const priorTaints = [];
         for (const d of priorDecides) {
-          if (!d || (typeof d.seq === 'number' && d.seq < minSeq)) continue;
+          if (!d) continue;
           if (Object.hasOwn(d, 'observedTaint')) {
             if (typeof d.observedTaint === 'string' && TAINT_LEVELS.includes(d.observedTaint)) {
               priorTaints.push(d.observedTaint);
@@ -391,6 +401,11 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
           };
         }
         const routing = res.routing || { ok: false, outcome: 'abstain', reason: packet.reason, permissionGranted: false, autoApplied: false };
+        const hasSecretFlag = Object.hasOwn(rawArgs, 'hasSecret') && rawArgs.hasSecret !== undefined && rawArgs.hasSecret !== false;
+        const packetTaint = res.packet && TAINT_LEVELS.includes(res.packet.effectiveTaint) ? res.packet.effectiveTaint : null;
+        const persistedTaint = explicitTaint
+          ? (packetTaint ? joinTaint(explicitTaint, packetTaint) : explicitTaint)
+          : (hasSecretFlag ? 'secret_risk' : null);
         await append({
           type: 'decide',
           goal: goalKey,
@@ -401,7 +416,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
           allowExit: packet.allowExit,
           outcome: packet.outcome,
           effectiveTaint: packet.effectiveTaint,
-          observedTaint: res.packet && explicitTaint ? explicitTaint : null,
+          observedTaint: persistedTaint,
           checksPassed: derivedChecksPassed,
           crossFamilyVerified: derivedCrossFamily,
           gateSeq: gateRow?.seq ?? null,
