@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SCAN_DIRS = ['lib', 'plugins', 'scripts', 'tools'];
+const SCAN_DIRS = ['lib', 'plugins', 'scripts', 'tools', 'brandtext', 'theme'];
 const R012_EXEMPT = new Set(['tools/build.mjs', 'tools/install.mjs']);
 const SPAWN_APIS = new Set(['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync']);
 const CALL_RE = /(?<![\w$])([A-Za-z_$][\w$]*)\s*(?:\?\.\s*)?\(/g;
@@ -240,30 +240,38 @@ function runSelfTest() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-spawn-test-'));
   try {
     fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true });
+    fs.mkdirSync(path.join(tmp, 'brandtext'), { recursive: true });
+    fs.mkdirSync(path.join(tmp, 'theme'), { recursive: true });
     fs.mkdirSync(path.join(tmp, 'native', 'arc-gateway'), { recursive: true });
     fs.writeFileSync(path.join(tmp, 'scripts', 'good.mjs'),
       "import { /* c */ spawnSync as exec } from 'node:child_process';\nexec(`node ${1, 2}`, ['-v'], { ...{}, encoding: 'utf8', 'windowsHide': true });\n");
     fs.writeFileSync(path.join(tmp, 'scripts', 'good-ns.mjs'),
       "import * as cp from 'node:child_process';\nconst reMatch = /a/.exec('a');\ncp.spawn('node', ['-v'], { encoding: 'utf8', windowsHide: true });\n");
+    fs.writeFileSync(path.join(tmp, 'brandtext', 'good.mjs'),
+      "import { spawnSync } from 'node:child_process';\nconst tar = (...a) => spawnSync('tar', a, { cwd: '.', encoding: 'utf8', windowsHide: true });\n");
+    fs.writeFileSync(path.join(tmp, 'theme', 'good.mjs'),
+      "import { spawnSync } from 'node:child_process';\nspawnSync('tar', ['-cJf', 'a.tar.xz', 'arc-theme'], { encoding: 'utf8', windowsHide: true });\n");
     fs.writeFileSync(path.join(tmp, 'native', 'arc-gateway', 'hide_windows.go'),
       'package main\nfunc hide(c *Cmd) { c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000} }\n');
     const passRes = auditWindowlessSpawns(tmp);
     assert.equal(passRes.state, 'pass');
-    assert.equal(passRes.checkedCalls, 2);
+    assert.equal(passRes.checkedCalls, 4);
 
-    const checkBad = (rel, code, expected = 1) => {
-      const p = path.join(tmp, 'scripts', rel);
+    const checkBad = (rel, code, expected = 1, dir = 'scripts') => {
+      const p = path.join(tmp, dir, rel);
       fs.writeFileSync(p, code);
       const r = auditWindowlessSpawns(tmp);
       assert.equal(r.state, 'fail_unhidden_spawn');
       assert.equal(r.violations.length, expected);
-      assert.equal(r.violations[0].file, `scripts/${rel}`);
+      assert.equal(r.violations[0].file, `${dir}/${rel}`);
       fs.rmSync(p);
     };
     checkBad('bad-alias.mjs', "import { spawnSync as launch } from 'node:child_process';\nlaunch('node', ['-v'], { encoding: 'utf8' }); // windowsHide: true\n");
     checkBad('bad-ns.mjs', "import cp from 'node:child_process';\ncp.spawn('node', ['-v'], { encoding: 'utf8', note: 'windowsHide: true' });\n");
     checkBad('bad-tpl.mjs', "import { execSync } from 'node:child_process';\nconst t='\u{1F680}',m=`v:${execSync('node -v',{encoding:'utf8'})}`;\n");
     checkBad('bad-edge.cjs', "const { spawn: $spawn } = require('node:child_process');\nconst cp = require('node:child_process');\nif (1) /don't/;\n$spawn('node', ['-v'], { env: { windowsHide: true } });\n$spawn('node', ['-v'], { windowsHide: true, ...{} });\n$spawn('node', ['-v'], { windowsHide: true, windowsHide: false });\ncp?.spawn('node', ['-v'], {});\n", 4);
+    checkBad('bad-tar.mjs', "import { spawnSync } from 'node:child_process';\nconst tar = (...a) => spawnSync('tar', a, { cwd: '.', encoding: 'utf8' });\n", 1, 'brandtext');
+    checkBad('bad-archive.mjs', "import { spawnSync } from 'node:child_process';\nspawnSync('tar', ['-cJf', 'a.tar.xz', 'arc-theme'], { encoding: 'utf8' });\n", 1, 'theme');
 
     fs.writeFileSync(path.join(tmp, 'native', 'arc-gateway', 'hide_windows.go'),
       'package main\n// c.SysProcAttr = &syscall.SysProcAttr{CreationFlags: CREATE_NO_WINDOW}\n');

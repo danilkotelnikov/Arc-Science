@@ -26,7 +26,7 @@ const STAGE = '_stage';
 const archive = path.join(here, ARCHIVE);
 const stage = path.join(here, STAGE);
 const norm = (p) => p.replace(/\\/g, '/');
-const tar = (...a) => spawnSync('tar', a, { cwd: here, encoding: 'utf8' });
+const tar = (...a) => spawnSync('tar', a, { cwd: here, encoding: 'utf8', windowsHide: true });
 
 function* walk(dir, depth = 0) {
   let ents;
