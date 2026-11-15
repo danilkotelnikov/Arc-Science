@@ -787,7 +787,9 @@ export async function runLiveArcValidation({ arcCmd = DEFAULT_ARC_CMD } = {}) {
   const checkerVal = checkerParsed.ok ? checkerParsed.value : {};
   const cleanPassed = checkerVal[cleanSlot] === 'pass';
   const mutantRejected = checkerVal[mutantSlot] === 'fail';
-  const nanIdentified = /\bnan\b/i.test(`${String(checkerVal.failingInput || '')} ${String(checkerVal.defect || '')}`);
+  const failingInputStr = typeof checkerVal.failingInput === 'string' ? checkerVal.failingInput : '';
+  const defectStr = typeof checkerVal.defect === 'string' ? checkerVal.defect : '';
+  const nanIdentified = /\bnan\b/i.test(`${failingInputStr} ${defectStr}`);
   const v4Verdict = !builderRes.ok || !builtCode.trim()
     ? 'blocked'
     : (detClean.ok && !detMutant.ok && cleanPassed && mutantRejected && nanIdentified ? 'verified' : 'failed');
@@ -813,8 +815,8 @@ export async function runLiveArcValidation({ arcCmd = DEFAULT_ARC_CMD } = {}) {
     mutantRejected,
     nanIdentified,
     verdict: v4Verdict,
-    failingInput: checkerParsed.ok ? String(checkerVal.failingInput || '') : null,
-    defect: checkerParsed.ok ? String(checkerVal.defect || '') : null,
+    failingInput: checkerParsed.ok && typeof checkerVal.failingInput === 'string' ? checkerVal.failingInput : null,
+    defect: checkerParsed.ok && typeof checkerVal.defect === 'string' ? checkerVal.defect : null,
     pass: builderRes.ok && checkerRes.ok && detClean.ok && !detMutant.ok && cf.ok && cleanPassed && mutantRejected && nanIdentified,
     durationMs: builderRes.durationMs + checkerRes.durationMs,
   };

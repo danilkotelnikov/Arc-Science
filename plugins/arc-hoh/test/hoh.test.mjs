@@ -482,7 +482,7 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   assert.equal(cleanAfterRefreeze.packet.effectiveTaint, 'untrusted_web');
   assert.equal(cleanAfterRefreeze.packet.allowExit, false);
 
-  // Explicit secret_risk on an R009-blocked call is persisted to goal history.
+  // Explicit {taint:'clean', hasSecret:true} on an R009-blocked call and invalid taint strings both persist secret_risk.
   await decide.execute({
     goal: cfGoal,
     probability: 0.95,
@@ -503,6 +503,53 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   }, claudeReviewer);
   assert.equal(afterBlockedSecret.packet.effectiveTaint, 'secret_risk');
   assert.equal(afterBlockedSecret.packet.allowExit, false);
+
+  const cleanFile3 = path.join(d, 'cf3.txt');
+  await writeFile(cleanFile3, 'r009 secret downgrade regression');
+  await propose.execute({ goal: 'cf-r009-sec', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, geminiLead);
+  const fr3 = await freeze.execute({ goal: 'cf-r009-sec', files: [cleanFile3] }, geminiLead);
+  await gate.execute({ goal: 'cf-r009-sec', ...goodGate(fr3.candidate) }, claudeReviewer);
+  const blockedCleanWithSecret = await decide.execute({
+    goal: 'cf-r009-sec',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    hasSecret: true,
+    grantPermission: true,
+    citations: ['file:cf3.txt'],
+    checksPassed: true,
+  }, claudeReviewer);
+  assert.equal(blockedCleanWithSecret.ok, false);
+  const afterCleanWithSecret = await decide.execute({
+    goal: 'cf-r009-sec',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:cf3.txt'],
+    checksPassed: true,
+  }, claudeReviewer);
+  assert.equal(afterCleanWithSecret.packet.effectiveTaint, 'secret_risk');
+  assert.equal(afterCleanWithSecret.packet.allowExit, false);
+
+  // Agent ids embedding family keywords without host family/model/provider metadata cannot attest cross-family.
+  const idOnlyGemini = { agent: { id: 'gemini-check-1' } };
+  const idOnlyClaude = { agent: { id: 'claude-check-2' } };
+  const idFile = path.join(d, 'idonly.txt');
+  await writeFile(idFile, 'id spoofing test');
+  await propose.execute({ goal: 'cf-idonly', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, idOnlyGemini);
+  const frId = await freeze.execute({ goal: 'cf-idonly', files: [idFile] }, idOnlyGemini);
+  await gate.execute({ goal: 'cf-idonly', ...goodGate(frId.candidate) }, idOnlyClaude);
+  const idOnlyWebBlocked = await decide.execute({
+    goal: 'cf-idonly',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, idOnlyClaude);
+  assert.equal(idOnlyWebBlocked.packet.allowExit, false);
+  assert.equal(idOnlyWebBlocked.packet.action, 'block_tainted');
 
   // Editing the frozen file invalidates the prior gate immediately (TOCTOU rehash guard).
   await writeFile(cfFile, 'mutated after gate');

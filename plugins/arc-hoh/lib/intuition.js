@@ -606,8 +606,9 @@ export function crossFitPlatt2Fold(records = [], options = {}) {
 
 /**
  * Bayes-optimal decision router maximizing net VOI and scale-invariant positive-action loss (spec 13.15).
- * Check costs must use the same loss units as cfp and cfn; positiveLoss is normalized by 0.5 * (cfp + cfn)
- * before thresholding against answerLossThreshold so uniform scaling of (cfp, cfn) preserves routing decisions.
+ * Check costs must use the same loss units as cfp and cfn; positiveLoss and check cost are normalized by
+ * 0.5 * (cfp + cfn) before thresholding so uniform scaling of (cfp, cfn, cost) preserves routing outcomes,
+ * alongside a weight-independent minimum probability floor.
  */
 export function routeOptimalDecision(input = {}) {
   const esc = enforceConsentNonEscalation(input);
@@ -631,14 +632,18 @@ export function routeOptimalDecision(input = {}) {
   const q = scalerUsable ? applyPlattScaler(rawProbability, scaler) : rawProbability;
   const cfp = typeof inp.cfp === 'number' && Number.isFinite(inp.cfp) && inp.cfp > 0 ? inp.cfp : 1;
   const cfn = typeof inp.cfn === 'number' && Number.isFinite(inp.cfn) && inp.cfn > 0 ? inp.cfn : 1;
+  const lossScale = 0.5 * (cfp + cfn);
   const baseLoss = loss(q, cfp, cfn);
   const positiveLoss = cfp * (1 - q);
-  const normalizedPositiveLoss = positiveLoss / (0.5 * (cfp + cfn));
+  const normalizedPositiveLoss = positiveLoss / lossScale;
   const answerCutoff = cfp / (cfp + cfn);
   const canVerify = inp.canVerify !== false;
   const needsOperator = normalizeFailClosedFlag(inp.needsOperator) || normalizeFailClosedFlag(inp.requiresHumanYes);
   const cheapCostThreshold = typeof inp.cheapCostThreshold === 'number' && Number.isFinite(inp.cheapCostThreshold) && inp.cheapCostThreshold > 0 ? inp.cheapCostThreshold : 0.2;
   const answerLossThreshold = typeof inp.answerLossThreshold === 'number' && Number.isFinite(inp.answerLossThreshold) && inp.answerLossThreshold > 0 ? inp.answerLossThreshold : 0.15;
+  const minAnswerProbability = typeof inp.minAnswerProbability === 'number' && Number.isFinite(inp.minAnswerProbability) && inp.minAnswerProbability >= 0 && inp.minAnswerProbability <= 1
+    ? inp.minAnswerProbability
+    : 0.5;
 
   const rawChecks = canVerify && Array.isArray(inp.checks) ? inp.checks : [];
   const scoredChecks = rawChecks
@@ -661,6 +666,7 @@ export function routeOptimalDecision(input = {}) {
     .sort((x, y) => (y.netValue - x.netValue) || (y.voiPerCost - x.voiPerCost) || (x.cost - y.cost));
 
   const bestCheck = scoredChecks[0] || null;
+  const normalizedBestCost = bestCheck ? bestCheck.cost / lossScale : 0;
   let outcome = canVerify ? 'open_tree_hoh' : 'abstain';
   let reason = canVerify ? 'expected_risk_exceeds_direct_act' : 'unverifiable_risk_exceeds_threshold';
 
@@ -668,9 +674,9 @@ export function routeOptimalDecision(input = {}) {
     outcome = 'ask_operator';
     reason = 'operator_approval_required';
   } else if (bestCheck && bestCheck.netValue > 0) {
-    outcome = bestCheck.cost <= cheapCostThreshold ? 'run_one_cheap_check' : 'open_tree_hoh';
-    reason = bestCheck.cost <= cheapCostThreshold ? 'positive_net_voi_cheap_check' : 'positive_net_voi_tree_check';
-  } else if (normalizedPositiveLoss <= answerLossThreshold && q >= answerCutoff) {
+    outcome = normalizedBestCost <= cheapCostThreshold ? 'run_one_cheap_check' : 'open_tree_hoh';
+    reason = normalizedBestCost <= cheapCostThreshold ? 'positive_net_voi_cheap_check' : 'positive_net_voi_tree_check';
+  } else if (normalizedPositiveLoss <= answerLossThreshold && (1 - q) <= answerLossThreshold && q >= Math.max(answerCutoff, minAnswerProbability)) {
     outcome = 'answer_now';
     reason = 'calibrated_loss_below_threshold';
   } else if (!canVerify || q < Math.min(0.25, answerCutoff)) {
@@ -836,7 +842,7 @@ function normalizeFamilyName(family) {
   return typeof family === 'string' ? family.trim().toLowerCase() : '';
 }
 
-function isVerifiedCrossFamilyPair(pair) {
+function isVerifiedCrossFamilyPair(pair, opts = {}) {
   if (!pair || typeof pair !== 'object' || Array.isArray(pair)) return false;
   if (pair.ok !== true || pair.crossFamilyCheck?.ok !== true) return false;
   const bSpec = resolveKnownRouteSpec(pair.builder?.route);
@@ -850,7 +856,17 @@ function isVerifiedCrossFamilyPair(pair) {
   if (pair.checker?.formal !== undefined && pair.checker.formal !== cSpec.formal) return false;
   if (pair.builder?.tierRank !== undefined && pair.builder.tierRank !== bSpec.tierRank) return false;
   if (pair.checker?.tierRank !== undefined && pair.checker.tierRank !== cSpec.tierRank) return false;
-  return true;
+  const rederived = pairBuilderAndChecker({
+    builderRoute: bSpec.route,
+    checkerRoute: cSpec.route,
+    ...(opts.minTier !== undefined ? { minTier: opts.minTier } : {}),
+    ...(opts.minCheckerTier !== undefined ? { minCheckerTier: opts.minCheckerTier } : {}),
+    ...(opts.needsFormal !== undefined ? { needsFormal: Boolean(opts.needsFormal) } : {}),
+    ...(opts.allowLegacy === true ? { allowLegacy: true } : {}),
+    ...(typeof pair.crossFamilyCheck?.builderId === 'string' && pair.crossFamilyCheck.builderId ? { builderId: pair.crossFamilyCheck.builderId } : {}),
+    ...(typeof pair.crossFamilyCheck?.checkerId === 'string' && pair.crossFamilyCheck.checkerId ? { checkerId: pair.crossFamilyCheck.checkerId } : {}),
+  });
+  return rederived.ok === true;
 }
 
 /** Least upper bound (supremum) on the information-flow taint lattice; empty or unknown/null entries fail closed to secret_risk. */
@@ -884,11 +900,16 @@ export function decideExitAction(input = {}) {
   const effectiveTaint = (hasSecret || badTaints) ? 'secret_risk' : joinTaint(...levels);
   const citationCount = Array.isArray(input.citations)
     ? input.citations.filter((c) => typeof c === 'string' && c.trim().length > 0).length
-    : (Number.isInteger(input.citationCount) && input.citationCount >= 0 ? input.citationCount : 0);
+    : 0;
   const checksPassed = input.checksPassed === true;
   const crossFamilyVerified = input.crossFamilyVerified === true;
   const hasPair = input.pair !== undefined && input.pair !== null;
-  const pairValid = isVerifiedCrossFamilyPair(input.pair);
+  const pairValid = isVerifiedCrossFamilyPair(input.pair, {
+    minTier: input.minTier,
+    minCheckerTier: input.minCheckerTier,
+    needsFormal: input.needsFormal,
+    allowLegacy: input.allowLegacy,
+  });
 
   if (effectiveTaint === 'secret_risk') {
     return { ok: false, action: 'block_secret', effectiveTaint, allowExit: false, reason: 'secret_risk taint blocks exit' };
@@ -934,7 +955,12 @@ export function emitDecisionPacket(input = {}) {
   const hasSecret = normalizeFailClosedFlag(input.hasSecret);
   const needsOperator = normalizeFailClosedFlag(input.needsOperator) || normalizeFailClosedFlag(input.requiresHumanYes);
   const hasPair = input.pair != null;
-  const pairValid = hasPair ? isVerifiedCrossFamilyPair(input.pair) : true;
+  const pairValid = hasPair ? isVerifiedCrossFamilyPair(input.pair, {
+    minTier: input.minTier,
+    minCheckerTier: input.minCheckerTier,
+    needsFormal: input.needsFormal,
+    allowLegacy: input.allowLegacy,
+  }) : true;
   const exitGuard = decideExitAction({
     ...(Object.hasOwn(input, 'taint') ? { taint: input.taint } : {}),
     ...(Object.hasOwn(input, 'taints') ? { taints: input.taints } : {}),
@@ -945,6 +971,10 @@ export function emitDecisionPacket(input = {}) {
     checksPassed: input.checksPassed === true,
     crossFamilyVerified: input.crossFamilyVerified === true,
     pair: input.pair,
+    minTier: input.minTier,
+    minCheckerTier: input.minCheckerTier,
+    needsFormal: input.needsFormal,
+    allowLegacy: input.allowLegacy,
   });
   const crossFamilyOk = exitGuard.effectiveTaint === 'untrusted_web'
     ? (input.crossFamilyVerified === true && hasPair && pairValid)

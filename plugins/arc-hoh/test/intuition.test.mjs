@@ -318,9 +318,26 @@ test('routeOptimalDecision maximizes net VOI, respects asymmetric loss, and bloc
   const usedLarge = routeOptimalDecision({ probability: 0.95, plattScaler: largeCv.scaler });
   assert.equal(usedLarge.scalerApplied, true);
 
-  // Uniform scaling of loss weights keeps answer_now invariant.
+  // Uniform scaling of (cfp, cfn, check.cost) preserves routing and asymmetric weights cannot bypass the probability floor.
   assert.notEqual(routeOptimalDecision({ id: 'coin-small', probability: 0.5, cfp: 0.1, cfn: 0.1 }).outcome, 'answer_now');
   assert.equal(routeOptimalDecision({ id: 'sure-large', probability: 0.95, cfp: 10, cfn: 10 }).outcome, 'answer_now');
+  assert.notEqual(routeOptimalDecision({ id: 'asym-low-q', probability: 0.05, cfp: 1, cfn: 20 }).outcome, 'answer_now');
+  assert.notEqual(routeOptimalDecision({ id: 'asym-mid-q', probability: 0.6, cfp: 1, cfn: 20 }).outcome, 'answer_now');
+  assert.equal(routeOptimalDecision({ id: 'asym-below-cutoff', probability: 0.04, cfp: 1, cfn: 20 }).outcome, 'abstain');
+  assert.equal(routeOptimalDecision({
+    id: 'cheap-unit',
+    probability: 0.55,
+    cfp: 1,
+    cfn: 1,
+    checks: [{ id: 'c', s: 0.9, e: 0.9, cost: 0.1 }],
+  }).outcome, 'run_one_cheap_check');
+  assert.equal(routeOptimalDecision({
+    id: 'cheap-scaled',
+    probability: 0.55,
+    cfp: 10,
+    cfn: 10,
+    checks: [{ id: 'c', s: 0.9, e: 0.9, cost: 1.0 }],
+  }).outcome, 'run_one_cheap_check');
 });
 
 test('pairBuilderAndChecker enforces cross-family pairing, strict tiers/capabilities, and R006 failures', () => {
@@ -547,4 +564,47 @@ test('taint lattice, exit guard, and cammut.decision/0 packet enforce strict fai
   const freshPair = pairBuilderAndChecker({ minTier: 'T1' });
   assert.equal(freshPair.ok, true);
   assert.equal(freshPair.checker.family, 'anthropic');
+
+  // Forged T0/legacy or non-formal pairs must be rejected by both decideExitAction and emitDecisionPacket.
+  const forgedLegacyPair = {
+    ok: true,
+    crossFamilyCheck: { ok: true, builderFamily: 'anthropic', checkerFamily: 'google' },
+    builder: { route: 'claude-haiku-5-5', family: 'anthropic', tierRank: 0, formal: false },
+    checker: { route: 'gemini-3.8-flash', family: 'google', tierRank: 0, formal: false },
+  };
+  assert.equal(decideExitAction({
+    taint: 'untrusted_web',
+    citations: ['url:a'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+    pair: forgedLegacyPair,
+  }).action, 'block_pairing');
+  const legacyRes = emitDecisionPacket({
+    id: 'DEC-110',
+    goal: 'web-legacy-forged',
+    probability: 0.95,
+    taint: 'untrusted_web',
+    citations: ['url:a'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+    pair: forgedLegacyPair,
+  });
+  assert.equal(legacyRes.ok, false);
+  assert.equal(legacyRes.packet.allowExit, false);
+  assert.equal(legacyRes.packet.action, 'block_pairing');
+
+  const nonFormalRes = emitDecisionPacket({
+    id: 'DEC-111',
+    goal: 'web-nonformal-pair',
+    probability: 0.95,
+    needsFormal: true,
+    taint: 'untrusted_web',
+    citations: ['url:a'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+    pair: pairBuilderAndChecker({ minTier: 'T1' }),
+  });
+  assert.equal(nonFormalRes.ok, false);
+  assert.equal(nonFormalRes.packet.allowExit, false);
+  assert.equal(nonFormalRes.packet.action, 'block_pairing');
 });
