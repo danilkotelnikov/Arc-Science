@@ -500,13 +500,94 @@ export const memoryRecall = defaultServer.memory.recall;
 
 import { createResearchSessionStore, registerConsoleRoutes } from './console.js';
 
+function jsonRender(_args, value) {
+  return [{ type: 'text', text: JSON.stringify(value === undefined ? null : value, null, 2) }];
+}
+
+const normalizeJson = (v) => (v === undefined ? null : JSON.parse(JSON.stringify(v)));
+const s = (description, extra = {}) => (description ? { type: 'string', description, ...extra } : { type: 'string', ...extra });
+const int = (description) => (description ? { type: 'integer', description } : { type: 'integer' });
+const bool = () => ({ type: 'boolean' });
+const arr = (items, description) => (description ? { type: 'array', items, description } : { type: 'array', items });
+const obj = (properties, required, additionalProperties = false) => ({
+  type: 'object',
+  properties,
+  ...(required && required.length ? { required } : {}),
+  additionalProperties,
+});
+const memEntry = () => obj({ id: s(), text: s(), context: s(), tags: arr(s()), createdAt: s() }, ['id', 'text', 'tags', 'createdAt']);
+
+const HOST_TOOL_SPECS = {
+  'shelf.search': {
+    safeName: 'shelf_search',
+    description: 'Search verified tool shelf entries.',
+    parameters: obj({ query: s('Query terms.'), domain: s('Domain filter.'), limit: int('Max results.') }),
+    outputSchema: obj({ ok: bool(), count: int(), items: arr(obj({ id: s(), name: s(), domain: s(), license: s(), status: s() }, ['id', 'name', 'domain', 'license', 'status'])) }, ['ok', 'count', 'items']),
+    adaptExecute: (fn) => (args) => {
+      const cards = fn(args);
+      if (!Array.isArray(cards)) return { ok: false, count: 0, items: [] };
+      return { ok: true, count: cards.length, items: cards.map((c) => ({ id: String(c.id), name: String(c.name), domain: String(c.domain), license: String(c.license), status: String(c.status) })) };
+    },
+  },
+  'claim.record': {
+    safeName: 'claim_record',
+    description: 'Record a claim with R006 source verification.',
+    parameters: obj({ id: s('Claim id.'), text: s('Claim text.'), evidence: s('Evidence summary.'), level: s('Evidence level.'), doi: s('DOI.'), pmid: s('PMID.'), arxiv: s('arXiv ID.'), url: s('Source URL.'), dependsOn: arr(s(), 'Parent claim IDs.') }, ['text']),
+    outputSchema: obj({ ok: bool(), rule: s(), error: s(), id: s(), count: int(), claim: { type: 'object', additionalProperties: true } }, ['ok']),
+  },
+  'gate.check': {
+    safeName: 'gate_check',
+    description: 'Verify candidate digest, checks, and prose lint count.',
+    parameters: obj({ candidateHash: s('Candidate sha256.'), checks: arr(obj({ passed: bool(), name: s() }, ['passed'], true), 'Check items.'), proseErrors: int('Prose error count.') }, ['candidateHash', 'checks']),
+    outputSchema: obj({ ok: bool(), verdict: s('', { enum: ['accepted', 'unmet'] }), candidateHash: s(), failedChecks: arr(s()) }, ['ok', 'verdict', 'candidateHash', 'failedChecks']),
+  },
+  'toolpack.load': {
+    safeName: 'toolpack_load',
+    description: 'Load an authorized Arc Harness toolpack.',
+    parameters: obj({ pack: s('Toolpack id.'), target: s('Target path.') }, ['pack']),
+    outputSchema: obj({ ok: bool(), rule: s(), error: s(), pack: s(), name: s(), domain: s(), tools: arr(s()), target: s() }, ['ok']),
+    adaptExecute: (fn, { hostScope }) => (args) => {
+      const out = normalizeJson(fn({ ...(args && typeof args === 'object' ? args : {}), scope: hostScope }));
+      if (out && out.target === null) delete out.target;
+      return out;
+    },
+  },
+  'memory.retain': {
+    safeName: 'memory_retain',
+    description: 'Retain a factual note with project, date, and source tags.',
+    parameters: obj({ text: s('Memory note.'), context: s('Context line.'), tags: arr(s(), 'Mandatory tags.') }, ['text', 'tags']),
+    outputSchema: obj({ ok: bool(), error: s(), id: s(), entry: memEntry() }, ['ok']),
+  },
+  'memory.recall': {
+    safeName: 'memory_recall',
+    description: 'Recall stored facts by query and tags.',
+    parameters: obj({ query: s('Search query.'), tags: arr(s(), 'Filter tags.'), budget: s('Budget tier.', { enum: ['low', 'mid', 'high'] }) }),
+    outputSchema: obj({ ok: bool(), error: s(), budget: s('', { enum: ['low', 'mid', 'high'] }), count: int(), items: arr(memEntry()) }, ['ok']),
+  },
+};
+
+export function buildHostToolDefinitions(server, providerSafeNames = false, opts = {}) {
+  const hostScope = opts.toolpackScope && typeof opts.toolpackScope === 'object' ? opts.toolpackScope : { authorized: false, allowedRoots: [] };
+  return Object.entries(server.tools).map(([toolName, rawExecute]) => {
+    const spec = HOST_TOOL_SPECS[toolName];
+    if (!spec) {
+      return { name: providerSafeNames ? toolName.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64) : toolName, description: toolName, parameters: obj({}, undefined, true), output: { schema: {}, render: jsonRender }, execute: rawExecute };
+    }
+    const exec = spec.adaptExecute ? spec.adaptExecute(rawExecute, { hostScope }) : (args) => normalizeJson(rawExecute(args));
+    return { name: providerSafeNames ? spec.safeName : toolName, description: spec.description, parameters: spec.parameters, output: { schema: providerSafeNames ? spec.outputSchema : {}, render: jsonRender }, execute: providerSafeNames ? exec : rawExecute };
+  });
+}
+
 export function apply(ctx, opts = {}) {
   const server = createArcCoreServer(opts);
   const consoleStore = createResearchSessionStore(opts.console || {});
   server.console = consoleStore;
   if (ctx && ctx.tools && typeof ctx.tools.register === 'function') {
-    for (const [toolName, execute] of Object.entries(server.tools)) {
-      ctx.tools.register({ name: toolName, execute });
+    const providerSafeNames = opts.providerSafeNames !== undefined
+      ? Boolean(opts.providerSafeNames)
+      : (typeof ctx.tools.schemas === 'function' || typeof ctx.tools.restrict === 'function' || (ctx.tools.layers !== null && typeof ctx.tools.layers === 'object'));
+    for (const definition of buildHostToolDefinitions(server, providerSafeNames, opts)) {
+      ctx.tools.register(definition);
     }
   }
   if (ctx && typeof ctx.inject === 'function') {

@@ -749,16 +749,97 @@ test('traceView lists the newest events first with a short summary, and reports 
   await appendLedger(f, { type: 'propose', goal: 'g1', hypothesis: 'h'.repeat(300), checks: ['a', 'b'] });
   await appendLedger(f, { type: 'freeze', goal: 'g1', candidate: 'sha256:' + 'a'.repeat(64), files: 3 });
   await appendLedger(f, { type: 'gate', goal: 'g1', cycle: 1, verdict: 'unmet', reasons: ['check c1 exited 1', 'no probe'] });
+  await appendLedger(f, {
+    type: 'decide',
+    goal: 'g1',
+    id: 'DEC-0001',
+    action: 'block_tainted',
+    allowExit: false,
+    outcome: 'blocked',
+    effectiveTaint: 'untrusted_web',
+    checksPassed: false,
+    crossFamilyVerified: true,
+    gateSeq: 3,
+  });
   const v = await traceView(f, () => 'brief text');
-  assert.equal(v.chain.ok, true); assert.equal(v.chain.entries, 3);
-  assert.deepEqual(v.items.map((x) => x.type), ['gate', 'freeze', 'propose']);
-  assert.equal(v.items[0].summary, 'unmet: check c1 exited 1; no probe');
-  assert.equal(v.items[1].summary, '3 file(s), candidate sha256:aaaaaaaaaaaa');
-  assert.ok(v.items[2].summary.length <= 160);
+  assert.equal(v.chain.ok, true); assert.equal(v.chain.entries, 4);
+  assert.deepEqual(v.items.map((x) => x.type), ['decide', 'gate', 'freeze', 'propose']);
+  assert.equal(v.items[0].summary, 'DEC-0001, block_tainted, blocked, untrusted_web, gate #3');
+  assert.deepEqual(v.items[0].decision, {
+    id: 'DEC-0001',
+    action: 'block_tainted',
+    allowExit: false,
+    outcome: 'blocked',
+    effectiveTaint: 'untrusted_web',
+    checksPassed: false,
+    crossFamilyVerified: true,
+    gateSeq: 3,
+  });
+  assert.equal(v.items[1].summary, 'unmet: check c1 exited 1; no probe');
+  assert.equal(v.items[2].summary, '3 file(s), candidate sha256:aaaaaaaaaaaa');
+  assert.ok(v.items[3].summary.length <= 160);
   assert.equal(v.brief, 'brief text');
   const lines = (await readFile(f, 'utf8')).split('\n'); lines[1] = lines[1].replace('"files":3', '"files":4');
   await writeFile(f, lines.join('\n'));
-  assert.deepEqual((await traceView(f, () => '')).chain, { ok: false, entries: 3, badAt: 2 });
+  assert.deepEqual((await traceView(f, () => '')).chain, { ok: false, entries: 4, badAt: 2 });
   assert.equal((await traceView(f, () => '', 1)).items.length, 1);
   await rm(d, { recursive: true });
+});
+
+test('trace client renders Decision packet cards with exit-ready and hold pills', async () => {
+  const vm = await import('node:vm');
+  const clientCode = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8');
+  let captured = null;
+  const h = (tag, props, ...children) => ({ tag, props: props || {}, children: children.flat() });
+  const sandbox = {
+    window: { __ModuleLoader__: { load: (def) => { captured = def; } } },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    setInterval: () => 0,
+    clearInterval: () => {},
+  };
+  vm.runInNewContext(clientCode, sandbox);
+  const plugin = captured.factory((id) => {
+    if (id === 'react') return { createElement: h, useState: (v) => [v, () => {}], useEffect: () => {}, Fragment: 'fragment' };
+    return {};
+  });
+  const t = (k, p = {}) => String(plugin.en[k] || k).replace(/\{(\w+)\}/g, (_, n) => (p[n] ?? ''));
+  const holdTree = plugin.Item({
+    it: {
+      seq: 4,
+      ts: '2026-11-15T10:00:00.000Z',
+      type: 'decide',
+      goal: 'g1',
+      decision: { id: 'DEC-0001', action: 'block_tainted', allowExit: false, outcome: 'blocked', effectiveTaint: 'untrusted_web', gateSeq: 3 },
+      summary: 'DEC-0001, block_tainted, blocked, untrusted_web, gate #3',
+    },
+    t,
+  });
+  const readyTree = plugin.Item({
+    it: {
+      seq: 5,
+      ts: '2026-11-15T10:05:00.000Z',
+      type: 'decide',
+      goal: 'g1',
+      decision: { id: 'DEC-0002', action: 'ship_pr', allowExit: true, outcome: 'ready', effectiveTaint: 'trusted_local', gateSeq: 4 },
+      summary: 'DEC-0002, ship_pr, ready, trusted_local, gate #4',
+    },
+    t,
+  });
+  const textOf = (node) => !node ? '' : typeof node === 'string' || typeof node === 'number' ? String(node) : (Array.isArray(node.children) ? node.children.map(textOf).join(' ') : '');
+  const findByAttr = (node, attr, val) => {
+    if (!node || typeof node !== 'object') return null;
+    if (node.props && node.props[attr] === val) return node;
+    for (const c of node.children || []) { const hit = findByAttr(c, attr, val); if (hit) return hit; }
+    return null;
+  };
+  const holdText = textOf(holdTree);
+  const readyText = textOf(readyTree);
+  assert.ok(holdText.includes('Decision'));
+  assert.ok(holdText.includes('Hold'));
+  assert.ok(holdText.includes('(gate #3)'));
+  assert.ok(readyText.includes('Exit ready'));
+  assert.ok(readyText.includes('(gate #4)'));
+  const holdCard = findByAttr(holdTree, 'data-hoh-decision-card', 'true');
+  assert.ok(holdCard && holdCard.children.some((c) => textOf(c) === 'DEC-0001'));
+  assert.ok(!holdText.includes('\u00b7'));
 });

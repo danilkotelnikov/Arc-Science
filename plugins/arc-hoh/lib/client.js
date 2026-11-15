@@ -16,9 +16,11 @@ window.__ModuleLoader__.load({ id: 'arc-hoh', factory: (require) => {
     'ledger.broken': 'Chain broken at entry {n}',
     'ledger.empty': 'No entries yet. An entry appears when an agent proposes, freezes or gates a task.',
     'ledger.error': 'Could not read the ledger.',
-    'type.propose': 'Proposal', 'type.freeze': 'Frozen', 'type.gate': 'Gate',
+    'type.propose': 'Proposal', 'type.freeze': 'Frozen', 'type.gate': 'Gate', 'type.decide': 'Decision',
     'verdict.accepted': 'Accepted', 'verdict.rejected': 'Rejected', 'verdict.unmet': 'Unmet', 'verdict.blocked': 'Blocked',
+    'verdict.exit-ready': 'Exit ready', 'verdict.hold': 'Hold',
     'cycle': 'cycle {n}',
+    'gate.ref': 'gate #{n}',
     'brief.title': 'Memory brief',
     'brief.empty': 'No brief yet. Cammut sends one when it is reachable.',
   };
@@ -26,6 +28,7 @@ window.__ModuleLoader__.load({ id: 'arc-hoh', factory: (require) => {
   const muted = { opacity: 0.65 };
   const tabular = { fontVariantNumeric: 'tabular-nums' };
   const line = '1px solid color-mix(in srgb, currentColor 14%, transparent)';
+  const pill = { display: 'inline-block', padding: '1px 6px', borderRadius: 999, background: 'color-mix(in srgb, currentColor 10%, transparent)', fontSize: '0.9em' };
 
   function Icon({ size = 16 }) {
     return h('svg', { width: size, height: size, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, 'aria-hidden': true },
@@ -50,14 +53,24 @@ window.__ModuleLoader__.load({ id: 'arc-hoh', factory: (require) => {
 
   function Item({ it, t }) {
     const rawVerdict = it.type === 'gate' ? String(it.summary).split(':')[0].trim() : '';
-    const verdict = formatVerdict(rawVerdict, t);
+    const d = it.type === 'decide' ? (it.decision || null) : null;
+    const decideVerdict = d ? (d.allowExit ? 'exit-ready' : 'hold') : '';
+    const activeVerdict = rawVerdict || decideVerdict;
+    const verdict = formatVerdict(activeVerdict, t);
+    const chips = d ? [d.id, d.action, d.outcome, d.effectiveTaint].filter(Boolean) : [];
+    const passed = rawVerdict === 'accepted' || decideVerdict === 'exit-ready';
     return h('li', { style: { padding: '10px 0', borderTop: line, listStyle: 'none', display: 'grid', gap: 4 } },
       h('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline' } },
         h('span', { style: { fontWeight: 600 } }, t('type.' + it.type) || it.type),
-        verdict ? h('span', { style: { fontWeight: 600, ...(rawVerdict === 'accepted' ? {} : { textDecoration: 'underline' }) } }, verdict) : null,
+        verdict ? h('span', { style: { fontWeight: 600, ...(passed ? {} : { textDecoration: 'underline' }) } }, verdict) : null,
         h('span', { style: { ...muted, ...tabular, marginLeft: 'auto', whiteSpace: 'nowrap' } }, when(it.ts))),
-      h('div', { style: { overflowWrap: 'anywhere' } }, it.goal, it.cycle ? h('span', { style: { ...muted, ...tabular } }, ' (' + t('cycle', { n: it.cycle }) + ')') : null),
-      it.summary && it.type !== 'gate' ? h('div', { style: { ...muted, overflowWrap: 'anywhere' } }, it.summary) : null,
+      h('div', { style: { overflowWrap: 'anywhere' } },
+        it.goal,
+        it.cycle ? h('span', { style: { ...muted, ...tabular } }, ' (' + t('cycle', { n: it.cycle }) + ')') : null,
+        d && d.gateSeq !== undefined ? h('span', { style: { ...muted, ...tabular } }, ' (' + t('gate.ref', { n: d.gateSeq }) + ')') : null),
+      d && chips.length > 0 ? h('div', { 'data-hoh-decision-card': 'true', style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+        chips.map((c, idx) => h('span', { key: String(idx), style: pill }, c))) : null,
+      it.summary && it.type !== 'gate' && !d ? h('div', { style: { ...muted, overflowWrap: 'anywhere' } }, it.summary) : null,
       it.type === 'gate' && it.summary.includes(': ') ? h('div', { style: { ...muted, overflowWrap: 'anywhere' } }, it.summary.slice(it.summary.indexOf(': ') + 2)) : null);
   }
 
@@ -115,5 +128,5 @@ window.__ModuleLoader__.load({ id: 'arc-hoh', factory: (require) => {
     });
   }
 
-  return { name: 'arc-hoh', inject: ['slots', 'locale'], apply };
+  return { name: 'arc-hoh', inject: ['slots', 'locale'], apply, en, Item };
 } });
