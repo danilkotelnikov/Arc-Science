@@ -386,6 +386,101 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   assert.equal(afterDecideVerify.ok, true);
   assert.ok(afterDecideVerify.entries > v.entries);
 
+  // Unknown-family builder/reviewer on gate allows clean exit via checksPassed, but blocks untrusted_web exit.
+  const unknownFamWebBlocked = await decide.execute({
+    goal: 'demo',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, reviewer);
+  assert.equal(unknownFamWebBlocked.packet.allowExit, false);
+  assert.equal(unknownFamWebBlocked.packet.action, 'block_tainted');
+
+  // Fresh goal with cross-family gate agents (with underscore separator), propose-after-gate, TOCTOU, and non-poisoning omitted taint.
+  const cfFile = path.join(d, 'cf.txt');
+  await writeFile(cfFile, 'cross family candidate');
+  await propose.execute({ goal: 'cf', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, lead);
+  const cfFr = await freeze.execute({ goal: 'cf', files: [cfFile] }, lead);
+  const cfGate = await gate.execute({
+    goal: 'cf',
+    ...goodGate(cfFr.candidate),
+    builder: 'gemini-4-argon',
+    reviewer: 'claude_sonnet_5_5',
+  }, reviewer);
+  assert.equal(cfGate.verdict, 'accepted');
+
+  // Omitted taint fails closed on that call only without poisoning subsequent clean calls on the same goal.
+  const omittedTaint = await decide.execute({
+    goal: 'cf',
+    probability: 0.95,
+    minTier: 'T1',
+    citations: ['file:cf.txt'],
+    checksPassed: true,
+  }, reviewer);
+  assert.equal(omittedTaint.packet.allowExit, false);
+  assert.equal(omittedTaint.packet.action, 'block_secret');
+
+  const cfCleanAfterOmit = await decide.execute({
+    goal: 'cf',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:cf.txt'],
+    checksPassed: true,
+  }, reviewer);
+  assert.equal(cfCleanAfterOmit.packet.allowExit, true);
+
+  const cfWebAllowed = await decide.execute({
+    goal: 'cf',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:verified'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, reviewer);
+  assert.equal(cfWebAllowed.ok, true);
+  assert.equal(cfWebAllowed.packet.allowExit, true);
+  assert.equal(cfWebAllowed.packet.checkEvidence.crossFamilyOk, true);
+
+  // Editing the frozen file invalidates the prior gate immediately (TOCTOU rehash guard).
+  await writeFile(cfFile, 'mutated after gate');
+  const toctouBlocked = await decide.execute({
+    goal: 'cf',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:verified'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, reviewer);
+  assert.equal(toctouBlocked.packet.allowExit, false);
+  assert.equal(toctouBlocked.packet.action, 'block_tainted');
+
+  // Adding a newer hoh_propose after an accepted gate also invalidates gate freshness until a new gate is accepted.
+  const cfFr2 = await freeze.execute({ goal: 'cf', files: [cfFile] }, lead);
+  const cfGate2 = await gate.execute({
+    goal: 'cf',
+    ...goodGate(cfFr2.candidate),
+    builder: 'gemini-4-argon',
+    reviewer: 'claude_sonnet_5_5',
+  }, reviewer);
+  assert.equal(cfGate2.verdict, 'accepted');
+  await propose.execute({ goal: 'cf', hypothesis: 'h2', boundary: 'b', checks: ['node test.js', 'node extra.js'], probes: ['empty'] }, lead);
+  const staleAfterPropose = await decide.execute({
+    goal: 'cf',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:cf.txt'],
+    checksPassed: true,
+  }, reviewer);
+  assert.equal(staleAfterPropose.packet.allowExit, false);
+  assert.equal(staleAfterPropose.packet.action, 'block_unverified');
+
   const off = makeTools((def) => def, { ARC_HOME: d, ARC_HOH_RETAIN: '0' }, { retain: async () => { throw new Error('must not be called'); } });
   const r = await off[2].execute({ ...base, candidate: fr2.candidate }, reviewer);
   assert.equal(r.retained, false);

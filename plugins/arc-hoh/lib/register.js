@@ -2,14 +2,32 @@
 import { appendLedger, checkDigest, clip, goalEvents, hashFiles, lastEvent, ledgerFile, optedOut, verifyLedger, decideGate, withLedger } from './gates.js';
 import { CONTRACT, briefText } from './contract.js';
 import { retainNote } from './brief.js';
-import { routeOptimalDecision, pairBuilderAndChecker, emitDecisionPacket } from './intuition.js';
+import { routeOptimalDecision, pairBuilderAndChecker, emitDecisionPacket, TAINT_LEVELS, enforceConsentNonEscalation } from './intuition.js';
 
 const stripSha = (id) => String(id ?? '').replace(/^sha256:/, '');
+const FAMILY_ALPHA_TOKENS = Object.freeze({
+  anthropic: new Set(['claude', 'fable', 'opus', 'sonnet', 'haiku', 'anthropic']),
+  google: new Set(['gemini', 'argon', 'carbon', 'hydrogen', 'google', 'vertex']),
+  openai: new Set(['gpt', 'openai', 'codex', 'sol', 'astra']),
+  zhipu: new Set(['glm', 'zhipu', 'zcode']),
+});
+const OPENAI_ALNUM_TOKENS = new Set(['o1', 'o3', 'o4']);
+
 function inferKnownFamily(id) {
-  const s = String(id || '').toLowerCase();
-  if (/\b(?:claude|fable|opus|sonnet|haiku|anthropic)\b/.test(s)) return 'anthropic';
-  if (/\b(?:gemini|argon|carbon|hydrogen|google|vertex)\b/.test(s)) return 'google';
-  return null;
+  const raw = String(id || '').toLowerCase();
+  if (!raw.trim()) return null;
+  const alphaTokens = raw.split(/[^a-z]+/).filter(Boolean);
+  const alnumTokens = raw.split(/[^a-z0-9]+/).filter(Boolean);
+  const families = new Set();
+  for (const tok of alphaTokens) {
+    for (const [fam, words] of Object.entries(FAMILY_ALPHA_TOKENS)) {
+      if (words.has(tok)) families.add(fam);
+    }
+  }
+  for (const tok of alnumTokens) {
+    if (OPENAI_ALNUM_TOKENS.has(tok)) families.add('openai');
+  }
+  return families.size === 1 ? [...families][0] : null;
 }
 
 const strList = { type: 'array', items: { type: 'string' } };
@@ -231,17 +249,35 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
       const ledgerPath = file();
       const rawArgs = args && typeof args === 'object' ? args : {};
       const goalKey = typeof rawArgs.goal === 'string' && rawArgs.goal.trim() ? rawArgs.goal.trim() : 'unspecified';
+      const escCheck = enforceConsentNonEscalation(rawArgs);
       return withLedger(ledgerPath, async (append) => {
-        const gateRow = await lastEvent(ledgerPath, goalKey, 'gate');
+        const chain = await verifyLedger(ledgerPath);
+        const proposeRow = await lastEvent(ledgerPath, goalKey, 'propose');
         const freezeRow = await lastEvent(ledgerPath, goalKey, 'freeze');
+        const gateRow = await lastEvent(ledgerPath, goalKey, 'gate');
         const priorDecides = await goalEvents(ledgerPath, goalKey, 'decide');
 
+        let freezeIntact = false;
+        if (freezeRow && Array.isArray(freezeRow.paths) && freezeRow.paths.length > 0 && stripSha(freezeRow.candidate) !== '') {
+          try {
+            const now = await hashFiles(freezeRow.paths);
+            freezeIntact = stripSha(now.candidate) !== '' && stripSha(now.candidate) === stripSha(freezeRow.candidate);
+          } catch {
+            freezeIntact = false;
+          }
+        }
+
         const gateAcceptedAndFresh = Boolean(
-          gateRow
-          && gateRow.verdict === 'accepted'
+          chain.ok
+          && freezeIntact
+          && proposeRow
           && freezeRow
-          && Number.isInteger(gateRow.seq)
+          && gateRow
+          && gateRow.verdict === 'accepted'
+          && Number.isInteger(proposeRow.seq)
           && Number.isInteger(freezeRow.seq)
+          && Number.isInteger(gateRow.seq)
+          && gateRow.seq > proposeRow.seq
           && gateRow.seq > freezeRow.seq
           && stripSha(gateRow.candidate) !== ''
           && stripSha(gateRow.candidate) === stripSha(freezeRow.candidate)
@@ -258,27 +294,68 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
         );
         const bFam = inferKnownFamily(gateRow?.builder);
         const rFam = inferKnownFamily(gateRow?.reviewer);
-        const sameKnownFamily = Boolean(bFam && rFam && bFam === rFam);
+        const crossFamilyKnown = Boolean(bFam && rFam && bFam !== rFam);
         const derivedChecksPassed = rawArgs.checksPassed === true && gateAcceptedAndFresh;
-        const derivedCrossFamily = rawArgs.crossFamilyVerified === true && gateAcceptedAndFresh && !sameKnownFamily;
-        const priorTaints = priorDecides.map((d) => (d && typeof d.effectiveTaint === 'string' ? d.effectiveTaint : 'secret_risk'));
+        const derivedCrossFamily = rawArgs.crossFamilyVerified === true && gateAcceptedAndFresh && crossFamilyKnown;
+
+        const explicitTaint = typeof rawArgs.taint === 'string' && TAINT_LEVELS.includes(rawArgs.taint.trim())
+          ? rawArgs.taint.trim()
+          : null;
+        const minSeq = freezeRow && Number.isInteger(freezeRow.seq) ? freezeRow.seq : 0;
+        const priorTaints = [];
+        for (const d of priorDecides) {
+          if (!d || (typeof d.seq === 'number' && d.seq < minSeq)) continue;
+          if (Object.hasOwn(d, 'observedTaint')) {
+            if (typeof d.observedTaint === 'string' && TAINT_LEVELS.includes(d.observedTaint)) {
+              priorTaints.push(d.observedTaint);
+            }
+          } else if (typeof d.effectiveTaint === 'string' && TAINT_LEVELS.includes(d.effectiveTaint)) {
+            priorTaints.push(d.effectiveTaint);
+          }
+        }
 
         const pair = pairBuilderAndChecker({
           minTier: rawArgs.minTier,
           minCheckerTier: rawArgs.minCheckerTier,
           needsFormal: rawArgs.needsFormal,
         });
+        const r009Keys = [
+          'permissionGranted', 'grantPermission', 'bypassConsent', 'bypassGate',
+          'autoApplied', 'autoApply', 'overrideR006', 'overrideR009',
+          'raiseSpendCap', 'spendApproved', 'consentToken', 'spendCapUsd',
+        ];
         const safeInput = {
-          ...rawArgs,
           goal: goalKey,
-          taint: Object.hasOwn(rawArgs, 'taint') ? rawArgs.taint : 'secret_risk',
+          ...(Object.hasOwn(rawArgs, 'probability') ? { probability: rawArgs.probability } : {}),
+          ...(Object.hasOwn(rawArgs, 'cfp') ? { cfp: rawArgs.cfp } : {}),
+          ...(Object.hasOwn(rawArgs, 'cfn') ? { cfn: rawArgs.cfn } : {}),
+          ...(Object.hasOwn(rawArgs, 'checks') ? { checks: rawArgs.checks } : {}),
+          ...(Object.hasOwn(rawArgs, 'minTier') ? { minTier: rawArgs.minTier } : {}),
+          ...(Object.hasOwn(rawArgs, 'minCheckerTier') ? { minCheckerTier: rawArgs.minCheckerTier } : {}),
+          ...(Object.hasOwn(rawArgs, 'needsFormal') ? { needsFormal: rawArgs.needsFormal } : {}),
+          taint: explicitTaint ?? 'secret_risk',
           taints: priorTaints,
+          ...(Object.hasOwn(rawArgs, 'citations') ? { citations: rawArgs.citations } : {}),
           checksPassed: derivedChecksPassed,
           crossFamilyVerified: derivedCrossFamily,
+          ...(Object.hasOwn(rawArgs, 'requiresHumanYes') ? { requiresHumanYes: rawArgs.requiresHumanYes } : {}),
+          ...(Object.hasOwn(rawArgs, 'needsOperator') ? { needsOperator: rawArgs.needsOperator } : {}),
+          ...(Object.hasOwn(rawArgs, 'hasSecret') ? { hasSecret: rawArgs.hasSecret } : {}),
           pair,
         };
-        const res = emitDecisionPacket(safeInput);
-        const overallOk = res.ok === true && pair.ok === true;
+        for (const k of r009Keys) {
+          if (Object.hasOwn(rawArgs, k)) safeInput[k] = rawArgs[k];
+        }
+        const res = escCheck.ok ? emitDecisionPacket(safeInput) : {
+          ok: false,
+          state: escCheck.state,
+          rule: 'R009',
+          violations: escCheck.violations,
+          permissionGranted: false,
+        };
+        const overallOk = escCheck.ok && res.ok === true && pair.ok === true;
+        const needsOp = (Object.hasOwn(rawArgs, 'requiresHumanYes') && rawArgs.requiresHumanYes !== undefined && rawArgs.requiresHumanYes !== false)
+          || (Object.hasOwn(rawArgs, 'needsOperator') && rawArgs.needsOperator !== undefined && rawArgs.needsOperator !== false);
         let packet = res.packet ? { ...res.packet } : {
           schema: 'cammut.decision/0',
           id: 'DEC-BLOCKED',
@@ -293,6 +370,8 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
           netValue: 0,
           route: null,
           checkerRoute: null,
+          requiresHumanYes: needsOp,
+          pairOk: Boolean(pair.ok),
           citations: [],
           checkEvidence: { ok: false, crossFamilyOk: false, summary: '' },
           permissionGranted: false,
@@ -302,11 +381,12 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
         if (!overallOk) {
           packet = {
             ...packet,
-            action: pair.ok ? 'block_escalation' : 'block_pairing',
+            action: escCheck.ok && !pair.ok ? 'block_pairing' : 'block_escalation',
             allowExit: false,
             outcome: packet.outcome === 'answer_now' ? 'abstain' : (packet.outcome || 'abstain'),
             route: null,
             checkerRoute: null,
+            pairOk: Boolean(pair.ok),
             reason: packet.reason || pair.reason || pair.state || (res.violations || []).join('; ') || 'decision_blocked',
           };
         }
@@ -321,6 +401,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
           allowExit: packet.allowExit,
           outcome: packet.outcome,
           effectiveTaint: packet.effectiveTaint,
+          observedTaint: res.packet && explicitTaint ? explicitTaint : null,
           checksPassed: derivedChecksPassed,
           crossFamilyVerified: derivedCrossFamily,
           gateSeq: gateRow?.seq ?? null,

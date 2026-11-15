@@ -140,7 +140,7 @@ const ESCALATION_KEYS = Object.freeze([
 
 /** Verify that a router or learned policy output never claims permissions or bypasses R009/R006 (G8.7). */
 export function enforceConsentNonEscalation(decision) {
-  if (!decision || typeof decision !== 'object') {
+  if (!decision || typeof decision !== 'object' || Array.isArray(decision)) {
     return { ok: false, state: 'fail_bad_decision', rule: 'R009', violations: ['missing decision object'] };
   }
   const violations = [];
@@ -506,7 +506,7 @@ export function fitPlattScaler(records = [], options = {}) {
     negCount,
     l2,
     converged,
-    usable: converged && posCount >= 2 && negCount >= 2,
+    usable: false,
   };
 }
 
@@ -585,17 +585,21 @@ export function crossFitPlatt2Fold(records = [], options = {}) {
     };
   });
   const allConverged = scalerEven.converged && scalerOdd.converged && fullScaler.converged;
+  const oofBrier = brierScore(predictions);
+  const improvesOof = typeof oofBrier === 'number' && typeof rawBrier === 'number' && oofBrier < rawBrier;
+  const usable = allConverged && resolved.length >= 20 && posCount >= 2 && negCount >= 2 && improvesOof;
   return {
     ok: true,
     count: resolved.length,
     rawBrier,
-    oofBrier: brierScore(predictions),
+    oofBrier,
     rawBss,
     bss: brierSkillScore(predictions),
-    scaler: fullScaler,
+    improvesOof,
+    scaler: { ...fullScaler, oofBrier, rawBrier, improvesOof, usable },
     foldScalers: [scalerEven, scalerOdd],
     allConverged,
-    usable: allConverged && resolved.length >= 20,
+    usable,
     predictions,
   };
 }
@@ -606,33 +610,34 @@ export function routeOptimalDecision(input = {}) {
   if (!esc.ok) {
     return { ok: false, state: esc.state, rule: 'R009', permissionGranted: false, autoApplied: false, violations: esc.violations };
   }
-  const id = typeof input.id === 'string' && input.id.trim() ? input.id.trim() : 'dec-1';
-  const rawProbability = clampProb(input.priorProbability ?? input.probability ?? 0.5);
-  const minPlatt = Number.isInteger(input.minPlattSamples) && input.minPlattSamples > 0 ? input.minPlattSamples : 20;
-  const scaler = input.plattScaler;
+  const inp = input;
+  const id = typeof inp.id === 'string' && inp.id.trim() ? inp.id.trim() : 'dec-1';
+  const rawProbability = clampProb(inp.priorProbability ?? inp.probability ?? 0.5);
+  const minPlatt = Number.isInteger(inp.minPlattSamples) && inp.minPlattSamples > 0 ? inp.minPlattSamples : 20;
+  const scaler = inp.plattScaler;
   const scalerUsable = Boolean(
     scaler
     && typeof scaler === 'object'
     && scaler.converged === true
-    && scaler.usable !== false
+    && scaler.usable === true
     && Number.isInteger(scaler.count) && scaler.count >= minPlatt
     && Number.isInteger(scaler.posCount) && scaler.posCount >= 2
     && Number.isInteger(scaler.negCount) && scaler.negCount >= 2,
   );
   const q = scalerUsable ? applyPlattScaler(rawProbability, scaler) : rawProbability;
-  const cfp = typeof input.cfp === 'number' && Number.isFinite(input.cfp) && input.cfp > 0 ? input.cfp : 1;
-  const cfn = typeof input.cfn === 'number' && Number.isFinite(input.cfn) && input.cfn > 0 ? input.cfn : 1;
+  const cfp = typeof inp.cfp === 'number' && Number.isFinite(inp.cfp) && inp.cfp > 0 ? inp.cfp : 1;
+  const cfn = typeof inp.cfn === 'number' && Number.isFinite(inp.cfn) && inp.cfn > 0 ? inp.cfn : 1;
   const baseLoss = loss(q, cfp, cfn);
   const positiveLoss = cfp * (1 - q);
   const answerCutoff = cfp / (cfp + cfn);
-  const canVerify = input.canVerify !== false;
-  const needsOperator = normalizeFailClosedFlag(input.needsOperator) || normalizeFailClosedFlag(input.requiresHumanYes);
-  const cheapCostThreshold = typeof input.cheapCostThreshold === 'number' && input.cheapCostThreshold > 0 ? input.cheapCostThreshold : 0.2;
-  const answerLossThreshold = typeof input.answerLossThreshold === 'number' && input.answerLossThreshold > 0 ? input.answerLossThreshold : 0.15;
+  const canVerify = inp.canVerify !== false;
+  const needsOperator = normalizeFailClosedFlag(inp.needsOperator) || normalizeFailClosedFlag(inp.requiresHumanYes);
+  const cheapCostThreshold = typeof inp.cheapCostThreshold === 'number' && Number.isFinite(inp.cheapCostThreshold) && inp.cheapCostThreshold > 0 ? inp.cheapCostThreshold : 0.2;
+  const answerLossThreshold = typeof inp.answerLossThreshold === 'number' && Number.isFinite(inp.answerLossThreshold) && inp.answerLossThreshold > 0 ? inp.answerLossThreshold : 0.15;
 
-  const rawChecks = canVerify && Array.isArray(input.checks) ? input.checks : [];
+  const rawChecks = canVerify && Array.isArray(inp.checks) ? inp.checks : [];
   const scoredChecks = rawChecks
-    .filter((c) => c && typeof c.s === 'number' && typeof c.e === 'number' && c.s > 0 && c.s <= 1 && c.e > 0 && c.e <= 1 && c.s + c.e > 1 && typeof c.cost === 'number' && c.cost > 0)
+    .filter((c) => c && typeof c.s === 'number' && Number.isFinite(c.s) && typeof c.e === 'number' && Number.isFinite(c.e) && c.s > 0 && c.s <= 1 && c.e > 0 && c.e <= 1 && c.s + c.e > 1 && typeof c.cost === 'number' && Number.isFinite(c.cost) && c.cost > 0)
     .map((c) => {
       const expectedVoi = voi(q, c, cfp, cfn);
       const netValue = expectedVoi - c.cost;
@@ -768,12 +773,25 @@ export function pairBuilderAndChecker(input = {}) {
     return { ok: false, state: 'fail_no_cross_family_checker' };
   }
 
+  if (builder.family === checker.family) {
+    return {
+      ok: false,
+      state: 'fail_same_family_verdict',
+      rule: 'R006',
+      builder,
+      checker,
+      reason: 'builder and checker must belong to different model families',
+      permissionGranted: false,
+      autoApplied: false,
+    };
+  }
+
   const crossFamilyCheck = checkCrossFamilyVerdict({
     builderFamily: builder.family,
     checkerFamily: checker.family,
     builderId: input.builderId || `builder:${builder.route}`,
     checkerId: input.checkerId || `checker:${checker.route}`,
-    verdict: input.verdict ?? 'paired',
+    verdict: 'paired',
   });
   if (!crossFamilyCheck.ok) {
     return {
@@ -801,6 +819,25 @@ export function pairBuilderAndChecker(input = {}) {
 }
 
 export const TAINT_LEVELS = Object.freeze(['clean', 'tool_output', 'untrusted_web', 'secret_risk']);
+
+function isVerifiedCrossFamilyPair(pair) {
+  return Boolean(
+    pair
+    && typeof pair === 'object'
+    && !Array.isArray(pair)
+    && pair.ok === true
+    && pair.crossFamilyCheck?.ok === true
+    && typeof pair.builder?.family === 'string'
+    && typeof pair.checker?.family === 'string'
+    && pair.builder.family.trim() !== ''
+    && pair.checker.family.trim() !== ''
+    && pair.builder.family !== pair.checker.family
+    && typeof pair.builder?.route === 'string'
+    && pair.builder.route.trim() !== ''
+    && typeof pair.checker?.route === 'string'
+    && pair.checker.route.trim() !== '',
+  );
+}
 
 /** Least upper bound (supremum) on the information-flow taint lattice; empty or unknown/null entries fail closed to secret_risk. */
 export function joinTaint(...levels) {
@@ -836,6 +873,8 @@ export function decideExitAction(input = {}) {
     : (Number.isInteger(input.citationCount) && input.citationCount >= 0 ? input.citationCount : 0);
   const checksPassed = input.checksPassed === true;
   const crossFamilyVerified = input.crossFamilyVerified === true;
+  const hasPair = input.pair !== undefined && input.pair !== null;
+  const pairValid = isVerifiedCrossFamilyPair(input.pair);
 
   if (effectiveTaint === 'secret_risk') {
     return { ok: false, action: 'block_secret', effectiveTaint, allowExit: false, reason: 'secret_risk taint blocks exit' };
@@ -843,10 +882,7 @@ export function decideExitAction(input = {}) {
   if (operatorRequired) {
     return { ok: false, action: 'ask_operator', effectiveTaint, allowExit: false, reason: 'operator approval required (needs_yes)' };
   }
-  if (effectiveTaint === 'untrusted_web' && !crossFamilyVerified) {
-    return { ok: false, action: 'block_tainted', effectiveTaint, allowExit: false, reason: 'untrusted_web requires cross-family verification' };
-  }
-  if (input.pair !== undefined && input.pair !== null && input.pair?.ok !== true) {
+  if (hasPair && !pairValid) {
     return {
       ok: false,
       action: 'block_pairing',
@@ -855,6 +891,15 @@ export function decideExitAction(input = {}) {
       reason: (typeof input.pair?.reason === 'string' && input.pair.reason)
         || (typeof input.pair?.state === 'string' && input.pair.state)
         || 'builder/checker pairing failed',
+    };
+  }
+  if (effectiveTaint === 'untrusted_web' && !(crossFamilyVerified && pairValid)) {
+    return {
+      ok: false,
+      action: 'block_tainted',
+      effectiveTaint,
+      allowExit: false,
+      reason: 'untrusted_web requires cross-family verification and valid cross-family pair',
     };
   }
   if (!checksPassed || !(citationCount >= 1)) {
@@ -872,10 +917,10 @@ export function emitDecisionPacket(input = {}) {
   const citations = Array.isArray(input.citations)
     ? input.citations.filter((c) => typeof c === 'string' && c.trim().length > 0).map((c) => c.trim())
     : [];
-  const crossFamilyOk = input.crossFamilyVerified === true;
   const hasSecret = normalizeFailClosedFlag(input.hasSecret);
   const needsOperator = normalizeFailClosedFlag(input.needsOperator) || normalizeFailClosedFlag(input.requiresHumanYes);
-  const pairValid = input.pair == null || input.pair?.ok === true;
+  const hasPair = input.pair != null;
+  const pairValid = hasPair ? isVerifiedCrossFamilyPair(input.pair) : true;
   const exitGuard = decideExitAction({
     ...(Object.hasOwn(input, 'taint') ? { taint: input.taint } : {}),
     ...(Object.hasOwn(input, 'taints') ? { taints: input.taints } : {}),
@@ -884,9 +929,12 @@ export function emitDecisionPacket(input = {}) {
     needsOperator,
     citations,
     checksPassed: input.checksPassed === true,
-    crossFamilyVerified: crossFamilyOk,
+    crossFamilyVerified: input.crossFamilyVerified === true,
     pair: input.pair,
   });
+  const crossFamilyOk = exitGuard.effectiveTaint === 'untrusted_web'
+    ? (input.crossFamilyVerified === true && hasPair && pairValid)
+    : (input.crossFamilyVerified === true && pairValid);
   const routing = routeOptimalDecision({ ...input, needsOperator, requiresHumanYes: needsOperator });
   let outcome = routing.ok ? routing.outcome : 'abstain';
   let action = exitGuard.action;
@@ -901,6 +949,12 @@ export function emitDecisionPacket(input = {}) {
     action = outcome === 'ask_operator' ? 'ask_operator' : (outcome === 'abstain' ? 'block_uncertainty' : outcome);
     reason = routing.reason || 'routing outcome requires action before exit';
   }
+  const route = pairValid
+    ? (hasPair ? input.pair.builder.route : (typeof input.route === 'string' && input.route.trim() ? input.route.trim() : null))
+    : null;
+  const checkerRoute = pairValid
+    ? (hasPair ? input.pair.checker.route : (typeof input.checkerRoute === 'string' && input.checkerRoute.trim() ? input.checkerRoute.trim() : null))
+    : null;
   const packet = {
     schema: 'cammut.decision/0',
     id: typeof input.id === 'string' && input.id.trim() ? input.id.trim() : 'DEC-0001',
@@ -913,8 +967,10 @@ export function emitDecisionPacket(input = {}) {
     calibratedProbability: routing.ok ? routing.calibratedProbability : clampProb(input.probability ?? 0.5),
     expectedVoi: routing.ok ? routing.expectedVoi : 0,
     netValue: routing.ok ? routing.netValue : 0,
-    route: pairValid ? (input.route || (input.pair?.ok === true ? input.pair.builder?.route ?? null : null)) : null,
-    checkerRoute: pairValid ? (input.checkerRoute || (input.pair?.ok === true ? input.pair.checker?.route ?? null : null)) : null,
+    route,
+    checkerRoute,
+    requiresHumanYes: needsOperator,
+    pairOk: pairValid,
     citations,
     checkEvidence: {
       ok: input.checksPassed === true,
@@ -941,6 +997,8 @@ export function validateDecisionPacket(packet) {
   if (typeof packet.action !== 'string' || !packet.action.trim()) errors.push('action must be a non-empty string');
   if (!INTUITION_OUTCOMES.includes(packet.outcome)) errors.push('outcome must be a supported routing outcome');
   if (typeof packet.allowExit !== 'boolean') errors.push('allowExit must be a boolean');
+  if (typeof packet.requiresHumanYes !== 'boolean') errors.push('requiresHumanYes must be a boolean');
+  if (typeof packet.pairOk !== 'boolean') errors.push('pairOk must be a boolean');
   if (packet.permissionGranted !== false) errors.push('permissionGranted must be false');
   if (packet.autoApplied !== false) errors.push('autoApplied must be false');
   if (!TAINT_LEVELS.includes(packet.effectiveTaint)) errors.push('effectiveTaint must belong to TAINT_LEVELS');
@@ -965,11 +1023,20 @@ export function validateDecisionPacket(packet) {
     }
     if (packet.allowExit === true) {
       if (packet.outcome !== 'answer_now') errors.push('allowExit=true requires outcome=answer_now');
+      if (packet.requiresHumanYes !== false) errors.push('allowExit=true requires requiresHumanYes=false');
+      if (packet.pairOk !== true) errors.push('allowExit=true requires pairOk=true');
       if (packet.effectiveTaint === 'secret_risk') errors.push('allowExit=true forbidden under secret_risk');
       if (!validCitations || packet.citations.length < 1) errors.push('allowExit=true requires >= 1 valid citation');
       if (!packet.checkEvidence || packet.checkEvidence.ok !== true) errors.push('allowExit=true requires passing checkEvidence');
-      if (packet.effectiveTaint === 'untrusted_web' && packet.checkEvidence?.crossFamilyOk !== true) {
-        errors.push('allowExit=true under untrusted_web requires crossFamilyOk');
+      if (packet.effectiveTaint === 'untrusted_web') {
+        if (packet.checkEvidence?.crossFamilyOk !== true) {
+          errors.push('allowExit=true under untrusted_web requires crossFamilyOk');
+        }
+        const hasBuilderRoute = typeof packet.route === 'string' && packet.route.trim().length > 0;
+        const hasCheckerRoute = typeof packet.checkerRoute === 'string' && packet.checkerRoute.trim().length > 0;
+        if (!hasBuilderRoute || !hasCheckerRoute || packet.route.trim() === packet.checkerRoute.trim()) {
+          errors.push('allowExit=true under untrusted_web requires distinct builder and checker routes');
+        }
       }
     }
   }

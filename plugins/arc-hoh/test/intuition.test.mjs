@@ -286,11 +286,33 @@ test('routeOptimalDecision maximizes net VOI, respects asymmetric loss, and bloc
   assert.equal(ignoredTiny.calibratedProbability, 0.5);
   assert.notEqual(ignoredTiny.outcome, 'answer_now');
 
-  const twentySamples = Array.from({ length: 24 }, (_, idx) => ({
-    probability: idx % 2 === 0 ? 0.9 : 0.1,
-    actual: idx % 2 === 0 ? 1 : 0,
-  }));
-  const largeCv = crossFitPlatt2Fold(twentySamples);
+  const overconfident12 = [
+    { probability: 0.95, actual: 1 },
+    { probability: 0.95, actual: 1 },
+    { probability: 0.95, actual: 1 },
+    { probability: 0.95, actual: 0 },
+    { probability: 0.95, actual: 0 },
+    { probability: 0.95, actual: 0 },
+    { probability: 0.15, actual: 0 },
+    { probability: 0.15, actual: 0 },
+    { probability: 0.15, actual: 0 },
+    { probability: 0.15, actual: 1 },
+    { probability: 0.15, actual: 1 },
+    { probability: 0.15, actual: 1 },
+  ];
+  const overconfident24 = [...overconfident12, ...overconfident12];
+  const wellCalibrated24 = Array.from({ length: 24 }, (_, idx) => {
+    if (idx < 12) return { probability: 0.75, actual: idx < 9 ? 1 : 0 };
+    return { probability: 0.25, actual: idx < 21 ? 0 : 1 };
+  });
+  const weakCv = crossFitPlatt2Fold(wellCalibrated24);
+  assert.equal(weakCv.improvesOof, false);
+  assert.equal(weakCv.usable, false);
+  assert.equal(weakCv.scaler.usable, false);
+  assert.equal(routeOptimalDecision({ probability: 0.95, plattScaler: weakCv.scaler }).scalerApplied, false);
+
+  const largeCv = crossFitPlatt2Fold(overconfident24);
+  assert.equal(largeCv.improvesOof, true);
   assert.equal(largeCv.usable, true);
   assert.equal(largeCv.scaler.usable, true);
   const usedLarge = routeOptimalDecision({ probability: 0.95, plattScaler: largeCv.scaler });
@@ -323,7 +345,7 @@ test('pairBuilderAndChecker enforces cross-family pairing, strict tiers/capabili
   assert.equal(pairBuilderAndChecker({ builderRoute: 'gemini-4-carbon', checkerRoute: 'claude-haiku-5-5', needsFormal: true }).state, 'fail_checker_capability');
   assert.equal(pairBuilderAndChecker({ minTier: 't3' }).state, 'fail_unknown_tier');
 
-  const sameFamily = pairBuilderAndChecker({ builderRoute: 'claude-sonnet-5-5', checkerRoute: 'claude-opus-5-5' });
+  const sameFamily = pairBuilderAndChecker({ builderRoute: 'claude-sonnet-5-5', checkerRoute: 'claude-opus-5-5', verdict: 'planned' });
   assert.equal(sameFamily.ok, false);
   assert.equal(sameFamily.state, 'fail_same_family_verdict');
 
@@ -441,4 +463,56 @@ test('taint lattice, exit guard, and cammut.decision/0 packet enforce strict fai
   assert.equal(nonAnswerDeferred.packet.allowExit, false);
   assert.equal(nonAnswerDeferred.packet.outcome, 'run_one_cheap_check');
   assert.equal(nonAnswerDeferred.packet.action, 'run_one_cheap_check');
+
+  const webWithPair = emitDecisionPacket({
+    id: 'DEC-106',
+    goal: 'web-verified',
+    probability: 0.95,
+    taint: 'untrusted_web',
+    citations: ['url:a'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+    pair: pairBuilderAndChecker({ minTier: 'T1' }),
+  });
+  assert.equal(webWithPair.ok, true);
+  assert.equal(webWithPair.packet.allowExit, true);
+  assert.equal(webWithPair.packet.checkEvidence.crossFamilyOk, true);
+
+  const webNoPair = emitDecisionPacket({
+    id: 'DEC-107',
+    goal: 'web-missing-pair',
+    probability: 0.95,
+    taint: 'untrusted_web',
+    citations: ['url:a'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  });
+  assert.equal(webNoPair.ok, true);
+  assert.equal(webNoPair.packet.allowExit, false);
+  assert.equal(webNoPair.packet.action, 'block_tainted');
+
+  const webForgedSameFam = emitDecisionPacket({
+    id: 'DEC-108',
+    goal: 'web-forged-pair',
+    probability: 0.95,
+    taint: 'untrusted_web',
+    citations: ['url:a'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+    pair: {
+      ok: true,
+      crossFamilyCheck: { ok: true },
+      builder: { family: 'google', route: 'gemini-4-argon' },
+      checker: { family: 'google', route: 'gemini-4-carbon' },
+    },
+  });
+  assert.equal(webForgedSameFam.ok, false);
+  assert.equal(webForgedSameFam.packet.allowExit, false);
+  assert.equal(webForgedSameFam.packet.action, 'block_pairing');
+
+  assert.equal(validateDecisionPacket({ ...webWithPair.packet, requiresHumanYes: undefined }).ok, false);
+  assert.equal(validateDecisionPacket({ ...webWithPair.packet, pairOk: undefined }).ok, false);
+  assert.equal(validateDecisionPacket({ ...webWithPair.packet, requiresHumanYes: true }).ok, false);
+  assert.equal(validateDecisionPacket({ ...webWithPair.packet, pairOk: false }).ok, false);
+  assert.equal(validateDecisionPacket({ ...webWithPair.packet, checkerRoute: webWithPair.packet.route }).ok, false);
 });
