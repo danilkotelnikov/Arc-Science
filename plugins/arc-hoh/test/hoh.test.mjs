@@ -246,8 +246,8 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   const env = { ARC_HOME: d };
   const notes = [];
   const tools = makeTools((def) => def, env, { retain: async (n) => { notes.push(n); return true; } });
-  assert.deepEqual(tools.map((t) => t.name), ['hoh_propose', 'hoh_freeze', 'hoh_gate', 'hoh_verify_ledger']);
-  const [propose, freeze, gate, verify] = tools;
+  assert.deepEqual(tools.map((t) => t.name), ['hoh_propose', 'hoh_freeze', 'hoh_gate', 'hoh_verify_ledger', 'hoh_decide']);
+  const [propose, freeze, gate, verify, decide] = tools;
   const lead = { agent: { id: 'lead-1' } }, reviewer = { agent: { id: 'rev-1' } };
   const f = path.join(d, 'work.txt'); await writeFile(f, 'candidate one');
 
@@ -276,6 +276,410 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   assert.equal((await gate.execute({ ...base, candidate: fr2.candidate }, reviewer)).verdict, 'accepted');
   const v = await verify.execute({}, {});
   assert.equal(v.ok, true);
+  const dec = await decide.execute({
+    goal: 'demo',
+    probability: 0.9,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:work.txt'],
+    checksPassed: true,
+  }, reviewer);
+  assert.equal(dec.ok, true);
+  assert.equal(dec.packet.schema, 'cammut.decision/0');
+  assert.equal(dec.packet.allowExit, true);
+  assert.equal(dec.pair.builder.family === dec.pair.checker.family, false);
+
+  const webBlocked = await decide.execute({
+    goal: 'web-unverified',
+    probability: 0.9,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+  }, reviewer);
+  assert.equal(webBlocked.ok, true);
+  assert.equal(webBlocked.packet.allowExit, false);
+  assert.equal(webBlocked.packet.action, 'block_tainted');
+  assert.equal(webBlocked.packet.outcome, 'abstain');
+  assert.match(decide.output.render({}, webBlocked)[0].text, /outcome=abstain/);
+
+  const opBlocked = await decide.execute({
+    goal: 'op-required',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:work.txt'],
+    checksPassed: true,
+    requiresHumanYes: true,
+  }, reviewer);
+  assert.equal(opBlocked.packet.allowExit, false);
+  assert.equal(opBlocked.packet.action, 'ask_operator');
+  assert.equal(opBlocked.routing.outcome, 'ask_operator');
+  assert.match(decide.output.render({}, opBlocked)[0].text, /ask_operator/);
+
+  const pairBlocked = await decide.execute({
+    goal: 'bad-pair',
+    probability: 0.95,
+    minTier: 'unknown_tier',
+    taint: 'clean',
+    citations: ['doi:10.1000/test'],
+    checksPassed: true,
+  }, reviewer);
+  assert.equal(pairBlocked.ok, false);
+  assert.equal(pairBlocked.pair.ok, false);
+  assert.equal(pairBlocked.pair.state, 'fail_unknown_tier');
+  assert.equal(pairBlocked.packet.allowExit, false);
+  assert.equal(pairBlocked.packet.action, 'block_pairing');
+  assert.equal(pairBlocked.packet.route, null);
+  assert.equal(pairBlocked.packet.checkerRoute, null);
+
+  const noGateBlocked = await decide.execute({
+    goal: 'no-accepted-gate',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:claimed.txt'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, reviewer);
+  assert.equal(noGateBlocked.packet.allowExit, false);
+  assert.equal(noGateBlocked.packet.action, 'block_unverified');
+
+  const demoWeb = await decide.execute({
+    goal: 'demo',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+    crossFamilyVerified: false,
+  }, reviewer);
+  assert.equal(demoWeb.packet.effectiveTaint, 'untrusted_web');
+  assert.equal(demoWeb.packet.allowExit, false);
+
+  const demoDowngradeBlocked = await decide.execute({
+    goal: 'demo',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:work.txt'],
+    checksPassed: true,
+    crossFamilyVerified: false,
+  }, reviewer);
+  assert.equal(demoDowngradeBlocked.packet.effectiveTaint, 'untrusted_web');
+  assert.equal(demoDowngradeBlocked.packet.allowExit, false);
+
+  const r009Blocked = await decide.execute({
+    goal: 'demo',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    grantPermission: true,
+    citations: ['file:work.txt'],
+    checksPassed: true,
+  }, reviewer);
+  assert.equal(r009Blocked.ok, false);
+  assert.equal(r009Blocked.packet.allowExit, false);
+  assert.equal(r009Blocked.packet.action, 'block_escalation');
+
+  const afterDecideVerify = await verify.execute({}, {});
+  assert.equal(afterDecideVerify.ok, true);
+  assert.ok(afterDecideVerify.entries > v.entries);
+
+  // Unknown-family builder/reviewer on gate allows clean exit via checksPassed, but blocks untrusted_web exit.
+  const unknownFamWebBlocked = await decide.execute({
+    goal: 'demo',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, reviewer);
+  assert.equal(unknownFamWebBlocked.packet.allowExit, false);
+  assert.equal(unknownFamWebBlocked.packet.action, 'block_tainted');
+
+  // Free-text builder/reviewer strings cannot spoof cross-family when runtime exec lacks distinct known families.
+  const spoofFile = path.join(d, 'spoof.txt');
+  await writeFile(spoofFile, 'spoof candidate');
+  await propose.execute({ goal: 'spoof', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, lead);
+  const spFr = await freeze.execute({ goal: 'spoof', files: [spoofFile] }, lead);
+  await gate.execute({
+    goal: 'spoof',
+    ...goodGate(spFr.candidate),
+    builder: 'gemini-4-argon',
+    reviewer: 'claude_sonnet_5_5',
+  }, reviewer);
+  const spoofWebBlocked = await decide.execute({
+    goal: 'spoof',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, reviewer);
+  assert.equal(spoofWebBlocked.packet.allowExit, false);
+  assert.equal(spoofWebBlocked.packet.action, 'block_tainted');
+
+  // Fresh goal with runtime exec cross-family metadata, propose-after-gate, TOCTOU, non-poisoning omitted taint, re-freeze monotonicity, and spaced goal key.
+  const geminiLead = { agent: { id: 'lead-gemini', provider: 'vertex', model: 'google/gemini-4-argon' } };
+  const claudeReviewer = { agent: { id: 'rev-claude', provider: 'anthropic', model: 'claude-sonnet-5-5' } };
+  const cfGoal = 'cf spaced ';
+  const cfFile = path.join(d, 'cf.txt');
+  await writeFile(cfFile, 'cross family candidate');
+  await propose.execute({ goal: cfGoal, hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, geminiLead);
+  const cfFr = await freeze.execute({ goal: cfGoal, files: [cfFile] }, geminiLead);
+  const cfGate = await gate.execute({ goal: cfGoal, ...goodGate(cfFr.candidate) }, claudeReviewer);
+  assert.equal(cfGate.verdict, 'accepted');
+
+  // Omitted taint fails closed on that call only without poisoning subsequent clean calls on the same goal.
+  const omittedTaint = await decide.execute({
+    goal: cfGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    citations: ['file:cf.txt'],
+    checksPassed: true,
+  }, claudeReviewer);
+  assert.equal(omittedTaint.packet.allowExit, false);
+  assert.equal(omittedTaint.packet.action, 'block_secret');
+
+  const cfCleanAfterOmit = await decide.execute({
+    goal: cfGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:cf.txt'],
+    checksPassed: true,
+  }, claudeReviewer);
+  assert.equal(cfCleanAfterOmit.packet.allowExit, true);
+
+  const cfWebAllowed = await decide.execute({
+    goal: cfGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:verified'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, claudeReviewer);
+  assert.equal(cfWebAllowed.ok, true);
+  assert.equal(cfWebAllowed.packet.allowExit, true);
+  assert.equal(cfWebAllowed.packet.checkEvidence.crossFamilyOk, true);
+
+  // Re-freezing preserves prior untrusted_web taint monotonically (no reset at freeze boundary).
+  const cfFrRefreeze = await freeze.execute({ goal: cfGoal, files: [cfFile] }, geminiLead);
+  await gate.execute({ goal: cfGoal, ...goodGate(cfFrRefreeze.candidate) }, claudeReviewer);
+  const cleanAfterRefreeze = await decide.execute({
+    goal: cfGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:cf.txt'],
+    checksPassed: true,
+    crossFamilyVerified: false,
+  }, claudeReviewer);
+  assert.equal(cleanAfterRefreeze.packet.effectiveTaint, 'untrusted_web');
+  assert.equal(cleanAfterRefreeze.packet.allowExit, false);
+
+  // Explicit {taint:'clean', hasSecret:true} on an R009-blocked call and invalid taint strings both persist secret_risk.
+  await decide.execute({
+    goal: cfGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'secret_risk',
+    grantPermission: true,
+    citations: ['file:cf.txt'],
+    checksPassed: true,
+  }, claudeReviewer);
+  const afterBlockedSecret = await decide.execute({
+    goal: cfGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:cf.txt'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, claudeReviewer);
+  assert.equal(afterBlockedSecret.packet.effectiveTaint, 'secret_risk');
+  assert.equal(afterBlockedSecret.packet.allowExit, false);
+
+  const cleanFile3 = path.join(d, 'cf3.txt');
+  await writeFile(cleanFile3, 'r009 secret downgrade regression');
+  await propose.execute({ goal: 'cf-r009-sec', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, geminiLead);
+  const fr3 = await freeze.execute({ goal: 'cf-r009-sec', files: [cleanFile3] }, geminiLead);
+  await gate.execute({ goal: 'cf-r009-sec', ...goodGate(fr3.candidate) }, claudeReviewer);
+  const blockedCleanWithSecret = await decide.execute({
+    goal: 'cf-r009-sec',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    hasSecret: true,
+    grantPermission: true,
+    citations: ['file:cf3.txt'],
+    checksPassed: true,
+  }, claudeReviewer);
+  assert.equal(blockedCleanWithSecret.ok, false);
+  const afterCleanWithSecret = await decide.execute({
+    goal: 'cf-r009-sec',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:cf3.txt'],
+    checksPassed: true,
+  }, claudeReviewer);
+  assert.equal(afterCleanWithSecret.packet.effectiveTaint, 'secret_risk');
+  assert.equal(afterCleanWithSecret.packet.allowExit, false);
+
+  // Agent ids embedding family keywords without host family/model/provider metadata cannot attest cross-family.
+  const idOnlyGemini = { agent: { id: 'gemini-check-1' } };
+  const idOnlyClaude = { agent: { id: 'claude-check-2' } };
+  const idFile = path.join(d, 'idonly.txt');
+  await writeFile(idFile, 'id spoofing test');
+  await propose.execute({ goal: 'cf-idonly', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, idOnlyGemini);
+  const frId = await freeze.execute({ goal: 'cf-idonly', files: [idFile] }, idOnlyGemini);
+  await gate.execute({ goal: 'cf-idonly', ...goodGate(frId.candidate) }, idOnlyClaude);
+  const idOnlyWebBlocked = await decide.execute({
+    goal: 'cf-idonly',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, idOnlyClaude);
+  assert.equal(idOnlyWebBlocked.packet.allowExit, false);
+  assert.equal(idOnlyWebBlocked.packet.action, 'block_tainted');
+
+  // Aggregator providers (e.g. provider='vertex' or 'anthropic') without attested family or model return null family.
+  const provOnlyVertex = { agent: { id: 'v1', provider: 'vertex' } };
+  const provOnlyAnth = { agent: { id: 'a1', provider: 'anthropic' } };
+  const pvFile = path.join(d, 'provonly.txt');
+  await writeFile(pvFile, 'provider only test');
+  await propose.execute({ goal: 'cf-provonly', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, provOnlyVertex);
+  const frPv = await freeze.execute({ goal: 'cf-provonly', files: [pvFile] }, provOnlyVertex);
+  await gate.execute({ goal: 'cf-provonly', ...goodGate(frPv.candidate) }, provOnlyAnth);
+  const provOnlyBlocked = await decide.execute({
+    goal: 'cf-provonly',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, provOnlyAnth);
+  assert.equal(provOnlyBlocked.packet.allowExit, false);
+  assert.equal(provOnlyBlocked.packet.action, 'block_tainted');
+
+  // Unrecognized or non-string taint key fails closed and persists secret_risk so a clean retry cannot launder it.
+  const badTaintGoal = 'cf-invalid-taint';
+  const badTaintFile = path.join(d, 'invalid-taint.txt');
+  await writeFile(badTaintFile, 'invalid taint persistence check');
+  await propose.execute({ goal: badTaintGoal, hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, geminiLead);
+  const frBadTaint = await freeze.execute({ goal: badTaintGoal, files: [badTaintFile] }, geminiLead);
+  await gate.execute({ goal: badTaintGoal, ...goodGate(frBadTaint.candidate) }, claudeReviewer);
+  const badTaintBlocked = await decide.execute({
+    goal: badTaintGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'pii',
+    citations: ['file:invalid-taint.txt'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, claudeReviewer);
+  assert.equal(badTaintBlocked.packet.allowExit, false);
+  assert.equal(badTaintBlocked.packet.action, 'block_secret');
+  const cleanAfterInvalidTaint = await decide.execute({
+    goal: badTaintGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:invalid-taint.txt'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, claudeReviewer);
+  assert.equal(cleanAfterInvalidTaint.packet.effectiveTaint, 'secret_risk');
+  assert.equal(cleanAfterInvalidTaint.packet.allowExit, false);
+
+  // Mixed-case valid taint normalizes cleanly and preserves untrusted_web monotonicity across clean retries.
+  const mixedCaseGoal = 'cf-mixed-case-taint';
+  const mixedCaseFile = path.join(d, 'mixed-case.txt');
+  await writeFile(mixedCaseFile, 'mixed case taint check');
+  await propose.execute({ goal: mixedCaseGoal, hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, geminiLead);
+  const frMixed = await freeze.execute({ goal: mixedCaseGoal, files: [mixedCaseFile] }, geminiLead);
+  await gate.execute({ goal: mixedCaseGoal, ...goodGate(frMixed.candidate) }, claudeReviewer);
+  const mixedWeb = await decide.execute({
+    goal: mixedCaseGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: ' Untrusted_Web ',
+    citations: ['url:mixed'],
+    checksPassed: true,
+    crossFamilyVerified: false,
+  }, claudeReviewer);
+  assert.equal(mixedWeb.packet.effectiveTaint, 'untrusted_web');
+  assert.equal(mixedWeb.packet.allowExit, false);
+  const cleanAfterMixed = await decide.execute({
+    goal: mixedCaseGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:mixed-case.txt'],
+    checksPassed: true,
+    crossFamilyVerified: false,
+  }, claudeReviewer);
+  assert.equal(cleanAfterMixed.packet.effectiveTaint, 'untrusted_web');
+  assert.equal(cleanAfterMixed.packet.allowExit, false);
+
+  // A third-party cross-family freeze helper cannot bypass a proposer in the reviewer's own family.
+  const helperSpoofGoal = 'cf-proposer-same-family';
+  const helperSpoofFile = path.join(d, 'helper-spoof.txt');
+  await writeFile(helperSpoofFile, 'proposer family binding test');
+  await propose.execute({ goal: helperSpoofGoal, hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, claudeReviewer);
+  const frHelper = await freeze.execute({ goal: helperSpoofGoal, files: [helperSpoofFile] }, geminiLead);
+  await gate.execute({ goal: helperSpoofGoal, ...goodGate(frHelper.candidate) }, claudeReviewer);
+  const helperSpoofBlocked = await decide.execute({
+    goal: helperSpoofGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, claudeReviewer);
+  assert.equal(helperSpoofBlocked.packet.allowExit, false);
+  assert.equal(helperSpoofBlocked.packet.action, 'block_tainted');
+
+  // Editing the frozen file invalidates the prior gate immediately (TOCTOU rehash guard).
+  await writeFile(cfFile, 'mutated after gate');
+  const toctouBlocked = await decide.execute({
+    goal: cfGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:verified'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, claudeReviewer);
+  assert.equal(toctouBlocked.packet.allowExit, false);
+
+  // Adding a newer hoh_propose after an accepted gate also invalidates gate freshness until a new gate is accepted.
+  const cfFile2 = path.join(d, 'cf2.txt');
+  await writeFile(cfFile2, 'fresh goal v2');
+  await propose.execute({ goal: 'cf2', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, geminiLead);
+  const cfFr2 = await freeze.execute({ goal: 'cf2', files: [cfFile2] }, geminiLead);
+  await gate.execute({ goal: 'cf2', ...goodGate(cfFr2.candidate) }, claudeReviewer);
+  await propose.execute({ goal: 'cf2', hypothesis: 'h2', boundary: 'b', checks: ['node test.js', 'node extra.js'], probes: ['empty'] }, geminiLead);
+  const staleAfterPropose = await decide.execute({
+    goal: 'cf2',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:cf2.txt'],
+    checksPassed: true,
+  }, claudeReviewer);
+  assert.equal(staleAfterPropose.packet.allowExit, false);
+  assert.equal(staleAfterPropose.packet.action, 'block_unverified');
 
   const off = makeTools((def) => def, { ARC_HOME: d, ARC_HOH_RETAIN: '0' }, { retain: async () => { throw new Error('must not be called'); } });
   const r = await off[2].execute({ ...base, candidate: fr2.candidate }, reviewer);
@@ -345,16 +749,97 @@ test('traceView lists the newest events first with a short summary, and reports 
   await appendLedger(f, { type: 'propose', goal: 'g1', hypothesis: 'h'.repeat(300), checks: ['a', 'b'] });
   await appendLedger(f, { type: 'freeze', goal: 'g1', candidate: 'sha256:' + 'a'.repeat(64), files: 3 });
   await appendLedger(f, { type: 'gate', goal: 'g1', cycle: 1, verdict: 'unmet', reasons: ['check c1 exited 1', 'no probe'] });
+  await appendLedger(f, {
+    type: 'decide',
+    goal: 'g1',
+    id: 'DEC-0001',
+    action: 'block_tainted',
+    allowExit: false,
+    outcome: 'blocked',
+    effectiveTaint: 'untrusted_web',
+    checksPassed: false,
+    crossFamilyVerified: true,
+    gateSeq: 3,
+  });
   const v = await traceView(f, () => 'brief text');
-  assert.equal(v.chain.ok, true); assert.equal(v.chain.entries, 3);
-  assert.deepEqual(v.items.map((x) => x.type), ['gate', 'freeze', 'propose']);
-  assert.equal(v.items[0].summary, 'unmet: check c1 exited 1; no probe');
-  assert.equal(v.items[1].summary, '3 file(s), candidate sha256:aaaaaaaaaaaa');
-  assert.ok(v.items[2].summary.length <= 160);
+  assert.equal(v.chain.ok, true); assert.equal(v.chain.entries, 4);
+  assert.deepEqual(v.items.map((x) => x.type), ['decide', 'gate', 'freeze', 'propose']);
+  assert.equal(v.items[0].summary, 'DEC-0001, block_tainted, blocked, untrusted_web, gate #3');
+  assert.deepEqual(v.items[0].decision, {
+    id: 'DEC-0001',
+    action: 'block_tainted',
+    allowExit: false,
+    outcome: 'blocked',
+    effectiveTaint: 'untrusted_web',
+    checksPassed: false,
+    crossFamilyVerified: true,
+    gateSeq: 3,
+  });
+  assert.equal(v.items[1].summary, 'unmet: check c1 exited 1; no probe');
+  assert.equal(v.items[2].summary, '3 file(s), candidate sha256:aaaaaaaaaaaa');
+  assert.ok(v.items[3].summary.length <= 160);
   assert.equal(v.brief, 'brief text');
   const lines = (await readFile(f, 'utf8')).split('\n'); lines[1] = lines[1].replace('"files":3', '"files":4');
   await writeFile(f, lines.join('\n'));
-  assert.deepEqual((await traceView(f, () => '')).chain, { ok: false, entries: 3, badAt: 2 });
+  assert.deepEqual((await traceView(f, () => '')).chain, { ok: false, entries: 4, badAt: 2 });
   assert.equal((await traceView(f, () => '', 1)).items.length, 1);
   await rm(d, { recursive: true });
+});
+
+test('trace client renders Decision packet cards with exit-ready and hold pills', async () => {
+  const vm = await import('node:vm');
+  const clientCode = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8');
+  let captured = null;
+  const h = (tag, props, ...children) => ({ tag, props: props || {}, children: children.flat() });
+  const sandbox = {
+    window: { __ModuleLoader__: { load: (def) => { captured = def; } } },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    setInterval: () => 0,
+    clearInterval: () => {},
+  };
+  vm.runInNewContext(clientCode, sandbox);
+  const plugin = captured.factory((id) => {
+    if (id === 'react') return { createElement: h, useState: (v) => [v, () => {}], useEffect: () => {}, Fragment: 'fragment' };
+    return {};
+  });
+  const t = (k, p = {}) => String(plugin.en[k] || k).replace(/\{(\w+)\}/g, (_, n) => (p[n] ?? ''));
+  const holdTree = plugin.Item({
+    it: {
+      seq: 4,
+      ts: '2026-11-15T10:00:00.000Z',
+      type: 'decide',
+      goal: 'g1',
+      decision: { id: 'DEC-0001', action: 'block_tainted', allowExit: false, outcome: 'blocked', effectiveTaint: 'untrusted_web', gateSeq: 3 },
+      summary: 'DEC-0001, block_tainted, blocked, untrusted_web, gate #3',
+    },
+    t,
+  });
+  const readyTree = plugin.Item({
+    it: {
+      seq: 5,
+      ts: '2026-11-15T10:05:00.000Z',
+      type: 'decide',
+      goal: 'g1',
+      decision: { id: 'DEC-0002', action: 'ship_pr', allowExit: true, outcome: 'ready', effectiveTaint: 'trusted_local', gateSeq: 4 },
+      summary: 'DEC-0002, ship_pr, ready, trusted_local, gate #4',
+    },
+    t,
+  });
+  const textOf = (node) => !node ? '' : typeof node === 'string' || typeof node === 'number' ? String(node) : (Array.isArray(node.children) ? node.children.map(textOf).join(' ') : '');
+  const findByAttr = (node, attr, val) => {
+    if (!node || typeof node !== 'object') return null;
+    if (node.props && node.props[attr] === val) return node;
+    for (const c of node.children || []) { const hit = findByAttr(c, attr, val); if (hit) return hit; }
+    return null;
+  };
+  const holdText = textOf(holdTree);
+  const readyText = textOf(readyTree);
+  assert.ok(holdText.includes('Decision'));
+  assert.ok(holdText.includes('Hold'));
+  assert.ok(holdText.includes('(gate #3)'));
+  assert.ok(readyText.includes('Exit ready'));
+  assert.ok(readyText.includes('(gate #4)'));
+  const holdCard = findByAttr(holdTree, 'data-hoh-decision-card', 'true');
+  assert.ok(holdCard && holdCard.children.some((c) => textOf(c) === 'DEC-0001'));
+  assert.ok(!holdText.includes('\u00b7'));
 });
