@@ -333,6 +333,59 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   assert.equal(pairBlocked.packet.route, null);
   assert.equal(pairBlocked.packet.checkerRoute, null);
 
+  const noGateBlocked = await decide.execute({
+    goal: 'no-accepted-gate',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:claimed.txt'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, reviewer);
+  assert.equal(noGateBlocked.packet.allowExit, false);
+  assert.equal(noGateBlocked.packet.action, 'block_unverified');
+
+  const demoWeb = await decide.execute({
+    goal: 'demo',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+    crossFamilyVerified: false,
+  }, reviewer);
+  assert.equal(demoWeb.packet.effectiveTaint, 'untrusted_web');
+  assert.equal(demoWeb.packet.allowExit, false);
+
+  const demoDowngradeBlocked = await decide.execute({
+    goal: 'demo',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:work.txt'],
+    checksPassed: true,
+    crossFamilyVerified: false,
+  }, reviewer);
+  assert.equal(demoDowngradeBlocked.packet.effectiveTaint, 'untrusted_web');
+  assert.equal(demoDowngradeBlocked.packet.allowExit, false);
+
+  const r009Blocked = await decide.execute({
+    goal: 'demo',
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    grantPermission: true,
+    citations: ['file:work.txt'],
+    checksPassed: true,
+  }, reviewer);
+  assert.equal(r009Blocked.ok, false);
+  assert.equal(r009Blocked.packet.allowExit, false);
+  assert.equal(r009Blocked.packet.action, 'block_escalation');
+
+  const afterDecideVerify = await verify.execute({}, {});
+  assert.equal(afterDecideVerify.ok, true);
+  assert.ok(afterDecideVerify.entries > v.entries);
+
   const off = makeTools((def) => def, { ARC_HOME: d, ARC_HOH_RETAIN: '0' }, { retain: async () => { throw new Error('must not be called'); } });
   const r = await off[2].execute({ ...base, candidate: fr2.candidate }, reviewer);
   assert.equal(r.retained, false);

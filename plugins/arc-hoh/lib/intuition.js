@@ -17,6 +17,10 @@ function clampProb(p) {
   return Math.min(1, Math.max(0, p));
 }
 
+function normalizeFailClosedFlag(value) {
+  return value === undefined || value === false ? false : true;
+}
+
 export function routeIntuition(input = {}) {
   if (input && input.grantPermission === true) {
     return {
@@ -452,8 +456,10 @@ export function fitPlattScaler(records = [], options = {}) {
   const resolved = (records || []).filter(
     (r) => r && typeof r.probability === 'number' && Number.isFinite(r.probability) && (r.actual === 0 || r.actual === 1),
   );
-  if (resolved.length === 0) {
-    return { a: 1, b: 0, count: 0, l2, converged: false };
+  const posCount = resolved.filter((r) => r.actual === 1).length;
+  const negCount = resolved.length - posCount;
+  if (resolved.length === 0 || posCount < 1 || negCount < 1) {
+    return { a: 1, b: 0, count: resolved.length, posCount, negCount, l2, converged: false, usable: false };
   }
   const maxIter = Number.isInteger(options.maxIter) && options.maxIter > 0 ? options.maxIter : 40;
   let a = 1;
@@ -490,9 +496,18 @@ export function fitPlattScaler(records = [], options = {}) {
     }
   }
   if (!(a > 0) || !Number.isFinite(a) || !Number.isFinite(b)) {
-    return { a: 1, b: 0, count: resolved.length, l2, converged: false };
+    return { a: 1, b: 0, count: resolved.length, posCount, negCount, l2, converged: false, usable: false };
   }
-  return { a, b, count: resolved.length, l2, converged };
+  return {
+    a,
+    b,
+    count: resolved.length,
+    posCount,
+    negCount,
+    l2,
+    converged,
+    usable: converged && posCount >= 2 && negCount >= 2,
+  };
 }
 
 /** Apply a fitted Platt scaler to a raw probability in [0, 1]. */
@@ -524,8 +539,9 @@ export function crossFitPlatt2Fold(records = [], options = {}) {
   const rawBss = brierSkillScore(resolved);
   const posCount = resolved.filter((r) => r.actual === 1).length;
   const negCount = resolved.length - posCount;
-  if (resolved.length < 2 || posCount < 2 || negCount < 2) {
-    const scaler = fitPlattScaler(resolved, options);
+  const l2 = typeof options.l2 === 'number' && options.l2 > 0 ? options.l2 : 0.05;
+  if (resolved.length < 4 || posCount < 2 || negCount < 2) {
+    const scaler = { a: 1, b: 0, count: resolved.length, posCount, negCount, l2, converged: false, usable: false };
     return {
       ok: true,
       count: resolved.length,
@@ -535,7 +551,8 @@ export function crossFitPlatt2Fold(records = [], options = {}) {
       bss: null,
       scaler,
       foldScalers: [],
-      allConverged: scaler.converged,
+      allConverged: false,
+      usable: false,
       predictions: [],
     };
   }
@@ -567,6 +584,7 @@ export function crossFitPlatt2Fold(records = [], options = {}) {
       fold,
     };
   });
+  const allConverged = scalerEven.converged && scalerOdd.converged && fullScaler.converged;
   return {
     ok: true,
     count: resolved.length,
@@ -576,7 +594,8 @@ export function crossFitPlatt2Fold(records = [], options = {}) {
     bss: brierSkillScore(predictions),
     scaler: fullScaler,
     foldScalers: [scalerEven, scalerOdd],
-    allConverged: scalerEven.converged && scalerOdd.converged && fullScaler.converged,
+    allConverged,
+    usable: allConverged && resolved.length >= 20,
     predictions,
   };
 }
@@ -589,14 +608,25 @@ export function routeOptimalDecision(input = {}) {
   }
   const id = typeof input.id === 'string' && input.id.trim() ? input.id.trim() : 'dec-1';
   const rawProbability = clampProb(input.priorProbability ?? input.probability ?? 0.5);
-  const q = input.plattScaler ? applyPlattScaler(rawProbability, input.plattScaler) : rawProbability;
+  const minPlatt = Number.isInteger(input.minPlattSamples) && input.minPlattSamples > 0 ? input.minPlattSamples : 20;
+  const scaler = input.plattScaler;
+  const scalerUsable = Boolean(
+    scaler
+    && typeof scaler === 'object'
+    && scaler.converged === true
+    && scaler.usable !== false
+    && Number.isInteger(scaler.count) && scaler.count >= minPlatt
+    && Number.isInteger(scaler.posCount) && scaler.posCount >= 2
+    && Number.isInteger(scaler.negCount) && scaler.negCount >= 2,
+  );
+  const q = scalerUsable ? applyPlattScaler(rawProbability, scaler) : rawProbability;
   const cfp = typeof input.cfp === 'number' && Number.isFinite(input.cfp) && input.cfp > 0 ? input.cfp : 1;
   const cfn = typeof input.cfn === 'number' && Number.isFinite(input.cfn) && input.cfn > 0 ? input.cfn : 1;
   const baseLoss = loss(q, cfp, cfn);
   const positiveLoss = cfp * (1 - q);
   const answerCutoff = cfp / (cfp + cfn);
   const canVerify = input.canVerify !== false;
-  const needsOperator = Boolean(input.needsOperator);
+  const needsOperator = normalizeFailClosedFlag(input.needsOperator) || normalizeFailClosedFlag(input.requiresHumanYes);
   const cheapCostThreshold = typeof input.cheapCostThreshold === 'number' && input.cheapCostThreshold > 0 ? input.cheapCostThreshold : 0.2;
   const answerLossThreshold = typeof input.answerLossThreshold === 'number' && input.answerLossThreshold > 0 ? input.answerLossThreshold : 0.15;
 
@@ -645,6 +675,7 @@ export function routeOptimalDecision(input = {}) {
     reason,
     rawProbability,
     calibratedProbability: q,
+    scalerApplied: scalerUsable,
     baseLoss,
     positiveLoss,
     bestCheck,
@@ -790,12 +821,16 @@ export function decideExitAction(input = {}) {
   if (!esc.ok) {
     return { ok: false, action: 'block_escalation', rule: 'R009', effectiveTaint: 'secret_risk', allowExit: false, reason: esc.violations.join('; ') };
   }
+  const hasSecret = normalizeFailClosedFlag(input.hasSecret);
+  const operatorRequired = normalizeFailClosedFlag(input.needsOperator) || normalizeFailClosedFlag(input.requiresHumanYes);
   const hasScalarTaint = Object.hasOwn(input, 'taint') && input.taint !== undefined;
+  const hasTaintsProp = Object.hasOwn(input, 'taints') && input.taints !== undefined;
+  const badTaints = hasTaintsProp && !Array.isArray(input.taints);
   const levels = [
     ...(hasScalarTaint ? [input.taint] : []),
     ...(Array.isArray(input.taints) ? input.taints : []),
   ];
-  const effectiveTaint = input.hasSecret ? 'secret_risk' : joinTaint(...levels);
+  const effectiveTaint = (hasSecret || badTaints) ? 'secret_risk' : joinTaint(...levels);
   const citationCount = Array.isArray(input.citations)
     ? input.citations.filter((c) => typeof c === 'string' && c.trim().length > 0).length
     : (Number.isInteger(input.citationCount) && input.citationCount >= 0 ? input.citationCount : 0);
@@ -805,19 +840,21 @@ export function decideExitAction(input = {}) {
   if (effectiveTaint === 'secret_risk') {
     return { ok: false, action: 'block_secret', effectiveTaint, allowExit: false, reason: 'secret_risk taint blocks exit' };
   }
-  if (input.requiresHumanYes === true || input.needsOperator === true) {
+  if (operatorRequired) {
     return { ok: false, action: 'ask_operator', effectiveTaint, allowExit: false, reason: 'operator approval required (needs_yes)' };
   }
   if (effectiveTaint === 'untrusted_web' && !crossFamilyVerified) {
     return { ok: false, action: 'block_tainted', effectiveTaint, allowExit: false, reason: 'untrusted_web requires cross-family verification' };
   }
-  if (input.pair && input.pair.ok === false) {
+  if (input.pair !== undefined && input.pair !== null && input.pair?.ok !== true) {
     return {
       ok: false,
       action: 'block_pairing',
       effectiveTaint,
       allowExit: false,
-      reason: input.pair.reason || input.pair.state || 'builder/checker pairing failed',
+      reason: (typeof input.pair?.reason === 'string' && input.pair.reason)
+        || (typeof input.pair?.state === 'string' && input.pair.state)
+        || 'builder/checker pairing failed',
     };
   }
   if (!checksPassed || !(citationCount >= 1)) {
@@ -836,11 +873,13 @@ export function emitDecisionPacket(input = {}) {
     ? input.citations.filter((c) => typeof c === 'string' && c.trim().length > 0).map((c) => c.trim())
     : [];
   const crossFamilyOk = input.crossFamilyVerified === true;
-  const needsOperator = input.requiresHumanYes === true || input.needsOperator === true;
+  const hasSecret = normalizeFailClosedFlag(input.hasSecret);
+  const needsOperator = normalizeFailClosedFlag(input.needsOperator) || normalizeFailClosedFlag(input.requiresHumanYes);
+  const pairValid = input.pair == null || input.pair?.ok === true;
   const exitGuard = decideExitAction({
     ...(Object.hasOwn(input, 'taint') ? { taint: input.taint } : {}),
-    taints: input.taints,
-    hasSecret: input.hasSecret === true,
+    ...(Object.hasOwn(input, 'taints') ? { taints: input.taints } : {}),
+    hasSecret,
     requiresHumanYes: needsOperator,
     needsOperator,
     citations,
@@ -848,25 +887,34 @@ export function emitDecisionPacket(input = {}) {
     crossFamilyVerified: crossFamilyOk,
     pair: input.pair,
   });
-  const routing = routeOptimalDecision({ ...input, needsOperator });
+  const routing = routeOptimalDecision({ ...input, needsOperator, requiresHumanYes: needsOperator });
   let outcome = routing.ok ? routing.outcome : 'abstain';
-  if (!exitGuard.allowExit && outcome === 'answer_now') {
-    outcome = exitGuard.action === 'ask_operator' ? 'ask_operator' : 'abstain';
+  let action = exitGuard.action;
+  let allowExit = exitGuard.allowExit;
+  let reason = exitGuard.reason;
+  if (!allowExit) {
+    if (outcome === 'answer_now') {
+      outcome = action === 'ask_operator' ? 'ask_operator' : 'abstain';
+    }
+  } else if (outcome !== 'answer_now') {
+    allowExit = false;
+    action = outcome === 'ask_operator' ? 'ask_operator' : (outcome === 'abstain' ? 'block_uncertainty' : outcome);
+    reason = routing.reason || 'routing outcome requires action before exit';
   }
   const packet = {
     schema: 'cammut.decision/0',
     id: typeof input.id === 'string' && input.id.trim() ? input.id.trim() : 'DEC-0001',
     goal: typeof input.goal === 'string' && input.goal.trim() ? input.goal.trim() : 'unspecified',
-    action: exitGuard.action,
-    allowExit: exitGuard.allowExit,
+    action,
+    allowExit,
     effectiveTaint: exitGuard.effectiveTaint,
-    reason: exitGuard.reason,
+    reason,
     outcome,
     calibratedProbability: routing.ok ? routing.calibratedProbability : clampProb(input.probability ?? 0.5),
     expectedVoi: routing.ok ? routing.expectedVoi : 0,
     netValue: routing.ok ? routing.netValue : 0,
-    route: input.route || (input.pair?.ok ? input.pair.builder?.route ?? null : null),
-    checkerRoute: input.checkerRoute || (input.pair?.ok ? input.pair.checker?.route ?? null : null),
+    route: pairValid ? (input.route || (input.pair?.ok === true ? input.pair.builder?.route ?? null : null)) : null,
+    checkerRoute: pairValid ? (input.checkerRoute || (input.pair?.ok === true ? input.pair.checker?.route ?? null : null)) : null,
     citations,
     checkEvidence: {
       ok: input.checksPassed === true,
@@ -878,7 +926,7 @@ export function emitDecisionPacket(input = {}) {
     issuedAt: input.issuedAt || new Date().toISOString(),
   };
   const validation = validateDecisionPacket(packet);
-  return { ok: validation.ok && (input.pair == null || input.pair.ok === true), packet, exitGuard, routing, validation };
+  return { ok: validation.ok && pairValid, packet, exitGuard, routing, validation };
 }
 
 /** Validate a cammut.decision/0 packet against schema, R009, taint lattice, and exit invariants. */
@@ -891,12 +939,19 @@ export function validateDecisionPacket(packet) {
   if (typeof packet.id !== 'string' || !packet.id.trim()) errors.push('id must be a non-empty string');
   if (typeof packet.goal !== 'string' || !packet.goal.trim()) errors.push('goal must be a non-empty string');
   if (typeof packet.action !== 'string' || !packet.action.trim()) errors.push('action must be a non-empty string');
+  if (!INTUITION_OUTCOMES.includes(packet.outcome)) errors.push('outcome must be a supported routing outcome');
   if (typeof packet.allowExit !== 'boolean') errors.push('allowExit must be a boolean');
   if (packet.permissionGranted !== false) errors.push('permissionGranted must be false');
   if (packet.autoApplied !== false) errors.push('autoApplied must be false');
   if (!TAINT_LEVELS.includes(packet.effectiveTaint)) errors.push('effectiveTaint must belong to TAINT_LEVELS');
   if (typeof packet.calibratedProbability !== 'number' || !Number.isFinite(packet.calibratedProbability) || packet.calibratedProbability < 0 || packet.calibratedProbability > 1) {
     errors.push('calibratedProbability must lie in [0, 1]');
+  }
+  if (typeof packet.expectedVoi !== 'number' || !Number.isFinite(packet.expectedVoi)) {
+    errors.push('expectedVoi must be a finite number');
+  }
+  if (typeof packet.netValue !== 'number' || !Number.isFinite(packet.netValue)) {
+    errors.push('netValue must be a finite number');
   }
   const validCitations = Array.isArray(packet.citations)
     && packet.citations.every((c) => typeof c === 'string' && c.trim().length > 0);
@@ -909,6 +964,7 @@ export function validateDecisionPacket(packet) {
       errors.push('allowExit=true must match action=emit_decision biconditionally');
     }
     if (packet.allowExit === true) {
+      if (packet.outcome !== 'answer_now') errors.push('allowExit=true requires outcome=answer_now');
       if (packet.effectiveTaint === 'secret_risk') errors.push('allowExit=true forbidden under secret_risk');
       if (!validCitations || packet.citations.length < 1) errors.push('allowExit=true requires >= 1 valid citation');
       if (!packet.checkEvidence || packet.checkEvidence.ok !== true) errors.push('allowExit=true requires passing checkEvidence');

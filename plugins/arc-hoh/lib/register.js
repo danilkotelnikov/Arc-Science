@@ -1,8 +1,16 @@
 // arc-hoh 0.2.0 (2026-10-31): the tools and prompt sections. No arc imports here, so node can test it.
-import { appendLedger, checkDigest, clip, goalEvents, hashFiles, lastEvent, ledgerFile, optedOut, verifyLedger, decideGate } from './gates.js';
+import { appendLedger, checkDigest, clip, goalEvents, hashFiles, lastEvent, ledgerFile, optedOut, verifyLedger, decideGate, withLedger } from './gates.js';
 import { CONTRACT, briefText } from './contract.js';
 import { retainNote } from './brief.js';
 import { routeOptimalDecision, pairBuilderAndChecker, emitDecisionPacket } from './intuition.js';
+
+const stripSha = (id) => String(id ?? '').replace(/^sha256:/, '');
+function inferKnownFamily(id) {
+  const s = String(id || '').toLowerCase();
+  if (/\b(?:claude|fable|opus|sonnet|haiku|anthropic)\b/.test(s)) return 'anthropic';
+  if (/\b(?:gemini|argon|carbon|hydrogen|google|vertex)\b/.test(s)) return 'google';
+  return null;
+}
 
 const strList = { type: 'array', items: { type: 'string' } };
 
@@ -219,52 +227,106 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
         return [{ type: 'text', text: `${pkt.action || 'blocked'} (allowExit=${Boolean(pkt.allowExit)}, outcome=${pkt.outcome || route.outcome || 'abstain'}, taint=${pkt.effectiveTaint || 'secret_risk'})` }];
       },
     },
-    async execute(args) {
-      const pair = pairBuilderAndChecker({
-        minTier: args.minTier,
-        minCheckerTier: args.minCheckerTier,
-        needsFormal: args.needsFormal,
+    async execute(args, exec) {
+      const ledgerPath = file();
+      const rawArgs = args && typeof args === 'object' ? args : {};
+      const goalKey = typeof rawArgs.goal === 'string' && rawArgs.goal.trim() ? rawArgs.goal.trim() : 'unspecified';
+      return withLedger(ledgerPath, async (append) => {
+        const gateRow = await lastEvent(ledgerPath, goalKey, 'gate');
+        const freezeRow = await lastEvent(ledgerPath, goalKey, 'freeze');
+        const priorDecides = await goalEvents(ledgerPath, goalKey, 'decide');
+
+        const gateAcceptedAndFresh = Boolean(
+          gateRow
+          && gateRow.verdict === 'accepted'
+          && freezeRow
+          && Number.isInteger(gateRow.seq)
+          && Number.isInteger(freezeRow.seq)
+          && gateRow.seq > freezeRow.seq
+          && stripSha(gateRow.candidate) !== ''
+          && stripSha(gateRow.candidate) === stripSha(freezeRow.candidate)
+          && typeof gateRow.builder === 'string'
+          && typeof gateRow.reviewer === 'string'
+          && gateRow.builder.trim() !== ''
+          && gateRow.reviewer.trim() !== ''
+          && gateRow.builder.trim() !== gateRow.reviewer.trim()
+          && typeof freezeRow.caller === 'string'
+          && typeof gateRow.caller === 'string'
+          && freezeRow.caller !== ''
+          && gateRow.caller !== ''
+          && freezeRow.caller !== gateRow.caller,
+        );
+        const bFam = inferKnownFamily(gateRow?.builder);
+        const rFam = inferKnownFamily(gateRow?.reviewer);
+        const sameKnownFamily = Boolean(bFam && rFam && bFam === rFam);
+        const derivedChecksPassed = rawArgs.checksPassed === true && gateAcceptedAndFresh;
+        const derivedCrossFamily = rawArgs.crossFamilyVerified === true && gateAcceptedAndFresh && !sameKnownFamily;
+        const priorTaints = priorDecides.map((d) => (d && typeof d.effectiveTaint === 'string' ? d.effectiveTaint : 'secret_risk'));
+
+        const pair = pairBuilderAndChecker({
+          minTier: rawArgs.minTier,
+          minCheckerTier: rawArgs.minCheckerTier,
+          needsFormal: rawArgs.needsFormal,
+        });
+        const safeInput = {
+          ...rawArgs,
+          goal: goalKey,
+          taint: Object.hasOwn(rawArgs, 'taint') ? rawArgs.taint : 'secret_risk',
+          taints: priorTaints,
+          checksPassed: derivedChecksPassed,
+          crossFamilyVerified: derivedCrossFamily,
+          pair,
+        };
+        const res = emitDecisionPacket(safeInput);
+        const overallOk = res.ok === true && pair.ok === true;
+        let packet = res.packet ? { ...res.packet } : {
+          schema: 'cammut.decision/0',
+          id: 'DEC-BLOCKED',
+          goal: goalKey,
+          action: 'block_escalation',
+          allowExit: false,
+          effectiveTaint: 'secret_risk',
+          reason: (res.violations || []).join('; ') || res.state || 'decision_blocked',
+          outcome: 'abstain',
+          calibratedProbability: 0.5,
+          expectedVoi: 0,
+          netValue: 0,
+          route: null,
+          checkerRoute: null,
+          citations: [],
+          checkEvidence: { ok: false, crossFamilyOk: false, summary: '' },
+          permissionGranted: false,
+          autoApplied: false,
+          issuedAt: new Date().toISOString(),
+        };
+        if (!overallOk) {
+          packet = {
+            ...packet,
+            action: pair.ok ? 'block_escalation' : 'block_pairing',
+            allowExit: false,
+            outcome: packet.outcome === 'answer_now' ? 'abstain' : (packet.outcome || 'abstain'),
+            route: null,
+            checkerRoute: null,
+            reason: packet.reason || pair.reason || pair.state || (res.violations || []).join('; ') || 'decision_blocked',
+          };
+        }
+        const routing = res.routing || { ok: false, outcome: 'abstain', reason: packet.reason, permissionGranted: false, autoApplied: false };
+        await append({
+          type: 'decide',
+          goal: goalKey,
+          caller: callerOf(exec),
+          ok: overallOk,
+          id: packet.id,
+          action: packet.action,
+          allowExit: packet.allowExit,
+          outcome: packet.outcome,
+          effectiveTaint: packet.effectiveTaint,
+          checksPassed: derivedChecksPassed,
+          crossFamilyVerified: derivedCrossFamily,
+          gateSeq: gateRow?.seq ?? null,
+        });
+        return { ok: overallOk, packet, routing, pair };
       });
-      const safeInput = {
-        goal: args.goal,
-        probability: args.probability,
-        cfp: args.cfp,
-        cfn: args.cfn,
-        checks: args.checks,
-        minTier: args.minTier,
-        minCheckerTier: args.minCheckerTier,
-        needsFormal: args.needsFormal,
-        ...(Object.hasOwn(args, 'taint') ? { taint: args.taint } : {}),
-        citations: args.citations,
-        checksPassed: args.checksPassed === true,
-        requiresHumanYes: args.requiresHumanYes === true,
-        needsOperator: args.needsOperator === true || args.requiresHumanYes === true,
-        crossFamilyVerified: args.crossFamilyVerified === true,
-        pair,
-      };
-      const res = emitDecisionPacket(safeInput);
-      const packet = res.packet || {
-        schema: 'cammut.decision/0',
-        id: 'DEC-BLOCKED',
-        goal: typeof args.goal === 'string' && args.goal.trim() ? args.goal.trim() : 'unspecified',
-        action: 'block_escalation',
-        allowExit: false,
-        effectiveTaint: 'secret_risk',
-        reason: (res.violations || []).join('; ') || res.state || 'decision_blocked',
-        outcome: 'abstain',
-        calibratedProbability: 0.5,
-        expectedVoi: 0,
-        netValue: 0,
-        route: pair.ok ? pair.builder?.route ?? null : null,
-        checkerRoute: pair.ok ? pair.checker?.route ?? null : null,
-        citations: [],
-        checkEvidence: { ok: false, crossFamilyOk: false, summary: '' },
-        permissionGranted: false,
-        autoApplied: false,
-        issuedAt: new Date().toISOString(),
-      };
-      const routing = res.routing || { ok: false, outcome: 'abstain', reason: packet.reason, permissionGranted: false, autoApplied: false };
-      return { ok: res.ok === true && pair.ok === true, packet, routing, pair };
     },
     presentCall: (args) => ({ card: 'generic', title: 'Decision router', kind: 'other', rawInput: { goal: args.goal } }),
   });
