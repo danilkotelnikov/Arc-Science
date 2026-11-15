@@ -571,32 +571,84 @@ test('propose, freeze and gate work end to end, with runtime agent ids', async (
   assert.equal(provOnlyBlocked.packet.allowExit, false);
   assert.equal(provOnlyBlocked.packet.action, 'block_tainted');
 
-  // Malformed taint fails closed for that single call without permanently poisoning subsequent clean calls.
-  const typoGoal = 'cf-typo-taint';
-  const typoFile = path.join(d, 'typo.txt');
-  await writeFile(typoFile, 'typo non-poisoning check');
-  await propose.execute({ goal: typoGoal, hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, geminiLead);
-  const frTypo = await freeze.execute({ goal: typoGoal, files: [typoFile] }, geminiLead);
-  await gate.execute({ goal: typoGoal, ...goodGate(frTypo.candidate) }, claudeReviewer);
-  const typoBlocked = await decide.execute({
-    goal: typoGoal,
+  // Unrecognized or non-string taint key fails closed and persists secret_risk so a clean retry cannot launder it.
+  const badTaintGoal = 'cf-invalid-taint';
+  const badTaintFile = path.join(d, 'invalid-taint.txt');
+  await writeFile(badTaintFile, 'invalid taint persistence check');
+  await propose.execute({ goal: badTaintGoal, hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, geminiLead);
+  const frBadTaint = await freeze.execute({ goal: badTaintGoal, files: [badTaintFile] }, geminiLead);
+  await gate.execute({ goal: badTaintGoal, ...goodGate(frBadTaint.candidate) }, claudeReviewer);
+  const badTaintBlocked = await decide.execute({
+    goal: badTaintGoal,
     probability: 0.95,
     minTier: 'T1',
-    taint: 'tool-output',
-    citations: ['file:typo.txt'],
+    taint: 'pii',
+    citations: ['file:invalid-taint.txt'],
     checksPassed: true,
+    crossFamilyVerified: true,
   }, claudeReviewer);
-  assert.equal(typoBlocked.packet.allowExit, false);
-  assert.equal(typoBlocked.packet.action, 'block_secret');
-  const cleanAfterTypo = await decide.execute({
-    goal: typoGoal,
+  assert.equal(badTaintBlocked.packet.allowExit, false);
+  assert.equal(badTaintBlocked.packet.action, 'block_secret');
+  const cleanAfterInvalidTaint = await decide.execute({
+    goal: badTaintGoal,
     probability: 0.95,
     minTier: 'T1',
     taint: 'clean',
-    citations: ['file:typo.txt'],
+    citations: ['file:invalid-taint.txt'],
     checksPassed: true,
+    crossFamilyVerified: true,
   }, claudeReviewer);
-  assert.equal(cleanAfterTypo.packet.allowExit, true);
+  assert.equal(cleanAfterInvalidTaint.packet.effectiveTaint, 'secret_risk');
+  assert.equal(cleanAfterInvalidTaint.packet.allowExit, false);
+
+  // Mixed-case valid taint normalizes cleanly and preserves untrusted_web monotonicity across clean retries.
+  const mixedCaseGoal = 'cf-mixed-case-taint';
+  const mixedCaseFile = path.join(d, 'mixed-case.txt');
+  await writeFile(mixedCaseFile, 'mixed case taint check');
+  await propose.execute({ goal: mixedCaseGoal, hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, geminiLead);
+  const frMixed = await freeze.execute({ goal: mixedCaseGoal, files: [mixedCaseFile] }, geminiLead);
+  await gate.execute({ goal: mixedCaseGoal, ...goodGate(frMixed.candidate) }, claudeReviewer);
+  const mixedWeb = await decide.execute({
+    goal: mixedCaseGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: ' Untrusted_Web ',
+    citations: ['url:mixed'],
+    checksPassed: true,
+    crossFamilyVerified: false,
+  }, claudeReviewer);
+  assert.equal(mixedWeb.packet.effectiveTaint, 'untrusted_web');
+  assert.equal(mixedWeb.packet.allowExit, false);
+  const cleanAfterMixed = await decide.execute({
+    goal: mixedCaseGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'clean',
+    citations: ['file:mixed-case.txt'],
+    checksPassed: true,
+    crossFamilyVerified: false,
+  }, claudeReviewer);
+  assert.equal(cleanAfterMixed.packet.effectiveTaint, 'untrusted_web');
+  assert.equal(cleanAfterMixed.packet.allowExit, false);
+
+  // A third-party cross-family freeze helper cannot bypass a proposer in the reviewer's own family.
+  const helperSpoofGoal = 'cf-proposer-same-family';
+  const helperSpoofFile = path.join(d, 'helper-spoof.txt');
+  await writeFile(helperSpoofFile, 'proposer family binding test');
+  await propose.execute({ goal: helperSpoofGoal, hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, claudeReviewer);
+  const frHelper = await freeze.execute({ goal: helperSpoofGoal, files: [helperSpoofFile] }, geminiLead);
+  await gate.execute({ goal: helperSpoofGoal, ...goodGate(frHelper.candidate) }, claudeReviewer);
+  const helperSpoofBlocked = await decide.execute({
+    goal: helperSpoofGoal,
+    probability: 0.95,
+    minTier: 'T1',
+    taint: 'untrusted_web',
+    citations: ['url:probe'],
+    checksPassed: true,
+    crossFamilyVerified: true,
+  }, claudeReviewer);
+  assert.equal(helperSpoofBlocked.packet.allowExit, false);
+  assert.equal(helperSpoofBlocked.packet.action, 'block_tainted');
 
   // Editing the frozen file invalidates the prior gate immediately (TOCTOU rehash guard).
   await writeFile(cfFile, 'mutated after gate');
