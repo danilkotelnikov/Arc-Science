@@ -244,6 +244,7 @@ test('2-fold stratified Platt calibration and Brier Skill Score improve overconf
   assert.ok(cv.oofBrier < cv.rawBrier - 0.05, `expected clear oofBrier (${cv.oofBrier}) improvement over rawBrier (${cv.rawBrier})`);
   assert.ok(brierSkillScore([{ probability: 0.9, actual: 1 }, { probability: 0.1, actual: 0 }]) > 0.9);
   assert.equal(brierSkillScore([{ probability: 0.5, actual: 1 }]), null);
+  assert.equal(crossFitPlatt2Fold([{ probability: 0.9, actual: 1 }, { probability: 0.1, actual: 0 }]).oofBrier, null);
 });
 
 test('routeOptimalDecision maximizes net VOI, respects asymmetric loss, and blocks checks when canVerify=false', () => {

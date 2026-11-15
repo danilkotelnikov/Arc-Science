@@ -522,7 +522,9 @@ export function crossFitPlatt2Fold(records = [], options = {}) {
   );
   const rawBrier = brierScore(resolved);
   const rawBss = brierSkillScore(resolved);
-  if (resolved.length < 2) {
+  const posCount = resolved.filter((r) => r.actual === 1).length;
+  const negCount = resolved.length - posCount;
+  if (resolved.length < 2 || posCount < 2 || negCount < 2) {
     const scaler = fitPlattScaler(resolved, options);
     return {
       ok: true,
