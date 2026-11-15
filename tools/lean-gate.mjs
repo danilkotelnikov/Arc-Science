@@ -140,23 +140,27 @@ export function scanBannedTokens(strippedSrc) {
   const hits = [];
   const lines = strippedSrc.split(/\r?\n/);
   const re = new RegExp(`\\b(${BANNED_TOKENS.join('|')})\\b`, 'g');
-  const unsafeOptRe = /\bset_option\s+(?:warningAsError|autoImplicit|debug\.skipKernelTC)\b/;
+  const unsafeOptRe = /\bset_option\s+(?:debug\.skipKernelTC\b|warningAsError\b(?!\s+true\b)|autoImplicit\b(?!\s+false\b))/g;
   const cmdRe = /#\s*(exit|eval|reduce)\b/;
-  lines.forEach((rawLine, idx) => {
-    const line = rawLine.replace(/^\s*(?:(?:public|meta)\s+)*import\s+[A-Za-z0-9_.]+/, '');
+  const cleanLines = lines.map((rawLine) => rawLine.replace(/^\s*(?:(?:public|meta)\s+)*import\s+[A-Za-z0-9_.]+/, ''));
+  cleanLines.forEach((line, idx) => {
     let m;
     re.lastIndex = 0;
     while ((m = re.exec(line)) !== null) {
       hits.push({ token: m[1], line: idx + 1 });
     }
-    const optM = unsafeOptRe.exec(line);
-    if (optM) hits.push({ token: optM[0], line: idx + 1 });
     const cmdM = cmdRe.exec(line);
     if (cmdM) hits.push({ token: `#${cmdM[1]}`, line: idx + 1 });
     if (/#\s*print\b/.test(line) && !/^\s*#\s*print\s+axioms\s+[A-Za-z0-9_.']+\s*$/.test(line)) {
       hits.push({ token: '#print', line: idx + 1 });
     }
   });
+  const joined = cleanLines.join('\n');
+  let optM;
+  while ((optM = unsafeOptRe.exec(joined)) !== null) {
+    const lineNum = joined.slice(0, optM.index).split('\n').length;
+    hits.push({ token: optM[0], line: lineNum });
+  }
   return hits;
 }
 
@@ -303,7 +307,7 @@ export function resolveLeanRunner() {
       [
         '-d',
         'Ubuntu',
-        '--',
+        '--exec',
         'bash',
         '-lc',
         'command -v lean || echo "$HOME/.elan/toolchains/leanprover--lean4---v4.34.1/bin/lean"',
@@ -320,11 +324,43 @@ export function resolveLeanRunner() {
   return cachedLeanCmd;
 }
 
-export function invokeLean(args, { stdin, timeoutMs = 60_000 } = {}) {
+export function invokeLean(args, { stdin, timeoutMs = 60_000, lakeDir = null, wslLakeDir = null } = {}) {
   const runner = resolveLeanRunner();
   const fullArgs = ['-DwarningAsError=true', '-DautoImplicit=false', ...args];
+  if (wslLakeDir && process.platform === 'win32') {
+    const q = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+    const cmd = `cd ${q(wslLakeDir)} && "$HOME/.elan/bin/lake" env lean ${fullArgs.map(q).join(' ')}`;
+    return spawnSync('wsl', ['-d', 'Ubuntu', '--exec', 'bash', '-lc', cmd], {
+      input: stdin,
+      windowsHide: true,
+      stdio: [stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      timeout: timeoutMs,
+    });
+  }
+  if (lakeDir) {
+    if (runner.mode === 'wsl') {
+      const q = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+      const cmd = `cd ${q(toWslPath(lakeDir))} && "$HOME/.elan/bin/lake" env lean ${fullArgs.map(q).join(' ')}`;
+      return spawnSync('wsl', ['-d', 'Ubuntu', '--exec', 'bash', '-lc', cmd], {
+        input: stdin,
+        windowsHide: true,
+        stdio: [stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+        encoding: 'utf8',
+        timeout: timeoutMs,
+      });
+    }
+    return spawnSync('lake', ['env', 'lean', ...fullArgs], {
+      cwd: lakeDir,
+      input: stdin,
+      windowsHide: true,
+      stdio: [stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      timeout: timeoutMs,
+    });
+  }
   if (runner.mode === 'wsl') {
-    return spawnSync('wsl', ['-d', 'Ubuntu', '--', runner.bin, ...fullArgs], {
+    return spawnSync('wsl', ['-d', 'Ubuntu', '--exec', runner.bin, ...fullArgs], {
       input: stdin,
       windowsHide: true,
       stdio: [stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
@@ -381,8 +417,18 @@ function resolveModuleMap(allFiles, rootDir) {
   return byMod;
 }
 
-function hasBuiltLakePackages(rootDir) {
-  const lakeLib = path.join(rootDir, '.lake', 'build', 'lib', 'lean');
+export function hasBuiltLakePackages(rootDir, { lakeDir = null, wslLakeDir = null } = {}) {
+  if (wslLakeDir && process.platform === 'win32') {
+    const q = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+    const chk = spawnSync(
+      'wsl',
+      ['-d', 'Ubuntu', '--exec', 'bash', '-lc', `test -d ${q(wslLakeDir + '/.lake/build')} || test -d ${q(wslLakeDir + '/.lake/packages/mathlib/.lake/build')}`],
+      { windowsHide: true, timeout: 10_000 },
+    );
+    if (chk.status === 0) return true;
+  }
+  const baseDir = lakeDir ? path.resolve(lakeDir) : rootDir;
+  const lakeLib = path.join(baseDir, '.lake', 'build', 'lib', 'lean');
   return fs.existsSync(lakeLib);
 }
 
@@ -391,6 +437,8 @@ export function runLeanGate({
   only = [],
   heldout = null,
   amendments = null,
+  lakeDir = null,
+  wslLakeDir = null,
 } = {}) {
   const absTarget = path.resolve(target);
   const st = fs.statSync(absTarget);
@@ -403,6 +451,7 @@ export function runLeanGate({
   const report = {
     gate: 'G3.1',
     target: absTarget,
+    lake_dir: wslLakeDir || (lakeDir ? path.resolve(lakeDir) : null),
     state: 'blocked_internal',
     checked_at: new Date().toISOString(),
     spec_check: null,
@@ -451,7 +500,7 @@ export function runLeanGate({
   }
 
   // Determine transitive external dependencies (e.g. Mathlib when not prebuilt in .lake)
-  const lakeBuilt = hasBuiltLakePackages(rootDir);
+  const lakeBuilt = hasBuiltLakePackages(rootDir, { lakeDir, wslLakeDir });
   const memoExt = new Map();
   function needsExternal(f, seen = new Set()) {
     if (memoExt.has(f)) return memoExt.get(f);
@@ -512,8 +561,8 @@ export function runLeanGate({
   for (const f of compilable) {
     const meta = metaByFile.get(f);
     const relName = path.relative(rootDir, f) || path.basename(f);
-    const fileArg = runner.mode === 'wsl' ? toWslPath(f) : f;
-    const res = invokeLean([fileArg]);
+    const fileArg = (runner.mode === 'wsl' || wslLakeDir) ? toWslPath(f) : f;
+    const res = invokeLean([fileArg], { lakeDir, wslLakeDir });
     if (res.status !== 0) {
       report.compile_failures.push({
         file: relName,
@@ -529,12 +578,12 @@ export function runLeanGate({
     let combinedAxioms = [...alreadyPrinted];
 
     if (missingDecls.length > 0) {
-      // Only use --stdin when no sibling local imports exist; otherwise stage sibling harness briefly.
+      // Never write temp audit files inside target directory when running under a Lake workspace.
       const hasLocalImports = meta.imports.some((imp) => modMap.has(imp));
       const suffix = '\n' + missingDecls.map((d) => `#print axioms _root_.${d}`).join('\n') + '\n';
       let auditRes;
-      if (!hasLocalImports) {
-        auditRes = invokeLean(['--stdin'], { stdin: meta.raw + suffix });
+      if (!hasLocalImports || wslLakeDir || lakeDir) {
+        auditRes = invokeLean(['--stdin'], { stdin: meta.raw + suffix, lakeDir, wslLakeDir });
       } else {
         const tmpHarness = path.join(path.dirname(f), `.lean_gate_audit_${process.pid}.lean`);
         try {
@@ -686,11 +735,23 @@ end Good
     assert.ok(scanBannedTokens('#exit\ntheorem x : True := trivial\n').length > 0);
     assert.ok(scanBannedTokens('import Init axiom cheat : False\n').length > 0);
     assert.ok(scanBannedTokens('#print "\'x\' does not depend on any axioms"\n').length > 0);
+    assert.equal(scanBannedTokens('set_option autoImplicit false\ntheorem x : True := trivial\n').length, 0);
+    assert.ok(scanBannedTokens('set_option autoImplicit true\ntheorem x : True := trivial\n').some((h) => h.token.includes('autoImplicit')));
+    assert.ok(scanBannedTokens('set_option autoImplicit \ntrue\ntheorem x : True := trivial\n').some((h) => h.token.includes('autoImplicit')));
+    assert.ok(scanBannedTokens('set_option\nautoImplicit true\ntheorem x : True := trivial\n').some((h) => h.token.includes('autoImplicit')));
+    assert.ok(scanBannedTokens('set_option warningAsError \nfalse\ntheorem x : True := trivial\n').some((h) => h.token.includes('warningAsError')));
     const rawStripped = stripLeanCommentsAndStrings('def s := r#"a\\"#\ntheorem b : False := sorry\n');
     assert.ok(scanBannedTokens(rawStripped).some((h) => h.token === 'sorry'));
     assert.equal(runLeanGate({ target: passDir, heldout: path.join(tmp, 'does-not-exist.json') }).state, 'fail_spec_drift');
 
-    console.log('lean-gate self-test: PASS (1 passing + 9 security control groups verified)');
+    // 10. Lake build detection control: missing vs present .lake/build/lib/lean
+    const fakeLake = path.join(tmp, 'c10_lake');
+    fs.mkdirSync(fakeLake, { recursive: true });
+    assert.equal(hasBuiltLakePackages(passDir, { lakeDir: fakeLake }), false);
+    fs.mkdirSync(path.join(fakeLake, '.lake', 'build', 'lib', 'lean'), { recursive: true });
+    assert.equal(hasBuiltLakePackages(passDir, { lakeDir: fakeLake }), true);
+
+    console.log('lean-gate self-test: PASS (1 passing + 10 security and Lake control groups verified)');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -706,14 +767,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     selfTest();
     process.exit(0);
   }
-  const target = arg('--target') || '.';
+  const target = arg('--target') || arg('--dir') || '.';
   const onlyRaw = arg('--only');
   const only = onlyRaw ? onlyRaw.split(',').filter(Boolean) : [];
   const heldout = arg('--heldout') || null;
   const amendments = arg('--amendments') || null;
+  const lakeDir = arg('--lake-dir') || null;
+  const wslLakeDir = arg('--wsl-lake-dir') || null;
   const out = arg('--out') || null;
 
-  const rep = runLeanGate({ target, only, heldout, amendments });
+  const rep = runLeanGate({ target, only, heldout, amendments, lakeDir, wslLakeDir });
   if (out) {
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, JSON.stringify(rep, null, 2) + '\n', 'utf8');

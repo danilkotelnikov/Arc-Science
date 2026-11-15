@@ -19,15 +19,20 @@ window.__ModuleLoader__.load({ id: "arc-molecullage", factory: (require) => {
     "gates.fail": "Rejected",
     "atlas.title": "Shelf and eight-domain atlas",
     "atlas.summary": "{sources} verified sources across {domains} domains",
+    "atlas.filter": "Filter sources",
+    "atlas.placeholder": "Filter verified sources by name, kind or domain",
     "pipeline.title": "3D structure and figure pipeline",
     "pipeline.ready": "Ready",
   };
 
   const MONO = "\"Geist Mono\", ui-monospace, SFMono-Regular, Consolas, monospace";
+  const TEXT = "\"Geist\", system-ui, sans-serif";
   const muted = { opacity: 0.65 };
   const num = { fontVariantNumeric: "tabular-nums" };
   const line = "1px solid color-mix(in srgb, currentColor 14%, transparent)";
   const codeStyle = { display: "inline-block", maxWidth: "100%", boxSizing: "border-box", fontFamily: MONO, fontSize: "0.86em", padding: "1px 6px", borderRadius: 6, border: line, background: "color-mix(in srgb, currentColor 7%, transparent)", overflowWrap: "anywhere" };
+  const inputStyle = { fontFamily: TEXT, fontSize: 12, lineHeight: 1.4, padding: "5px 8px", color: "currentColor", background: "color-mix(in srgb, currentColor 6%, transparent)", border: "none", borderBottom: line, outline: "none", flex: 1, boxSizing: "border-box" };
+  const filterBtnStyle = { fontFamily: TEXT, fontSize: 12, padding: "4px 10px", borderRadius: 6, border: "none", cursor: "pointer", color: "currentColor", background: "color-mix(in srgb, currentColor 10%, transparent)", fontWeight: 600 };
 
   const Code = ({ children }) => h("code", { style: codeStyle }, children);
   const Head = ({ children }) => h("h3", { style: { fontSize: 13, fontWeight: 600, margin: "0 0 6px" } }, children);
@@ -39,10 +44,12 @@ window.__ModuleLoader__.load({ id: "arc-molecullage", factory: (require) => {
       h("path", { d: "M12 3v6.5M20 16.5l-5.6-3.2M4 16.5l5.6-3.2" }));
   }
 
-  function View({ data, failed, t }) {
+  function View({ data, failed, onFilter, t }) {
+    const [queryDraft, setQueryDraft] = React.useState("");
     const gate = data && data.antiOverplating;
     const atlas = data && data.atlas;
     const pipe = data && data.pipeline;
+    const matched = (data && Array.isArray(data.matchedSources) ? data.matchedSources : []).slice(0, 8);
     return h("div", { style: { padding: 12, fontSize: 13, lineHeight: 1.45, height: "100%", overflowY: "auto", boxSizing: "border-box", display: "grid", gap: 16, alignContent: "start" } },
       !data && !failed ? h("p", { style: { ...muted, margin: 0 } }, t("state.loading")) : null,
       failed && !data ? h("p", { role: "alert", style: { ...muted, margin: 0 } }, t("state.error")) : null,
@@ -59,7 +66,34 @@ window.__ModuleLoader__.load({ id: "arc-molecullage", factory: (require) => {
         h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 } },
           atlas.domains.map((d) => h("li", { key: d.id, style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "baseline" } },
             h("span", { style: { fontWeight: 600, minWidth: 110 } }, d.label),
-            d.tools.map((tool) => h(Code, { key: tool }, tool)))))) : null,
+            d.tools.map((tool) => h(Code, { key: tool }, tool))))),
+        onFilter
+          ? h("form", {
+              onSubmit: (e) => {
+                if (e && typeof e.preventDefault === "function") e.preventDefault();
+                onFilter(queryDraft || "");
+              },
+              style: { display: "flex", gap: 8, alignItems: "center", marginTop: 10 },
+            },
+              h("input", {
+                type: "text",
+                "aria-label": t("atlas.filter"),
+                "data-molecullage-filter": "true",
+                placeholder: t("atlas.placeholder"),
+                value: queryDraft || "",
+                onChange: (e) => setQueryDraft(e.target.value),
+                style: inputStyle,
+              }),
+              h("button", { type: "submit", style: filterBtnStyle }, t("atlas.filter")))
+          : null,
+        matched.length > 0
+          ? h("ul", { "data-molecullage-matches": "true", style: { margin: "8px 0 0", padding: 0, listStyle: "none", display: "grid", gap: 6 } },
+              matched.map((src) => h("li", { key: src.id || src.name, style: { paddingTop: 6, borderTop: line, display: "grid", gap: 2 } },
+                h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline", flexWrap: "wrap" } },
+                  h("span", { style: { fontWeight: 600 } }, src.name),
+                  h(Code, null, src.licenceClass || src.kind)),
+                src.use ? h("span", { style: { ...muted, fontSize: 12 } }, src.use) : null)))
+          : null) : null,
       pipe ? h("section", { "aria-label": t("pipeline.title"), style: { paddingTop: 12, borderTop: line } },
         h(Head, null, t("pipeline.title")),
         h("ul", { style: { margin: 0, padding: 0, listStyle: "none" } },
@@ -73,20 +107,23 @@ window.__ModuleLoader__.load({ id: "arc-molecullage", factory: (require) => {
     return function MolecullagePane() {
       const [data, setData] = React.useState(null);
       const [failed, setFailed] = React.useState(false);
+      const load = async (query = "") => {
+        try {
+          const r = await fetch("api/arc-molecullage/state", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(query ? { query } : {}),
+          });
+          const j = r.ok ? await r.json() : null;
+          if (j && j.ok) { setData(j); setFailed(false); } else setFailed(true);
+        } catch { setFailed(true); }
+      };
       React.useEffect(() => {
         let live = true;
-        const load = async () => {
-          try {
-            const r = await fetch("api/arc-molecullage/state", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-            const j = r.ok ? await r.json() : null;
-            if (!live) return;
-            if (j && j.ok) { setData(j); setFailed(false); } else setFailed(true);
-          } catch { if (live) setFailed(true); }
-        };
-        load();
+        (async () => { if (live) await load(""); })();
         return () => { live = false; };
       }, []);
-      return h(View, { data, failed, t });
+      return h(View, { data, failed, onFilter: (q) => load(q), t });
     };
   }
 

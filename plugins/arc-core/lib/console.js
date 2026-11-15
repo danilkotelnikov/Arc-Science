@@ -1,7 +1,10 @@
-// arc-core console & loops (2026-11-09): Unified C2 console model (4 workspaces, 4 connectors,
-// 5 seats, 3-pane Research session, Decision map, 30-day consent grants, Prose detector, built-in
-// session read routes) and 7 proposal-only update loops with ~/.arc state preservation
+// arc-core console & loops (2026-11-15): Unified C2 console model (4 workspaces, 4 connectors,
+// 5 seats, 3-pane Research session, Decision map, 30-day consent grants, Prose detector, live
+// Cammut/HoH/Molecullage read routes) and 7 proposal-only update loops with ~/.arc state preservation
 // (Slices U1, U2, Phase 1b.2-1b.3, Phase 4.1-4.8 N7a-N7e).
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 export const WORKSPACES = Object.freeze(['Research', 'Memory', 'Molecullage', 'Prose']);
 export const CONNECTORS = Object.freeze(['Servers', 'Keys', 'Apps', 'Audit']);
@@ -104,16 +107,62 @@ const FORMULAIC_OPENERS = [
   /\bholistic\b/i,
 ];
 
-export function detectFormulaicProse(text = '') {
+let cachedLexiconPath = null;
+let cachedRefusedEntries = null;
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function loadRefusedLexicon(lexiconPath = path.join(os.homedir(), 'arc-harness', 'shared', 'lexicon', 'refused.en.txt')) {
+  if (cachedRefusedEntries && cachedLexiconPath === lexiconPath) return cachedRefusedEntries;
+  const entries = [];
+  try {
+    if (fs.existsSync(lexiconPath)) {
+      const raw = fs.readFileSync(lexiconPath, 'utf8');
+      for (const line of raw.split(/\r?\n/)) {
+        const phrase = line.trim();
+        if (!phrase || phrase.startsWith('#')) continue;
+        const pattern = new RegExp(`\\b${escapeRegex(phrase).replace(/\s+/g, '\\s+')}\\b`, 'i');
+        entries.push({ phrase, pattern });
+      }
+    }
+  } catch {
+    // Offline fallback uses built-in FORMULAIC_OPENERS only.
+  }
+  cachedLexiconPath = lexiconPath;
+  cachedRefusedEntries = entries;
+  return entries;
+}
+
+export function detectFormulaicProse(text = '', opts = {}) {
   const findings = [];
+  const seen = new Set();
   const s = String(text || '');
+  const pushFinding = (kind, match) => {
+    const key = `${kind}:${String(match).toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    findings.push({ kind, match });
+  };
   for (const re of CONTRAST_PATTERNS) {
     const m = s.match(re);
-    if (m) findings.push({ kind: 'contrast-x-not-y', match: m[0] });
+    if (m) pushFinding('contrast-x-not-y', m[0]);
   }
+  const seenFormula = new Set();
   for (const re of FORMULAIC_OPENERS) {
     const m = s.match(re);
-    if (m) findings.push({ kind: 'formulaic-phrase', match: m[0] });
+    if (m) {
+      seenFormula.add(m[0].toLowerCase());
+      pushFinding('formulaic-phrase', m[0]);
+    }
+  }
+  for (const entry of loadRefusedLexicon(opts.lexiconPath)) {
+    const m = s.match(entry.pattern);
+    if (m && !seenFormula.has(m[0].toLowerCase())) {
+      seenFormula.add(m[0].toLowerCase());
+      pushFinding('refused-word', m[0]);
+    }
   }
   return {
     ok: findings.length === 0,
@@ -149,6 +198,17 @@ export function rewriteFormulaicProse(text = '') {
   out = out.replace(/\bparadigm\s+shift\b/gi, 'method change');
   out = out.replace(/\bseamlessly\b/gi, 'cleanly');
   out = out.replace(/\bholistic\b/gi, 'whole');
+  out = out.replace(/\bleverage\b/gi, 'use');
+  out = out.replace(/\bunlock\b/gi, 'open');
+  out = out.replace(/\bempower\b/gi, 'let');
+  out = out.replace(/\brevolution\b/gi, 'change');
+  out = out.replace(/\bgame[- ]changer\b/gi, 'useful step');
+  out = out.replace(/\bnext[- ]generation\b/gi, 'newer');
+  out = out.replace(/\bbest[- ]of[- ]breed\b/gi, 'strong');
+  out = out.replace(/\breimagine\b/gi, 'redesign');
+  out = out.replace(/\btransformative\b/gi, 'large');
+  out = out.replace(/\bdisruptive\b/gi, 'unusual');
+  out = out.replace(/\bmission[- ]critical\b/gi, 'essential');
   out = out.replace(/\s{2,}/g, ' ').trim();
   return out;
 }
@@ -170,8 +230,231 @@ export function createC2ConsoleState() {
   };
 }
 
+function redactSecretText(s) {
+  return String(s || '')
+    .replace(/\bBearer\s+[A-Za-z0-9._-]{8,}/gi, 'Bearer [redacted]')
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{8,}|AIza[A-Za-z0-9_-]{8,}|gh[pou]_[A-Za-z0-9_-]{8,})/g, '[redacted]');
+}
+
+function readJsonSafe(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function readHohLedgerSafe(ledgerPath, limit = 6) {
+  try {
+    if (!fs.existsSync(ledgerPath)) return { available: false, total: 0, latest: null, recent: [] };
+    const lines = fs.readFileSync(ledgerPath, 'utf8').split(/\r?\n/).filter((l) => l.trim());
+    const parsed = [];
+    for (const line of lines) {
+      try {
+        parsed.push(JSON.parse(line));
+      } catch {
+        // skip malformed line
+      }
+    }
+    const recent = parsed.slice(-limit).map((r) => ({
+      seq: r.seq ?? null,
+      ts: r.ts || null,
+      type: r.type || 'event',
+      caller: r.caller || 'agent',
+      goal: redactSecretText(String(r.goal || r.verdict || r.note || r.type || '').slice(0, 120)),
+    }));
+    const latest = recent.length > 0 ? recent[recent.length - 1] : null;
+    return { available: true, total: parsed.length, latest, recent };
+  } catch {
+    return { available: false, total: 0, latest: null, recent: [] };
+  }
+}
+
+function readLocalMolecullageSafe(molecullageRoot) {
+  const libDir = path.join(molecullageRoot, 'studio', 'library');
+  const sourcesJson = readJsonSafe(path.join(libDir, 'sources.json'));
+  const freezeJson = readJsonSafe(path.join(libDir, 'atlas', 'FREEZE.json'));
+  let domainsCount = 8;
+  try {
+    const domDir = path.join(libDir, 'atlas', 'domains');
+    if (fs.existsSync(domDir)) {
+      const files = fs.readdirSync(domDir).filter((f) => f.endsWith('.json'));
+      if (files.length > 0) domainsCount = files.length;
+    }
+  } catch {
+    domainsCount = 8;
+  }
+  const rawSources = Array.isArray(sourcesJson?.sources) ? sourcesJson.sources : [];
+  const sources = rawSources.map((s) => ({
+    id: String(s.id || ''),
+    name: String(s.name || ''),
+    kind: String(s.kind || ''),
+    section: String(s.section || ''),
+    licenceClass: String(s.licenceClass || ''),
+    use: String(s.use || '').slice(0, 120),
+  }));
+  return {
+    available: sources.length > 0,
+    sourcesCount: sources.length > 0 ? sources.length : 231,
+    domainsCount,
+    frozen: freezeJson?.frozen ?? null,
+    sources,
+  };
+}
+
+function readGatewayConfigSafe(arcHome) {
+  const cfg = readJsonSafe(path.join(arcHome, 'gateway-config.json'));
+  if (!cfg || typeof cfg !== 'object') {
+    return { available: false, cammutRecall: false, anthropicPromptCaching: false, defaultReasoningEffort: 'none' };
+  }
+  return {
+    available: true,
+    cammutRecall: Boolean(cfg.cammutRecall),
+    anthropicPromptCaching: Boolean(cfg.anthropicPromptCaching),
+    defaultReasoningEffort: String(cfg.defaultReasoningEffort || 'none'),
+    radiumConfigured: Boolean(cfg.radiumUrl),
+    mergeConfigured: Boolean(cfg.mergeUrl),
+  };
+}
+
+function readLocalPluginsSafe(arcHome) {
+  const plugins = [];
+  const preflights = [];
+  try {
+    const dir = path.join(arcHome, 'local-plugins');
+    if (fs.existsSync(dir)) {
+      for (const name of fs.readdirSync(dir)) {
+        const full = path.join(dir, name);
+        if (fs.statSync(full).isDirectory()) plugins.push(name);
+      }
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    const pdir = path.join(arcHome, 'preflight');
+    if (fs.existsSync(pdir)) {
+      const files = fs.readdirSync(pdir).filter((f) => f.endsWith('.json')).slice(-4);
+      for (const f of files) {
+        const j = readJsonSafe(path.join(pdir, f));
+        preflights.push({ file: f, state: String(j?.state || (j?.ok === true ? 'pass' : 'recorded')) });
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return { plugins, preflights };
+}
+
+function parseMcpTextBody(rawText) {
+  const trimmed = String(rawText || '').trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('{')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  const lines = trimmed.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line.startsWith('data:')) {
+      try {
+        return JSON.parse(line.slice(5).trim());
+      } catch {
+        // continue
+      }
+    }
+  }
+  return null;
+}
+
+async function probeGatewayHealth(gatewayHost, fetchImpl, timeoutMs = 1200) {
+  if (!fetchImpl) return { reachable: false, status: 'no-fetch', routes: [], cammut: false, upstreamCount: 0 };
+  try {
+    const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(timeoutMs) : undefined;
+    const res = await fetchImpl(`http://${gatewayHost}/health`, { method: 'GET', signal });
+    if (!res.ok) return { reachable: false, status: `http-${res.status}`, routes: [], cammut: false, upstreamCount: 0 };
+    const data = await res.json();
+    return {
+      reachable: true,
+      status: String(data?.status || 'ok'),
+      version: String(data?.version || ''),
+      routes: Array.isArray(data?.routes) ? data.routes.slice(0, 12) : [],
+      cammut: Boolean(data?.cammut),
+      upstreamCount: data?.cammutUpstreams && typeof data.cammutUpstreams === 'object' ? Object.keys(data.cammutUpstreams).length : 0,
+    };
+  } catch (err) {
+    return { reachable: false, status: String(err?.name || 'offline'), routes: [], cammut: false, upstreamCount: 0 };
+  }
+}
+
+async function recallCammutMemory(gatewayHost, query, opts = {}, fetchImpl) {
+  if (!fetchImpl) return { ok: false, error: 'Fetch unavailable', items: [] };
+  try {
+    const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(2500) : undefined;
+    const tags = Array.isArray(opts.tags) && opts.tags.length > 0 ? opts.tags : ['project:Omniverso'];
+    const budget = typeof opts.budget === 'string' && opts.budget ? opts.budget : 'low';
+    const res = await fetchImpl(`http://${gatewayHost}/cammut/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method: 'tools/call',
+        params: {
+          name: 'cammut_call',
+          arguments: {
+            tool: 'hindsight/recall',
+            arguments: { query, tags, budget },
+          },
+        },
+      }),
+      signal,
+    });
+    const rawText = await res.text();
+    const parsed = parseMcpTextBody(rawText);
+    const contentText = parsed?.result?.content?.[0]?.text || rawText;
+    let payloadJson = null;
+    try {
+      payloadJson = JSON.parse(contentText);
+    } catch {
+      payloadJson = null;
+    }
+    const rawItems = Array.isArray(payloadJson?.results)
+      ? payloadJson.results
+      : Array.isArray(payloadJson?.facts)
+        ? payloadJson.facts
+        : Array.isArray(payloadJson)
+          ? payloadJson
+          : contentText
+            ? [{ text: String(contentText).slice(0, 280), context: 'cammut' }]
+            : [];
+    const items = rawItems.slice(0, 8).map((item, idx) => ({
+      id: String(item?.id || `mem-${idx + 1}`),
+      text: redactSecretText(String(item?.text || item?.content || item?.summary || item || '').slice(0, 280)),
+      context: redactSecretText(String(item?.context || item?.type || 'memory').slice(0, 80)),
+    }));
+    return { ok: Boolean(res.ok && !parsed?.error), items, error: parsed?.error ? String(parsed.error.message || 'rpc-error') : null };
+  } catch (err) {
+    return { ok: false, error: redactSecretText(err?.message || 'Cammut recall failed'), items: [] };
+  }
+}
+
 export function createResearchSessionStore(opts = {}) {
   const nowFn = typeof opts.now === 'function' ? opts.now : () => Date.now();
+  const gatewayHost = typeof opts.gatewayHost === 'string' && opts.gatewayHost.trim() ? opts.gatewayHost.trim() : '127.0.0.1:7424';
+  const arcHome = typeof opts.arcHome === 'string' && opts.arcHome.trim() ? opts.arcHome : path.join(os.homedir(), '.arc');
+  const molecullageRoot = typeof opts.molecullageRoot === 'string' && opts.molecullageRoot.trim() ? opts.molecullageRoot : path.join(os.homedir(), 'Molecullage');
+  const liveEnabled = opts.live !== false;
+  const fetchImpl = typeof opts.fetch === 'function'
+    ? opts.fetch
+    : (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null);
   const state = createC2ConsoleState();
   const sessionId = typeof opts.sessionId === 'string' && opts.sessionId.trim() ? opts.sessionId.trim() : 'session-arc-science-01';
 
@@ -422,27 +705,135 @@ export function createResearchSessionStore(opts = {}) {
     return { ok: true, text: proseText, report: detectFormulaicProse(proseText) };
   }
 
+  const liveState = {
+    gateway: { reachable: false, status: 'not-checked', routes: [], cammut: false, upstreamCount: 0 },
+    ledger: { available: false, total: 0, latest: null, recent: [] },
+    molecullageData: { available: false, sourcesCount: 231, domainsCount: 8, frozen: null, sources: [] },
+    gatewayConfig: { available: false, cammutRecall: false, anthropicPromptCaching: false, defaultReasoningEffort: 'none' },
+    localPlugins: { plugins: [], preflights: [] },
+    molecullageLauncherAvailable: false,
+    memoryQuery: '',
+    memoryResults: [],
+    memoryError: null,
+    molecullageQuery: '',
+    molecullageMatches: [],
+    lastProbeAtMs: 0,
+  };
+
+  function filterMolecullageItems(query = '') {
+    const q = String(query || '').trim().toLowerCase();
+    const all = liveState.molecullageData.sources || [];
+    const filtered = !q
+      ? all
+      : all.filter((s) => `${s.id} ${s.name} ${s.kind} ${s.section} ${s.licenceClass} ${s.use}`.toLowerCase().includes(q));
+    return filtered.slice(0, 10);
+  }
+
+  function syncDiskState() {
+    liveState.ledger = readHohLedgerSafe(path.join(arcHome, 'hoh', 'ledger.jsonl'));
+    liveState.molecullageData = readLocalMolecullageSafe(molecullageRoot);
+    liveState.gatewayConfig = readGatewayConfigSafe(arcHome);
+    liveState.localPlugins = readLocalPluginsSafe(arcHome);
+    liveState.molecullageLauncherAvailable = fs.existsSync(path.join(arcHome, 'molecullage-mcp-launcher.mjs'));
+    liveState.molecullageMatches = filterMolecullageItems(liveState.molecullageQuery);
+  }
+
+  syncDiskState();
+
+  async function refreshLive(force = false) {
+    syncDiskState();
+    if (!liveEnabled) return liveState;
+    const tNow = nowFn();
+    if (!force && liveState.lastProbeAtMs && Math.abs(tNow - liveState.lastProbeAtMs) < 2000) {
+      return liveState;
+    }
+    liveState.lastProbeAtMs = tNow;
+    liveState.gateway = await probeGatewayHealth(gatewayHost, fetchImpl, 1200);
+    return liveState;
+  }
+
+  async function searchMemory(query = '', searchOpts = {}) {
+    const q = String(query || '').trim();
+    if (!q) {
+      liveState.memoryQuery = '';
+      liveState.memoryError = 'Enter a query to search shared memory';
+      return { ok: false, query: '', items: [], error: liveState.memoryError };
+    }
+    liveState.memoryQuery = q;
+    if (!liveEnabled) {
+      liveState.memoryError = 'Live gateway probing is turned off';
+      return { ok: false, query: q, items: [], error: liveState.memoryError };
+    }
+    const res = await recallCammutMemory(gatewayHost, q, searchOpts, fetchImpl);
+    liveState.memoryResults = res.items || [];
+    liveState.memoryError = res.error || null;
+    timeline.push({
+      id: `ev-${timeline.length + 1}`,
+      atMs: nowFn(),
+      kind: 'memory-recall',
+      summary: `Recalled ${liveState.memoryResults.length} shared memory notes for "${q.slice(0, 48)}"`,
+    });
+    return { ok: res.ok, query: q, items: liveState.memoryResults, error: liveState.memoryError };
+  }
+
+  function searchMolecullage(query = '') {
+    syncDiskState();
+    liveState.molecullageQuery = String(query || '').trim();
+    liveState.molecullageMatches = filterMolecullageItems(liveState.molecullageQuery);
+    return {
+      ok: true,
+      query: liveState.molecullageQuery,
+      total: liveState.molecullageData.sourcesCount,
+      items: liveState.molecullageMatches,
+    };
+  }
+
   function connectorDetails() {
     const activeGrants = listActiveGrants();
+    const hohEvents = (liveState.ledger.recent || []).slice(-4).map((ev) => ({
+      id: `hoh-${ev.seq ?? ev.ts ?? 'x'}`,
+      kind: `ledger:${ev.type}`,
+      summary: `${ev.caller}: ${ev.goal}`,
+      atMs: ev.ts ? Date.parse(ev.ts) || nowFn() : nowFn(),
+    }));
+    const sessionEvents = timeline.slice(-6).map((ev) => ({
+      id: ev.id,
+      kind: ev.kind,
+      summary: ev.summary,
+      atMs: ev.atMs,
+    }));
+    const srvStatus = liveState.gateway.reachable
+      ? `online, ${liveState.gateway.routes.length} routes, cammut ${liveState.gateway.cammut ? 'on' : 'off'}`
+      : `local config (${liveState.gateway.status})`;
+    const studioStatus = liveState.molecullageData.available
+      ? `ready (${liveState.molecullageData.sourcesCount} sources on disk)`
+      : 'ready';
+    const keyStatus = liveState.gatewayConfig.available
+      ? `cammutRecall ${liveState.gatewayConfig.cammutRecall ? 'on' : 'off'}, promptCaching ${liveState.gatewayConfig.anthropicPromptCaching ? 'on' : 'off'}`
+      : 'not configured';
+    const apps = [
+      { id: 'molecullage', label: 'Molecullage figure and structure pack', scopes: ['read', 'render'], grants: activeGrants.filter((g) => g.appId.startsWith('molecullage')).length },
+      { id: 'inspect', label: 'Scoped archive inspector', scopes: ['read', 'verify'], grants: activeGrants.filter((g) => g.appId.startsWith('inspect')).length },
+    ];
+    if (liveState.localPlugins.plugins.length > 0) {
+      apps.push({
+        id: 'local-plugins',
+        label: `Synced local plugins (${liveState.localPlugins.plugins.length})`,
+        scopes: liveState.localPlugins.plugins.slice(0, 6),
+        grants: activeGrants.filter((g) => g.appId.startsWith('local-plugins')).length,
+      });
+    }
     return {
       Servers: [
-        { id: 'srv-cammut', label: 'Loopback Cammut gateway', endpoint: '127.0.0.1:4317', status: 'loopback token guard active' },
-        { id: 'srv-studio', label: 'Molecullage studio server', endpoint: 'stdio local', status: 'ready' },
+        { id: 'srv-cammut', label: 'Loopback Cammut gateway', endpoint: gatewayHost, status: srvStatus },
+        { id: 'srv-studio', label: 'Molecullage studio server', endpoint: liveState.molecullageLauncherAvailable ? '~/.arc/molecullage-mcp-launcher.mjs' : 'stdio local', status: studioStatus },
       ],
       Keys: [
-        { id: 'key-cammut', label: 'Cammut bearer token', ref: 'cred://arc-native/cammut-bearer', status: 'stored in OS vault' },
+        { id: 'key-cammut', label: 'Gateway and memory settings', ref: '~/.arc/gateway-config.json', status: keyStatus },
         { id: 'key-signing', label: 'Release bundle public key', ref: 'cred://arc-native/release-verify', status: 'pinned' },
       ],
-      Apps: [
-        { id: 'molecullage', label: 'Molecullage figure and structure pack', scopes: ['read', 'render'], grants: activeGrants.filter((g) => g.appId.startsWith('molecullage')).length },
-        { id: 'inspect', label: 'Scoped archive inspector', scopes: ['read', 'verify'], grants: activeGrants.filter((g) => g.appId.startsWith('inspect')).length },
-      ],
-      Audit: timeline.slice(-6).map((ev) => ({
-        id: ev.id,
-        kind: ev.kind,
-        summary: ev.summary,
-        atMs: ev.atMs,
-      })),
+      Apps: apps,
+      Audit: [...sessionEvents, ...hohEvents].slice(-8),
     };
   }
 
@@ -456,6 +847,12 @@ export function createResearchSessionStore(opts = {}) {
       timeline: { ok: true, events: timeline.map((e) => ({ ...e })) },
       decisions: { ok: true, items: decisions.map((d) => ({ ...d })) },
       connectorsDetail: connectorDetails(),
+      liveLedger: {
+        available: liveState.ledger.available,
+        total: liveState.ledger.total,
+        latest: liveState.ledger.latest,
+        recent: liveState.ledger.recent,
+      },
       release: {
         ok: true,
         verdict: 'accepted',
@@ -465,15 +862,26 @@ export function createResearchSessionStore(opts = {}) {
       },
       memory: {
         ok: true,
-        gateway: '127.0.0.1:4317',
-        authRequired: true,
+        gateway: gatewayHost,
+        reachable: liveState.gateway.reachable,
+        routes: liveState.gateway.routes,
+        cammut: liveState.gateway.cammut,
+        upstreamCount: liveState.gateway.upstreamCount,
+        authRequired: false,
         labels: ['type', 'scope', 'status', 'evidence', 'sensitivity'],
+        lastQuery: liveState.memoryQuery,
+        error: liveState.memoryError,
+        results: liveState.memoryResults,
       },
       molecullage: {
         ok: true,
-        sources: 231,
-        domains: 8,
+        sources: liveState.molecullageData.sourcesCount,
+        domains: liveState.molecullageData.domainsCount,
         nestedBoxes: 0,
+        available: liveState.molecullageData.available,
+        frozen: liveState.molecullageData.frozen,
+        query: liveState.molecullageQuery,
+        items: liveState.molecullageMatches,
       },
       prose: {
         ok: true,
@@ -499,6 +907,9 @@ export function createResearchSessionStore(opts = {}) {
     listActiveGrants,
     updateProseDraft,
     rewriteProseDraft,
+    refreshLive,
+    searchMemory,
+    searchMolecullage,
     snapshot,
   };
 }
@@ -525,7 +936,10 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
     if (payload && payload.action && payload.branchId) return store.recordDecision(payload);
     return store.decisions();
   }
-  if (clean === 'api/arc-core/console/state') return store.snapshot();
+  if (clean === 'api/arc-core/console/state') {
+    if (typeof store.refreshLive === 'function') await store.refreshLive(false);
+    return store.snapshot();
+  }
   if (clean === 'api/arc-core/console/action') {
     if (payload.kind === 'workspace') return store.selectWorkspace(payload.workspace);
     if (payload.kind === 'research-view') return store.selectResearchView(payload.view);
@@ -536,6 +950,12 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
     if (payload.kind === 'prose') return store.updateProseDraft(payload.text);
     if (payload.kind === 'prose-rewrite') return store.rewriteProseDraft();
     if (payload.kind === 'operator-switch') return store.setOperatorSwitch(payload.rungId, payload.enabled);
+    if (payload.kind === 'memory-search' && typeof store.searchMemory === 'function') return store.searchMemory(payload.query, payload);
+    if (payload.kind === 'molecullage-search' && typeof store.searchMolecullage === 'function') return store.searchMolecullage(payload.query);
+    if (payload.kind === 'refresh' && typeof store.refreshLive === 'function') {
+      await store.refreshLive(true);
+      return store.snapshot();
+    }
     return { ok: false, error: `Unknown console action kind: ${String(payload.kind || '')}` };
   }
   return { ok: false, error: `Unknown console route: ${clean}` };
