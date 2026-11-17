@@ -532,9 +532,9 @@ func (s *Server) tuneRequest(p map[string]any, cfg Config, rt *Route) {
 			eff = v
 		}
 	}
-	// The route's own default fills in only for chat requests that carry no effort.
+	// The route's own default fills in only for chat requests that carry no effort; "off" adds nothing.
 	added := false
-	if eff == "" && rt.DefaultReasoningEffort != "" && p["messages"] != nil {
+	if eff == "" && rt.DefaultReasoningEffort != "" && rt.DefaultReasoningEffort != "off" && p["messages"] != nil {
 		eff, added = rt.DefaultReasoningEffort, true
 	}
 	if eff == "off" {

@@ -26,7 +26,7 @@ arc-gateway.exe install
 
 Copy `gateway.example.json` to `%USERPROFILE%\.arc\gateway.json` and keep the routes you use. Keys go in `%USERPROFILE%\.arc\.credentials.yaml` under `refs:`, or in the settings page at `http://127.0.0.1:7424/settings`. Saving there needs the token in `.arc\.gateway-token`.
 
-A route can carry `defaultReasoningEffort` (`off`, `low`, `medium` or `high`). The gateway adds it to a chat request that names no effort. An effort the app sends, or `forceReasoningEffort`, always wins. The example sets `low` on `/vertex/v1`: on Gemini 4 Hydrogen and Argon, low answered about 1.2 s sooner than no effort (measured 17.XI.2026). Routes without the field are left as they are.
+A route can carry `defaultReasoningEffort` (`low`, `medium` or `high`, in lower case). The gateway adds it to a chat request that names no effort. An effort the app sends, or `forceReasoningEffort`, always wins. Routes without the field, and Anthropic routes, are left as they are. The example sets `low` on `/vertex/v1`, because Gemini routes start at low effort unless a model card says otherwise.
 
 `cammut.upstreams` lists Cammut addresses in order. The gateway tries the next one only when a connection fails.
 

@@ -461,6 +461,26 @@ func TestRouteDefaultEffortOnlyWhenRequestHasNone(t *testing.T) {
 	}
 }
 
+func TestRouteDefaultEffortYieldsToForceAndOff(t *testing.T) {
+	var got string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { b, _ := io.ReadAll(r.Body); got = string(b) }))
+	defer up.Close()
+	for _, c := range []struct{ force, def, in, want string }{
+		{"high", "low", `{"messages":[]}`, `{"messages":[],"reasoning_effort":"high"}`},
+		{"", "off", `{"messages":[],"reasoning":{"summary":"auto"}}`, `{"messages":[],"reasoning":{"summary":"auto"}}`},
+	} {
+		cfg := defaultConfig()
+		cfg.ForceReasoningEffort = c.force
+		cfg.Routes = []Route{{Prefix: "/vertex/v1", Target: up.URL, Auth: "none", DefaultReasoningEffort: c.def}}
+		ts, _ := setup(t, cfg)
+		do(t, ts, "POST", "/vertex/v1/chat/completions", c.in, nil)
+		ts.Close()
+		if got != c.want {
+			t.Fatalf("force %q default %q: upstream got %s, want %s", c.force, c.def, got, c.want)
+		}
+	}
+}
+
 func TestExampleConfigVertexDefaultsLow(t *testing.T) {
 	b, err := os.ReadFile("gateway.example.json")
 	if err != nil {
