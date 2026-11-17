@@ -532,6 +532,11 @@ func (s *Server) tuneRequest(p map[string]any, cfg Config, rt *Route) {
 			eff = v
 		}
 	}
+	// The route's own default fills in only for chat requests that carry no effort.
+	added := false
+	if eff == "" && rt.DefaultReasoningEffort != "" && p["messages"] != nil {
+		eff, added = rt.DefaultReasoningEffort, true
+	}
 	if eff == "off" {
 		delete(p, "reasoning_effort")
 		delete(p, "reasoning")
@@ -543,7 +548,7 @@ func (s *Server) tuneRequest(p map[string]any, cfg Config, rt *Route) {
 		case "minimal":
 			n = "low"
 		}
-		if _, ok := p["reasoning_effort"]; ok || cfg.ForceReasoningEffort != "" {
+		if _, ok := p["reasoning_effort"]; ok || cfg.ForceReasoningEffort != "" || (added && obj(p["reasoning"]) == nil) {
 			p["reasoning_effort"] = n
 		}
 		if ro := obj(p["reasoning"]); ro != nil {

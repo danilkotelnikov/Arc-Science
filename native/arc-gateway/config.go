@@ -21,6 +21,8 @@ type Route struct {
 	NormalizeModels bool   `json:"normalizeModels"` // fill id/object in GET /models
 	VertexProject   string `json:"vertexProject"`
 	VertexLocation  string `json:"vertexLocation"`
+	// reasoning effort for chat requests that carry none ("off", "low", ...); empty adds nothing
+	DefaultReasoningEffort string `json:"defaultReasoningEffort"`
 }
 
 // Governor keeps Cammut memory answers inside a size budget.

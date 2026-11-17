@@ -3,7 +3,7 @@
   "routes": [
     { "prefix": "/anthropic", "target": "https://api.anthropic.com", "keyRef": "ANTHROPIC_API_KEY", "anthropic": true },
     { "prefix": "/openai/v1", "target": "https://api.openai.com/v1", "keyRef": "OPENAI_API_KEY" },
-    { "prefix": "/vertex/v1", "auth": "vertex", "vertexProject": "your-project", "vertexLocation": "global" }
+    { "prefix": "/vertex/v1", "auth": "vertex", "vertexProject": "your-project", "vertexLocation": "global", "defaultReasoningEffort": "low" }
   ],
   "cammut": {
     "upstreams": ["http://127.0.0.1:7421"],

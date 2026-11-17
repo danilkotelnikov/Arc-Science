@@ -426,3 +426,57 @@ func TestBrokenConfigIsNotOverwritten(t *testing.T) {
 		t.Fatal("multi-line key value accepted")
 	}
 }
+
+// --- per-route reasoning default ---
+
+func TestRouteDefaultEffortOnlyWhenRequestHasNone(t *testing.T) {
+	var got []string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { b, _ := io.ReadAll(r.Body); got = append(got, string(b)) }))
+	defer up.Close()
+	cfg := defaultConfig() // global default stays "high": it must not reach any route
+	cfg.Routes = []Route{
+		{Prefix: "/vertex/v1", Target: up.URL, Auth: "none", DefaultReasoningEffort: "low"},
+		{Prefix: "/radium/v1", Target: up.URL, Auth: "none"},
+	}
+	ts, _ := setup(t, cfg)
+	defer ts.Close()
+	cases := []struct{ path, in, want string }{
+		{"/vertex/v1/chat/completions", `{"model":"gemini-4-argon","messages":[]}`, `"reasoning_effort":"low"`},
+		{"/vertex/v1/chat/completions", `{"model":"gemini-4-argon","messages":[],"reasoning_effort":"high"}`, `"reasoning_effort":"high"`},
+		{"/vertex/v1/chat/completions", `{"model":"gemini-4-argon","messages":[],"reasoning":{"effort":"medium"}}`, `"reasoning":{"effort":"medium"}`},
+		{"/vertex/v1/embeddings", `{"model":"gemini-embedding","input":"x"}`, `{"model":"gemini-embedding","input":"x"}`},
+		{"/radium/v1/chat/completions", `{"model":"m","messages":[]}`, `{"model":"m","messages":[]}`},
+		{"/vertex/v1/chat/completions", `{"model":"gemini-4-argon","messages":[],"reasoning":{"summary":"auto"}}`, `"reasoning":{"effort":"low","summary":"auto"}`},
+	}
+	for i, c := range cases {
+		do(t, ts, "POST", c.path, c.in, nil)
+		if len(got) != i+1 || !strings.Contains(got[i], c.want) {
+			t.Fatalf("case %d %s %s: upstream got %v, want %s", i, c.path, c.in, got, c.want)
+		}
+	}
+	for _, i := range []int{2, 5} { // a reasoning object gets the effort inside it, never a second field
+		if strings.Count(got[i], "effort") != 1 {
+			t.Fatalf("case %d has %d effort fields: %s", i, strings.Count(got[i], "effort"), got[i])
+		}
+	}
+}
+
+func TestExampleConfigVertexDefaultsLow(t *testing.T) {
+	b, err := os.ReadFile("gateway.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c Config
+	if err := json.Unmarshal(b, &c); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range c.Routes {
+		want := ""
+		if r.Prefix == "/vertex/v1" {
+			want = "low"
+		}
+		if r.DefaultReasoningEffort != want {
+			t.Fatalf("route %s default %q, want %q", r.Prefix, r.DefaultReasoningEffort, want)
+		}
+	}
+}
