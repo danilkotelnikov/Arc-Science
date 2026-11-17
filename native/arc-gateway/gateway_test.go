@@ -468,6 +468,9 @@ func TestRouteDefaultEffortYieldsToForceAndOff(t *testing.T) {
 	for _, c := range []struct{ force, def, in, want string }{
 		{"high", "low", `{"messages":[]}`, `{"messages":[],"reasoning_effort":"high"}`},
 		{"", "off", `{"messages":[],"reasoning":{"summary":"auto"}}`, `{"messages":[],"reasoning":{"summary":"auto"}}`},
+		{"", " Low ", `{"messages":[]}`, `{"messages":[],"reasoning_effort":"low"}`},
+		{"", "lwo", `{"messages":[]}`, `{"messages":[]}`},
+		{"", "low", `{"messages":[],"reasoning":{"effort":"medium"},"reasoning_effort":""}`, `{"messages":[],"reasoning":{"effort":"medium"},"reasoning_effort":"medium"}`},
 	} {
 		cfg := defaultConfig()
 		cfg.ForceReasoningEffort = c.force
@@ -490,13 +493,31 @@ func TestExampleConfigVertexDefaultsLow(t *testing.T) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		t.Fatal(err)
 	}
+	seen := false
 	for _, r := range c.Routes {
 		want := ""
 		if r.Prefix == "/vertex/v1" {
-			want = "low"
+			want, seen = "low", true
 		}
 		if r.DefaultReasoningEffort != want {
 			t.Fatalf("route %s default %q, want %q", r.Prefix, r.DefaultReasoningEffort, want)
 		}
+	}
+	if !seen {
+		t.Fatal("example config has no /vertex/v1 route")
+	}
+}
+
+func TestRouteDefaultEffortSkipsAnthropicRoutes(t *testing.T) {
+	var got string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { b, _ := io.ReadAll(r.Body); got = string(b) }))
+	defer up.Close()
+	cfg := defaultConfig()
+	cfg.Routes = []Route{{Prefix: "/anthropic", Target: up.URL, Anthropic: true, DefaultReasoningEffort: "low"}}
+	ts, _ := setup(t, cfg)
+	defer ts.Close()
+	do(t, ts, "POST", "/anthropic/v1/messages", `{"model":"m","messages":[]}`, nil)
+	if got == "" || strings.Contains(got, "effort") {
+		t.Fatalf("anthropic route body changed: %s", got)
 	}
 }

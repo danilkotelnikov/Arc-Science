@@ -526,16 +526,20 @@ func (s *Server) captureLine(line []byte, byIndex map[int]*[2]string) {
 func (s *Server) tuneRequest(p map[string]any, cfg Config, rt *Route) {
 	eff := cfg.ForceReasoningEffort
 	if eff == "" {
-		if v, ok := p["reasoning_effort"].(string); ok {
+		if v, ok := p["reasoning_effort"].(string); ok && v != "" {
 			eff = v
 		} else if v, ok := obj(p["reasoning"])["effort"].(string); ok {
 			eff = v
 		}
 	}
-	// The route's own default fills in only for chat requests that carry no effort; "off" adds nothing.
+	// The route's own default fills in only for chat requests that carry no effort.
+	// "off", an empty value and unknown words add nothing.
 	added := false
-	if eff == "" && rt.DefaultReasoningEffort != "" && rt.DefaultReasoningEffort != "off" && p["messages"] != nil {
-		eff, added = rt.DefaultReasoningEffort, true
+	if d := strings.ToLower(strings.TrimSpace(rt.DefaultReasoningEffort)); eff == "" && p["messages"] != nil {
+		switch d {
+		case "minimal", "low", "medium", "high", "xhigh", "max":
+			eff, added = d, true
+		}
 	}
 	if eff == "off" {
 		delete(p, "reasoning_effort")
