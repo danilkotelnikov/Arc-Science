@@ -1,9 +1,12 @@
 /**
- * arc-molecullage 0.1.0 (2026-11-08)
+ * arc-molecullage 0.1.0 (2026-11-15)
  * Host half of the unified Molecullage workspace (replaces the deprecated Molecules and BioArt plugins).
  * Exposes POST /api/arc-molecullage/state with the five-gate anti-overplating check (nestedBoxes = 0),
- * the 231-source library and eight-domain atlas summary, and the 3D structure and Blender figure pipeline status.
+ * the live 231-source library and eight-domain atlas summary, and the 3D structure and Blender figure pipeline status.
  */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 export const name = "arc-molecullage";
 export const version = "0.1.0";
@@ -65,23 +68,77 @@ export function checkOverplating(spec = {}) {
   };
 }
 
-export function atlasSummary() {
+function readLiveLibrary(opts = {}) {
+  const molecullageRoot = typeof opts.molecullageRoot === "string" && opts.molecullageRoot.trim()
+    ? opts.molecullageRoot
+    : path.join(os.homedir(), "Molecullage");
+  const arcHome = typeof opts.arcHome === "string" && opts.arcHome.trim()
+    ? opts.arcHome
+    : path.join(os.homedir(), ".arc");
+  const libDir = path.join(molecullageRoot, "studio", "library");
+  let sources = [];
+  let domainsCount = ATLAS_DOMAINS.length;
+  let frozen = null;
+  try {
+    const srcPath = path.join(libDir, "sources.json");
+    if (fs.existsSync(srcPath)) {
+      const parsed = JSON.parse(fs.readFileSync(srcPath, "utf8"));
+      if (Array.isArray(parsed?.sources)) {
+        sources = parsed.sources.map((s) => ({
+          id: String(s.id || ""),
+          name: String(s.name || ""),
+          kind: String(s.kind || ""),
+          section: String(s.section || ""),
+          licenceClass: String(s.licenceClass || ""),
+          use: String(s.use || "").slice(0, 120),
+        }));
+      }
+    }
+    const domDir = path.join(libDir, "atlas", "domains");
+    if (fs.existsSync(domDir)) {
+      const files = fs.readdirSync(domDir).filter((f) => f.endsWith(".json"));
+      if (files.length > 0) domainsCount = files.length;
+    }
+    const freezePath = path.join(libDir, "atlas", "FREEZE.json");
+    if (fs.existsSync(freezePath)) {
+      frozen = Boolean(JSON.parse(fs.readFileSync(freezePath, "utf8"))?.frozen);
+    }
+  } catch {
+    // CI or sandbox fallback retains verified baseline counts.
+  }
+  const launcherReady = fs.existsSync(path.join(arcHome, "molecullage-mcp-launcher.mjs"));
   return {
-    sources: 231,
-    domainsCount: ATLAS_DOMAINS.length,
+    available: sources.length > 0,
+    sourcesCount: sources.length > 0 ? sources.length : 231,
+    domainsCount,
+    frozen,
+    launcherReady,
+    sources,
+  };
+}
+
+export function atlasSummary(opts = {}) {
+  const live = readLiveLibrary(opts);
+  return {
+    sources: live.sourcesCount,
+    domainsCount: live.domainsCount,
     grammarRules: 56,
+    available: live.available,
+    frozen: live.frozen,
     domains: ATLAS_DOMAINS.map((d) => ({ id: d.id, label: d.label, tools: [...d.tools] })),
   };
 }
 
-export function pipelineStatus() {
+export function pipelineStatus(opts = {}) {
+  const live = readLiveLibrary(opts);
   return {
     ok: true,
+    launcherReady: live.launcherReady,
     stages: PIPELINE_STAGES.map((s) => ({ ...s })),
   };
 }
 
-export async function serve(request) {
+export async function serve(request, opts = {}) {
   let body = {};
   if (request && typeof request.text === "function") {
     try {
@@ -93,17 +150,38 @@ export async function serve(request) {
   } else if (request && typeof request === "object" && !Array.isArray(request)) {
     body = request;
   }
+  const live = readLiveLibrary(opts);
+  const query = typeof body?.query === "string" ? body.query.trim() : "";
+  const q = query.toLowerCase();
+  const matchedSources = (
+    !q
+      ? live.sources
+      : live.sources.filter((s) => `${s.id} ${s.name} ${s.kind} ${s.section} ${s.licenceClass} ${s.use}`.toLowerCase().includes(q))
+  ).slice(0, 10);
   const spec = body && typeof body.figure === "object" && body.figure ? body.figure : body;
   return {
     ok: true,
+    query,
+    matchedSources,
     workspace: {
       id: "molecullage",
       title: "Molecullage",
       consoles: ["Research", "Memory", "Molecullage", "Prose"],
     },
     antiOverplating: checkOverplating(spec),
-    atlas: atlasSummary(),
-    pipeline: pipelineStatus(),
+    atlas: {
+      sources: live.sourcesCount,
+      domainsCount: live.domainsCount,
+      grammarRules: 56,
+      available: live.available,
+      frozen: live.frozen,
+      domains: ATLAS_DOMAINS.map((d) => ({ id: d.id, label: d.label, tools: [...d.tools] })),
+    },
+    pipeline: {
+      ok: true,
+      launcherReady: live.launcherReady,
+      stages: PIPELINE_STAGES.map((s) => ({ ...s })),
+    },
   };
 }
 

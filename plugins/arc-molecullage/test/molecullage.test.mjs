@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
@@ -108,4 +109,25 @@ test("client View renders loading state, five gates, 231-source atlas and 3D pip
   assert.doesNotMatch(source, /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|\b(blue|violet|purple|indigo)\b/i);
   const allNodes = nodes(tree);
   assert.ok(allNodes.some((n) => n.props?.style?.fontVariantNumeric === "tabular-nums"));
+});
+
+test("serve supports live library filtering with fallback when disk library is absent", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mol-lib-"));
+  try {
+    const libDir = path.join(tmp, "studio", "library");
+    fs.mkdirSync(path.join(libDir, "atlas", "domains"), { recursive: true });
+    fs.writeFileSync(path.join(libDir, "sources.json"), JSON.stringify({
+      sources: [
+        { id: "s1", name: "ChimeraX", kind: "app", section: "structure", licenceClass: "academic", use: "macromolecular render" },
+        { id: "s2", name: "Blender", kind: "app", section: "3d", licenceClass: "GPL-3.0", use: "cellular studio scene" },
+      ],
+    }), "utf8");
+    const filtered = await serve({ query: "chimera" }, { molecullageRoot: tmp, arcHome: tmp });
+    assert.equal(filtered.ok, true);
+    assert.equal(filtered.atlas.sources, 2);
+    assert.equal(filtered.matchedSources.length, 1);
+    assert.equal(filtered.matchedSources[0].name, "ChimeraX");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });

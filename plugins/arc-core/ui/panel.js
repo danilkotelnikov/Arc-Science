@@ -39,6 +39,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "research.release": "Release",
     "research.decisions": "Decision map",
     "research.ladder": "Validation ladder",
+    "research.ledger": "Live session ledger",
     "connector.servers": "Connector servers",
     "connector.keys": "Connector keys",
     "connector.apps": "Connector apps",
@@ -46,11 +47,15 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "consent.title": "Connector consent",
     "consent.prompt": "Choose access duration for {appId}",
     "memory.title": "Shared memory gateway",
+    "memory.recall": "Recall",
     "molecullage.title": "Molecullage studio shelf",
+    "molecullage.filter": "Filter sources",
     "prose.title": "Plain prose check",
     "prose.clean": "Clean plain prose",
     "prose.flagged": "Formulaic phrasing detected",
     "prose.rewrite": "Rewrite locally",
+    "prose.apply": "Check text",
+    "action.refresh": "Refresh",
     "settings.title": "Console settings",
     "settings.theme": "Active theme",
     "settings.switches": "Operator switches",
@@ -87,6 +92,21 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     borderRadius: RADIUS,
     background: "color-mix(in srgb, currentColor 8%, transparent)",
     ...num,
+  };
+
+  const inputStyle = {
+    fontFamily: TEXT_FONT,
+    fontSize: 12,
+    lineHeight: 1.4,
+    padding: "5px 8px",
+    color: INK,
+    background: "color-mix(in srgb, currentColor 6%, transparent)",
+    border: "none",
+    borderBottom: HAIRLINE,
+    borderRadius: 0,
+    outline: "none",
+    width: "100%",
+    boxSizing: "border-box",
   };
 
   function Icon({ size = 16 }) {
@@ -262,7 +282,20 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
                 h("div", { style: { fontWeight: 600, fontSize: 12 } }, t("research.ladder")),
                 h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
                   ladder.filter((r) => r.active).map((r) =>
-                    h("code", { key: r.id, style: tagStyle }, `${r.id} ${r.label}`)))))));
+                    h("code", { key: r.id, style: tagStyle }, `${r.id} ${r.label}`)))))),
+
+      data && data.liveLedger && data.liveLedger.available
+        ? h("div", { "data-live-ledger": "true", style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 6 } },
+            h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
+              h("span", { style: { fontWeight: 600, fontSize: 12 } }, t("research.ledger")),
+              h("code", { style: tagStyle }, `${data.liveLedger.total} entries`)),
+            h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 4 } },
+              (data.liveLedger.recent || []).slice(-3).map((ev, idx) =>
+                h("li", { key: `${ev.seq ?? idx}`, style: { display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", fontSize: 12 } },
+                  h("code", { style: tagStyle }, ev.type),
+                  h("span", { style: muted }, ev.caller),
+                  h("span", null, ev.goal)))))
+        : null);
   }
 
   function View({
@@ -281,8 +314,14 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     onProseChange,
     onProseRewrite,
     onToggleSwitch,
+    onSearchMemory,
+    onSearchMolecullage,
+    onRefresh,
     t,
   }) {
+    const [memoryDraft, setMemoryDraft] = React.useState("");
+    const [molecullageDraft, setMolecullageDraft] = React.useState("");
+    const [proseDraft, setProseDraft] = React.useState(null);
     const head = data && data.head;
     const activeWorkspace = (head && head.activeWorkspace) || "Research";
     const activeView = (head && head.activeResearchView) || "Map";
@@ -344,7 +383,15 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
             "aria-pressed": settingsOpen,
             onClick: () => onToggleSettings && onToggleSettings(!settingsOpen),
             style: btnStyle(settingsOpen),
-          }, t("nav.settings")))) : null,
+          }, t("nav.settings")),
+          onRefresh
+            ? h("button", {
+                type: "button",
+                "data-refresh-console": "true",
+                onClick: () => onRefresh(),
+                style: btnStyle(false),
+              }, t("action.refresh"))
+            : null)) : null,
 
       h(ConsentDialog, { pendingConsent, onConsent, onClose: onCloseConsent, t }),
 
@@ -390,14 +437,73 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       data && inWorkspaceMode && activeWorkspace === "Memory"
         ? h("section", { "aria-label": t("memory.title"), style: { display: "grid", gap: 8 } },
             h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("memory.title")),
-            h("div", { style: num }, `Loopback gateway: ${data.memory.gateway}, token check active`),
-            h("div", { style: muted }, `Policy labels: ${data.memory.labels.join(", ")}`))
+            h("div", { style: num }, `Loopback gateway: ${data.memory.gateway}, status: ${data.memory.reachable ? "online" : "offline"}`),
+            (data.memory.routes || []).length > 0
+              ? h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+                  data.memory.routes.map((r) => h("code", { key: r, style: tagStyle }, r)))
+              : null,
+            h("div", { style: muted }, `Policy labels: ${data.memory.labels.join(", ")}`),
+            onSearchMemory
+              ? h("form", {
+                  onSubmit: (e) => {
+                    if (e && typeof e.preventDefault === "function") e.preventDefault();
+                    onSearchMemory(memoryDraft || "Cammuteur-R1");
+                  },
+                  style: { display: "flex", gap: 8, alignItems: "center" },
+                },
+                  h("input", {
+                    type: "text",
+                    "aria-label": "Shared memory query",
+                    "data-memory-query": "true",
+                    placeholder: "Search shared memory notes",
+                    value: memoryDraft,
+                    onChange: (e) => setMemoryDraft(e.target.value),
+                    style: { ...inputStyle, flex: 1 },
+                  }),
+                  h("button", { type: "submit", "data-memory-recall": "true", style: btnStyle(true) }, t("memory.recall")))
+              : null,
+            data.memory.error ? h("div", { style: { ...muted, fontSize: 12 } }, data.memory.error) : null,
+            (data.memory.results || []).length > 0
+              ? h("ul", { "data-memory-results": "true", style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 } },
+                  data.memory.results.map((item, idx) =>
+                    h("li", { key: item.id || idx, style: { paddingTop: 6, borderTop: HAIRLINE, display: "grid", gap: 2 } },
+                      h("code", { style: tagStyle }, item.context || "memory"),
+                      h("span", { style: { fontSize: 12 } }, item.text))))
+              : null)
         : null,
 
       data && inWorkspaceMode && activeWorkspace === "Molecullage"
         ? h("section", { "aria-label": t("molecullage.title"), style: { display: "grid", gap: 8 } },
             h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("molecullage.title")),
-            h("div", { style: num }, `${data.molecullage.sources} verified sources across ${data.molecullage.domains} domains, nested boxes: ${data.molecullage.nestedBoxes}`))
+            h("div", { style: num }, `${data.molecullage.sources} verified sources across ${data.molecullage.domains} domains, nested boxes: ${data.molecullage.nestedBoxes}`),
+            onSearchMolecullage
+              ? h("form", {
+                  onSubmit: (e) => {
+                    if (e && typeof e.preventDefault === "function") e.preventDefault();
+                    onSearchMolecullage(molecullageDraft);
+                  },
+                  style: { display: "flex", gap: 8, alignItems: "center" },
+                },
+                  h("input", {
+                    type: "text",
+                    "aria-label": "Molecullage source filter",
+                    "data-molecullage-query": "true",
+                    placeholder: "Filter studio library by name, kind or licence",
+                    value: molecullageDraft,
+                    onChange: (e) => setMolecullageDraft(e.target.value),
+                    style: { ...inputStyle, flex: 1 },
+                  }),
+                  h("button", { type: "submit", "data-molecullage-filter": "true", style: btnStyle(true) }, t("molecullage.filter")))
+              : null,
+            (data.molecullage.items || []).length > 0
+              ? h("ul", { "data-molecullage-items": "true", style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 } },
+                  data.molecullage.items.slice(0, 8).map((src) =>
+                    h("li", { key: src.id || src.name, style: { paddingTop: 6, borderTop: HAIRLINE, display: "grid", gap: 2 } },
+                      h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline", flexWrap: "wrap" } },
+                        h("span", { style: { fontWeight: 600 } }, src.name),
+                        h("code", { style: tagStyle }, src.licenceClass || src.kind)),
+                      src.use ? h("span", { style: { ...muted, fontSize: 12 } }, src.use) : null)))
+              : null)
         : null,
 
       data && inWorkspaceMode && activeWorkspace === "Prose"
@@ -410,19 +516,49 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
                   data.prose.report.findings.map((f, idx) =>
                     h("li", { key: idx, style: { paddingTop: 4, borderTop: HAIRLINE } }, `${f.kind}: ${f.match}`)))
               : null,
+            onProseChange
+              ? h("textarea", {
+                  rows: 2,
+                  "aria-label": "Prose draft input",
+                  "data-prose-input": "true",
+                  value: proseDraft !== null ? proseDraft : data.prose.text,
+                  onChange: (e) => setProseDraft(e.target.value),
+                  style: inputStyle,
+                })
+              : null,
             h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+              onProseChange
+                ? h("button", {
+                    type: "button",
+                    "data-prose-apply": "true",
+                    onClick: async () => {
+                      const nextText = proseDraft !== null ? proseDraft : data.prose.text;
+                      const ok = await onProseChange(nextText);
+                      if (ok !== false) setProseDraft((cur) => (cur === nextText ? null : cur));
+                    },
+                    style: btnStyle(true),
+                  }, t("prose.apply"))
+                : null,
               onProseRewrite
                 ? h("button", {
                     type: "button",
                     "data-prose-rewrite": "true",
-                    onClick: () => onProseRewrite(),
+                    onClick: async () => {
+                      const nextText = proseDraft !== null ? proseDraft : data.prose.text;
+                      const ok = await onProseRewrite(nextText);
+                      if (ok !== false) setProseDraft((cur) => (cur === nextText ? null : cur));
+                    },
                     style: btnStyle(false),
                   }, t("prose.rewrite"))
                 : null,
               onProseChange
                 ? h("button", {
                     type: "button",
-                    onClick: () => onProseChange("The wax bath holds 40 to 41 C for a 42 minute simulated window."),
+                    onClick: async () => {
+                      const sample = "The wax bath holds 40 to 41 C for a 42 minute simulated window.";
+                      const ok = await onProseChange(sample);
+                      if (ok !== false) setProseDraft(null);
+                    },
                     style: btnStyle(false),
                   }, "Check sample sentence")
                 : null))
@@ -470,14 +606,26 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
 
       const dispatch = async (payload) => {
         try {
-          await fetch("api/arc-core/console/action", {
+          const r = await fetch("api/arc-core/console/action", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify(payload),
           });
+          if (!r || !r.ok) {
+            setFailed(true);
+            return false;
+          }
+          const j = await r.json().catch(() => null);
+          if (j && j.ok === false) {
+            setFailed(true);
+            return false;
+          }
+          setFailed(false);
           await refresh();
+          return true;
         } catch {
           setFailed(true);
+          return false;
         }
       };
 
@@ -508,8 +656,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           setPendingConsent(null);
         },
         onProseChange: (text) => dispatch({ kind: "prose", text }),
-        onProseRewrite: () => dispatch({ kind: "prose-rewrite" }),
+        onProseRewrite: (text) => dispatch({ kind: "prose-rewrite", ...(typeof text === "string" ? { text } : {}) }),
         onToggleSwitch: (rungId, enabled) => dispatch({ kind: "operator-switch", rungId, enabled }),
+        onSearchMemory: (query) => dispatch({ kind: "memory-search", query }),
+        onSearchMolecullage: (query) => dispatch({ kind: "molecullage-search", query }),
+        onRefresh: () => dispatch({ kind: "refresh" }),
       });
     };
   }
