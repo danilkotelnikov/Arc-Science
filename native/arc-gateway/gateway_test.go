@@ -685,7 +685,9 @@ func TestVertexStreamingHeartbeatPreventsSilentIdleTimeout(t *testing.T) {
 }
 
 func TestVertex429NormalizesTransientQuotaWordingToRateLimit(t *testing.T) {
+	hits := 0
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
 		io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(429)
@@ -693,16 +695,18 @@ func TestVertex429NormalizesTransientQuotaWordingToRateLimit(t *testing.T) {
 	}))
 	defer up.Close()
 	c := defaultConfig()
-	c.Routes = []Route{{Prefix: "/vertex/v1", Target: up.URL, Auth: "none"}}
+	yes := true
+	c.Routes = []Route{{Prefix: "/vertex/v1", Target: up.URL, Auth: "none", StreamThoughts: &yes}}
 	t.Setenv("ARC_HOME", t.TempDir())
 	s := NewServer(func() Config { return c })
-	s.vertexHeartbeat = 0
-	s.retryWaits = []time.Duration{5 * time.Millisecond}
+	s.vertexHeartbeat = 10 * time.Millisecond
+	s.retryWaits = []time.Duration{8 * time.Millisecond, 8 * time.Millisecond, 8 * time.Millisecond, 8 * time.Millisecond, 8 * time.Millisecond}
 	ts := httptest.NewServer(s)
 	c.Port = localPort(ts)
 	defer ts.Close()
 
-	req, _ := http.NewRequest("POST", ts.URL+"/vertex/v1/chat/completions", strings.NewReader(`{"model":"google/gemini-4-neon","messages":[{"role":"user","content":"hi"}]}`))
+	// Stream=true verifies heartbeat is deferred during 429 retries so client still receives HTTP 429 rate_limit_exceeded.
+	req, _ := http.NewRequest("POST", ts.URL+"/vertex/v1/chat/completions", strings.NewReader(`{"model":"google/gemini-4-neon","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -711,8 +715,11 @@ func TestVertex429NormalizesTransientQuotaWordingToRateLimit(t *testing.T) {
 	defer resp.Body.Close()
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	bodyLower := strings.ToLower(string(bodyBytes))
+	if hits != 6 {
+		t.Fatalf("expected 1 initial + 5 retry attempts = 6 hits, got %d", hits)
+	}
 	if resp.StatusCode != 429 {
-		t.Fatalf("expected HTTP 429, got %d (%s)", resp.StatusCode, bodyLower)
+		t.Fatalf("expected HTTP 429 (not premature 200 SSE heartbeat), got %d (%s)", resp.StatusCode, bodyLower)
 	}
 	if resp.Header.Get("Retry-After") == "" {
 		t.Fatalf("expected Retry-After header on normalized 429")

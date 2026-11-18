@@ -580,21 +580,36 @@ def _scrapling_resp_to_dict(resp: Any, fallback_url: str) -> dict[str, Any]:
 def _fetch_tier1_http(url: str, timeout_s: int) -> dict[str, Any]:
     from curl_cffi import requests as cffi_requests
 
-    cached = _get_host_cookies(url)
     headers = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf;q=0.8,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
         "Upgrade-Insecure-Requests": "1",
     }
-    resp = cffi_requests.get(
-        url,
-        impersonate="chrome",
-        headers=headers,
-        cookies=cached or None,
-        allow_redirects=True,
-        max_redirects=6,
-        timeout=min(max(5, timeout_s), 25),
-    )
+    current_url = url
+    max_hops = 6
+    resp = None
+    for _ in range(max_hops + 1):
+        validate_public_url(current_url)
+        cached = _get_host_cookies(current_url)
+        resp = cffi_requests.get(
+            current_url,
+            impersonate="chrome",
+            headers=headers,
+            cookies=cached or None,
+            allow_redirects=False,
+            timeout=min(max(5, timeout_s), 25),
+        )
+        if resp.status_code in (301, 302, 303, 307, 308):
+            loc = resp.headers.get("location") or resp.headers.get("Location")
+            if not loc:
+                break
+            current_url = urljoin(current_url, str(loc).strip())
+            continue
+        break
+    else:
+        raise CrawlerError(f"Exceeded maximum of {max_hops} redirects", "WEB_REDIRECT_BLOCKED")
+
+    assert resp is not None
     raw_bytes = bytes(resp.content or b"")
     resp_headers = {str(k).lower(): str(v) for k, v in dict(resp.headers).items()}
     ctype = resp_headers.get("content-type", "")
@@ -603,7 +618,7 @@ def _fetch_tier1_http(url: str, timeout_s: int) -> dict[str, Any]:
     cookies_dict = dict(resp.cookies.items()) if hasattr(resp, "cookies") and resp.cookies else None
     return {
         "status_code": int(resp.status_code),
-        "final_url": str(resp.url or url),
+        "final_url": current_url,
         "headers": resp_headers,
         "cookies": cookies_dict,
         "raw_bytes": raw_bytes,

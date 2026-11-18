@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -501,6 +502,7 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, cfg Config)
 		release func()
 		err     error
 	}
+	var inRetry atomic.Bool
 	doUpstream := func() upResult {
 		var release func()
 		if maxConc := rt.maxConcurrentCap(); maxConc > 0 && r.Method == http.MethodPost {
@@ -540,12 +542,13 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, cfg Config)
 		}
 		// Vertex AI Dynamic Shared Quota (429), concurrency abort (409), or transient 503:
 		// back off with jitter (respecting Retry-After) and step down thinking level to LOW on retry.
-		if rt.Auth == "vertex" && r.Method == http.MethodPost {
+		if (rt.Auth == "vertex" || strings.HasPrefix(rt.Prefix, "/vertex")) && r.Method == http.MethodPost {
 			baseWaits := s.vertexRetryWaits()
 			for attempt, baseWait := range baseWaits {
 				if err != nil || (up.StatusCode != 429 && up.StatusCode != 409 && up.StatusCode != 503) {
 					break
 				}
+				inRetry.Store(true)
 				code := up.StatusCode
 				wait := jitterDuration(baseWait)
 				if ra := parseRetryAfter(up.Header.Get("Retry-After")); ra > 0 {
@@ -603,6 +606,11 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, cfg Config)
 			case <-r.Context().Done():
 				return
 			case <-ticker.C:
+				// Never commit HTTP 200 SSE headers while actively backing off on transient 429/409/503 retries,
+				// so an exhausted retry loop still returns real HTTP 429 rate_limit_exceeded to arc-llm.
+				if inRetry.Load() {
+					continue
+				}
 				if !headersSent {
 					w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 					w.Header().Set("Cache-Control", "no-cache")
