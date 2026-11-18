@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
-import { checkOverplating, atlasSummary, pipelineStatus, serve, apply } from "../lib/index.js";
+import { checkOverplating, atlasSummary, pipelineStatus, serve, apply, handleAction } from "../lib/index.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -130,4 +130,60 @@ test("serve supports live library filtering with fallback when disk library is a
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test("handleAction persists notes, pins, and 5-gate checks to molecullage-notes.json with optional Cammut retain", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mol-notes-")), act = (b, o = {}) => handleAction(b, { arcHome: tmp, ...o }), eq = assert.equal;
+  try {
+    const rc = [], nRes = await act({ action: "note", text: "1MEL Bearer secretToken1234567890123456", doi: "10.1038/nsb0996-803", retain: true }, { retain: async (p) => (rc.push(p), true) });
+    eq(nRes.ok, true); eq(nRes.retained, true); eq(nRes.notes.length, 1); assert.ok(!nRes.notes[0].text.includes("secretToken1234567890123456")); eq(rc.length, 1);
+    const pRes = await act({ action: "toggle-pin", source: { id: "pdb-1mel", name: "PDB 1MEL", kind: "molecular", section: "structure", licenceClass: "CC0", doi: "10.1038/nsb0996-803" } });
+    eq(pRes.ok, true); eq(pRes.pinned, true); eq(pRes.pins.length, 1);
+    const cFail = await act({ action: "check", nestedBoxes: 1, minFontPt: 5.0 });
+    eq(cFail.ok, true); eq(cFail.antiOverplating.ok, false); assert.deepEqual(cFail.antiOverplating.failedGates, ["no-nested-boxes", "canvas-typography"]);
+    const st = await serve({}, { arcHome: tmp, molecullageRoot: tmp }); eq(st.notes.length, 1); eq(st.pins.length, 1); eq(st.antiOverplating.ok, false);
+    const lRet = await act({ action: "retain", text: "Keep", retain: true }, { retainTimeoutMs: 20, retain: () => new Promise(() => {}) });
+    eq(lRet.ok, true); eq(lRet.retained, false); eq((await act({ action: "retain", text: "Keep", retain: true }, { retain: async () => true })).notes.length, 2);
+    eq((await serve({ domain: "constructor" }, { arcHome: tmp })).ok, true);
+    const sseFail = await act({ action: "retain", text: "SSE" }, { fetch: async () => ({ ok: true, text: async () => 'event: message\ndata: {"result":{"isError":true}}\n\n' }) });
+    eq(sseFail.retained, false); eq((await act({ action: "check", reset: true })).antiOverplating.ok, true); eq((await act({ action: "unpin", sourceId: "pdb-1mel" })).pins.length, 0);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("host apply registers /api/arc-molecullage/action before /state", () => {
+  const reg = [];
+  apply({ inject: (_d, fn) => fn({ get: () => ({ fetch: { register: (c) => (reg.push(c), () => {}) } }), effect: (f) => f() }) });
+  assert.deepEqual(reg.map((r) => r.path), ["/api/arc-molecullage/action", "/api/arc-molecullage/state"]);
+});
+
+test("interactive client supports 5-gate runner, domain chips, pinning, prompt reuse, and polling pause", async () => {
+  const src = fs.readFileSync(path.join(here, "../lib/client.js"), "utf8"), eq = assert.equal;
+  assert.ok(!src.includes("\u00b7") && !src.includes("\u2022"));
+  assert.doesNotMatch(src, /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|(?<!var\(--)\b(blue|violet|purple|indigo)\b/i);
+  let loaded, clip = "", cVal = "", evN = 0;
+  const cEl = { tagName: "TEXTAREA", value: "", disabled: false, closest: () => null, getBoundingClientRect: () => ({ width: 320, height: 64 }), dispatchEvent: (e) => { if (e.type === "input") evN += 1; }, focus: () => {} };
+  Object.defineProperty(cEl, "value", { get: () => cVal, set: (v) => { cVal = v; }, configurable: true });
+  const aCalls = [], dClicks = [], baseState = await serve({});
+  baseState.matchedSources = [{ id: "s-cx", name: "ChimeraX", kind: "molecular", section: "structure", licenceClass: "academic", doi: "10.1002/pro.4792", use: "ribbon" }];
+  vm.runInNewContext(src, {
+    window: { __ModuleLoader__: { load: (m) => { loaded = m; } } }, navigator: { clipboard: { writeText: (s) => ((clip = s), Promise.resolve()) } },
+    document: { querySelectorAll: () => [cEl] }, Event: class { constructor(type, opts) { this.type = type; this.opts = opts; } },
+    fetch: async () => ({ ok: true, json: async () => baseState }), setInterval: () => 1, clearInterval: () => {},
+  });
+  let states = [], idx = 0;
+  const mod = loaded.factory((n) => n === "react" ? { createElement: (type, props, ...ch) => ({ type, props: props ?? {}, children: ch.flat(Infinity) }), Fragment: "fragment", useState: (i0) => { const i = idx++; if (!(i in states)) states[i] = typeof i0 === "function" ? i0() : i0; return [states[i], (v) => { states[i] = typeof v === "function" ? v(states[i]) : v; }]; }, useEffect: () => {} } : {});
+  const t = (k, v) => (mod.en[k] ?? k).replace(/\{(\w+)\}/g, (_, x) => v?.[x] ?? "");
+  const ren = (ex = {}) => { idx = 0; return render({ type: mod.View, props: { data: baseState, failed: false, activeDomain: "", paused: false, onAction: (p) => aCalls.push(p), onSelectDomain: (d) => dClicks.push(d), onFilter: () => {}, t, ...ex }, children: [] }); };
+  const list = nodes(ren()), hasB = (s) => Boolean(s && typeof s.border === "string" && s.border !== "none" && !s.border.startsWith("0"));
+  assert.ok(!list.some((n) => hasB(n.props?.style)), "zero bordered boxes");
+  list.find((n) => n.props?.["data-molecullage-domain"] === "3d").props.onClick(); assert.deepEqual(dClicks, ["3d"]);
+  list.find((n) => n.props?.["data-molecullage-pin"] === "s-cx").props.onClick(); eq(aCalls[0].action, "toggle-pin"); eq(aCalls[0].source.id, "s-cx");
+  list.find((n) => n.props?.["data-molecullage-stage-prompt"] === "qa").props.onClick(); assert.ok(cVal.includes("qa_figure")); eq(clip, ""); eq(evN, 1);
+  cEl.getBoundingClientRect = () => ({ width: 0, height: 0 });
+  list.find((n) => n.props?.["data-molecullage-stage-prompt"] === "build").props.onClick(); assert.ok(clip.includes("build_figure"));
+  list.find((n) => n.props?.["data-molecullage-nested-input"] === "true").props.onChange({ target: { value: "2" } });
+  nodes(ren()).find((n) => n.props?.["data-molecullage-nested-input"] === "true").props.onChange({ target: { value: "0" } });
+  nodes(ren()).find((n) => n.props?.["data-molecullage-run-checks"] === "true").props.onClick();
+  eq(aCalls.at(-1).action, "check"); eq(aCalls.at(-1).figureSpec.overplate, 0);
+  assert.ok(nodes(ren({ paused: true })).some((n) => n.props?.["data-molecullage-polling-paused"] === "true"));
 });

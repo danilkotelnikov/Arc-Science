@@ -56,6 +56,19 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "prose.rewrite": "Rewrite locally",
     "prose.apply": "Check text",
     "action.refresh": "Refresh",
+    "note.title": "Owner notes",
+    "note.placeholder": "Add an owner note or constraint",
+    "note.save": "Save note",
+    "note.retain": "Save and retain",
+    "verdict.approve": "Approve",
+    "verdict.revise": "Revise",
+    "verdict.hold": "Hold",
+    "chat.use": "Use in chat",
+    "chat.ready": "Prompt ready in composer",
+    "chat.copied": "Prompt copied",
+    "chat.failed": "Could not insert or copy prompt",
+    "molecullage.pin": "Pin",
+    "molecullage.pinned": "Pinned",
     "settings.title": "Console settings",
     "settings.theme": "Active theme",
     "settings.switches": "Operator switches",
@@ -113,6 +126,45 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     return h("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true },
       h("circle", { cx: 12, cy: 12, r: 8.5 }),
       h("path", { d: "M12 3.5v17M3.5 12h17" }));
+  }
+
+  function pushToChatComposer(pt, setFb, t) {
+    const text = String(pt || "").trim(), g = globalThis, D = g.document, N = g.navigator?.clipboard;
+    if (!text) return false;
+    let cp = null, ins = false;
+    try { if (typeof N?.writeText === "function") cp = Promise.resolve(N.writeText(text)).then(() => true, () => false); } catch {}
+    try {
+      const elig = Array.from(D?.querySelectorAll?.("textarea, [contenteditable=\"true\"]") || []).filter((e) => e && !e.disabled && !e.readOnly && !e.closest?.("[data-arc-plugin-pane=\"true\"]"));
+      const el = elig.find((e) => e.offsetParent !== null) || elig[0];
+      if (el) {
+        const app = (c) => (String(c || "").trim() ? String(c).replace(/\s+$/, "") + "\n\n" + text : text);
+        if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+          const ctor = el.tagName === "INPUT" ? g.HTMLInputElement : g.HTMLTextAreaElement, s = ctor ? Object.getOwnPropertyDescriptor(ctor.prototype, "value")?.set : null, next = app(el.value);
+          if (s) s.call(el, next); else el.value = next;
+          if (g.Event) el.dispatchEvent?.(new g.Event("input", { bubbles: true })); el.focus?.(); ins = true;
+        } else if (el.isContentEditable || el.getAttribute?.("contenteditable") === "true") {
+          const lx = el.__lexicalEditor, cm = el.cmTile?.root?.view || el.cmView?.view || el.closest?.(".cm-editor")?.cmView?.view;
+          if (lx?.parseEditorState && lx?.setEditorState) {
+            const p0 = (l) => ({ children: l ? [{ detail: 0, format: 0, mode: "normal", style: "", text: l, type: "text", version: 1 }] : [], direction: null, format: "", indent: 0, type: "paragraph", version: 1, textFormat: 0, textStyle: "" });
+            const pv = lx.getEditorState?.()?.toJSON?.(), pc = pv?.root?.children, add = text.split(/\n/).map(p0);
+            const ch = Array.isArray(pc) && (String(el.textContent || "").trim() || pc.some((n) => n?.type !== "paragraph" || n.children?.length > 0)) ? [...pc, p0(""), ...add] : add;
+            lx.setEditorState(lx.parseEditorState(JSON.stringify({ root: pv?.root ? { ...pv.root, children: ch } : { children: ch, direction: null, format: "", indent: 0, type: "root", version: 1 } }))); lx.focus?.();
+          } else if (cm?.dispatch && cm.state?.doc) {
+            const s = cm.state.doc.toString(), h0 = !!s.trim(), add = h0 ? "\n\n" + text : text, f = h0 ? s.length : 0;
+            cm.dispatch({ changes: { from: f, to: s.length, insert: add }, selection: { anchor: f + add.length } }); cm.focus?.();
+          } else {
+            if (String(el.textContent || "").trim() && typeof el.append === "function" && typeof D?.createElement === "function") el.append(D.createElement("br"), D.createElement("br"), text);
+            else el.textContent = app(el.textContent);
+            if (g.Event) el.dispatchEvent?.(new g.Event("input", { bubbles: true })); el.focus?.();
+          }
+          ins = true;
+        }
+      }
+    } catch { ins = false; }
+    if (typeof setFb === "function") {
+      if (ins) setFb(t("chat.ready")); else if (cp) cp.then((ok) => setFb(ok ? t("chat.copied") : t("chat.failed"))); else setFb(t("chat.failed"));
+    }
+    return ins;
   }
 
   function ConsentDialog({ pendingConsent, onConsent, onClose, t }) {
@@ -200,65 +252,74 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
               : null))));
   }
 
-  function ResearchWorkspace({ data, activeView, onSelectView, onDecision, t }) {
+  function ResearchWorkspace({
+    data,
+    activeView,
+    onSelectView,
+    onDecision,
+    onAddNote,
+    onAnnotateVerdict,
+    onUseInChat,
+    t,
+  }) {
+    const [noteDraft, setNoteDraft] = React.useState("");
+    const [noteTarget, setNoteTarget] = React.useState("");
+    const safeNote = noteDraft || "";
+    const safeTarget = noteTarget || "session";
     const branches = (data && data.tree && data.tree.branches) || [];
     const claims = (data && data.claims && data.claims.items) || [];
     const evidence = (data && data.evidence && data.evidence.items) || [];
     const ladder = (data && data.head && data.head.ladderRungs) || [];
     const seats = (data && data.head && data.head.seatAssignments) || SEATS.map((seat) => ({ seat, role: "" }));
     const release = data && data.release;
+    const verdicts = (data && data.verdicts) || {};
+    const notes = (data && data.notes && data.notes.items) || [];
+    const REVIEW_VERDICTS = [{ value: "Approve", label: t("verdict.approve") }, { value: "Revise", label: t("verdict.revise") }, { value: "Hold", label: t("verdict.hold") }];
+    const mkBtn = (label, onClick, active = false, extra = {}) => h("button", { type: "button", onClick, style: btnStyle(active), ...extra }, label);
+    const didSucceed = (res) => res !== false && res != null && (typeof res !== "object" || res.ok !== false);
+    const rowWrap = { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" };
+    const submitNote = async (retain) => {
+      const txt = safeNote.trim();
+      if (!txt || !onAddNote) return;
+      const sub = safeNote;
+      try { const res = await onAddNote({ targetType: safeTarget === "session" ? "session" : "branch", targetId: safeTarget, text: txt, retain }); if (didSucceed(res)) setNoteDraft((c) => (c === sub ? "" : c)); } catch {}
+    };
 
     return h("section", { "aria-label": t("research.panes"), style: { display: "grid", gap: 12 } },
-      h("div", {
-        "data-research-seats": "true",
-        "aria-label": t("research.seats"),
-        style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "baseline" },
-      },
+      h("div", { "data-research-seats": "true", "aria-label": t("research.seats"), style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "baseline" } },
         h("span", { style: { ...muted, fontSize: 12 } }, `${t("research.seats")}:`),
-        seats.map((entry) =>
-          h("code", { key: entry.seat, "data-seat": entry.seat, style: tagStyle }, entry.seat))),
+        seats.map((entry) => h("code", { key: entry.seat, "data-seat": entry.seat, style: tagStyle }, entry.seat))),
 
       h("div", { role: "tablist", "aria-label": "Research views", style: { display: "flex", gap: 6, flexWrap: "wrap", paddingBottom: 8, borderBottom: HAIRLINE } },
-        RESEARCH_VIEWS.map((view) =>
-          h("button", {
-            key: view,
-            type: "button",
-            role: "tab",
-            "aria-selected": activeView === view,
-            "data-research-view": view,
-            onClick: () => onSelectView && onSelectView(view),
-            style: btnStyle(activeView === view),
-          }, view))),
+        RESEARCH_VIEWS.map((view) => mkBtn(view, () => onSelectView && onSelectView(view), activeView === view, { key: view, role: "tab", "aria-selected": activeView === view, "data-research-view": view }))),
 
       activeView === "Release" && release
         ? h("div", { "data-pane": "Release", style: { paddingTop: 4, display: "grid", gap: 6 } },
             h("div", { style: { fontWeight: 600 } }, "Release gate"),
             h("div", { style: num }, `Verdict: ${release.verdict}, candidate: ${release.candidateHash}, nested boxes: ${release.nestedBoxes}`),
-            h("div", { style: muted }, release.proseOk ? "Prose check clean" : "Prose check has findings"))
-        : h("div", {
-            "data-research-three-pane": "true",
-            style: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16, alignItems: "start" },
-          },
+            h("div", { style: muted }, release.proseOk ? "Prose check clean" : "Prose check has findings"),
+            verdicts["release:candidate"] ? h("div", { style: { fontSize: 12 } }, `Owner verdict: ${verdicts["release:candidate"].verdict}`) : null,
+            h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+              onAnnotateVerdict ? REVIEW_VERDICTS.map((rv) => mkBtn(rv.label, () => onAnnotateVerdict({ targetType: "release", targetId: "candidate", verdict: rv.value }), verdicts["release:candidate"] && verdicts["release:candidate"].verdict === rv.value, { key: rv.value, "data-verdict-action": rv.value, "data-target-id": "candidate" })) : null,
+              onUseInChat ? mkBtn(t("chat.use"), () => onUseInChat(`Review release gate (${release.verdict}, candidate ${release.candidateHash}, nested boxes ${release.nestedBoxes})`), false, { "data-use-chat": "release" }) : null))
+        : h("div", { "data-research-three-pane": "true", style: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16, alignItems: "start" } },
             h("div", { "data-pane": "Map", style: { display: "grid", gap: 8 } },
               h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("research.map")),
               h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 } },
-                branches.map((b) =>
-                  h("li", { key: b.id, "data-branch": b.id, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 6 } },
+                branches.map((b) => {
+                  const branchReview = verdicts[`branch:${b.id}`];
+                  return h("li", { key: b.id, "data-branch": b.id, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 6 } },
                     h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
                       h("span", { style: { fontWeight: 600 } }, b.title),
                       h("code", { style: tagStyle }, b.rung)),
                     h("div", { style: { ...muted, ...num, fontSize: 12 } },
-                      `Support: ${b.supportLogLR}, value per cost: ${b.voiPerCost}, selected: ${b.decision}`),
+                      `Support: ${b.supportLogLR}, value per cost: ${b.voiPerCost}, selected: ${b.decision}${branchReview ? `, owner: ${branchReview.verdict}` : ""}`),
                     h("div", { "aria-label": t("research.decisions"), style: { display: "flex", gap: 4, flexWrap: "wrap" } },
-                      DECISION_ACTIONS.map((act) =>
-                        h("button", {
-                          key: act,
-                          type: "button",
-                          "data-decision-action": act,
-                          "data-branch-id": b.id,
-                          onClick: () => onDecision && onDecision({ branchId: b.id, action: act }),
-                          style: btnStyle(b.decision === act),
-                        }, act))))))),
+                      DECISION_ACTIONS.map((act) => mkBtn(act, () => onDecision && onDecision({ branchId: b.id, action: act }), b.decision === act, { key: act, "data-decision-action": act, "data-branch-id": b.id }))),
+                    h("div", { style: { display: "flex", gap: 4, flexWrap: "wrap" } },
+                      onAnnotateVerdict ? REVIEW_VERDICTS.map((rv) => mkBtn(rv.label, () => onAnnotateVerdict({ targetType: "branch", targetId: b.id, verdict: rv.value }), Boolean(branchReview && branchReview.verdict === rv.value), { key: rv.value, "data-verdict-action": rv.value, "data-branch-id": b.id })) : null,
+                      onUseInChat ? mkBtn(t("chat.use"), () => onUseInChat(`Branch "${b.title}" (${b.id}, rung ${b.rung}, decision ${b.decision}, support ${b.supportLogLR})`), false, { "data-use-chat": `branch:${b.id}` }) : null));
+                }))),
 
             h("div", { "data-pane": "Claims", style: { paddingLeft: 12, borderLeft: HAIRLINE, display: "grid", gap: 8 } },
               h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("research.claims")),
@@ -269,7 +330,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
                     h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "baseline" } },
                       h("code", { style: tagStyle }, c.level),
                       h("code", { style: tagStyle }, c.rung),
-                      h("span", { style: { ...muted, fontSize: 12 } }, c.source)))))),
+                      h("span", { style: { ...muted, fontSize: 12 } }, c.source),
+                      onUseInChat ? mkBtn(t("chat.use"), () => onUseInChat(`Claim [${c.level}, ${c.rung}]: ${c.text} (source: ${c.source})`), false, { "data-use-chat": `claim:${c.id}` }) : null))))),
 
             h("div", { "data-pane": "Evidence", style: { paddingLeft: 12, borderLeft: HAIRLINE, display: "grid", gap: 8 } },
               h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("research.evidence")),
@@ -281,8 +343,20 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
               h("div", { style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 4 } },
                 h("div", { style: { fontWeight: 600, fontSize: 12 } }, t("research.ladder")),
                 h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-                  ladder.filter((r) => r.active).map((r) =>
-                    h("code", { key: r.id, style: tagStyle }, `${r.id} ${r.label}`)))))),
+                  ladder.filter((r) => r.active).map((r) => h("code", { key: r.id, style: tagStyle }, `${r.id} ${r.label}`)))))),
+
+      h("div", { "data-console-notes": "true", style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 6 } },
+        h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline", flexWrap: "wrap" } },
+          h("span", { style: { fontWeight: 600, fontSize: 12 } }, t("note.title")), h("code", { style: tagStyle }, `${notes.length} notes`)),
+        onAddNote ? h("form", { onSubmit: (e) => { e?.preventDefault?.(); submitNote(false); }, style: rowWrap },
+          h("select", { "aria-label": "Note target", "data-console-note-target": "true", value: safeTarget, onChange: (e) => setNoteTarget(e.target.value), style: { ...inputStyle, width: "auto" } },
+            h("option", { value: "session" }, "session"), branches.map((b) => h("option", { key: b.id, value: b.id }, b.id))),
+          h("input", { type: "text", "aria-label": t("note.title"), "data-console-note-input": "true", placeholder: t("note.placeholder"), value: safeNote, onChange: (e) => setNoteDraft(e.target.value), style: { ...inputStyle, flex: 1, minWidth: 160 } }),
+          h("button", { type: "submit", "data-console-note-save": "true", style: btnStyle(true) }, t("note.save")),
+          mkBtn(t("note.retain"), () => submitNote(true), false, { "data-console-note-retain": "true" })) : null,
+        notes.length > 0 ? h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 4 } },
+          notes.slice(-5).reverse().map((n) => h("li", { key: n.id, style: { ...rowWrap, alignItems: "baseline", fontSize: 12 } },
+            h("code", { style: tagStyle }, n.targetId || "session"), n.verdict ? h("code", { style: tagStyle }, n.verdict) : null, h("span", null, n.text)))) : null),
 
       data && data.liveLedger && data.liveLedger.available
         ? h("div", { "data-live-ledger": "true", style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 6 } },
@@ -301,6 +375,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   function View({
     data,
     failed,
+    actionError = "",
     skin = "arc",
     pendingConsent = null,
     onSelectWorkspace,
@@ -308,6 +383,10 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     onSelectConnector,
     onToggleSettings,
     onDecision,
+    onAddNote,
+    onAnnotateVerdict,
+    onPinSource,
+    onUseInChat,
     onConsent,
     onCloseConsent,
     onOpenConsent,
@@ -322,6 +401,13 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const [memoryDraft, setMemoryDraft] = React.useState("");
     const [molecullageDraft, setMolecullageDraft] = React.useState("");
     const [proseDraft, setProseDraft] = React.useState(null);
+    const [chatStatus, setChatStatus] = React.useState("");
+    const safeMemoryDraft = memoryDraft || "";
+    const safeMolecullageDraft = molecullageDraft || "";
+    const handleUseInChat = (promptText) => {
+      pushToChatComposer(promptText, setChatStatus, t);
+      if (typeof onUseInChat === "function") onUseInChat(promptText);
+    };
     const head = data && data.head;
     const activeWorkspace = (head && head.activeWorkspace) || "Research";
     const activeView = (head && head.activeResearchView) || "Map";
@@ -334,6 +420,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
 
     return h("div", {
       "data-arc-console": "c2",
+      "data-arc-plugin-pane": "true",
       "data-arc-skin": themeEntry.id,
       style: {
         padding: 14,
@@ -395,6 +482,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
 
       h(ConsentDialog, { pendingConsent, onConsent, onClose: onCloseConsent, t }),
 
+      chatStatus ? h("div", { "data-chat-status": "true", style: { ...muted, fontSize: 12 } }, chatStatus) : null,
+      actionError ? h("p", { role: "alert", "data-console-action-error": "true", style: { ...muted, margin: 0, fontSize: 12 } }, actionError) : null,
+
       data && settingsOpen
         ? h("section", { "aria-label": t("settings.title"), style: { display: "grid", gap: 10 } },
             h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("settings.title")),
@@ -430,6 +520,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
             activeView,
             onSelectView: onSelectResearchView,
             onDecision,
+            onAddNote,
+            onAnnotateVerdict,
+            onUseInChat: handleUseInChat,
             t,
           })
         : null,
@@ -447,7 +540,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
               ? h("form", {
                   onSubmit: (e) => {
                     if (e && typeof e.preventDefault === "function") e.preventDefault();
-                    onSearchMemory(memoryDraft || "Cammuteur-R1");
+                    onSearchMemory(safeMemoryDraft || "Cammuteur-R1");
                   },
                   style: { display: "flex", gap: 8, alignItems: "center" },
                 },
@@ -456,7 +549,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
                     "aria-label": "Shared memory query",
                     "data-memory-query": "true",
                     placeholder: "Search shared memory notes",
-                    value: memoryDraft,
+                    value: safeMemoryDraft,
                     onChange: (e) => setMemoryDraft(e.target.value),
                     style: { ...inputStyle, flex: 1 },
                   }),
@@ -466,44 +559,43 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
             (data.memory.results || []).length > 0
               ? h("ul", { "data-memory-results": "true", style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 } },
                   data.memory.results.map((item, idx) =>
-                    h("li", { key: item.id || idx, style: { paddingTop: 6, borderTop: HAIRLINE, display: "grid", gap: 2 } },
+                    h("li", { key: item.id || idx, style: { paddingTop: 6, borderTop: HAIRLINE, display: "grid", gap: 4 } },
                       h("code", { style: tagStyle }, item.context || "memory"),
-                      h("span", { style: { fontSize: 12 } }, item.text))))
+                      h("span", { style: { fontSize: 12 } }, item.text),
+                      h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+                        h("button", {
+                          type: "button",
+                          "data-use-chat": `memory:${item.id || idx}`,
+                          onClick: () => handleUseInChat(`Shared memory [${item.context || "memory"}]: ${item.text}`),
+                          style: btnStyle(false),
+                        }, t("chat.use"))))))
               : null)
         : null,
 
       data && inWorkspaceMode && activeWorkspace === "Molecullage"
-        ? h("section", { "aria-label": t("molecullage.title"), style: { display: "grid", gap: 8 } },
-            h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("molecullage.title")),
-            h("div", { style: num }, `${data.molecullage.sources} verified sources across ${data.molecullage.domains} domains, nested boxes: ${data.molecullage.nestedBoxes}`),
-            onSearchMolecullage
-              ? h("form", {
-                  onSubmit: (e) => {
-                    if (e && typeof e.preventDefault === "function") e.preventDefault();
-                    onSearchMolecullage(molecullageDraft);
-                  },
-                  style: { display: "flex", gap: 8, alignItems: "center" },
-                },
-                  h("input", {
-                    type: "text",
-                    "aria-label": "Molecullage source filter",
-                    "data-molecullage-query": "true",
-                    placeholder: "Filter studio library by name, kind or licence",
-                    value: molecullageDraft,
-                    onChange: (e) => setMolecullageDraft(e.target.value),
-                    style: { ...inputStyle, flex: 1 },
-                  }),
-                  h("button", { type: "submit", "data-molecullage-filter": "true", style: btnStyle(true) }, t("molecullage.filter")))
-              : null,
-            (data.molecullage.items || []).length > 0
-              ? h("ul", { "data-molecullage-items": "true", style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 } },
-                  data.molecullage.items.slice(0, 8).map((src) =>
-                    h("li", { key: src.id || src.name, style: { paddingTop: 6, borderTop: HAIRLINE, display: "grid", gap: 2 } },
-                      h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline", flexWrap: "wrap" } },
-                        h("span", { style: { fontWeight: 600 } }, src.name),
-                        h("code", { style: tagStyle }, src.licenceClass || src.kind)),
-                      src.use ? h("span", { style: { ...muted, fontSize: 12 } }, src.use) : null)))
-              : null)
+        ? (() => {
+            const pins = data.molecullage?.pins || [], pinnedSet = new Set(pins.map((p) => p.id)), rowWrap = { display: "flex", gap: 6, flexWrap: "wrap" };
+            return h("section", { "aria-label": t("molecullage.title"), style: { display: "grid", gap: 8 } },
+              h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("molecullage.title")),
+              h("div", { style: num }, `${data.molecullage.sources} verified sources across ${data.molecullage.domains} domains, nested boxes: ${data.molecullage.nestedBoxes}`),
+              pins.length > 0 ? h("div", { "data-molecullage-pins": "true", style: { ...rowWrap, alignItems: "center" } },
+                h("span", { style: { ...muted, ...num, fontSize: 12 } }, `${t("molecullage.pinned")}: ${pins.length}`),
+                pins.slice(0, 6).map((p) => h("code", { key: p.id, style: tagStyle }, p.name || p.id))) : null,
+              onSearchMolecullage ? h("form", { onSubmit: (e) => { e?.preventDefault?.(); onSearchMolecullage(safeMolecullageDraft); }, style: { display: "flex", gap: 8, alignItems: "center" } },
+                h("input", { type: "text", "aria-label": "Molecullage source filter", "data-molecullage-query": "true", placeholder: "Filter studio library by name, kind or licence", value: safeMolecullageDraft, onChange: (e) => setMolecullageDraft(e.target.value), style: { ...inputStyle, flex: 1 } }),
+                h("button", { type: "submit", "data-molecullage-filter": "true", style: btnStyle(true) }, t("molecullage.filter"))) : null,
+              (data.molecullage.items || []).length > 0 ? h("ul", { "data-molecullage-items": "true", style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 } },
+                data.molecullage.items.slice(0, 8).map((src) => {
+                  const k = src.id || src.name, isPinned = pinnedSet.has(k);
+                  return h("li", { key: k, style: { paddingTop: 6, borderTop: HAIRLINE, display: "grid", gap: 4 } },
+                    h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline", flexWrap: "wrap" } },
+                      h("span", { style: { fontWeight: 600 } }, src.name), h("code", { style: tagStyle }, src.licenceClass || src.kind)),
+                    src.use ? h("span", { style: { ...muted, fontSize: 12 } }, src.use) : null,
+                    h("div", { style: rowWrap },
+                      onPinSource ? h("button", { type: "button", "data-molecullage-pin": k, "aria-pressed": isPinned, onClick: () => onPinSource({ source: src }), style: btnStyle(isPinned) }, isPinned ? t("molecullage.pinned") : t("molecullage.pin")) : null,
+                      h("button", { type: "button", "data-use-chat": `molecullage:${k}`, onClick: () => handleUseInChat(`Use Molecullage source "${src.name}" (${src.section || "library"}, licence: ${src.licenceClass || src.kind}${src.doi ? `, ${src.doi}` : ""}${src.url ? `, ${src.url}` : ""})`), style: btnStyle(false) }, t("chat.use"))));
+                })) : null);
+          })()
         : null,
 
       data && inWorkspaceMode && activeWorkspace === "Prose"
@@ -561,7 +653,13 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
                     },
                     style: btnStyle(false),
                   }, "Check sample sentence")
-                : null))
+                : null,
+              h("button", {
+                type: "button",
+                "data-use-chat": "prose",
+                onClick: () => handleUseInChat(`Use verified prose draft: ${proseDraft !== null ? proseDraft : data.prose.text}`),
+                style: btnStyle(false),
+              }, t("chat.use"))))
         : null,
 
       data && !settingsOpen
@@ -583,6 +681,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     return function ArcConsolePane() {
       const [data, setData] = React.useState(null);
       const [failed, setFailed] = React.useState(false);
+      const [actionError, setActionError] = React.useState("");
       const [pendingConsent, setPendingConsent] = React.useState(null);
 
       const refresh = async () => {
@@ -606,27 +705,10 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
 
       const dispatch = async (payload) => {
         try {
-          const r = await fetch("api/arc-core/console/action", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-          if (!r || !r.ok) {
-            setFailed(true);
-            return false;
-          }
-          const j = await r.json().catch(() => null);
-          if (j && j.ok === false) {
-            setFailed(true);
-            return false;
-          }
-          setFailed(false);
-          await refresh();
-          return true;
-        } catch {
-          setFailed(true);
-          return false;
-        }
+          const r = await fetch("api/arc-core/console/action", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }), j = await r.json().catch(() => null);
+          if (!r.ok || !j || j.ok === false) { const err = (j && j.error) || "Action failed"; setActionError(err); setFailed(true); return j || { ok: false, error: err }; }
+          setActionError(""); setFailed(false); await refresh(); return j;
+        } catch { setActionError("Action failed"); setFailed(true); return { ok: false, error: "Action failed" }; }
       };
 
       React.useEffect(() => {
@@ -641,6 +723,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       return h(View, {
         data,
         failed,
+        actionError,
         skin,
         pendingConsent,
         t,
@@ -649,14 +732,17 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         onSelectConnector: (connector) => dispatch({ kind: "connector", connector }),
         onToggleSettings: (open) => dispatch({ kind: "settings", open }),
         onDecision: ({ branchId, action }) => dispatch({ kind: "decision", branchId, action }),
+        onAddNote: (req) => dispatch({ kind: "note", ...req }),
+        onAnnotateVerdict: (req) => dispatch({ kind: "verdict", ...req }),
+        onPinSource: (req) => dispatch({ kind: "molecullage-pin", ...req }),
         onOpenConsent: (req) => setPendingConsent(req),
         onCloseConsent: () => setPendingConsent(null),
         onConsent: async (req) => {
           await dispatch({ kind: "consent", ...req });
           setPendingConsent(null);
         },
-        onProseChange: (text) => dispatch({ kind: "prose", text }),
-        onProseRewrite: (text) => dispatch({ kind: "prose-rewrite", ...(typeof text === "string" ? { text } : {}) }),
+        onProseChange: async (text) => (await dispatch({ kind: "prose", text }))?.ok !== false,
+        onProseRewrite: async (text) => (await dispatch({ kind: "prose-rewrite", ...(typeof text === "string" ? { text } : {}) }))?.ok !== false,
         onToggleSwitch: (rungId, enabled) => dispatch({ kind: "operator-switch", rungId, enabled }),
         onSearchMemory: (query) => dispatch({ kind: "memory-search", query }),
         onSearchMolecullage: (query) => dispatch({ kind: "molecullage-search", query }),
@@ -708,5 +794,6 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     CONSENT_MODES,
     THEMES,
     en,
+    pushToChatComposer,
   };
 } });

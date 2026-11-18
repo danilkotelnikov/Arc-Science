@@ -390,3 +390,50 @@ test('5. Plugin bundle files (cordis.patch.yml, icon.svg) and ~/.arc/local-plugi
     assert.equal(fs.readFileSync(localFile, 'utf8'), fs.readFileSync(repoFile, 'utf8'), `${rel} matches repo`);
   }
 });
+
+test('6. Console action handles owner notes, verdicts, pins, non-blocking retain, and composer insertion', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-cn-')), eq = assert.equal;
+  try {
+    const cm = [], st = createResearchSessionStore({ arcHome: tmpDir, live: true, fetch: async (u, i) => String(u).includes('/cammut/mcp') ? (cm.push(JSON.parse(i.body)), { ok: true, text: async () => '{"result":{"content":[{"text":"{}"}]}}' }) : { ok: false, json: async () => ({}) } });
+    const act = (b) => serveConsoleRoute('/api/arc-core/console/action', b, st);
+    eq((await act({ kind: 'verdict', targetType: 'branch', targetId: 'b-cdr3-loop', verdict: 'Unknown' })).ok, false);
+    eq((await act({ kind: 'verdict', targetType: 'branch', targetId: 'b-cdr3-loop', verdict: 'constructor' })).ok, false);
+    const rel = await act({ kind: 'verdict', targetType: 'release', targetId: 'candidate', verdict: 'Approve' });
+    eq(rel.ok, true); eq(rel.key, 'release:candidate'); eq(st.snapshot().verdicts['release:candidate'].verdict, 'Approve');
+    const nRes = await act({ kind: 'note', targetType: 'branch', targetId: 'b-cdr3-loop', text: 'CDR3 Bearer secretToken123456789012', retain: true });
+    eq(nRes.ok, true); eq(nRes.saved, true); eq(nRes.retained.ok, true); assert.ok(!nRes.note.text.includes('secretToken123456789012')); eq(cm.length, 1);
+    const vRes = await act({ kind: 'verdict', targetType: 'branch', targetId: 'b-cdr3-loop', verdict: 'Approve', note: 'Ready' });
+    eq(vRes.ok, true); eq(vRes.review.verdict, 'Approve');
+    const pRes = await act({ kind: 'molecullage-pin', source: { id: 'pdb-1mel', name: 'PDB 1MEL', section: 'structure', doi: '10.1038/nsb0996-803' } });
+    eq(pRes.ok, true); eq(pRes.pinned, true); eq(pRes.pins.length, 1);
+    const snap = createResearchSessionStore({ arcHome: tmpDir, live: false }).snapshot();
+    eq(snap.notes.items.length, 2); eq(snap.verdicts['branch:b-cdr3-loop'].verdict, 'Approve'); eq(snap.molecullage.pins.length, 1);
+    let loaded, clip = '', cVal = '', evN = 0;
+    const cEl = { tagName: 'TEXTAREA', value: '', disabled: false, offsetParent: {}, closest: () => null, dispatchEvent: (e) => { if (e.type === 'input') evN += 1; }, focus: () => {} };
+    Object.defineProperty(cEl, 'value', { get: () => cVal, set: (v) => { cVal = v; }, configurable: true });
+    const pEl = { tagName: 'TEXTAREA', value: 'inside', offsetParent: {}, closest: (s) => (s === '[data-arc-plugin-pane="true"]' ? {} : null) };
+    vm.runInNewContext(fs.readFileSync(panelPath, 'utf8'), {
+      window: { __ModuleLoader__: { load: (m) => { loaded = m; } } }, navigator: { clipboard: { writeText: (s) => ((clip = s), Promise.resolve()) } },
+      document: { querySelectorAll: () => [pEl, cEl] }, Event: class { constructor(type, opts) { this.type = type; this.opts = opts; } },
+    });
+    const ce = (type, props, ...ch) => ({ type, props: props ?? {}, children: ch.flat(Infinity).filter((c) => c != null && c !== false) });
+    let states = [], idx = 0;
+    const mod = loaded.factory((n) => n === 'react' ? { createElement: ce, Fragment: 'fragment', useState: (i0) => { const i = idx++; if (!(i in states)) states[i] = typeof i0 === 'function' ? i0() : i0; return [states[i], (v) => { states[i] = typeof v === 'function' ? v(states[i]) : v; }]; }, useEffect: () => {} } : {});
+    const t = makeTranslator(mod.en), acts = [];
+    const ren = (ex = {}) => { idx = 0; return renderTree({ type: mod.View, props: { data: { ...snap, ...ex }, failed: false, skin: 'arc', onAnnotateVerdict: (r) => acts.push({ kind: 'verdict', ...r }), onAddNote: (r) => acts.push({ kind: 'note', ...r }), onPinSource: (r) => acts.push({ kind: 'molecullage-pin', ...r }), t }, children: [] }); };
+    const rTree = ren(); eq(countNestedBorderedBoxes(rTree), 0);
+    const rNodes = allNodes(rTree), revBtn = rNodes.find((n) => n.props?.['data-verdict-action'] === 'Revise' && n.props?.['data-branch-id'] === 'b-cdr3-loop');
+    assert.ok(revBtn); revBtn.props.onClick(); eq(acts[0].kind, 'verdict'); eq(acts[0].verdict, 'Revise');
+    const chatBtn = rNodes.find((n) => n.props?.['data-use-chat'] === 'branch:b-cdr3-loop'); assert.ok(chatBtn); chatBtn.props.onClick();
+    assert.ok(cVal.includes('CDR3 active-site insertion geometry')); eq(clip, cVal); eq(evN, 1); eq(pEl.value, 'inside');
+    cVal = 'Existing draft'; chatBtn.props.onClick(); assert.ok(cVal.startsWith('Existing draft\n\n'));
+    let ls = null; const le = { isContentEditable: true, textContent: 'Bold line', closest: () => null, __lexicalEditor: { getEditorState: () => ({ toJSON: () => ({ root: { children: [{ type: 'paragraph', children: [{ type: 'text', text: 'Bold line', format: 1 }] }], direction: null, format: '', indent: 0, type: 'root', version: 1 } }) }), parseEditorState: (j) => JSON.parse(j), setEditorState: (s) => { ls = s; }, focus: () => {} } };
+    let ld; vm.runInNewContext(fs.readFileSync(panelPath, 'utf8'), { window: { __ModuleLoader__: { load: (m) => { ld = m; } } }, document: { querySelectorAll: () => [le] } });
+    assert.equal(ld.factory((n) => n === 'react' ? { createElement: ce, Fragment: 'fragment', useState: (i0) => [i0, () => {}], useEffect: () => {} } : {}).pushToChatComposer('New ctx'), true);
+    assert.equal(ls.root.children[0].children[0].format, 1); assert.ok(ls.root.children.at(-1).children[0].text.includes('New ctx'));
+    const mTree = ren({ head: { ...snap.head, activeWorkspace: 'Molecullage' }, molecullage: { ...snap.molecullage, items: [{ id: 'pdb-1mel', name: 'PDB 1MEL', kind: 'molecular', section: 'structure', licenceClass: 'CC0', use: 'VH' }] } });
+    eq(countNestedBorderedBoxes(mTree), 0);
+    const pinBtn = allNodes(mTree).find((n) => n.props?.['data-molecullage-pin'] === 'pdb-1mel'); assert.ok(pinBtn);
+    pinBtn.props.onClick(); eq(acts.at(-1).kind, 'molecullage-pin');
+  } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});
