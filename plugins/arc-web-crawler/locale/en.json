@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Arc Web Crawler",
+    "description": "Open-source keyless web search, stealth TLS/browser fetcher with Cloudflare Turnstile and CAPTCHA verification, and structured HTML/PDF content analyzer."
+  }
+}
