@@ -1,22 +1,27 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	mrand "math/rand/v2"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,12 +31,24 @@ type Server struct {
 	cfgFn     func() Config // read per request, so edits to gateway.json apply at once
 	sigs      *sigStore
 	vertex    *vertexAuth
-	api       *http.Client // AI providers: no total timeout (answers stream for minutes)
+	api       *http.Client // AI providers: HTTP/1.1 keep-alive pool, no total timeout (answers stream for minutes)
 	cammut    *http.Client // Cammut: headers must arrive within 300 s
 	tokenHash [32]byte
 	started   time.Time
 	logUsage  func(line []byte)
 	cammutUp  sync.Map // upstream -> last error text ("" = fine)
+	paceMu          sync.Mutex
+	sems            map[string]chan struct{}
+	lastHit         map[string]time.Time
+	vertexHeartbeat time.Duration // SSE reasoning keepalive interval for slow-TTFB Vertex streams (e.g. Carbon); <=0 disables
+	retryWaits      []time.Duration
+}
+
+func (s *Server) vertexRetryWaits() []time.Duration {
+	if len(s.retryWaits) > 0 {
+		return s.retryWaits
+	}
+	return []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 12 * time.Second, 16 * time.Second}
 }
 
 func newTransport() *http.Transport {
@@ -46,15 +63,35 @@ func newTransport() *http.Transport {
 	}
 }
 
+// newAPITransport uses dedicated HTTP/1.1 keep-alive connections so concurrent AI streams over
+// VPN/TUN proxies never suffer HTTP/2 head-of-line blocking or silently blackholed single-socket stalls.
+func newAPITransport() *http.Transport {
+	return &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 15 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		MaxIdleConns:          64,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       60 * time.Second,
+		ExpectContinueTimeout: time.Second,
+		WriteBufferSize:       64 << 10,
+		ReadBufferSize:        64 << 10,
+		ForceAttemptHTTP2:     false,
+		TLSNextProto:          map[string]func(string, *tls.Conn) http.RoundTripper{},
+	}
+}
+
 func NewServer(cfgFn func() Config) *Server {
 	ct := newTransport()
 	ct.ResponseHeaderTimeout = 300 * time.Second
 	s := &Server{
 		cfgFn:   cfgFn,
 		sigs:    newSigStore(filepath.Join(Home(), "thought-signatures.json")),
-		api:     &http.Client{Transport: newTransport(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		api:     &http.Client{Transport: newAPITransport(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		cammut:  &http.Client{Transport: ct},
 		started: time.Now(),
+		sems:            map[string]chan struct{}{},
+		lastHit:         map[string]time.Time{},
+		vertexHeartbeat: 25 * time.Second,
 	}
 	s.vertex = &vertexAuth{client: &http.Client{Timeout: 20 * time.Second}}
 	s.tokenHash = sha256.Sum256([]byte(loadOrCreateToken()))
@@ -405,13 +442,17 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, cfg Config)
 	}
 	var parsed map[string]any
 	var preCache []byte
+	injectedThinkingCfg := false
+	reqModel := ""
+	reqStart := time.Now()
 	cache := cfg.PromptCaching
 	if r.Method == http.MethodPost && len(body) > 0 {
 		if rt.Anthropic && strings.HasSuffix(sub, "/messages") && cache.Enabled {
 			body, _ = applyAnthropicCache(body, true, cache.TTL)
 		} else if !rt.Anthropic && json.Unmarshal(body, &parsed) == nil && parsed != nil {
+			reqModel, _ = parsed["model"].(string)
 			snapshot := marshal(parsed)
-			s.tuneRequest(parsed, cfg, rt)
+			injectedThinkingCfg = s.tuneRequest(parsed, cfg, rt)
 			before := body // nothing changed: send the caller's own bytes, key order intact
 			if after := marshal(parsed); after != snapshot {
 				before = []byte(after)
@@ -427,39 +468,213 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, cfg Config)
 		}
 	}
 
+	reqStream := false
+	if parsed != nil {
+		reqStream, _ = parsed["stream"].(bool)
+	}
+	rawBodyLen := len(body)
+	wireBodyLen := rawBodyLen
 	send := func(b []byte) (*http.Response, error) {
+		hdr := h.Clone()
+		payload := b
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && rt.compressRequestsEnabled() && len(b) >= 8192 && hdr.Get("Content-Encoding") == "" {
+			if gz, ok := gzipBytes(b); ok && len(gz) < len(b) {
+				payload = gz
+				hdr.Set("Content-Encoding", "gzip")
+			}
+		}
+		wireBodyLen = len(payload)
 		var rb io.Reader
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			rb = bytes.NewReader(b)
+			rb = bytes.NewReader(payload)
 		}
 		req, err := http.NewRequestWithContext(r.Context(), r.Method, target+sub+queryOf(r), rb)
 		if err != nil {
 			return nil, err
 		}
-		req.Header = h.Clone()
+		req.Header = hdr
 		return s.api.Do(req)
 	}
-	up, err := send(body)
-	// The upstream refused cache_control blocks: send again without them.
-	if err == nil && up.StatusCode == 400 && preCache != nil && cache.AutoFallbackNoCache {
-		up.Body.Close()
-		up, err = send(preCache)
+
+	type upResult struct {
+		up      *http.Response
+		release func()
+		err     error
 	}
-	// The model refused reasoning_effort / reasoning: send again without them.
-	if err == nil && up.StatusCode == 400 && parsed != nil && cfg.AutoFallbackNoReasoning && (parsed["reasoning_effort"] != nil || parsed["reasoning"] != nil) {
-		up.Body.Close()
-		delete(parsed, "reasoning_effort")
-		delete(parsed, "reasoning")
-		up, err = send([]byte(marshal(parsed)))
+	doUpstream := func() upResult {
+		var release func()
+		if maxConc := rt.maxConcurrentCap(); maxConc > 0 && r.Method == http.MethodPost {
+			var ok bool
+			release, ok = s.acquireRouteSlot(r.Context(), rt.Prefix, maxConc)
+			if !ok {
+				return upResult{err: context.Canceled}
+			}
+		}
+		free := func() {
+			if release != nil {
+				release()
+				release = nil
+			}
+		}
+		up, err := send(body)
+		// The upstream refused cache_control blocks: send again without them.
+		if err == nil && up.StatusCode == 400 && preCache != nil && cache.AutoFallbackNoCache {
+			up.Body.Close()
+			up, err = send(preCache)
+		}
+		// Vertex refused injected thinking_config (e.g. non-thinking model): strip it and retry once.
+		if err == nil && up.StatusCode == 400 && parsed != nil && injectedThinkingCfg {
+			up.Body.Close()
+			stripVertexThinkingConfig(parsed)
+			injectedThinkingCfg = false
+			body = []byte(marshal(parsed))
+			up, err = send(body)
+		}
+		// The model refused reasoning_effort / reasoning: send again without them.
+		if err == nil && up.StatusCode == 400 && parsed != nil && cfg.AutoFallbackNoReasoning && (parsed["reasoning_effort"] != nil || parsed["reasoning"] != nil) {
+			up.Body.Close()
+			delete(parsed, "reasoning_effort")
+			delete(parsed, "reasoning")
+			body = []byte(marshal(parsed))
+			up, err = send(body)
+		}
+		// Vertex AI Dynamic Shared Quota (429), concurrency abort (409), or transient 503:
+		// back off with jitter (respecting Retry-After) and step down thinking level to LOW on retry.
+		if rt.Auth == "vertex" && r.Method == http.MethodPost {
+			baseWaits := s.vertexRetryWaits()
+			for attempt, baseWait := range baseWaits {
+				if err != nil || (up.StatusCode != 429 && up.StatusCode != 409 && up.StatusCode != 503) {
+					break
+				}
+				code := up.StatusCode
+				wait := jitterDuration(baseWait)
+				if ra := parseRetryAfter(up.Header.Get("Retry-After")); ra > 0 {
+					if ra > 20*time.Second {
+						ra = 20 * time.Second
+					}
+					wait = ra
+				}
+				up.Body.Close()
+				t := time.NewTimer(wait)
+				select {
+				case <-r.Context().Done():
+					t.Stop()
+					free()
+					return upResult{err: context.Canceled}
+				case <-t.C:
+				}
+				retryBody := body
+				if parsed != nil && stepDownVertexEffort(parsed) {
+					retryBody = []byte(marshal(parsed))
+					body = retryBody
+				}
+				log.Printf("vertex: retry %d model=%s after HTTP %d (wait=%dms)", attempt+1, reqModel, code, wait.Milliseconds())
+				up, err = send(retryBody)
+			}
+			if err == nil && up.StatusCode == 429 && up.Header.Get("Retry-After") == "" {
+				up.Header.Set("Retry-After", "5")
+			}
+		}
+		if err != nil {
+			free()
+			return upResult{err: err}
+		}
+		return upResult{up: up, release: release}
 	}
+
+	useHeartbeat := reqStream && r.Method == http.MethodPost && strings.HasSuffix(sub, "/chat/completions") &&
+		s.vertexHeartbeat > 0 && (rt.Auth == "vertex" || rt.streamThoughtsEnabled())
+	var res upResult
+	headersSent := false
+	heartbeats := 0
+	if !useHeartbeat {
+		res = doUpstream()
+	} else {
+		resCh := make(chan upResult, 1)
+		go func() { resCh <- doUpstream() }()
+		ticker := time.NewTicker(s.vertexHeartbeat)
+		defer ticker.Stop()
+		fl, _ := w.(http.Flusher)
+	waitLoop:
+		for {
+			select {
+			case res = <-resCh:
+				break waitLoop
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				if !headersSent {
+					w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+					w.Header().Set("Cache-Control", "no-cache")
+					w.Header().Set("X-Accel-Buffering", "no")
+					w.WriteHeader(http.StatusOK)
+					headersSent = true
+				}
+				if !writeVertexHeartbeat(w, reqModel) {
+					return
+				}
+				if fl != nil {
+					fl.Flush()
+				}
+				heartbeats++
+			}
+		}
+	}
+	if res.release != nil {
+		defer res.release()
+	}
+	up, err := res.up, res.err
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
+			return
+		}
+		if headersSent {
+			writeVertexSSEError(w, 502, err.Error())
 			return
 		}
 		writeJSON(w, 502, map[string]string{"error": err.Error()})
 		return
 	}
 	defer up.Body.Close()
+	ttfbMs := time.Since(reqStart).Milliseconds()
+
+	if headersSent {
+		if up.StatusCode >= 300 {
+			errBody, _ := io.ReadAll(io.LimitReader(up.Body, 4096))
+			msg := strings.TrimSpace(string(errBody))
+			if up.StatusCode == 429 && (rt.Auth == "vertex" || strings.HasPrefix(rt.Prefix, "/vertex")) {
+				msg = "Vertex AI temporary rate limit (HTTP 429). Retry with backoff."
+			} else if msg == "" {
+				msg = fmt.Sprintf("upstream HTTP %d", up.StatusCode)
+			}
+			writeVertexSSEError(w, up.StatusCode, msg)
+			log.Printf("vertex: model=%s status=%d ttfb=%dms total=%dms req=%dB->%dB heartbeats=%d", reqModel, up.StatusCode, ttfbMs, time.Since(reqStart).Milliseconds(), rawBodyLen, wireBodyLen, heartbeats)
+			return
+		}
+		midHB := s.streamVertexSSE(w, up.Body, reqModel, s.vertexHeartbeat)
+		log.Printf("vertex: model=%s status=%d ttfb=%dms total=%dms req=%dB->%dB sse-thoughts=1 heartbeats=%d", reqModel, up.StatusCode, ttfbMs, time.Since(reqStart).Milliseconds(), rawBodyLen, wireBodyLen, heartbeats+midHB)
+		return
+	}
+
+	// Vertex AI returns HTTP 429 with "Quota exceeded ..." text on transient per-minute DSQ bursts.
+	// Normalize transient 429 bodies to standard rate_limit_exceeded JSON so downstream clients
+	// (arc-llm) execute their retryPolicy backoff instead of aborting as terminal account QUOTA.
+	if up.StatusCode == 429 && (rt.Auth == "vertex" || strings.HasPrefix(rt.Prefix, "/vertex")) {
+		_, _ = io.Copy(io.Discard, io.LimitReader(up.Body, 64<<10))
+		copyRespHeaders(w, up)
+		if w.Header().Get("Retry-After") == "" {
+			w.Header().Set("Retry-After", "5")
+		}
+		writeJSON(w, 429, map[string]any{
+			"error": map[string]any{
+				"type":    "rate_limit_exceeded",
+				"code":    "rate_limit_exceeded",
+				"message": "Vertex AI temporary rate limit (HTTP 429). Retry with backoff.",
+			},
+		})
+		log.Printf("vertex: model=%s status=429 (normalized rate_limit_exceeded) ttfb=%dms total=%dms req=%dB->%dB", reqModel, ttfbMs, time.Since(reqStart).Milliseconds(), rawBodyLen, wireBodyLen)
+		return
+	}
 
 	if rt.NormalizeModels && r.Method == http.MethodGet && sub == "/models" && up.StatusCode == 200 {
 		rawList, rerr := io.ReadAll(up.Body)
@@ -489,6 +704,15 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, cfg Config)
 	capture := up.StatusCode < 300 && r.Method == http.MethodPost && strings.HasSuffix(sub, "/chat/completions")
 	if !capture {
 		stream(w, up.Body, nil)
+		if rt.Auth == "vertex" && r.Method == http.MethodPost {
+			log.Printf("vertex: model=%s status=%d ttfb=%dms total=%dms req=%dB->%dB", reqModel, up.StatusCode, ttfbMs, time.Since(reqStart).Milliseconds(), rawBodyLen, wireBodyLen)
+		}
+		return
+	}
+	isSSE := strings.Contains(strings.ToLower(up.Header.Get("Content-Type")), "text/event-stream")
+	if isSSE && (rt.Auth == "vertex" || rt.streamThoughtsEnabled()) && rt.streamThoughtsEnabled() {
+		midHB := s.streamVertexSSE(w, up.Body, reqModel, s.vertexHeartbeat)
+		log.Printf("vertex: model=%s status=%d ttfb=%dms total=%dms req=%dB->%dB sse-thoughts=1 heartbeats=%d", reqModel, up.StatusCode, ttfbMs, time.Since(reqStart).Milliseconds(), rawBodyLen, wireBodyLen, midHB)
 		return
 	}
 	byIndex := map[int]*[2]string{}
@@ -507,6 +731,301 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, cfg Config)
 	if len(bytes.TrimSpace(pending)) > 0 {
 		s.captureLine(pending, byIndex)
 	}
+	if rt.Auth == "vertex" {
+		log.Printf("vertex: model=%s status=%d ttfb=%dms total=%dms req=%dB->%dB", reqModel, up.StatusCode, ttfbMs, time.Since(reqStart).Milliseconds(), rawBodyLen, wireBodyLen)
+	}
+}
+
+func (s *Server) acquireRouteSlot(ctx context.Context, prefix string, maxConc int) (func(), bool) {
+	s.paceMu.Lock()
+	sem, ok := s.sems[prefix]
+	if !ok || cap(sem) != maxConc {
+		sem = make(chan struct{}, maxConc)
+		s.sems[prefix] = sem
+	}
+	s.paceMu.Unlock()
+
+	select {
+	case sem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, false
+	}
+
+	// Smooth burst spikes by staggering concurrent dispatches by 100ms.
+	var wait time.Duration
+	s.paceMu.Lock()
+	now := time.Now()
+	if prev, ok := s.lastHit[prefix]; ok {
+		if gap := 100*time.Millisecond - now.Sub(prev); gap > 0 {
+			wait = gap
+			s.lastHit[prefix] = prev.Add(100 * time.Millisecond)
+		} else {
+			s.lastHit[prefix] = now
+		}
+	} else {
+		s.lastHit[prefix] = now
+	}
+	s.paceMu.Unlock()
+
+	if wait > 0 {
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			<-sem
+			return nil, false
+		case <-t.C:
+		}
+	}
+	return func() { <-sem }, true
+}
+
+func gzipBytes(b []byte) ([]byte, bool) {
+	var buf bytes.Buffer
+	gw, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
+	if err != nil {
+		return nil, false
+	}
+	if _, err := gw.Write(b); err != nil {
+		return nil, false
+	}
+	if err := gw.Close(); err != nil {
+		return nil, false
+	}
+	return buf.Bytes(), true
+}
+
+func jitterDuration(base time.Duration) time.Duration {
+	// +/- 25% jitter
+	factor := 0.75 + mrand.Float64()*0.5
+	return time.Duration(float64(base) * factor)
+}
+
+func parseRetryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.ParseFloat(v, 64); err == nil && secs > 0 {
+		return time.Duration(secs * float64(time.Second))
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+func stepDownVertexEffort(p map[string]any) bool {
+	changed := false
+	if v, _ := p["reasoning_effort"].(string); v == "high" || v == "medium" {
+		p["reasoning_effort"] = "low"
+		changed = true
+	}
+	if ro := obj(p["reasoning"]); ro != nil {
+		if v, _ := ro["effort"].(string); v == "high" || v == "medium" {
+			ro["effort"] = "low"
+			changed = true
+		}
+	}
+	if eb := obj(p["extra_body"]); eb != nil {
+		if g := obj(eb["google"]); g != nil {
+			if tc := obj(g["thinking_config"]); tc != nil {
+				if lvl, _ := tc["thinking_level"].(string); lvl == "HIGH" || lvl == "MEDIUM" {
+					tc["thinking_level"] = "LOW"
+					changed = true
+				}
+			}
+		}
+	}
+	return changed
+}
+
+func stripVertexThinkingConfig(p map[string]any) {
+	eb := obj(p["extra_body"])
+	if eb == nil {
+		return
+	}
+	g := obj(eb["google"])
+	if g == nil {
+		return
+	}
+	delete(g, "thinking_config")
+	if len(g) == 0 {
+		delete(eb, "google")
+	}
+	if len(eb) == 0 {
+		delete(p, "extra_body")
+	}
+}
+
+func writeVertexHeartbeat(w http.ResponseWriter, model string) bool {
+	if model == "" {
+		model = "google/gemini-4"
+	}
+	b, _ := json.Marshal(map[string]any{
+		"id":      "gw-hb",
+		"object":  "chat.completion.chunk",
+		"created": time.Now().Unix(),
+		"model":   model,
+		"choices": []map[string]any{{
+			"index":         0,
+			"delta":         map[string]any{"role": "assistant", "reasoning_content": " "},
+			"finish_reason": nil,
+		}},
+	})
+	_, err := w.Write(append(append([]byte("data: "), b...), '\n', '\n'))
+	return err == nil
+}
+
+func writeVertexSSEError(w http.ResponseWriter, status int, msg string) {
+	b, _ := json.Marshal(map[string]any{"error": map[string]any{"message": msg, "code": status}})
+	_, _ = w.Write(append(append([]byte("data: "), b...), '\n', '\n'))
+	_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	if fl, ok := w.(http.Flusher); ok {
+		fl.Flush()
+	}
+}
+
+// streamVertexSSE reads Vertex OpenAPI SSE lines, captures thought_signature, translates
+// thought chunks (delta.extra_content.google.thought=true) into delta.reasoning_content,
+// and emits reasoning keepalives if upstream pauses longer than hbEvery mid-stream.
+func (s *Server) streamVertexSSE(w http.ResponseWriter, body io.Reader, model string, hbEvery time.Duration) int {
+	fl, _ := w.(http.Flusher)
+	br := bufio.NewReaderSize(body, 64<<10)
+	byIndex := map[int]*[2]string{}
+	if hbEvery <= 0 {
+		for {
+			line, err := br.ReadBytes('\n')
+			if len(line) > 0 {
+				out := s.processVertexSSELine(line, byIndex)
+				if _, werr := w.Write(out); werr != nil {
+					return 0
+				}
+				if fl != nil {
+					fl.Flush()
+				}
+			}
+			if err == io.EOF {
+				return 0
+			}
+			if err != nil {
+				panic(http.ErrAbortHandler)
+			}
+		}
+	}
+	type lineRes struct {
+		line []byte
+		err  error
+	}
+	ch := make(chan lineRes, 16)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		defer close(ch)
+		for {
+			line, err := br.ReadBytes('\n')
+			select {
+			case ch <- lineRes{line: line, err: err}:
+			case <-done:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	ticker := time.NewTicker(hbEvery)
+	defer ticker.Stop()
+	hbCount := 0
+	for {
+		select {
+		case r, ok := <-ch:
+			if !ok {
+				return hbCount
+			}
+			if len(r.line) > 0 {
+				out := s.processVertexSSELine(r.line, byIndex)
+				if _, werr := w.Write(out); werr != nil {
+					return hbCount
+				}
+				if fl != nil {
+					fl.Flush()
+				}
+				ticker.Reset(hbEvery)
+			}
+			if r.err == io.EOF {
+				return hbCount
+			}
+			if r.err != nil {
+				panic(http.ErrAbortHandler)
+			}
+		case <-ticker.C:
+			if !writeVertexHeartbeat(w, model) {
+				return hbCount
+			}
+			if fl != nil {
+				fl.Flush()
+			}
+			hbCount++
+		}
+	}
+}
+
+func (s *Server) processVertexSSELine(line []byte, byIndex map[int]*[2]string) []byte {
+	trimmed := bytes.TrimSpace(line)
+	if !bytes.HasPrefix(trimmed, []byte("data:")) {
+		return line
+	}
+	payload := bytes.TrimSpace(bytes.TrimPrefix(trimmed, []byte("data:")))
+	if len(payload) == 0 || payload[0] != '{' {
+		return line
+	}
+	var p map[string]any
+	if json.Unmarshal(payload, &p) != nil {
+		return line
+	}
+	s.sigs.capture(p, byIndex)
+	rewritten := false
+	for _, ch := range asList(p["choices"]) {
+		delta := obj(ch["delta"])
+		if delta == nil {
+			continue
+		}
+		ec := obj(delta["extra_content"])
+		g := obj(ec["google"])
+		if isThought, _ := g["thought"].(bool); isThought {
+			if txt, ok := delta["content"].(string); ok && txt != "" {
+				delta["reasoning_content"] = txt
+				delete(delta, "content")
+			}
+			delete(g, "thought")
+			if len(g) == 0 {
+				delete(ec, "google")
+			}
+			if len(ec) == 0 {
+				delete(delta, "extra_content")
+			}
+			rewritten = true
+		}
+	}
+	if !rewritten {
+		return line
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return line
+	}
+	eol := "\n"
+	if bytes.HasSuffix(line, []byte("\r\n")) {
+		eol = "\r\n"
+	}
+	out := make([]byte, 0, 6+len(b)+len(eol))
+	out = append(out, "data: "...)
+	out = append(out, b...)
+	out = append(out, eol...)
+	return out
 }
 
 func (s *Server) captureLine(line []byte, byIndex map[int]*[2]string) {
@@ -523,8 +1042,18 @@ func (s *Server) captureLine(line []byte, byIndex map[int]*[2]string) {
 }
 
 // tuneRequest applies the reasoning, temperature and token settings, then Gemini thought signatures.
-func (s *Server) tuneRequest(p map[string]any, cfg Config, rt *Route) {
+// Returns true when it converted reasoning_effort into Vertex extra_body.google.thinking_config.
+func (s *Server) tuneRequest(p map[string]any, cfg Config, rt *Route) bool {
 	eff := cfg.ForceReasoningEffort
+	routeForced := false
+	if eff == "" && p["messages"] != nil {
+		if rf := strings.ToLower(strings.TrimSpace(rt.ForceReasoningEffort)); rf != "" {
+			switch rf {
+			case "off", "minimal", "low", "medium", "high", "xhigh", "max":
+				eff, routeForced = rf, true
+			}
+		}
+	}
 	if eff == "" {
 		if v, ok := p["reasoning_effort"].(string); ok && v != "" {
 			eff = v
@@ -541,6 +1070,7 @@ func (s *Server) tuneRequest(p map[string]any, cfg Config, rt *Route) {
 			eff, added = d, true
 		}
 	}
+	normEff := ""
 	if eff == "off" {
 		delete(p, "reasoning_effort")
 		delete(p, "reasoning")
@@ -552,7 +1082,8 @@ func (s *Server) tuneRequest(p map[string]any, cfg Config, rt *Route) {
 		case "minimal":
 			n = "low"
 		}
-		if _, ok := p["reasoning_effort"]; ok || cfg.ForceReasoningEffort != "" || (added && obj(p["reasoning"]) == nil) {
+		normEff = n
+		if _, ok := p["reasoning_effort"]; ok || cfg.ForceReasoningEffort != "" || (routeForced && obj(p["reasoning"]) == nil) || (added && obj(p["reasoning"]) == nil) {
 			p["reasoning_effort"] = n
 		}
 		if ro := obj(p["reasoning"]); ro != nil {
@@ -564,6 +1095,49 @@ func (s *Server) tuneRequest(p map[string]any, cfg Config, rt *Route) {
 	}
 	if cfg.MaxTokens != nil {
 		p["max_tokens"] = *cfg.MaxTokens
+	} else if maxOut := rt.maxOutputCap(); maxOut > 0 && p["messages"] != nil {
+		if mt, ok := p["max_completion_tokens"].(float64); ok && mt > float64(maxOut) {
+			p["max_completion_tokens"] = float64(maxOut)
+		}
+		if mt, ok := p["max_tokens"].(float64); ok && mt > float64(maxOut) {
+			p["max_tokens"] = float64(maxOut)
+		}
+	}
+	injectedThinking := false
+	if rt.Auth == "vertex" && p["messages"] != nil {
+		delete(p, "store")
+		for _, msg := range asList(p["messages"]) {
+			if msg["role"] == "developer" {
+				msg["role"] = "system"
+			}
+		}
+		// Enable live thought streaming on streaming Vertex OpenAPI calls so TTFB drops from
+		// 50-284s of silence to ~1-3s and prevents client 300s stream idle timeouts.
+		isStream, _ := p["stream"].(bool)
+		hasCustomTC := obj(obj(p["extra_body"])["google"])["thinking_config"] != nil
+		if isStream && rt.streamThoughtsEnabled() && normEff != "" && !hasCustomTC {
+			lvl := strings.ToUpper(normEff)
+			if lvl == "LOW" || lvl == "MEDIUM" || lvl == "HIGH" {
+				eb := obj(p["extra_body"])
+				if eb == nil {
+					eb = map[string]any{}
+					p["extra_body"] = eb
+				}
+				g := obj(eb["google"])
+				if g == nil {
+					g = map[string]any{}
+					eb["google"] = g
+				}
+				g["thinking_config"] = map[string]any{
+					"include_thoughts": true,
+					"thinking_level":   lvl,
+				}
+				delete(p, "reasoning_effort")
+				delete(p, "reasoning")
+				injectedThinking = true
+			}
+		}
 	}
 	s.sigs.inject(p, rt.Auth == "vertex")
+	return injectedThinking
 }
