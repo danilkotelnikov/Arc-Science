@@ -52,7 +52,7 @@ window.__ModuleLoader__.load({ id: "arc-molecullage", factory: (require) => {
     const matched = (data && Array.isArray(data.matchedSources) ? data.matchedSources : []).slice(0, 8);
     return h("div", { style: { padding: 12, fontSize: 13, lineHeight: 1.45, height: "100%", overflowY: "auto", boxSizing: "border-box", display: "grid", gap: 16, alignContent: "start" } },
       !data && !failed ? h("p", { style: { ...muted, margin: 0 } }, t("state.loading")) : null,
-      failed && !data ? h("p", { role: "alert", style: { ...muted, margin: 0 } }, t("state.error")) : null,
+      failed ? h("p", { role: "alert", style: { ...muted, margin: 0 } }, data ? `${t("state.error")} (showing previous results)` : t("state.error")) : null,
       gate ? h("section", { "aria-label": t("gates.title") },
         h(Head, null, t("gates.title")),
         h("p", { style: { ...muted, ...num, margin: "0 0 6px" } }, t("gates.summary", { rules: gate.rules, nestedBoxes: gate.nestedBoxes })),
@@ -107,7 +107,9 @@ window.__ModuleLoader__.load({ id: "arc-molecullage", factory: (require) => {
     return function MolecullagePane() {
       const [data, setData] = React.useState(null);
       const [failed, setFailed] = React.useState(false);
+      const reqSeqRef = React.useRef(0);
       const load = async (query = "") => {
+        const seq = ++reqSeqRef.current;
         try {
           const r = await fetch("api/arc-molecullage/state", {
             method: "POST",
@@ -115,8 +117,11 @@ window.__ModuleLoader__.load({ id: "arc-molecullage", factory: (require) => {
             body: JSON.stringify(query ? { query } : {}),
           });
           const j = r.ok ? await r.json() : null;
+          if (seq !== reqSeqRef.current) return;
           if (j && j.ok) { setData(j); setFailed(false); } else setFailed(true);
-        } catch { setFailed(true); }
+        } catch {
+          if (seq === reqSeqRef.current) setFailed(true);
+        }
       };
       React.useEffect(() => {
         let live = true;

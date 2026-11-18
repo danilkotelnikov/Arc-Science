@@ -531,10 +531,10 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
                 ? h("button", {
                     type: "button",
                     "data-prose-apply": "true",
-                    onClick: () => {
+                    onClick: async () => {
                       const nextText = proseDraft !== null ? proseDraft : data.prose.text;
-                      setProseDraft(null);
-                      onProseChange(nextText);
+                      const ok = await onProseChange(nextText);
+                      if (ok !== false) setProseDraft((cur) => (cur === nextText ? null : cur));
                     },
                     style: btnStyle(true),
                   }, t("prose.apply"))
@@ -543,9 +543,10 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
                 ? h("button", {
                     type: "button",
                     "data-prose-rewrite": "true",
-                    onClick: () => {
-                      setProseDraft(null);
-                      onProseRewrite();
+                    onClick: async () => {
+                      const nextText = proseDraft !== null ? proseDraft : data.prose.text;
+                      const ok = await onProseRewrite(nextText);
+                      if (ok !== false) setProseDraft((cur) => (cur === nextText ? null : cur));
                     },
                     style: btnStyle(false),
                   }, t("prose.rewrite"))
@@ -553,9 +554,10 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
               onProseChange
                 ? h("button", {
                     type: "button",
-                    onClick: () => {
-                      setProseDraft(null);
-                      onProseChange("The wax bath holds 40 to 41 C for a 42 minute simulated window.");
+                    onClick: async () => {
+                      const sample = "The wax bath holds 40 to 41 C for a 42 minute simulated window.";
+                      const ok = await onProseChange(sample);
+                      if (ok !== false) setProseDraft(null);
                     },
                     style: btnStyle(false),
                   }, "Check sample sentence")
@@ -604,14 +606,26 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
 
       const dispatch = async (payload) => {
         try {
-          await fetch("api/arc-core/console/action", {
+          const r = await fetch("api/arc-core/console/action", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify(payload),
           });
+          if (!r || !r.ok) {
+            setFailed(true);
+            return false;
+          }
+          const j = await r.json().catch(() => null);
+          if (j && j.ok === false) {
+            setFailed(true);
+            return false;
+          }
+          setFailed(false);
           await refresh();
+          return true;
         } catch {
           setFailed(true);
+          return false;
         }
       };
 
@@ -642,7 +656,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           setPendingConsent(null);
         },
         onProseChange: (text) => dispatch({ kind: "prose", text }),
-        onProseRewrite: () => dispatch({ kind: "prose-rewrite" }),
+        onProseRewrite: (text) => dispatch({ kind: "prose-rewrite", ...(typeof text === "string" ? { text } : {}) }),
         onToggleSwitch: (rungId, enabled) => dispatch({ kind: "operator-switch", rungId, enabled }),
         onSearchMemory: (query) => dispatch({ kind: "memory-search", query }),
         onSearchMolecullage: (query) => dispatch({ kind: "molecullage-search", query }),
