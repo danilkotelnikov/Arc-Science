@@ -101,6 +101,34 @@ test('Cordis plugin registers arc-crawler search/fetch providers and web_analyze
   assert.equal(tools.has('web_crawl'), true);
 });
 
+test('Cordis strict context without direct tools injection mounts providers and defers tool registration via ctx.inject', () => {
+  const searchProviders = new Map();
+  const fetchProviders = new Map();
+  const tools = new Map();
+  const ctx = {
+    web: {
+      registerSearchProvider: (p) => searchProviders.set(p.id, p),
+      registerFetchProvider: (p) => fetchProviders.set(p.id, p),
+    },
+    inject(deps, fn) {
+      assert.deepEqual(deps, ['tools']);
+      fn({ tools: { register: (t) => tools.set(t.name, t) } });
+    },
+  };
+  Object.defineProperty(ctx, 'tools', {
+    get() {
+      throw new Error('cannot get property "tools" without inject');
+    },
+  });
+
+  apply(ctx, {});
+
+  assert.equal(searchProviders.has(PROVIDER_ID), true);
+  assert.equal(fetchProviders.has(PROVIDER_ID), true);
+  assert.equal(tools.has('web_analyze'), true);
+  assert.equal(tools.has('web_crawl'), true);
+});
+
 test('SSRF guard rejects loopback, private IP, and non-HTTP schemes', async () => {
   const fetcher = createFetchProvider();
   for (const blocked of [

@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import { createWebError, ENGINE_SCRIPT, resolvePythonExecutable, runCrawlerCommand } from './runner.js';
 
 export const name = 'arc-web-crawler';
-export const version = '0.2.0';
+export const version = '0.6.0';
 export const inject = ['web'];
 
 export const PROVIDER_ID = 'arc-crawler';
@@ -342,9 +342,7 @@ export function apply(ctx, config = {}) {
   }
 
   if (config.registerTools !== false) {
-    if (ctx?.tools?.register) {
-      registerAnalyzerTools(ctx.tools, config);
-    } else if (typeof ctx?.inject === 'function') {
+    if (typeof ctx?.inject === 'function') {
       ctx.inject(['tools'], (scope) => {
         try {
           registerAnalyzerTools(scope.tools, config);
@@ -352,6 +350,8 @@ export function apply(ctx, config = {}) {
           console.error(`[arc-web-crawler] tool registration skipped: ${err}`);
         }
       });
+    } else if (ctx?.tools?.register) {
+      registerAnalyzerTools(ctx.tools, config);
     }
   }
 }

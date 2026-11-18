@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { readArcVersion } from '../scripts/version-sync.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const EXE = 'Arc Harness.exe';
@@ -47,15 +48,16 @@ function run(exe, args) {
 function main() {
   const arg = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : undefined; };
   const from = arg('--from') || path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Arc Harness');
-  const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+  const version = readArcVersion(root);
   const to = path.join(root, 'build', 'stage', 'Arc Harness');
   const icon = path.join(root, 'brand', 'dist', 'tray.ico');
   for (const line of stage(from, to)) console.log('stage:', line);
   const rcedit = arg('--rcedit');
   if (rcedit) {
     run(rcedit, [path.join(to, EXE), '--set-icon', icon, '--set-version-string', 'ProductName', 'Arc Harness', '--set-version-string', 'FileDescription', 'Arc Harness',
-      '--set-version-string', 'CompanyName', 'Arc Harness', '--set-version-string', 'OriginalFilename', EXE, '--set-version-string', 'InternalName', 'Arc Harness', '--set-product-version', version]);
-    console.log('brand: icon and file details of', EXE);
+      '--set-version-string', 'CompanyName', 'Arc Science', '--set-version-string', 'OriginalFilename', EXE, '--set-version-string', 'InternalName', 'Arc Harness',
+      '--set-product-version', version, '--set-file-version', version]);
+    console.log('brand: icon and file details of', EXE, `(${version})`);
   } else console.log('brand: skipped, no --rcedit');
   const iscc = arg('--iscc');
   if (iscc) {

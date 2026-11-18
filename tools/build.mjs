@@ -12,8 +12,10 @@ import { recolorSvg, recolorBlueAttrsInScript, recolorBlueTokens, replaceVendorB
 import { swapPicture } from '../lib/whaleimg.mjs';
 import { arcText, LEFT } from '../lib/arcnames.mjs';
 import { makeArcCopy } from '../lib/arcunpacked.mjs';
+import { readArcVersion } from '../scripts/version-sync.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ARC_VERSION = readArcVersion(root);
 const out = path.resolve(process.argv[2] || path.join(root, 'build', 'app.asar'));
 const brand = JSON.parse(fs.readFileSync(path.join(root, 'brand', 'dist', 'brand.json'), 'utf8'));
 const dist = (f) => fs.readFileSync(path.join(root, 'brand', 'dist', f));
@@ -870,6 +872,16 @@ const unpackedNew = new Map(); // new path under arc/ -> rewritten buffer of an 
   report.push(`runtime manifest: ${n} entries updated, ${gone} removed`);
 }
 
+// ---- patch 18: stamp Arc Harness independent version and desktop app id onto the Electron shell package.json
+{
+  const pp = 'package.json';
+  const pkg = JSON.parse(text(pp));
+  pkg.version = ARC_VERSION;
+  pkg.arcDesktopAppId = 'com.arc-science.arc-harness';
+  put(pp, JSON.stringify(pkg, null, 2) + '\n');
+  report.push(`independent version: Electron app package.json stamped to Arc Harness ${ARC_VERSION} (com.arc-science.arc-harness)`);
+}
+
 // ---- clean-room check: no old name is left in any text file of the written archive (base64 data excepted)
 {
   let left = 0;
@@ -886,6 +898,6 @@ const unpackedNew = new Map(); // new path under arc/ -> rewritten buffer of an 
 fs.mkdirSync(path.dirname(out), { recursive: true });
 const info = writeAsar(src, out, overrides, (seg) => arcText(seg)[0]);
 const sha = crypto.createHash('sha256').update(fs.readFileSync(out)).digest('hex');
-fs.writeFileSync(path.join(path.dirname(out), 'BUILD.json'), JSON.stringify({ built: new Date().toISOString(), source: 'pristine/app.asar', changedFiles: overrides.size, report, sha256: sha, ...info }, null, 2));
+fs.writeFileSync(path.join(path.dirname(out), 'BUILD.json'), JSON.stringify({ version: ARC_VERSION, built: new Date().toISOString(), source: 'pristine/app.asar', changedFiles: overrides.size, report, sha256: sha, ...info }, null, 2));
 console.log(report.map((r) => '- ' + r).join('\n'));
 console.log(`changed files: ${overrides.size}; archive: ${out} (${(fs.statSync(out).size / 1e6).toFixed(1)} MB) sha256 ${sha.slice(0, 16)}`);

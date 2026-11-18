@@ -1,6 +1,23 @@
 # Changelog
 
-All notable changes to Arc Harness are listed here. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). The kit is at version `0.5.0`, and each built-in plugin carries its own `package.json` version.
+All notable changes to Arc Harness are listed here. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). Starting with `0.6.0`, every Arc Harness package, plugin, native Go/Rust binary, Electron shell archive, and release bundle shares one canonical version defined in `VERSION` and enforced by `scripts/version-sync.mjs`.
+
+## [0.6.0] - 2026-11-19
+
+### Added
+
+- **Independent unified versioning (`VERSION`, `scripts/version-sync.mjs`)**: locks root `package.json`, all seven Arc plugins, `native/arc-gateway`, `native/arc-validators`, `CITATION.cff`, `README.md`, Electron shell `package.json` inside `app.asar` (`tools/build.mjs` patch 18, AppId `com.arc-science.arc-harness`), and Windows installer metadata to Arc Harness `0.6.0`.
+- **Release bundle builder (`tools/release-bundle.mjs`)**: compiles native Go and Rust binaries, stages all seven plugins and build tools, generates `RELEASE-MANIFEST.json` and `SHA256SUMS.txt`, and archives `Arc-Harness-Kit-0.6.0-win-x64.zip`.
+- **Open-source web crawler and CAPTCHA verifier (`plugins/arc-web-crawler`)**: registers native `ctx.web` search and fetch providers (`arc-crawler`) plus `web_analyze` and `web_crawl` tools with Markdown renderers and native web presentation cards, powered by Scrapling, `curl_cffi` TLS impersonation with per-hop SSRF redirect validation, Patchright Chromium stealth browser escalation with automatic Cloudflare Turnstile verification, Trafilatura, DDGS, and PyMuPDF.
+- **Write-once 1M Library index (`plugins/arc-core/lib/library-index.js`)**: SHA-256 deduplicated catalog builder and warm reader with zero cold body reads, write-time supersession linking, and 2-fold out-of-fold Platt widening calibration.
+- **Interactive desktop panels (`arc-core`, `arc-hoh`, `arc-molecullage`)**: owner notes, verdict buttons, pinned atlas sources, 5-gate figure checker, draft-preserving prose controls, and composer prompt insertion across C2 Console, Trace, and Molecullage tabs.
+- **Calibrated public science benchmark (`tools/science-bench.mjs`)**: headless cross-family MCQ evaluation with per-family USD spend reservations, 2-fold Platt Brier skill score, and self-test suite.
+- **Theme-aware README visuals (`docs/images/architecture-{light,dark}.svg`, `verification-{light,dark}.svg`)**: enterprise architecture and verification pipeline diagrams rendered in the C2 paper/dark palette.
+
+### Changed
+
+- **Native Go gateway (`native/arc-gateway`)**: added Vertex AI streaming `thought_signature` and `reasoning_content` translation, gzip request compression, SSE keepalive heartbeats, per-route default reasoning effort, 5-attempt jittered 429/409/503 retry with deferred pre-header heartbeat, and `rate_limit_exceeded` normalization so transient Vertex 429 bursts retry cleanly instead of triggering terminal quota aborts.
+- **Build and CI hygiene**: added `brandtext/` and `theme/` to `tools/check-spawns.mjs`, added `arc-web-crawler` to `brandtext/lean-profile.json` and `brandtext/upstream-manifest.json`, and removed remaining legacy vendor wording from `install.cmd`.
 
 ## [0.5.0] - 2026-11-10
 

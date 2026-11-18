@@ -1,6 +1,6 @@
 {
   "name": "arc-molecullage",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "description": "Molecullage workspace for Arc Harness: the 231-source library, eight-domain atlas, five-gate anti-overplating check and 3D structure and Blender figure pipeline.",
   "icon": "icon.svg",
   "type": "module",
