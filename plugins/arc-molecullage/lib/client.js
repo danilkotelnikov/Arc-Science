@@ -125,7 +125,7 @@ window.__ModuleLoader__.load({ id: "arc-molecullage", factory: (require) => {
 
     return h("div", { "data-arc-plugin-pane": "true", "data-arc-molecullage": "true", style: { padding: 12, fontSize: 13, lineHeight: 1.45, height: "100%", overflowY: "auto", boxSizing: "border-box", display: "grid", gap: 16, alignContent: "start" } },
       !data && !failed ? h("p", { style: mutM }, t("state.loading")) : null,
-      failed && !data ? h("p", { role: "alert", style: mutM }, t("state.error")) : null,
+      failed ? h("p", { role: "alert", style: mutM }, data ? `${t("state.error")} (showing previous results)` : t("state.error")) : null,
       cs || paused || actionError ? h("div", { style: { ...rw, gap: 8, fontSize: 11, ...muted } },
         cs ? h("span", { "data-molecullage-chat-status": "true" }, cs) : null,
         actionError ? h("span", { role: "alert", "data-molecullage-action-error": "true" }, actionError) : null,

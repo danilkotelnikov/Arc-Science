@@ -307,17 +307,21 @@ function readLocalMolecullageSafe(molecullageRoot) {
 }
 
 function readGatewayConfigSafe(arcHome) {
-  const cfg = readJsonSafe(path.join(arcHome, 'gateway-config.json'));
+  const nativeCfg = readJsonSafe(path.join(arcHome, 'gateway.json'));
+  const legacyCfg = readJsonSafe(path.join(arcHome, 'gateway-config.json'));
+  const cfg = (nativeCfg && typeof nativeCfg === 'object') ? nativeCfg : legacyCfg;
   if (!cfg || typeof cfg !== 'object') {
     return { available: false, cammutRecall: false, anthropicPromptCaching: false, defaultReasoningEffort: 'none' };
   }
+  const routes = Array.isArray(cfg.routes) ? cfg.routes : [];
+  const hasRoute = (prefix) => routes.some((r) => r && r.prefix === prefix && Boolean(r.target));
   return {
     available: true,
-    cammutRecall: Boolean(cfg.cammutRecall),
-    anthropicPromptCaching: Boolean(cfg.anthropicPromptCaching),
+    cammutRecall: Boolean(cfg.cammut?.governor?.enabled ?? cfg.cammutRecall?.enabled ?? cfg.cammutRecall),
+    anthropicPromptCaching: Boolean(cfg.promptCaching?.enabled ?? cfg.anthropicPromptCaching?.enabled ?? cfg.anthropicPromptCaching),
     defaultReasoningEffort: String(cfg.defaultReasoningEffort || 'none'),
-    radiumConfigured: Boolean(cfg.radiumUrl),
-    mergeConfigured: Boolean(cfg.mergeUrl),
+    radiumConfigured: Boolean(cfg.radiumUrl || hasRoute('/radium/v1')),
+    mergeConfigured: Boolean(cfg.mergeUrl || hasRoute('/merge/v1')),
   };
 }
 
@@ -481,7 +485,10 @@ function readConsoleNotesSafe(f) {
 export function createResearchSessionStore(opts = {}) {
   const nowFn = typeof opts.now === 'function' ? opts.now : () => Date.now();
   const gatewayHost = typeof opts.gatewayHost === 'string' && opts.gatewayHost.trim() ? opts.gatewayHost.trim() : '127.0.0.1:7424';
-  const arcHome = typeof opts.arcHome === 'string' && opts.arcHome.trim() ? opts.arcHome : path.join(os.homedir(), '.arc');
+  const envArcHome = typeof process.env.ARC_HOME === 'string' && process.env.ARC_HOME.trim() ? process.env.ARC_HOME.trim() : '';
+  const arcHome = typeof opts.arcHome === 'string' && opts.arcHome.trim()
+    ? opts.arcHome
+    : (envArcHome || path.join(os.homedir(), '.arc'));
   const molecullageRoot = typeof opts.molecullageRoot === 'string' && opts.molecullageRoot.trim() ? opts.molecullageRoot : path.join(os.homedir(), 'Molecullage');
   const liveEnabled = opts.live !== false;
   const notesFile = typeof opts.notesFile === 'string' && opts.notesFile.trim() ? opts.notesFile.trim()
@@ -776,7 +783,10 @@ export function createResearchSessionStore(opts = {}) {
     return { ok: true, text: proseText, report: detectFormulaicProse(proseText) };
   }
 
-  function rewriteProseDraft() {
+  function rewriteProseDraft(text) {
+    if (typeof text === 'string') {
+      proseText = text;
+    }
     proseText = rewriteFormulaicProse(proseText);
     pushTimeline({
       atMs: nowFn(),
@@ -833,10 +843,14 @@ export function createResearchSessionStore(opts = {}) {
     return liveState;
   }
 
+  let memorySearchSeq = 0;
+
   async function searchMemory(query = '', searchOpts = {}) {
+    const seq = ++memorySearchSeq;
     const q = String(query || '').trim();
     if (!q) {
       liveState.memoryQuery = '';
+      liveState.memoryResults = [];
       liveState.memoryError = 'Enter a query to search shared memory';
       return { ok: false, query: '', items: [], error: liveState.memoryError };
     }
@@ -846,6 +860,9 @@ export function createResearchSessionStore(opts = {}) {
       return { ok: false, query: q, items: [], error: liveState.memoryError };
     }
     const res = await recallCammutMemory(gatewayHost, q, searchOpts, fetchImpl);
+    if (seq !== memorySearchSeq) {
+      return { ok: res.ok, query: q, items: res.items || [], error: res.error || null, stale: true };
+    }
     liveState.memoryResults = res.items || [];
     liveState.memoryError = res.error || null;
     pushTimeline({
@@ -1048,7 +1065,7 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
     if (payload.kind === 'molecullage-pin') return store.toggleMolecullagePin(payload);
     if (payload.kind === 'consent') return store.applyConsent(payload);
     if (payload.kind === 'prose') return store.updateProseDraft(payload.text);
-    if (payload.kind === 'prose-rewrite') return store.rewriteProseDraft();
+    if (payload.kind === 'prose-rewrite') return store.rewriteProseDraft(typeof payload.text === 'string' ? payload.text : undefined);
     if (payload.kind === 'operator-switch') return store.setOperatorSwitch(payload.rungId, payload.enabled);
     if (payload.kind === 'memory-search' && typeof store.searchMemory === 'function') {
       return store.searchMemory(payload.query, {
