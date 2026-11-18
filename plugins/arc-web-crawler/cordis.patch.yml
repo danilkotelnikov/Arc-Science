@@ -1,0 +1,10 @@
+# arc-web-crawler bundle patch: mounts the local open-source crawler/fetcher/analyzer
+# and routes Arc Harness's native web_search and web_fetch seam to it.
+- id: web
+  config:
+    searchProvider: arc-crawler
+    fetchProvider: arc-crawler
+
+- insert:
+    - id: arc-web-crawler
+      name: arc-web-crawler

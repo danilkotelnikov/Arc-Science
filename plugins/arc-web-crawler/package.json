@@ -1,0 +1,40 @@
+{
+  "name": "arc-web-crawler",
+  "version": "0.1.0",
+  "description": "Open-source tiered web search, stealth fetcher, anti-bot/CAPTCHA verifier, and structured content analyzer for Arc Harness (Scrapling + Patchright + Trafilatura + DDGS + PyMuPDF).",
+  "icon": "icon.svg",
+  "type": "module",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./icon": "./icon.svg",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "lib",
+    "py",
+    "cordis.patch.yml",
+    "README.md",
+    "icon.svg",
+    "locale"
+  ],
+  "scripts": {
+    "test": "node --test test/crawler.test.mjs"
+  },
+  "arc": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@arc-harness/arc-web": "*",
+    "@arc-harness/arc-tools": "*"
+  },
+  "engines": {
+    "node": ">=22.19",
+    "arc": ">=0.2.1-rc.2 <0.3.0"
+  }
+}
