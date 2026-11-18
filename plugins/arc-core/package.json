@@ -8,6 +8,7 @@
   "main": "./lib/index.js",
   "exports": {
     ".": "./lib/index.js",
+    "./library-index": "./lib/library-index.js",
     "./client": "./ui/panel.js",
     "./ui/panel": "./ui/panel.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
@@ -24,7 +25,7 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node --test test/core.test.mjs test/ui-panel.test.mjs"
+    "test": "node --test test/core.test.mjs test/ui-panel.test.mjs test/library-index.test.mjs"
   },
   "arc": {
     "bundle": {
