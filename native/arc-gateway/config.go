@@ -21,6 +21,49 @@ type Route struct {
 	NormalizeModels bool   `json:"normalizeModels"` // fill id/object in GET /models
 	VertexProject   string `json:"vertexProject"`
 	VertexLocation  string `json:"vertexLocation"`
+	// reasoning effort for chat requests that carry none ("off", "low", ...); empty adds nothing
+	DefaultReasoningEffort string `json:"defaultReasoningEffort"`
+	// overrides request reasoning effort on this route when set ("off", "low", "medium", "high")
+	ForceReasoningEffort string `json:"forceReasoningEffort,omitempty"`
+	// Vertex AI performance knobs (nil / 0 = smart defaults for auth=="vertex")
+	StreamThoughts   *bool `json:"streamThoughts,omitempty"`
+	CompressRequests *bool `json:"compressRequests,omitempty"`
+	MaxOutputTokens  int   `json:"maxOutputTokens,omitempty"`
+	MaxConcurrent    int   `json:"maxConcurrent,omitempty"`
+}
+
+func (rt Route) streamThoughtsEnabled() bool {
+	if rt.StreamThoughts != nil {
+		return *rt.StreamThoughts
+	}
+	return rt.Auth == "vertex"
+}
+
+func (rt Route) compressRequestsEnabled() bool {
+	if rt.CompressRequests != nil {
+		return *rt.CompressRequests
+	}
+	return rt.Auth == "vertex"
+}
+
+func (rt Route) maxOutputCap() int {
+	if rt.MaxOutputTokens > 0 {
+		return rt.MaxOutputTokens
+	}
+	if rt.Auth == "vertex" {
+		return 32768
+	}
+	return 0
+}
+
+func (rt Route) maxConcurrentCap() int {
+	if rt.MaxConcurrent > 0 {
+		return rt.MaxConcurrent
+	}
+	if rt.Auth == "vertex" {
+		return 3
+	}
+	return 0
 }
 
 // Governor keeps Cammut memory answers inside a size budget.
@@ -94,6 +137,9 @@ func LoadConfig() Config {
 	_ = json.Unmarshal(b, &c)
 	if c.Port == 0 {
 		c.Port = 7424
+	}
+	if len(c.Cammut.Upstreams) == 0 {
+		c.Cammut.Upstreams = defaultConfig().Cammut.Upstreams
 	}
 	return withEnvPort(c)
 }

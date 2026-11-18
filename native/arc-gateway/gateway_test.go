@@ -426,3 +426,301 @@ func TestBrokenConfigIsNotOverwritten(t *testing.T) {
 		t.Fatal("multi-line key value accepted")
 	}
 }
+
+// --- per-route reasoning default ---
+
+func TestRouteDefaultEffortOnlyWhenRequestHasNone(t *testing.T) {
+	var got []string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { b, _ := io.ReadAll(r.Body); got = append(got, string(b)) }))
+	defer up.Close()
+	cfg := defaultConfig() // global default stays "high": it must not reach any route
+	cfg.Routes = []Route{
+		{Prefix: "/vertex/v1", Target: up.URL, Auth: "none", DefaultReasoningEffort: "low"},
+		{Prefix: "/radium/v1", Target: up.URL, Auth: "none"},
+	}
+	ts, _ := setup(t, cfg)
+	defer ts.Close()
+	cases := []struct{ path, in, want string }{
+		{"/vertex/v1/chat/completions", `{"model":"gemini-4-argon","messages":[]}`, `"reasoning_effort":"low"`},
+		{"/vertex/v1/chat/completions", `{"model":"gemini-4-argon","messages":[],"reasoning_effort":"high"}`, `"reasoning_effort":"high"`},
+		{"/vertex/v1/chat/completions", `{"model":"gemini-4-argon","messages":[],"reasoning":{"effort":"medium"}}`, `"reasoning":{"effort":"medium"}`},
+		{"/vertex/v1/embeddings", `{"model":"gemini-embedding","input":"x"}`, `{"model":"gemini-embedding","input":"x"}`},
+		{"/radium/v1/chat/completions", `{"model":"m","messages":[]}`, `{"model":"m","messages":[]}`},
+		{"/vertex/v1/chat/completions", `{"model":"gemini-4-argon","messages":[],"reasoning":{"summary":"auto"}}`, `"reasoning":{"effort":"low","summary":"auto"}`},
+	}
+	for i, c := range cases {
+		do(t, ts, "POST", c.path, c.in, nil)
+		if len(got) != i+1 || !strings.Contains(got[i], c.want) {
+			t.Fatalf("case %d %s %s: upstream got %v, want %s", i, c.path, c.in, got, c.want)
+		}
+	}
+	for _, i := range []int{2, 5} { // a reasoning object gets the effort inside it, never a second field
+		if strings.Count(got[i], "effort") != 1 {
+			t.Fatalf("case %d has %d effort fields: %s", i, strings.Count(got[i], "effort"), got[i])
+		}
+	}
+}
+
+func TestRouteDefaultEffortYieldsToForceAndOff(t *testing.T) {
+	var got string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { b, _ := io.ReadAll(r.Body); got = string(b) }))
+	defer up.Close()
+	for _, c := range []struct{ force, def, in, want string }{
+		{"high", "low", `{"messages":[]}`, `{"messages":[],"reasoning_effort":"high"}`},
+		{"", "off", `{"messages":[],"reasoning":{"summary":"auto"}}`, `{"messages":[],"reasoning":{"summary":"auto"}}`},
+		{"", " Low ", `{"messages":[]}`, `{"messages":[],"reasoning_effort":"low"}`},
+		{"", "lwo", `{"messages":[]}`, `{"messages":[]}`},
+		{"", "low", `{"messages":[],"reasoning":{"effort":"medium"},"reasoning_effort":""}`, `{"messages":[],"reasoning":{"effort":"medium"},"reasoning_effort":"medium"}`},
+	} {
+		cfg := defaultConfig()
+		cfg.ForceReasoningEffort = c.force
+		cfg.Routes = []Route{{Prefix: "/vertex/v1", Target: up.URL, Auth: "none", DefaultReasoningEffort: c.def}}
+		ts, _ := setup(t, cfg)
+		do(t, ts, "POST", "/vertex/v1/chat/completions", c.in, nil)
+		ts.Close()
+		if got != c.want {
+			t.Fatalf("force %q default %q: upstream got %s, want %s", c.force, c.def, got, c.want)
+		}
+	}
+}
+
+func TestExampleConfigVertexDefaultsLow(t *testing.T) {
+	b, err := os.ReadFile("gateway.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c Config
+	if err := json.Unmarshal(b, &c); err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, r := range c.Routes {
+		want := ""
+		if r.Prefix == "/vertex/v1" {
+			want, seen = "low", true
+		}
+		if r.DefaultReasoningEffort != want {
+			t.Fatalf("route %s default %q, want %q", r.Prefix, r.DefaultReasoningEffort, want)
+		}
+	}
+	if !seen {
+		t.Fatal("example config has no /vertex/v1 route")
+	}
+}
+
+func TestRouteDefaultEffortSkipsAnthropicRoutes(t *testing.T) {
+	var got string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { b, _ := io.ReadAll(r.Body); got = string(b) }))
+	defer up.Close()
+	cfg := defaultConfig()
+	cfg.Routes = []Route{{Prefix: "/anthropic", Target: up.URL, Anthropic: true, DefaultReasoningEffort: "low"}}
+	ts, _ := setup(t, cfg)
+	defer ts.Close()
+	do(t, ts, "POST", "/anthropic/v1/messages", `{"model":"m","messages":[]}`, nil)
+	if got == "" || strings.Contains(got, "effort") {
+		t.Fatalf("anthropic route body changed: %s", got)
+	}
+}
+
+func TestRouteForceEffortAndVertexCleanup(t *testing.T) {
+	var got string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { b, _ := io.ReadAll(r.Body); got = string(b) }))
+	defer up.Close()
+	cfg := defaultConfig()
+	cfg.Routes = []Route{{Prefix: "/vertex/v1", Target: up.URL, Auth: "none", ForceReasoningEffort: "low"}}
+	ts, _ := setup(t, cfg)
+	defer ts.Close()
+	do(t, ts, "POST", "/vertex/v1/chat/completions", `{"model":"google/gemini-4-argon","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}`, nil)
+	if !strings.Contains(got, `"reasoning_effort":"low"`) {
+		t.Fatalf("route ForceReasoningEffort did not override high: %s", got)
+	}
+	// Direct tuneRequest check for Auth="vertex": strips store, normalizes developer->system, caps max_completion_tokens
+	s := NewServer(func() Config { return cfg })
+	p := map[string]any{
+		"model":                 "google/gemini-4-argon",
+		"store":                 false,
+		"max_completion_tokens": float64(65536),
+		"reasoning_effort":      "high",
+		"messages":              []any{map[string]any{"role": "developer", "content": "sys"}},
+	}
+	vRoute := Route{Prefix: "/vertex/v1", Auth: "vertex", ForceReasoningEffort: "low"}
+	s.tuneRequest(p, cfg, &vRoute)
+	if _, hasStore := p["store"]; hasStore {
+		t.Fatalf("store not removed: %v", p)
+	}
+	if p["max_completion_tokens"] != float64(32768) {
+		t.Fatalf("max_completion_tokens not capped: %v", p["max_completion_tokens"])
+	}
+	if p["reasoning_effort"] != "low" {
+		t.Fatalf("reasoning_effort not forced to low: %v", p["reasoning_effort"])
+	}
+	if asList(p["messages"])[0]["role"] != "system" {
+		t.Fatalf("developer role not normalized to system: %v", p["messages"])
+	}
+	// Streaming vertex request converts reasoning_effort into extra_body.google.thinking_config
+	ps := map[string]any{
+		"model":            "google/gemini-4-neon",
+		"stream":           true,
+		"reasoning_effort": "high",
+		"messages":         []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	vRouteStream := Route{Prefix: "/vertex/v1", Auth: "vertex"}
+	if !s.tuneRequest(ps, cfg, &vRouteStream) {
+		t.Fatal("expected injectedThinking=true for streaming vertex request")
+	}
+	if ps["reasoning_effort"] != nil {
+		t.Fatalf("reasoning_effort should be removed when thinking_config is injected: %v", ps)
+	}
+	tc := obj(obj(obj(ps["extra_body"])["google"])["thinking_config"])
+	if tc["include_thoughts"] != true || tc["thinking_level"] != "HIGH" {
+		t.Fatalf("unexpected thinking_config: %v", tc)
+	}
+	if !stepDownVertexEffort(ps) || tc["thinking_level"] != "LOW" {
+		t.Fatalf("stepDownVertexEffort did not lower thinking_level to LOW: %v", tc)
+	}
+}
+
+func TestVertexSSEThoughtTranslationAndSigCapture(t *testing.T) {
+	s := NewServer(func() Config { return defaultConfig() })
+	byIndex := map[int]*[2]string{}
+	thoughtLine := []byte("data: {\"choices\":[{\"delta\":{\"content\":\"thinking step\",\"extra_content\":{\"google\":{\"thought\":true}},\"role\":\"assistant\"},\"index\":0}]}\n")
+	out := string(s.processVertexSSELine(thoughtLine, byIndex))
+	if !strings.Contains(out, `"reasoning_content":"thinking step"`) || strings.Contains(out, `"content":"thinking step"`) || strings.Contains(out, `"thought":true`) {
+		t.Fatalf("thought line not translated cleanly: %s", out)
+	}
+	toolLine := []byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_abc\",\"extra_content\":{\"google\":{\"thought_signature\":\"SIG_XYZ\"}}}]},\"index\":0}]}\n")
+	out2 := string(s.processVertexSSELine(toolLine, byIndex))
+	if out2 != string(toolLine) {
+		t.Fatalf("non-thought tool line was modified: %s", out2)
+	}
+	if s.sigs.get("call_abc") != "SIG_XYZ" {
+		t.Fatalf("thought_signature not captured: got %q", s.sigs.get("call_abc"))
+	}
+}
+
+func TestVertexGzipRequestCompression(t *testing.T) {
+	var gotEnc string
+	var gotLen int
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotEnc = r.Header.Get("Content-Encoding")
+		b, _ := io.ReadAll(r.Body)
+		gotLen = len(b)
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"ok":1}`)
+	}))
+	defer up.Close()
+	yes := true
+	cfg := defaultConfig()
+	cfg.Routes = []Route{{Prefix: "/v/v1", Target: up.URL, Auth: "none", CompressRequests: &yes}}
+	ts, _ := setup(t, cfg)
+	defer ts.Close()
+	big := fmt.Sprintf(`{"model":"google/gemini-4-neon","messages":[{"role":"user","content":"%s"}]}`, strings.Repeat("hello world ", 1000))
+	r := do(t, ts, "POST", "/v/v1/chat/completions", big, map[string]string{"Content-Type": "application/json"})
+	if r.StatusCode != 200 || gotEnc != "gzip" || gotLen >= len(big)/2 {
+		t.Fatalf("status=%d enc=%q raw=%d wire=%d", r.StatusCode, gotEnc, len(big), gotLen)
+	}
+}
+
+func TestEmptyCammutUpstreamsFallsBackToDefault(t *testing.T) {
+	t.Setenv("ARC_HOME", t.TempDir())
+	_ = os.WriteFile(configPath(), []byte(`{"port":7424,"cammut":{"upstreams":[]}}`), 0o600)
+	c := LoadConfig()
+	if len(c.Cammut.Upstreams) == 0 {
+		t.Fatal("empty cammut.upstreams was not restored to default")
+	}
+}
+
+func TestVertexStreamingHeartbeatPreventsSilentIdleTimeout(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		time.Sleep(110 * time.Millisecond) // simulate Carbon silent thinking before HTTP headers
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"CARBON_OK\",\"role\":\"assistant\"},\"index\":0}]}\n\n")
+		if fl != nil {
+			fl.Flush()
+		}
+		time.Sleep(60 * time.Millisecond) // simulate mid-stream pause
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_c1\",\"extra_content\":{\"google\":{\"thought_signature\":\"SIG_C1\"}}}]},\"index\":0}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer up.Close()
+	yes := true
+	cfg := defaultConfig()
+	cfg.Routes = []Route{{Prefix: "/vertex/v1", Target: up.URL, Auth: "none", StreamThoughts: &yes}}
+	t.Setenv("ARC_HOME", t.TempDir())
+	c := cfg
+	s := NewServer(func() Config { return c })
+	s.vertexHeartbeat = 35 * time.Millisecond
+	ts := httptest.NewServer(s)
+	c.Port = localPort(ts)
+	defer ts.Close()
+
+	req, _ := http.NewRequest("POST", ts.URL+"/vertex/v1/chat/completions", strings.NewReader(`{"model":"google/gemini-4-carbon","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	t0 := time.Now()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headerElapsed := time.Since(t0)
+	defer resp.Body.Close()
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyStr := string(bodyBytes)
+	if headerElapsed >= 100*time.Millisecond {
+		t.Fatalf("expected early SSE headers via heartbeat (<100ms), got %v", headerElapsed)
+	}
+	if !strings.Contains(bodyStr, `"reasoning_content":" "`) {
+		t.Fatalf("missing heartbeat reasoning_content chunk: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, `"CARBON_OK"`) || !strings.Contains(bodyStr, "data: [DONE]") {
+		t.Fatalf("real Carbon payload lost: %s", bodyStr)
+	}
+	if s.sigs.get("call_c1") != "SIG_C1" {
+		t.Fatalf("thought_signature lost after heartbeat: got %q", s.sigs.get("call_c1"))
+	}
+}
+
+func TestVertex429NormalizesTransientQuotaWordingToRateLimit(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(429)
+		io.WriteString(w, `{"error":{"code":429,"message":"Quota exceeded for aiplatform.googleapis.com/generate_content_requests_per_minute_per_project_per_base_model","status":"RESOURCE_EXHAUSTED"}}`)
+	}))
+	defer up.Close()
+	c := defaultConfig()
+	c.Routes = []Route{{Prefix: "/vertex/v1", Target: up.URL, Auth: "none"}}
+	t.Setenv("ARC_HOME", t.TempDir())
+	s := NewServer(func() Config { return c })
+	s.vertexHeartbeat = 0
+	s.retryWaits = []time.Duration{5 * time.Millisecond}
+	ts := httptest.NewServer(s)
+	c.Port = localPort(ts)
+	defer ts.Close()
+
+	req, _ := http.NewRequest("POST", ts.URL+"/vertex/v1/chat/completions", strings.NewReader(`{"model":"google/gemini-4-neon","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyLower := strings.ToLower(string(bodyBytes))
+	if resp.StatusCode != 429 {
+		t.Fatalf("expected HTTP 429, got %d (%s)", resp.StatusCode, bodyLower)
+	}
+	if resp.Header.Get("Retry-After") == "" {
+		t.Fatalf("expected Retry-After header on normalized 429")
+	}
+	if strings.Contains(bodyLower, "quota") {
+		t.Fatalf("transient 429 still contains 'quota' wording that triggers terminal QUOTA abort: %s", bodyLower)
+	}
+	if !strings.Contains(bodyLower, "rate_limit_exceeded") {
+		t.Fatalf("expected rate_limit_exceeded in normalized 429 body: %s", bodyLower)
+	}
+}
