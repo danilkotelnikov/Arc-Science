@@ -35,14 +35,25 @@ export const MODEL_PRICING_USD_PER_MTOK = Object.freeze({
 });
 
 export const SINGLE_SHOT_SPECS = Object.freeze([
-  Object.freeze({ armId: 'claude-opus-5-5', provider: 'anthropic', model: 'claude-opus-5-5', family: 'anthropic', reasoningEffort: null, reserveUsd: 0.08 }),
-  Object.freeze({ armId: 'claude-sonnet-5-5', provider: 'anthropic', model: 'claude-sonnet-5-5', family: 'anthropic', reasoningEffort: null, reserveUsd: 0.05 }),
-  Object.freeze({ armId: 'claude-fable-5-2', provider: 'anthropic', model: 'claude-fable-5-2', family: 'anthropic', reasoningEffort: null, reserveUsd: 0.25 }),
-  Object.freeze({ armId: 'claude-haiku-5-5', provider: 'anthropic', model: 'claude-haiku-5-5', family: 'anthropic', reasoningEffort: null, reserveUsd: 0.02 }),
-  Object.freeze({ armId: 'gemini-4-argon', provider: 'vertex', model: 'google/gemini-4-argon', family: 'google', reasoningEffort: 'low', reserveUsd: 0.05 }),
-  Object.freeze({ armId: 'gemini-4-carbon', provider: 'vertex', model: 'google/gemini-4-carbon', family: 'google', reasoningEffort: 'low', reserveUsd: 0.05 }),
-  Object.freeze({ armId: 'gemini-4-hydrogen', provider: 'vertex', model: 'google/gemini-4-hydrogen', family: 'google', reasoningEffort: 'low', reserveUsd: 0.04 }),
+  Object.freeze({ armId: 'claude-opus-5-5', provider: 'anthropic', model: 'claude-opus-5-5', family: 'anthropic', reasoningEffort: null, maxOutputTokens: 4096, reserveUsd: 0.12 }),
+  Object.freeze({ armId: 'claude-sonnet-5-5', provider: 'anthropic', model: 'claude-sonnet-5-5', family: 'anthropic', reasoningEffort: null, maxOutputTokens: 4096, reserveUsd: 0.08 }),
+  Object.freeze({ armId: 'claude-fable-5-2', provider: 'anthropic', model: 'claude-fable-5-2', family: 'anthropic', reasoningEffort: null, maxOutputTokens: 4096, reserveUsd: 0.28 }),
+  Object.freeze({ armId: 'claude-haiku-5-5', provider: 'anthropic', model: 'claude-haiku-5-5', family: 'anthropic', reasoningEffort: null, maxOutputTokens: 4096, reserveUsd: 0.02 }),
+  Object.freeze({ armId: 'gemini-4-argon', provider: 'vertex', model: 'google/gemini-4-argon', family: 'google', reasoningEffort: 'low', maxOutputTokens: 4096, reserveUsd: 0.08 }),
+  Object.freeze({ armId: 'gemini-4-carbon', provider: 'vertex', model: 'google/gemini-4-carbon', family: 'google', reasoningEffort: 'low', maxOutputTokens: 4096, reserveUsd: 0.08 }),
+  Object.freeze({ armId: 'gemini-4-hydrogen', provider: 'vertex', model: 'google/gemini-4-hydrogen', family: 'google', reasoningEffort: 'low', maxOutputTokens: 4096, reserveUsd: 0.06 }),
 ]);
+
+export function computeConservativeReserveUsd(spec, promptText = '') {
+  const key = normalizeModelKey(spec?.model);
+  const rates = MODEL_PRICING_USD_PER_MTOK[key];
+  const baseReserve = typeof spec?.reserveUsd === 'number' && Number.isFinite(spec.reserveUsd) ? spec.reserveUsd : 0.08;
+  if (!rates) return baseReserve;
+  const estInputTokens = Math.max(2000, Math.ceil(String(promptText || '').length / 3) + 1500);
+  const maxOutTokens = Number.isInteger(spec?.maxOutputTokens) && spec.maxOutputTokens > 0 ? spec.maxOutputTokens : 8192;
+  const worstCaseUsd = (estInputTokens * rates.input + maxOutTokens * rates.output) / 1_000_000;
+  return Number(Math.max(baseReserve, worstCaseUsd).toFixed(6));
+}
 
 export const HOH_PPC_ARM_ID = 'hoh-ppc-sonnet-carbon';
 export const FALLBACK_MISSING_USAGE_USD = 0.05;
@@ -397,7 +408,7 @@ export async function runArcHeadless({
       provider,
       model,
       exitCode: r.exitCode,
-      spawnError: r.spawnErr ? r.spawnErr.message : timeoutMsg,
+      spawnError: r.spawnErr ? r.spawnErr.message : null,
       errorMessage: errEv ? errEv.message : (timeoutMsg || (!ok ? String(r.stderr || '').trim().slice(0, 400) : null)),
       durationMs,
       usage,
@@ -522,7 +533,8 @@ function poolAgreeConfidence(p1, p2) {
 }
 
 async function callWithBudget({ spec, prompt, arcCmd, budgetGuard, callModelFn, timeoutMs }) {
-  const resv = budgetGuard.tryReserve(spec.family, spec.reserveUsd ?? 0.05);
+  const reserveUsd = computeConservativeReserveUsd(spec, prompt);
+  const resv = budgetGuard.tryReserve(spec.family, reserveUsd);
   if (!resv.ok) {
     return {
       ok: false,
@@ -769,7 +781,7 @@ export async function runHohPpcItem({ item, itemIndex = 0, arcCmd, budgetGuard, 
 
 export function summarizeArm(armId, meta, records) {
   const executed = records.filter((r) => r.state !== 'fail_budget' || r.calls > 0);
-  const scored = executed.length > 0 ? executed : records;
+  const scored = executed;
   const correctCount = scored.filter((r) => r.correct).length;
   const totalCount = scored.length;
   const accuracy = totalCount > 0 ? Number((correctCount / totalCount).toFixed(4)) : null;
