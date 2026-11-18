@@ -479,3 +479,50 @@ test('25. apply registers ToolRuntime-compatible provider-safe schemas and undec
   assert.equal(forged.rule, 'R009');
 });
 
+test('26. console live disk and gateway recall store redacts secrets and deduplicates refused lexicon', async () => {
+  const tmpArc = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-live-test-'));
+  const tmpMol = fs.mkdtempSync(path.join(os.tmpdir(), 'mol-live-test-'));
+  try {
+    fs.mkdirSync(path.join(tmpArc, 'hoh'), { recursive: true });
+    fs.writeFileSync(path.join(tmpArc, 'hoh', 'ledger.jsonl'), JSON.stringify({ seq: 1, type: 'gate', caller: 'test', goal: 'Bearer sk-secret123456' }) + '\n', 'utf8');
+    fs.writeFileSync(path.join(tmpArc, 'gateway-config.json'), JSON.stringify({ cammutRecall: true, anthropicPromptCaching: true, defaultReasoningEffort: 'none' }), 'utf8');
+    fs.mkdirSync(path.join(tmpMol, 'studio', 'library', 'atlas', 'domains'), { recursive: true });
+    fs.writeFileSync(path.join(tmpMol, 'studio', 'library', 'sources.json'), JSON.stringify({
+      sources: [{ id: 'chx', name: 'ChimeraX', kind: 'app', section: 'structure', licenceClass: 'academic', use: 'render pdb' }],
+    }), 'utf8');
+    const lexPath = path.join(tmpArc, 'refused.en.txt');
+    fs.writeFileSync(lexPath, 'leverage\nholistic\n', 'utf8');
+
+    const refusedCheck = detectFormulaicProse('We leverage a holistic plan.', { lexiconPath: lexPath });
+    assert.equal(refusedCheck.ok, false);
+    assert.equal(refusedCheck.findings.length, 2);
+
+    const mockFetch = async (url) => {
+      if (String(url).endsWith('/health')) {
+        return new Response(JSON.stringify({ status: 'ok', version: '1.0.0', routes: ['/anthropic', '/vertex/v1'], cammut: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        jsonrpc: '2.0',
+        result: { content: [{ type: 'text', text: JSON.stringify({ results: [{ id: 'm1', text: 'Verified note token sk-1234567890abcdef', context: 'cammut' }] }) }] },
+      }), { status: 200 });
+    };
+
+    const { createResearchSessionStore, serveConsoleRoute } = await import('../lib/console.js');
+    const liveStore = createResearchSessionStore({ arcHome: tmpArc, molecullageRoot: tmpMol, gatewayHost: '127.0.0.1:7424', fetch: mockFetch });
+    const snap = await serveConsoleRoute('api/arc-core/console/state', {}, liveStore);
+    assert.equal(snap.ok, true);
+    assert.equal(snap.liveLedger.total, 1);
+    assert.equal(snap.liveLedger.recent[0].goal.includes('sk-secret'), false);
+    assert.equal(snap.memory.reachable, true);
+    const mem = await serveConsoleRoute('api/arc-core/console/action', { kind: 'memory-search', query: 'Cammuteur' }, liveStore);
+    assert.equal(mem.ok, true);
+    assert.equal(mem.items[0].text.includes('sk-1234567890abcdef'), false);
+    assert.equal(mem.items[0].text.includes('[redacted]'), true);
+    const mol = await serveConsoleRoute('api/arc-core/console/action', { kind: 'molecullage-search', query: 'chimera' }, liveStore);
+    assert.equal(mol.items.length, 1);
+  } finally {
+    fs.rmSync(tmpArc, { recursive: true, force: true });
+    fs.rmSync(tmpMol, { recursive: true, force: true });
+  }
+});
+
