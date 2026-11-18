@@ -25,7 +25,8 @@
     "arc-mermaid",
     "arc-mode",
     "arc-molecullage",
-    "arc-theme"
+    "arc-theme",
+    "arc-web-crawler"
   ],
   "approvedLicenses": [
     "MIT",

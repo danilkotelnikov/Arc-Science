@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-const version = "1.0.0"
+const version = "0.6.0"
 
 func main() {
 	cmd := "run"

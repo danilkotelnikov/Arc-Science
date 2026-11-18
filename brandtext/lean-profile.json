@@ -12,7 +12,8 @@
     "arc-core",
     "arc-mode",
     "arc-molecullage",
-    "arc-mermaid"
+    "arc-mermaid",
+    "arc-web-crawler"
   ],
   "left_out": {
     "arc-context": "Context Insights: trajectories and spending pages",

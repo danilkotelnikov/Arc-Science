@@ -101,6 +101,20 @@ for (const [name, c] of [['header.svg', headerSVG], ['header-still.svg', stillSV
 }
 if (stillSVG !== null) t('header-still.svg: no SMIL animation', !/<(animate\w*|set)\b/i.test(stillSVG), 'Found SMIL animation');
 
+for (const rel of [
+  'docs/images/architecture-light.svg',
+  'docs/images/architecture-dark.svg',
+  'docs/images/verification-light.svg',
+  'docs/images/verification-dark.svg',
+]) {
+  const c = read(rel);
+  t(`${rel} exists`, c !== null, 'File not found');
+  if (c !== null) {
+    t(`${rel}: safe SVG`, noElement(c, 'script') && noElement(c, 'image') && noElement(c, 'link') && noURL(c) && !/\bhref\s*=/i.test(c) && !/\son\w+\s*=/i.test(c) && !/<foreignObject/i.test(c), 'Unsafe SVG construct');
+    if (readme !== null) t(`README.md references ${rel}`, hasRef(readme, rel), 'Missing reference');
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
