@@ -1,0 +1,524 @@
+// UPDATE-1: update the plugins and the two native programs of an installed Arc Harness from GitHub Releases.
+// Zero dependencies. It lives in arc-core because an installed plugin folder cannot reach the kit's lib/native.
+//
+// What an update replaces: the seven kit plugins, in ~/.arc/local-plugins AND in each profile's node_modules copy
+// (pnpm copies them; the app loads the copy), plus bin/arc-gateway.exe (where it is installed) and bin/arc-validators.exe
+// (only where a copy already exists). It never touches ~/.arc data, the app archive, or any other plugin.
+//
+// Steps: read the release list, pick the highest x.y.z release (no draft, no pre-release), download the kit zip and
+// SHA256SUMS.txt of that same release, check the zip hash, read the zip (zip-slip and size caps), check every plugin and
+// binary file against RELEASE-MANIFEST.json and SHA256SUMS.txt, stage, smoke-test the staged programs, swap with a
+// backup, check the live files, and roll back by itself when that check fails.
+//
+// The checksum file comes from the same release as the zip: it proves a complete download, not who built it.
+import crypto from 'node:crypto';
+import nodeFs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import zlib from 'node:zlib';
+import { spawnSync } from 'node:child_process';
+
+export const UPDATE_PLUGINS = Object.freeze(['arc-core', 'arc-hoh', 'arc-mermaid', 'arc-mode', 'arc-molecullage', 'arc-theme', 'arc-web-crawler']);
+const BINARIES = Object.freeze({ 'arc-gateway.exe': 'gateway', 'arc-validators.exe': 'validators' });
+const MODES = Object.freeze(['off', 'notify', 'auto']);
+const HOSTS = new Set(['api.github.com', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com', 'github-releases.githubusercontent.com']);
+const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const DEFAULT_REPO = 'danilkotelnikov/Arc-Science';
+const DEFAULT_API = 'https://api.github.com';
+const LIMITS = { maxKitBytes: 256 << 20, maxEntryBytes: 96 << 20, maxTotalBytes: 400 << 20, maxEntries: 20000, maxSumsBytes: 64 << 10, maxApiBytes: 4 << 20 };
+const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
+const fail = (code, msg) => Object.assign(new Error(`${code}: ${msg}`), { code });
+
+// ---- versions and releases
+const SEMVER_TAG = /^v?(\d+)\.(\d+)\.(\d+)$/;
+export function compareVersions(a, b) {
+  const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0) ? 1 : -1;
+  return 0;
+}
+const kitName = (v) => `Arc-Harness-Kit-${v}-win-x64.zip`;
+const clean = (s, n) => String(s ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').slice(0, n);
+
+/** The highest plain x.y.z release that is not a draft or a pre-release; { version, tag, url, notes, kit } or null. */
+export function pickRelease(list, wanted) {
+  let best = null;
+  for (const r of Array.isArray(list) ? list : []) {
+    if (!r || r.draft || r.prerelease) continue;
+    const m = SEMVER_TAG.exec(String(r.tag_name || ''));
+    if (!m) continue;
+    const version = `${m[1]}.${m[2]}.${m[3]}`;
+    if (wanted ? version !== wanted : (best && compareVersions(version, best.version) <= 0)) continue;
+    const assets = Array.isArray(r.assets) ? r.assets : [];
+    const zip = assets.find((a) => a && a.name === kitName(version)), sums = assets.find((a) => a && a.name === 'SHA256SUMS.txt');
+    best = { version, tag: r.tag_name, url: clean(r.html_url, 300), notes: clean(r.body, 1200), kit: zip && sums ? { name: zip.name, url: zip.browser_download_url, sumsUrl: sums.browser_download_url } : null };
+  }
+  return best;
+}
+
+// ---- where a download may come from
+export function assertAllowedUrl(raw, env = process.env) {
+  let u;
+  try { u = new URL(String(raw)); } catch { throw fail('ERR_UPDATE_HOST', 'not a URL'); }
+  if (u.username || u.password) throw fail('ERR_UPDATE_HOST', 'a URL with credentials is not allowed');
+  if (env.ARC_UPDATE_ALLOW_LOOPBACK === '1' && u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost')) return u; // tests only
+  if (u.protocol !== 'https:' || u.port || !HOSTS.has(u.hostname)) throw fail('ERR_UPDATE_HOST', `${u.protocol}//${u.host} is not allowed; only https GitHub hosts are`);
+  return u;
+}
+
+// ---- zip reader: central directory first, so it works on kits with data descriptors; no extraction to disk here
+const safeName = (n) => {
+  if (!n || n.includes('\\') || n.startsWith('/') || /^[A-Za-z]:/.test(n) || n.includes(':') || n.includes('\0')) return false;
+  const parts = n.endsWith('/') ? n.slice(0, -1).split('/') : n.split('/');
+  // Windows device names and names that Windows trims (a trailing dot or space) would write somewhere else
+  return parts.every((p) => p && p !== '.' && p !== '..' && !/[<>"|?*]/.test(p) && !/[. ]$/.test(p) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(p));
+};
+export function readZip(buf, caps = {}) {
+  const L = { ...LIMITS, ...caps };
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65535); i--) if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw fail('ERR_ZIP', 'not a zip file');
+  const count = buf.readUInt16LE(eocd + 10), cdSize = buf.readUInt32LE(eocd + 12), cdOff = buf.readUInt32LE(eocd + 16);
+  if (count === 0xffff || cdSize === 0xffffffff || cdOff === 0xffffffff) throw fail('ERR_ZIP', 'zip64 is not supported');
+  if (count > L.maxEntries) throw fail('ERR_ZIP_ENTRIES', `${count} entries; the cap is ${L.maxEntries}`);
+  if (cdOff + cdSize > buf.length) throw fail('ERR_ZIP', 'the central directory is outside the file');
+  const entries = [], seen = new Set();
+  let p = cdOff, total = 0;
+  for (let i = 0; i < count; i++) {
+    if (p + 46 > cdOff + cdSize || buf.readUInt32LE(p) !== 0x02014b50) throw fail('ERR_ZIP', 'bad central directory');
+    const flags = buf.readUInt16LE(p + 8), method = buf.readUInt16LE(p + 10), crc = buf.readUInt32LE(p + 16);
+    const csize = buf.readUInt32LE(p + 20), usize = buf.readUInt32LE(p + 24), nl = buf.readUInt16LE(p + 28), el = buf.readUInt16LE(p + 30), cl = buf.readUInt16LE(p + 32);
+    const madeBy = buf.readUInt16LE(p + 4) >> 8, ext = buf.readUInt32LE(p + 38), off = buf.readUInt32LE(p + 42);
+    const name = buf.toString('utf8', p + 46, p + 46 + nl);
+    p += 46 + nl + el + cl;
+    if (p > cdOff + cdSize) throw fail('ERR_ZIP', 'bad central directory');
+    if (flags & 1) throw fail('ERR_ZIP', 'an encrypted entry');
+    if (!safeName(name)) throw fail('ERR_ZIP_PATH', `unsafe path in the kit: ${JSON.stringify(name.slice(0, 80))}`);
+    if (madeBy === 3 && ((ext >>> 16) & 0o170000) === 0o120000) throw fail('ERR_ZIP_PATH', `a link in the kit: ${name}`);
+    const key = name.toLowerCase();
+    if (seen.has(key)) throw fail('ERR_ZIP_DUPLICATE', `the same path twice: ${name}`);
+    seen.add(key);
+    if (usize > L.maxEntryBytes) throw fail('ERR_ZIP_SIZE', `${name} is ${usize} bytes; the cap is ${L.maxEntryBytes}`);
+    total += usize;
+    if (total > L.maxTotalBytes) throw fail('ERR_ZIP_SIZE', `the kit unpacks to more than ${L.maxTotalBytes} bytes`);
+    if (usize > (1 << 20) && csize * 1000 < usize) throw fail('ERR_ZIP_SIZE', `${name} has an extreme compression ratio`);
+    const isDir = name.endsWith('/');
+    entries.push({
+      name, size: usize, isDir,
+      data() {
+        if (isDir) return Buffer.alloc(0);
+        if (off + 30 > buf.length || buf.readUInt32LE(off) !== 0x04034b50) throw fail('ERR_ZIP', `bad local header for ${name}`);
+        const lnl = buf.readUInt16LE(off + 26), lel = buf.readUInt16LE(off + 28);
+        if (buf.toString('utf8', off + 30, off + 30 + lnl) !== name) throw fail('ERR_ZIP', `local and central names differ for ${name}`);
+        const start = off + 30 + lnl + lel;
+        if (start + csize > buf.length) throw fail('ERR_ZIP', `${name} runs past the end of the file`);
+        const raw = buf.subarray(start, start + csize);
+        let out;
+        try {
+          out = method === 0 ? Buffer.from(raw) : method === 8 ? zlib.inflateRawSync(raw, { maxOutputLength: usize + 1 }) : null;
+        } catch { throw fail('ERR_ZIP_SIZE', `${name} unpacks to more than its declared ${usize} bytes, or is damaged`); }
+        if (!out) throw fail('ERR_ZIP', `${name} uses an unsupported method`);
+        if (out.length !== usize) throw fail('ERR_ZIP_SIZE', `${name} unpacks to ${out.length} bytes, not ${usize}`);
+        if ((zlib.crc32(out) >>> 0) !== crc) throw fail('ERR_ZIP', `${name} fails its CRC check`);
+        return out;
+      },
+    });
+  }
+  return entries;
+}
+
+// ---- the kit: every check before a single file is written
+function parseSums(text) {
+  const map = new Map();
+  for (const line of String(text).split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const m = /^([0-9a-fA-F]{64})\s+\*?(\S.*)$/.exec(line.trim());
+    if (!m) throw fail('ERR_UPDATE_SUMS', 'SHA256SUMS.txt has a line that is not "<sha256>  <name>"');
+    map.set(m[2], m[1].toLowerCase());
+  }
+  return map;
+}
+
+export function verifyKit({ zip, sumsText, version, caps }) {
+  const name = kitName(version), sums = parseSums(sumsText);
+  if (sums.get(name) !== sha256(zip)) throw fail('ERR_UPDATE_CHECKSUM', `the kit zip does not match its checksum in SHA256SUMS.txt (${name})`);
+  const top = `Arc-Harness-Kit-${version}-win-x64/`;
+  const entries = readZip(zip, caps);
+  const man = entries.find((e) => e.name === `${top}RELEASE-MANIFEST.json`);
+  if (!man) throw fail('ERR_UPDATE_MANIFEST', `the kit has no RELEASE-MANIFEST.json in its ${top.slice(0, -1)} folder; it may be another version`);
+  let manifest;
+  try { manifest = JSON.parse(man.data().toString('utf8')); } catch { throw fail('ERR_UPDATE_MANIFEST', 'RELEASE-MANIFEST.json is not valid JSON'); }
+  if (manifest.product !== 'Arc Harness' || manifest.version !== version) throw fail('ERR_UPDATE_MANIFEST', `the manifest says version ${manifest.version}, but the release is ${version}`);
+  const digests = manifest.files;
+  if (!digests || typeof digests !== 'object' || Array.isArray(digests) || !Object.keys(digests).length) throw fail('ERR_UPDATE_MANIFEST', 'the kit has no file digest list ("files" in RELEASE-MANIFEST.json), so it cannot be checked');
+  const wantedPath = (rel) => {
+    const m = /^plugins\/([^/]+)\/.+/.exec(rel);
+    return (m && UPDATE_PLUGINS.includes(m[1])) || (/^bin\/[^/]+$/.test(rel) && Object.hasOwn(BINARIES, rel.slice(4)));
+  };
+  // files the updater does not handle (a plugin of a later kit) are ignored; the ones it handles need a proper digest
+  const handled = Object.keys(digests).filter(wantedPath);
+  for (const rel of handled) if (!/^[0-9a-f]{64}$/.test(digests[rel])) throw fail('ERR_UPDATE_MANIFEST', `the manifest has no proper digest for ${clean(rel, 80)}`);
+  if (!handled.length) throw fail('ERR_UPDATE_MANIFEST', 'the manifest lists no plugin or program file');
+  const plugins = new Map(), bins = new Map();
+  let used = 0;
+  for (const e of entries) {
+    if (e.isDir || !e.name.startsWith(top)) continue;
+    const rel = e.name.slice(top.length);
+    if (!wantedPath(rel)) continue;
+    const want = digests[rel];
+    if (!want) throw fail('ERR_UPDATE_MANIFEST', `${rel} is in the kit but not in the manifest`);
+    const data = e.data();
+    if (sha256(data) !== want) throw fail('ERR_UPDATE_MANIFEST', `${rel} does not match its digest in RELEASE-MANIFEST.json`);
+    used++;
+    if (rel.startsWith('bin/')) bins.set(rel.slice(4), data);
+    else { const [, n, sub] = /^plugins\/([^/]+)\/(.+)$/.exec(rel); if (!plugins.has(n)) plugins.set(n, []); plugins.get(n).push({ rel: sub, data, sha: want }); }
+  }
+  if (used !== handled.length) throw fail('ERR_UPDATE_MANIFEST', 'the manifest lists files that the kit does not contain');
+  for (const [n, data] of bins) {
+    const viaSums = sums.get(`bin/${n}`), viaManifest = (manifest.binaries || []).find((b) => b && b.name === n)?.sha256;
+    if (viaSums !== sha256(data) || viaManifest !== sha256(data)) throw fail('ERR_UPDATE_CHECKSUM', `${n} does not match SHA256SUMS.txt and the manifest together`);
+  }
+  for (const n of UPDATE_PLUGINS) if (!plugins.has(n)) throw fail('ERR_UPDATE_MANIFEST', `the kit has no ${n} plugin`);
+  const core = plugins.get('arc-core')?.find((f) => f.rel === 'package.json');
+  if (!core || JSON.parse(core.data.toString('utf8')).version !== version) throw fail('ERR_UPDATE_MANIFEST', `arc-core in the kit is not version ${version}`);
+  return { plugins, bins, manifest };
+}
+
+// ---- small file helpers
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const eqPath = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+
+export function createUpdater(opts = {}) {
+  const env = opts.env ?? process.env, F = opts.fs ?? nodeFs;
+  const testSwitch = env.ARC_UPDATE_ALLOW_LOOPBACK === '1';
+  const realHome = path.join(os.homedir(), '.arc'), realGw = path.join(env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'ArcGateway');
+  if (testSwitch) {
+    // a test must name both folders itself: a forgotten override would swap the user's live files
+    const bad = (p, real) => !p || eqPath(p, real) || (env.ARC_HOME && eqPath(p, env.ARC_HOME));
+    if (bad(opts.home, realHome) || bad(opts.gatewayDir, realGw)) throw fail('ERR_UPDATE_TEST_PATHS', 'with the test switch on, give a throwaway home and gatewayDir');
+  }
+  const home = path.resolve(opts.home ?? (env.ARC_HOME?.trim() || realHome));
+  const gatewayDir = path.resolve(opts.gatewayDir ?? realGw);
+  const validatorsDirs = (opts.validatorsDirs ?? [gatewayDir, path.join(home, 'bin')]).map((d) => path.resolve(d));
+  const repo = REPO_RE.test(opts.repo || '') && testSwitch ? opts.repo : DEFAULT_REPO;
+  const api = (testSwitch && opts.api ? String(opts.api) : DEFAULT_API).replace(/\/+$/, '');
+  const limits = { ...LIMITS, ...(opts.limits || {}) };
+  const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+  const run = opts.run ?? ((file, args) => spawnSync(file, args, { encoding: 'utf8', timeout: 10000, windowsHide: true }));
+  const retryMs = opts.retryMs ?? 250;
+  const now = opts.now ?? (() => Date.now());
+  const dir = path.join(home, 'updates'), settingsFile = path.join(dir, 'settings.json'), stateFile = path.join(dir, 'state.json');
+  const backupRoot = path.join(dir, 'backup'), journalFile = path.join(backupRoot, 'backup.json'), staleRoot = path.join(dir, 'stale');
+  const localPlugins = path.join(home, 'local-plugins'), profilesDir = path.join(home, 'profiles'), lockFile = path.join(dir, 'lock');
+
+  const readJson = (f, dflt) => { try { return JSON.parse(F.readFileSync(f, 'utf8')); } catch { return dflt; } };
+  const writeJson = (f, v) => {
+    F.mkdirSync(path.dirname(f), { recursive: true });
+    const t = `${f}.${process.pid}-${++mem.counter}.tmp`;
+    F.writeFileSync(t, JSON.stringify(v, null, 2));
+    for (let i = 0; ; i++) {
+      try { F.renameSync(t, f); return; } catch (e) {
+        if (i >= 4 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) { try { F.rmSync(t, { force: true }); } catch { /* temp only */ } throw e; }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40); // a virus scanner can hold the file for a moment
+      }
+    }
+  };
+
+  const mem = { token: crypto.randomBytes(8).toString('hex'), phase: 'idle', message: '', busy: false, restartNeeded: false, healthy: null, releases: [], skippedBinaries: [], counter: 0 };
+  const settings = () => { const s = readJson(settingsFile, {}); return { mode: MODES.includes(s.mode) ? s.mode : 'notify', intervalHours: Number.isInteger(s.intervalHours) && s.intervalHours >= 1 && s.intervalHours <= 168 ? s.intervalHours : 12 }; };
+  const persisted = () => readJson(stateFile, {});
+  const save = (patch) => writeJson(stateFile, { ...persisted(), ...patch });
+  const journal = () => readJson(journalFile, null);
+
+  function readInstalled() {
+    const cands = [path.join(localPlugins, 'arc-core', 'package.json')];
+    try { for (const p of F.readdirSync(profilesDir)) cands.push(path.join(profilesDir, p, 'node_modules', 'arc-core', 'package.json')); } catch { /* no profiles */ }
+    for (const c of cands) { const v = readJson(c, null)?.version; if (typeof v === 'string' && /^\d+\.\d+\.\d+/.test(v)) return v.match(/^\d+\.\d+\.\d+/)[0]; }
+    return opts.installedVersion ?? '0.0.0';
+  }
+
+  function getState() {
+    const p = persisted(), c = p.lastCheck || {}, st = settings(), installed = readInstalled(), j = journal();
+    const available = Boolean(c.latest) && compareVersions(c.latest, installed) > 0;
+    return {
+      installed, latest: c.latest || null, available, installable: Boolean(c.installable), reason: c.reason || '', releaseUrl: c.releaseUrl || '', notes: c.notes || '', checkedAt: c.checkedAt || null,
+      phase: mem.phase, message: mem.message, busy: mem.busy, mode: st.mode, intervalHours: st.intervalHours,
+      hasBackup: Boolean(j && j.status === 'complete'), backupVersion: j && j.status === 'complete' ? j.fromVersion : null,
+      skipped: p.skipped || null, skippedBinaries: mem.skippedBinaries, restartNeeded: mem.restartNeeded, healthy: mem.healthy,
+    };
+  }
+  const phase = (ph, message = '') => { mem.phase = ph; mem.message = message; if (opts.onPhase) { try { opts.onPhase(getState()); } catch { /* a listener must not stop an update */ } } };
+
+  // ---- network
+  async function get(url, maxBytes, accept) {
+    let cur = url;
+    for (let hop = 0; hop < 6; hop++) {
+      assertAllowedUrl(cur, env);
+      const res = await fetchImpl(cur, { redirect: 'manual', headers: { 'user-agent': 'arc-harness-updater', accept }, signal: AbortSignal.timeout(opts.timeoutMs ?? 120000) });
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get('location');
+        if (!loc) throw fail('ERR_UPDATE_HTTP', 'a redirect without a location');
+        cur = new URL(loc, cur).href;
+        continue;
+      }
+      if (!res.ok) throw fail('ERR_UPDATE_HTTP', `HTTP ${res.status} from ${new URL(cur).host}`);
+      const len = Number(res.headers.get('content-length'));
+      if (Number.isFinite(len) && len > maxBytes) throw fail('ERR_UPDATE_SIZE', `the download is too large (${len} bytes; the cap is ${maxBytes})`);
+      const chunks = []; let n = 0;
+      for await (const ch of res.body) { n += ch.length; if (n > maxBytes) throw fail('ERR_UPDATE_SIZE', `the download is too large (the cap is ${maxBytes})`); chunks.push(Buffer.from(ch)); }
+      return Buffer.concat(chunks);
+    }
+    throw fail('ERR_UPDATE_HTTP', 'too many redirects');
+  }
+
+  // ---- check
+  const check = async () => (mem.busy ? getState() : doCheck());
+  async function doCheck() {
+    phase('checking');
+    try {
+      const body = await get(`${api}/repos/${repo}/releases?per_page=30`, limits.maxApiBytes, 'application/vnd.github+json');
+      const list = JSON.parse(body.toString('utf8'));
+      mem.releases = Array.isArray(list) ? list : [];
+      const top = pickRelease(mem.releases);
+      save({ lastCheck: top ? { latest: top.version, installable: Boolean(top.kit), reason: top.kit ? '' : 'no-kit', releaseUrl: top.url, notes: top.notes, checkedAt: new Date(now()).toISOString() } : { latest: null, installable: false, reason: 'no-release', checkedAt: new Date(now()).toISOString() } });
+      phase('idle', top ? '' : 'No release with a plain version number was found.');
+    } catch (err) {
+      phase('failed', `Could not reach GitHub or read its answer: ${clean(err.message, 200)}`);
+    }
+    return getState();
+  }
+
+  // ---- swap with backup
+  async function mv(a, b) {
+    for (let i = 0; ; i++) {
+      try { F.renameSync(a, b); return; } catch (e) {
+        if (i >= 3 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) throw e;
+        await sleep(retryMs);
+      }
+    }
+  }
+  const tag = () => `${now()}-${++mem.counter}`;
+  /** A folder goes under updates/stale (same drive as the home), a file next to itself: a running exe can be renamed but not deleted. */
+  async function moveAside(p, isDir) {
+    const to = isDir ? path.join(staleRoot, tag()) : `${p}.stale-${tag()}`;
+    F.mkdirSync(path.dirname(to), { recursive: true });
+    await mv(p, to);
+  }
+  function sweep() {
+    const tryRm = (p) => { try { F.rmSync(p, { recursive: true, force: true }); } catch { /* still locked: the next sweep tries again */ } };
+    try { for (const e of F.readdirSync(staleRoot)) tryRm(path.join(staleRoot, e)); } catch { /* none */ }
+    for (const d of new Set([gatewayDir, ...validatorsDirs])) {
+      try { for (const f of F.readdirSync(d)) if (/\.exe\..*stale-\d+-\d+$/.test(f)) tryRm(path.join(d, f)); } catch { /* no folder */ }
+    }
+  }
+
+  function planOps(kit, stage) {
+    const ops = [];
+    for (const n of UPDATE_PLUGINS) {
+      if (!kit.plugins.has(n)) continue;
+      ops.push({ kind: 'dir', target: path.join(localPlugins, n), src: path.join(stage, 'plugins', n), slot: `local-plugins/${n}` });
+      try { for (const p of F.readdirSync(profilesDir)) { const t = path.join(profilesDir, p, 'node_modules', n); if (F.existsSync(t)) ops.push({ kind: 'dir', target: t, src: path.join(stage, 'plugins', n), slot: `profile-${p}/${n}` }); } } catch { /* no profiles */ }
+    }
+    mem.skippedBinaries = [];
+    for (const name of kit.bins.keys()) {
+      const dirs = BINARIES[name] === 'gateway' ? [gatewayDir] : validatorsDirs;
+      const uniq = new Map(dirs.map((d) => [process.platform === 'win32' ? path.resolve(d).toLowerCase() : path.resolve(d), d]));
+      const found = [...uniq.values()].map((d) => path.join(d, name)).filter((f) => F.existsSync(f));
+      if (!found.length) mem.skippedBinaries.push(name);
+      for (const f of found) ops.push({ kind: 'file', target: f, src: path.join(stage, 'bin', name), name });
+    }
+    // every backup path is fixed here, before anything moves, so the journal is right even if the process dies mid-swap
+    for (const op of ops) {
+      op.newPath = `${op.target}.arc-new`;
+      if (F.existsSync(op.target)) op.backup = op.kind === 'dir' ? path.join(backupRoot, op.slot) : `${op.target}.arc-backup`;
+    }
+    return ops;
+  }
+
+  async function doOp(op) {
+    F.rmSync(op.newPath, { recursive: true, force: true });
+    if (op.kind === 'dir') {
+      F.cpSync(op.src, op.newPath, { recursive: true });
+      if (op.backup) { F.mkdirSync(path.dirname(op.backup), { recursive: true }); await mv(op.target, op.backup); }
+    } else {
+      F.copyFileSync(op.src, op.newPath);
+      if (op.backup) { if (F.existsSync(op.backup)) await moveAside(op.backup, false); await mv(op.target, op.backup); }
+    }
+    await mv(op.newPath, op.target);
+    op.done = true;
+  }
+
+  /** Put every moved item back. Collects errors instead of stopping at the first. */
+  async function restore(ops) {
+    const errors = [];
+    for (const op of [...ops].reverse()) {
+      try {
+        if (op.newPath) F.rmSync(op.newPath, { recursive: true, force: true });
+        if (op.backup && F.existsSync(op.backup)) {
+          if (F.existsSync(op.target)) await moveAside(op.target, op.kind === 'dir');
+          await mv(op.backup, op.target);
+        } else if (op.done && !op.backup && F.existsSync(op.target)) await moveAside(op.target, op.kind === 'dir');
+      } catch (e) { errors.push(`${path.basename(op.target)}: ${clean(e.message, 120)}`); }
+    }
+    return errors;
+  }
+
+  const live = (op, kit, name) => {
+    if (op.kind === 'file') return sha256(F.readFileSync(op.target)) === sha256(kit.bins.get(op.name));
+    return kit.plugins.get(name).every((f) => { try { return sha256(F.readFileSync(path.join(op.target, ...f.rel.split('/')))) === f.sha; } catch { return false; } });
+  };
+
+  function smoke(file, name, version) {
+    const kind = BINARIES[name];
+    let r;
+    try { r = run(file, kind === 'gateway' ? ['version'] : ['sha256', 'abc']); } catch (e) { throw fail('ERR_UPDATE_HEALTH', `${name} could not start: ${clean(e.message, 100)}`); }
+    if (!r || r.status !== 0) throw fail('ERR_UPDATE_HEALTH', `${name} did not run (${r && r.status !== null ? `exit ${r.status}` : 'no answer in time'})`);
+    if (kind === 'gateway' && !new RegExp(`(^|\\s)${version.replace(/\./g, '\\.')}(\\s|$)`).test(String(r.stdout))) throw fail('ERR_UPDATE_HEALTH', `${name} reports another version than ${version}`);
+    if (kind === 'validators') { let j; try { j = JSON.parse(r.stdout); } catch { j = null; } if (!j || j.sha256 !== sha256('abc')) throw fail('ERR_UPDATE_HEALTH', `${name} gave a wrong answer`); }
+  }
+
+  // The app can run in more than one process (desktop, web): a lock file keeps two of them from swapping at once.
+  function lock() {
+    F.mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 2; i++) {
+      try { F.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, at: now(), token: mem.token }), { flag: 'wx' }); return true; } catch (e) {
+        if (e.code !== 'EEXIST') throw e;
+        let at = readJson(lockFile, {}).at; // a lock another process is still writing reads as empty: its file time counts then
+        if (typeof at !== 'number') { try { at = F.statSync(lockFile).mtimeMs; } catch { return false; } }
+        if (now() - at < 20 * 60 * 1000) return false;
+        F.rmSync(lockFile, { force: true }); // left by a process that died
+      }
+    }
+    return false;
+  }
+  const unlock = () => { try { if (readJson(lockFile, {}).token === mem.token) F.rmSync(lockFile, { force: true }); } catch { /* a stale lock expires */ } };
+
+  // ---- install
+  async function install({ version, auto = false } = {}) {
+    if (mem.busy || !lock()) return { ok: false, error: 'An update is already running.' };
+    mem.busy = true;
+    let ops = [], toVersion = version || null, swapped = false;
+    const stage = path.join(dir, `stage-${tag()}`);
+    try {
+      const recovered = journal();
+      if (recovered && recovered.status === 'swapping') {
+        const errs = await restore(recovered.ops);
+        if (errs.length) { phase('failed', `An earlier update was cut short and could not be undone: ${errs.join('; ')}`); return { ok: false, error: `An earlier update was cut short and could not be undone: ${errs.join('; ')}` }; }
+        F.rmSync(journalFile, { force: true });
+      }
+      const st = await doCheck();
+      if (st.phase === 'failed') return { ok: false, error: st.message };
+      const pick = pickRelease(mem.releases, version);
+      if (!pick) return { ok: false, error: version ? `Release ${version} was not found.` : 'No release was found.' };
+      toVersion = pick.version;
+      const installed = readInstalled();
+      if (compareVersions(toVersion, installed) <= 0) { phase('idle', `Already up to date (${installed}).`); return { ok: false, error: `Already up to date (${installed}).` }; }
+      if (!pick.kit) { phase('idle', 'This release has no installable kit.'); return { ok: false, error: 'This release has no installable kit.' }; }
+      const sk = persisted().skipped;
+      if (auto && sk && sk.version === toVersion) return { ok: false, error: `Version ${toVersion} is skipped (${sk.reason}).` };
+
+      phase('downloading', `Downloading ${pick.kit.name}`);
+      const zip = await get(pick.kit.url, limits.maxKitBytes, 'application/octet-stream');
+      const sums = await get(pick.kit.sumsUrl, limits.maxSumsBytes, 'text/plain');
+      phase('verifying', 'Checking the checksum and every file');
+      const kit = verifyKit({ zip, sumsText: sums.toString('utf8'), version: toVersion, caps: limits });
+
+      phase('staging', 'Unpacking and testing the new programs');
+      F.rmSync(stage, { recursive: true, force: true });
+      const put = (rel, data) => { const f = path.join(stage, ...rel.split('/')); if (!path.resolve(f).startsWith(path.resolve(stage) + path.sep)) throw fail('ERR_ZIP_PATH', rel); F.mkdirSync(path.dirname(f), { recursive: true }); F.writeFileSync(f, data); };
+      for (const [n, files] of kit.plugins) for (const f of files) put(`plugins/${n}/${f.rel}`, f.data);
+      for (const [n, data] of kit.bins) { put(`bin/${n}`, data); smoke(path.join(stage, 'bin', n), n, toVersion); }
+
+      phase('installing', 'Replacing plugins and programs; the old ones are kept for a rollback');
+      ops = planOps(kit, stage);
+      if (F.existsSync(backupRoot)) { F.mkdirSync(staleRoot, { recursive: true }); await mv(backupRoot, path.join(staleRoot, `backup-${tag()}`)); }
+      F.mkdirSync(backupRoot, { recursive: true });
+      const meta = { fromVersion: installed, toVersion, at: new Date(now()).toISOString() };
+      const writeJournal = (status) => writeJson(journalFile, { ...meta, status, ops: ops.map(({ kind, target, backup, slot, name, done }) => ({ kind, target, backup, slot, name, done })) });
+      writeJournal('swapping');
+      swapped = true;
+      for (const op of ops) { try { await doOp(op); } finally { writeJournal('swapping'); } }
+
+      phase('testing', 'Checking the installed files and programs');
+      for (const op of ops) {
+        const name = op.kind === 'dir' ? path.basename(op.target) : null;
+        if (!live(op, kit, name)) throw fail('ERR_UPDATE_HEALTH', `${path.basename(op.target)} does not match the kit after the swap`);
+      }
+      for (const op of ops.filter((o) => o.kind === 'file')) smoke(op.target, op.name, toVersion);
+      writeJournal('complete');
+      mem.healthy = true; mem.restartNeeded = true;
+      save({ skipped: null });
+      F.rmSync(stage, { recursive: true, force: true });
+      sweep();
+      phase('done', `Updated to ${toVersion}. Restart Arc Harness to use it.`);
+      return { ok: true, version: toVersion };
+    } catch (err) {
+      const msg = clean(err.message, 300);
+      let rolled = false;
+      if (swapped) {
+        const errors = await restore(ops);
+        rolled = true;
+        if (!errors.length) F.rmSync(journalFile, { force: true });
+        mem.healthy = errors.length === 0;
+        if (errors.length) save({ skipped: { version: toVersion, reason: `failed: ${msg}`, at: new Date(now()).toISOString() } });
+        if (errors.length) { phase('failed', `${msg}. The rollback was not complete: ${errors.join('; ')}`); return { ok: false, error: `${msg}. The rollback was not complete: ${errors.join('; ')}` }; }
+      }
+      const transient = err.code === 'ERR_UPDATE_HTTP' || err.code === 'ERR_UPDATE_SIZE' || err.name === 'TimeoutError' || err.name === 'AbortError' || err instanceof TypeError;
+      if (toVersion && !transient) save({ skipped: { version: toVersion, reason: `failed: ${msg}`, at: new Date(now()).toISOString() } });
+      const text = rolled ? `${msg}. The old files were put back (rolled back).` : msg;
+      phase(rolled ? 'rolled-back' : 'failed', text);
+      return { ok: false, error: text };
+    } finally {
+      try { F.rmSync(stage, { recursive: true, force: true }); } catch { /* leftover in updates/ only */ }
+      mem.busy = false;
+      unlock();
+    }
+  }
+
+  // ---- rollback
+  async function rollback() {
+    if (mem.busy || !lock()) return { ok: false, error: 'An update is already running.' };
+    const j = journal();
+    if (!j || !['complete', 'swapping'].includes(j.status)) { unlock(); return { ok: false, error: 'There is no backup to roll back to.' }; }
+    mem.busy = true;
+    try {
+      const errors = await restore(j.ops);
+      if (errors.length) { phase('failed', `The rollback was not complete: ${errors.join('; ')}`); return { ok: false, error: `The rollback was not complete: ${errors.join('; ')}` }; }
+      F.rmSync(journalFile, { force: true });
+      try { F.rmSync(backupRoot, { recursive: true, force: true }); } catch { /* swept later */ }
+      save({ skipped: { version: j.toVersion, reason: 'rolled-back', at: new Date(now()).toISOString() } });
+      mem.restartNeeded = true; mem.healthy = true;
+      sweep();
+      phase('rolled-back', `Back to ${j.fromVersion}. Restart Arc Harness to use it.`);
+      return { ok: true, version: j.fromVersion };
+    } finally { mem.busy = false; unlock(); }
+  }
+
+  // ---- modes and the timer
+  function setMode(mode) {
+    if (!MODES.includes(mode)) throw new Error(`Unknown update mode: ${clean(mode, 20)}. Use off, notify or auto.`);
+    writeJson(settingsFile, { ...readJson(settingsFile, {}), mode });
+    return getState();
+  }
+  async function tick() {
+    const { mode } = settings();
+    if (mode === 'off') return { action: 'off' };
+    const s = await check();
+    if (s.phase === 'failed') return { action: 'error', message: s.message };
+    if (!s.available) return { action: 'none' };
+    if (!s.installable) return { action: 'no-kit' };
+    if (mode === 'notify') return { action: 'notified', version: s.latest };
+    if (s.skipped && s.skipped.version === s.latest) return { action: 'skipped', version: s.latest, reason: s.skipped.reason };
+    const r = await install({ auto: true });
+    return r.ok ? { action: 'installed', version: r.version } : { action: 'failed', message: r.error };
+  }
+  let timers = [];
+  function start({ firstAfterMs = 60000 } = {}) {
+    stop();
+    const every = () => settings().intervalHours * 3600 * 1000;
+    const loop = () => { tick().catch(() => {}).finally(() => { const t = setTimeout(loop, every()); t.unref?.(); timers = [t]; }); };
+    const t = setTimeout(loop, firstAfterMs); t.unref?.(); timers = [t];
+  }
+  function stop() { for (const t of timers) clearTimeout(t); timers = []; }
+
+  return { getState, check, install, rollback, setMode, tick, sweep, start, stop };
+}

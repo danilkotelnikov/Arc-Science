@@ -45,6 +45,31 @@ The copy runs only when `~/.dsh` exists and `~/.arc` has no `profiles` folder ye
 The tools look for the app in the `resources` folder of the original app. That is where the official installer puts it.
 If yours is elsewhere, set the environment variable `ARC_RESOURCES`. The live tests read `ARC_APP_DIR` for the folder that holds the program. [Run the tests](Run-the-tests) has the details.
 
+## Update plugins and programs
+
+An installed Arc Harness can fetch newer plugins and native programs from [GitHub Releases](https://github.com/danilkotelnikov/Arc-Science/releases). Open the console and choose **Updates**. The panel shows the installed and the latest version, the release notes, and these controls:
+
+- **Update mode.** *Off* never looks for updates. *Notify* (the default) looks every 12 hours and tells you in the console. *Auto* also installs a newer version. A manual **Check now** and **Update now** work in every mode.
+- **Update now.** It downloads the kit zip and `SHA256SUMS.txt` of the same release and checks the zip against the checksum file. It then checks every plugin and program file against `RELEASE-MANIFEST.json`, unpacks into a temporary folder, and starts each new program once to see that it runs. Only then does it swap the files.
+- **Roll back.** It puts the previous plugins and programs back from the one backup that the last update kept. Auto mode then skips the version you rolled back from. A version that failed is skipped by auto mode too, until a newer one appears.
+
+What an update replaces:
+
+- the seven kit plugins in `~/.arc/local-plugins`, and the copy of each in the profile folders (`~/.arc/profiles/<name>/node_modules`), because the app loads that copy;
+- `arc-gateway.exe` where it is installed, and `arc-validators.exe` where a copy already exists.
+
+What it never touches: your data in `~/.arc` (conversations, keys, settings), the app archive (`app.asar`), and plugins that are not in the kit.
+
+The programs start with the next launch of Arc Harness. The panel asks you to restart; the app never closes itself. If a check after the swap fails, the update puts the old files back by itself and the panel says so.
+
+A release that has no kit zip, such as `v0.5.0`, shows *no installable kit*. A kit built before the file digest list existed (`files` in `RELEASE-MANIFEST.json`) is refused, because its files cannot be checked one by one.
+
+The checksum limit: the checksum file comes from the same release as the zip. It proves that the download is complete and was not changed on the way. It does not prove who built the kit. Anyone who can publish to the release can publish both files.
+
+An update does not change the Electron shell. The app archive still comes from the build and install steps above.
+
+Not tested: no update ran against the real GitHub release yet, because it needs a release newer than the installed one. The tests use a fake release server.
+
 ## Check which archive is installed
 
 Run `node tools/install.mjs status`. It says one of three things: the original archive, the current Arc Harness build, or an archive that matches neither. It also says whether the update feed file is present.

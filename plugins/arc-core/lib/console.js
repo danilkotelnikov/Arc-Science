@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const WORKSPACES = Object.freeze(['Research', 'Memory', 'Molecullage', 'Prose']);
-export const CONNECTORS = Object.freeze(['Servers', 'Keys', 'Apps', 'Audit']);
+export const CONNECTORS = Object.freeze(['Servers', 'Keys', 'Apps', 'Audit', 'Updates']);
 export const SEATS = Object.freeze(['Planner', 'Reviewer', 'Falsifier', 'Vision', 'Prose']);
 export const RESEARCH_PANES = Object.freeze(['Map', 'Claims', 'Evidence']);
 export const RESEARCH_VIEWS = Object.freeze(['Map', 'Claims', 'Evidence', 'Release']);
@@ -1020,14 +1020,21 @@ export function createResearchSessionStore(opts = {}) {
   };
 }
 
-export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = createResearchSessionStore()) {
+// extra.updater: the updater of updater.js. Update routes: state (read) and action (POST only, same-origin or loopback pages only).
+const LOOPBACK_ORIGIN = /^(?:127\.0\.0\.1|localhost|\[::1\])$/;
+export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = createResearchSessionStore(), extra = {}) {
+  const updater = extra && extra.updater;
   let routePath = '';
+  let method = 'POST', origin = null, host = null;
   let payload = maybeBody || {};
   if (typeof reqOrPath === 'string') {
     routePath = reqOrPath;
   } else if (reqOrPath && typeof reqOrPath.url === 'string') {
     const u = new URL(reqOrPath.url, 'http://127.0.0.1');
     routePath = u.pathname;
+    method = String(reqOrPath.method || 'GET').toUpperCase();
+    host = u.host;
+    origin = reqOrPath.headers && typeof reqOrPath.headers.get === 'function' ? reqOrPath.headers.get('origin') : null;
     if (reqOrPath.method === 'POST' && typeof reqOrPath.text === 'function') {
       const raw = await reqOrPath.text();
       if (raw && raw.trim()) {
@@ -1052,7 +1059,39 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
   }
   if (clean === 'api/arc-core/console/state') {
     if (typeof store.refreshLive === 'function') await store.refreshLive(false);
-    return store.snapshot();
+    const snap = store.snapshot();
+    if (updater) { const u = updater.getState(); snap.update = { available: u.available && u.installable, latest: u.latest, phase: u.phase, restartNeeded: u.restartNeeded }; }
+    return snap;
+  }
+  if (clean === 'api/arc-core/update/state') {
+    if (!updater) return { ok: false, error: 'Updates are not available in this build.' };
+    return { ok: true, ...updater.getState() };
+  }
+  if (clean === 'api/arc-core/update/action') {
+    if (!updater) return { ok: false, error: 'Updates are not available in this build.' };
+    if (method !== 'POST') return { ok: false, status: 405, error: 'Use POST.' };
+    // a page on a rebound name (evil.example resolving to 127.0.0.1) has a non-loopback Host; an opaque Origin ("null") is a sandboxed frame
+    const hostName = String(host || '').replace(/:\d+$/, '');
+    if (!LOOPBACK_ORIGIN.test(hostName)) return { ok: false, status: 403, error: 'Update settings change only from this computer.' };
+    if (origin) {
+      let o = null;
+      try { o = new URL(origin); } catch { /* refused below */ }
+      if (!o || !LOOPBACK_ORIGIN.test(o.hostname)) return { ok: false, status: 403, error: 'This page may not change update settings.' };
+    }
+    if (payload.kind === 'check') return { ok: true, ...(await updater.check()) };
+    if (payload.kind === 'mode') {
+      try { return { ok: true, ...updater.setMode(payload.mode) }; } catch (err) { return { ok: false, error: String(err.message || err) }; }
+    }
+    if (payload.kind === 'install') {
+      const version = typeof payload.version === 'string' && /^\d+\.\d+\.\d+$/.test(payload.version) ? payload.version : undefined;
+      if (updater.getState().busy) return { ok: false, error: 'An update is already running.' };
+      const run = updater.install({ version });
+      if (payload.wait === true) { const r = await run; return { ...r, state: updater.getState() }; }
+      run.catch(() => {}); // progress comes through update/state
+      return { ok: true, started: true, state: updater.getState() };
+    }
+    if (payload.kind === 'rollback') { const r = await updater.rollback(); return { ...r, state: updater.getState() }; }
+    return { ok: false, error: `Unknown update action: ${String(payload.kind || '')}` };
   }
   if (clean === 'api/arc-core/console/action') {
     if (payload.kind === 'workspace') return store.selectWorkspace(payload.workspace);
@@ -1083,7 +1122,7 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
   return { ok: false, error: `Unknown console route: ${clean}` };
 }
 
-export function registerConsoleRoutes(ctx, store = createResearchSessionStore()) {
+export function registerConsoleRoutes(ctx, store = createResearchSessionStore(), extra = {}) {
   if (!ctx || typeof ctx.inject !== 'function') return [];
   const routes = [
     '/api/arc-core/session/head',
@@ -1092,6 +1131,8 @@ export function registerConsoleRoutes(ctx, store = createResearchSessionStore())
     '/api/arc-core/session/decisions',
     '/api/arc-core/console/state',
     '/api/arc-core/console/action',
+    '/api/arc-core/update/state',
+    '/api/arc-core/update/action',
   ];
   const disposers = [];
   ctx.inject(['connection'], (c) => {
@@ -1107,9 +1148,9 @@ export function registerConsoleRoutes(ctx, store = createResearchSessionStore())
           requestBody: 'buffered',
           fetch: async (req) => {
             try {
-              const body = await serveConsoleRoute(req, {}, store);
+              const body = await serveConsoleRoute(req, {}, store, extra);
               return new Response(JSON.stringify(body), {
-                status: body.ok ? 200 : 400,
+                status: typeof body.status === 'number' ? body.status : (body.ok ? 200 : 400),
                 headers: {
                   'content-type': 'application/json',
                   'cache-control': 'no-store',

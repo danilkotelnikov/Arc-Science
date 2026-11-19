@@ -114,7 +114,7 @@ test('1. Built-in session read routes (head, timeline, tree, decisions) mount vi
   });
 
   assert.deepEqual(injectedDeps, ['connection']);
-  assert.equal(effects.length, 6);
+  assert.equal(effects.length, 8);
 
   for (const route of [
     '/api/arc-core/session/head',
@@ -123,6 +123,8 @@ test('1. Built-in session read routes (head, timeline, tree, decisions) mount vi
     '/api/arc-core/session/decisions',
     '/api/arc-core/console/state',
     '/api/arc-core/console/action',
+    '/api/arc-core/update/state',
+    '/api/arc-core/update/action',
   ]) {
     assert.ok(registered.has(route), `missing route ${route}`);
     const cfg = registered.get(route);
@@ -137,7 +139,7 @@ test('1. Built-in session read routes (head, timeline, tree, decisions) mount vi
   const headJson = await headRes.json();
   assert.equal(headJson.ok, true);
   assert.deepEqual(headJson.workspaces, ['Research', 'Memory', 'Molecullage', 'Prose']);
-  assert.deepEqual(headJson.connectors, ['Servers', 'Keys', 'Apps', 'Audit']);
+  assert.deepEqual(headJson.connectors, ['Servers', 'Keys', 'Apps', 'Audit', 'Updates']);
   assert.deepEqual(headJson.seats, ['Planner', 'Reviewer', 'Falsifier', 'Vision', 'Prose']);
   assert.equal(headJson.ladderRungs.find((r) => r.id === 'L5').active, false);
   assert.equal(headJson.ladderRungs.find((r) => r.id === 'L6').active, false);
@@ -336,7 +338,7 @@ test('4. Workspaces, Connectors, local Prose rewrite, and Settings render with S
       }
     }
 
-    for (const conn of ['Servers', 'Keys', 'Apps', 'Audit']) {
+    for (const conn of ['Servers', 'Keys', 'Apps', 'Audit', 'Updates']) {
       store.selectConnector(conn);
       const connTree = renderTree({
         type: mod.View,
@@ -436,4 +438,66 @@ test('6. Console action handles owner notes, verdicts, pins, non-blocking retain
     const pinBtn = allNodes(mTree).find((n) => n.props?.['data-molecullage-pin'] === 'pdb-1mel'); assert.ok(pinBtn);
     pinBtn.props.onClick(); eq(acts.at(-1).kind, 'molecullage-pin');
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});
+
+test('7. Updates connector: status line, mode buttons, actions, progress, restart prompt, release notes; helper text lives in Hint popovers', () => {
+  const { mod, source } = loadPanel();
+  const en = makeTranslator(mod.en);
+  const view = (info, error) => renderTree({ type: mod.UpdatesView, props: { info, error, pending: false, onAction: () => {}, t: en }, children: [] });
+  const base = { installed: '0.6.0', latest: '0.6.0', available: false, installable: true, mode: 'notify', phase: 'idle', busy: false, hasBackup: false, notes: '', restartNeeded: false };
+  const find = (tree, key) => allNodes(tree).find((n) => n.props && n.props[key] !== undefined);
+  const text = (n) => allWords(n).join(' ');
+  const btn = (tree, key, val) => allNodes(tree).find((n) => n.type === 'button' && n.props[key] === (val ?? 'true'));
+
+  let tree = view(base);
+  assert.match(text(find(tree, 'data-updates-status')), /up to date/i);
+  assert.equal(text(find(tree, 'data-updates-versions')).includes('0.6.0'), true);
+  assert.equal(btn(tree, 'data-update-install').props.disabled, true, 'nothing newer: Update now is disabled');
+  assert.equal(btn(tree, 'data-update-rollback').props.disabled, true, 'no backup: Roll back is disabled');
+  assert.equal(btn(tree, 'data-update-mode', 'notify').props['aria-pressed'], true);
+  assert.equal(btn(tree, 'data-update-mode', 'auto').props['aria-pressed'], false);
+
+  tree = view({ ...base, latest: '0.7.0', available: true, notes: 'Notes for 0.7.0', hasBackup: true });
+  assert.match(text(find(tree, 'data-updates-status')), /0\.7\.0 is ready/);
+  assert.equal(btn(tree, 'data-update-install').props.disabled, false);
+  assert.equal(btn(tree, 'data-update-rollback').props.disabled, false);
+  assert.ok(find(tree, 'data-updates-notes'), 'release notes show');
+  const calls = [];
+  const onClick = btn(tree, 'data-update-mode', 'auto').props.onClick;
+  assert.equal(typeof onClick, 'function');
+
+  tree = view({ ...base, latest: '0.7.0', available: true, installable: false });
+  assert.match(text(find(tree, 'data-updates-status')), /no installable kit/i);
+  assert.equal(btn(tree, 'data-update-install').props.disabled, true);
+
+  tree = view({ ...base, latest: '0.7.0', available: true, busy: true, phase: 'verifying', message: 'Checking the checksum and every file' });
+  assert.ok(find(tree, 'data-updates-progress'), 'progress phases show while an update runs');
+  assert.equal(allNodes(tree).find((n) => n.props && n.props.role === 'progressbar').props['aria-valuenow'], 2);
+  assert.equal(btn(tree, 'data-update-check').props.disabled, true);
+  assert.match(text(find(tree, 'data-updates-why')), /running/i);
+
+  tree = view({ ...base, installed: '0.7.0', latest: '0.7.0', phase: 'done', restartNeeded: true, hasBackup: true });
+  assert.ok(find(tree, 'data-updates-restart'), 'a restart prompt, never a silent close');
+
+  // R005: the visible one-line texts are at most 90 characters; the long explanations sit in Hint popovers
+  const long = 'x'.repeat(200);
+  const lineTexts = ['data-updates-status', 'data-updates-why'].map((k) => text(find(view({ ...base, busy: true }, long), k)));
+  for (const l of lineTexts) assert.ok(l.length <= 90, `${l.length} chars: ${l}`);
+  assert.equal(allNodes(view(base)).filter((n) => n.props && n.props['data-hint'] === 'true').length >= 4, true);
+  for (const k of Object.keys(mod.en).filter((x) => x.startsWith('updates.hint.'))) assert.ok(mod.en[k].length > 40);
+  for (const [k, v] of Object.entries(mod.en).filter(([x]) => /^updates\.(status|why)\./.test(x))) assert.ok(v.length <= 90, `${k}: ${v.length}`);
+  void calls; void source;
+});
+
+test('8. Updates panel source: no blue or violet, no default blue controls, no middle dot, no HTML injection', () => {
+  const { source } = loadPanel();
+  const start = source.indexOf('// ---- Updates connector'), end = source.indexOf('function ConnectorView');
+  const part = source.slice(start, end);
+  assert.ok(part.length > 1000);
+  assert.equal(/·|·/.test(part), false, 'no middle dot');
+  assert.equal(/dangerouslySetInnerHTML|innerHTML/.test(part), false, 'notes are plain text');
+  assert.equal(/type:\s*"radio"|<progress|type:\s*"range"/.test(part), false, 'no browser-default blue radio, progress or range');
+  assert.equal(/#[0-9a-fA-F]{3,8}|rgba?\(|hsla?\(|oklch\(/.test(part), false, 'colours come from theme tokens, never from literals');
+  assert.equal(/(blue|purple|violet|indigo|navy)/i.test(part), false);
+  assert.match(part, /outline:2px solid currentColor/, 'own focus ring, not the default blue one');
 });

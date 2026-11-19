@@ -1,7 +1,7 @@
 /**
  * arc-core 0.1.0 (2026-11-09): Unified C2 console panel (Phase 1b.2-1b.3 & Phase 4.1-4.8).
  * Workspaces: Research, Memory, Molecullage, Prose.
- * Connectors: Servers, Keys, Apps, Audit; plus Settings.
+ * Connectors: Servers, Keys, Apps, Audit, Updates; plus Settings.
  * Research session: 3-pane layout (Map, Claims, Evidence) + Release view,
  * Decision map (Pursue, Park, Drop, Request a test), validation ladder L1-L4
  * (with L5/L6 operator switches off by default), and 30-day consent dialog.
@@ -12,7 +12,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   const NS = "arc-core", TAB = "arc-core-console";
 
   const WORKSPACES = ["Research", "Memory", "Molecullage", "Prose"];
-  const CONNECTORS = ["Servers", "Keys", "Apps", "Audit"];
+  const CONNECTORS = ["Servers", "Keys", "Apps", "Audit", "Updates"];
   const SEATS = ["Planner", "Reviewer", "Falsifier", "Vision", "Prose"];
   const RESEARCH_VIEWS = ["Map", "Claims", "Evidence", "Release"];
   const DECISION_ACTIONS = ["Pursue", "Park", "Drop", "Request a test"];
@@ -44,6 +44,30 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "connector.keys": "Connector keys",
     "connector.apps": "Connector apps",
     "connector.audit": "Connector audit",
+    "connector.updates": "Updates",
+    "updates.installed": "Installed",
+    "updates.latest": "Latest",
+    "updates.mode": "Update mode",
+    "updates.off": "Off",
+    "updates.notify": "Notify",
+    "updates.auto": "Auto",
+    "updates.check": "Check now",
+    "updates.install": "Update now",
+    "updates.rollback": "Roll back",
+    "updates.notes": "Release notes",
+    "updates.progress": "Update progress",
+    "updates.hint.mode": "Off never looks for updates. Notify looks and tells you here. Auto also installs them. A manual check and a manual update work in every mode.",
+    "updates.hint.scope": "An update replaces the Arc plugins and the gateway and validator programs. Your data, keys and conversations stay where they are. The app itself is not changed.",
+    "updates.hint.checksum": "The checksum file comes from the same release as the download. It proves the download is complete, not who built it.",
+    "updates.hint.rollback": "Roll back puts the previous plugins and programs back. Auto mode then skips the version you rolled back from.",
+    "updates.hint.restart": "Updated programs start with the next launch. Arc Harness never closes itself.",
+    "updates.status.unknown": "Not checked yet.",
+    "updates.status.current": "You are up to date.",
+    "updates.status.ready": "Version {v} is ready to install.",
+    "updates.status.nokit": "Version {v} has no installable kit yet.",
+    "updates.status.restart": "Restart Arc Harness to finish the update.",
+    "updates.why.install": "Update now needs a newer release with an installable kit.",
+    "updates.why.busy": "An update is running.",
     "consent.title": "Connector consent",
     "consent.prompt": "Choose access duration for {appId}",
     "memory.title": "Shared memory gateway",
@@ -201,7 +225,110 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         onClose ? h("button", { type: "button", onClick: onClose, style: btnStyle(false) }, "Close") : null));
   }
 
+  // ---- Updates connector: plugins and native programs, from GitHub releases (arc-core/lib/updater.js)
+  const UPDATE_PHASES = ["downloading", "verifying", "staging", "installing", "testing", "done"];
+  const UPDATE_PHASE_LABEL = { downloading: "Download", verifying: "Verify", staging: "Stage", installing: "Install", testing: "Test", done: "Done" };
+  const UPDATE_MODES = ["off", "notify", "auto"];
+  const UPDATE_CSS = ".arc-upd button:focus-visible,.arc-upd summary:focus-visible{outline:2px solid currentColor;outline-offset:2px}" +
+    ".arc-upd button:disabled{opacity:.5;cursor:not-allowed}.arc-upd pre{white-space:pre-wrap;margin:0;font-family:inherit}";
+  // the C2 primary pair (dark brown on paper, cream on the dark canvas) from the theme tokens
+  const upBtn = (active) => ({
+    ...btnStyle(false),
+    ...(active ? { background: "var(--dsw-alias-brand-primary-new-colorprimary-new-color, currentColor)", color: "var(--dsw-alias-bg-base, Canvas)", fontWeight: 600 } : {}),
+  });
+  const clampLine = (s, n = 90) => (String(s).length > n ? String(s).slice(0, n - 1) + "…" : String(s));
+
+  function Hint({ label, text }) {
+    const [open, setOpen] = React.useState(false);
+    return h("span", { style: { position: "relative", display: "inline-block" } },
+      h("button", {
+        type: "button", "aria-label": label, "aria-expanded": open, "data-hint": "true",
+        onClick: () => setOpen(!open),
+        style: { ...btnStyle(false), padding: "0 6px", borderRadius: "50%", fontSize: 11, lineHeight: "16px" },
+      }, "?"),
+      open ? h("span", { role: "note", style: { position: "absolute", left: 0, top: "calc(100% + 4px)", zIndex: 5, width: 260, padding: "8px 10px", fontSize: 12, lineHeight: 1.45, background: SURFACE, color: INK, border: HAIRLINE, borderRadius: RADIUS, boxShadow: "0 2px 10px color-mix(in srgb, currentColor 18%, transparent)" } }, text) : null);
+  }
+
+  function updateStatus(u, error, t) {
+    if (error) return error;
+    if (u.phase === "failed" || u.phase === "rolled-back") return u.message || "";
+    if (u.busy && u.message) return u.message;
+    if (u.restartNeeded) return t("updates.status.restart");
+    if (!u.latest) return u.message || t("updates.status.unknown");
+    if (u.available && u.installable) return t("updates.status.ready", { v: u.latest });
+    if (u.available) return t("updates.status.nokit", { v: u.latest });
+    return t("updates.status.current");
+  }
+
+  function UpdatesView({ info, error, pending, onAction, t }) {
+    const u = info || { installed: "", latest: null, available: false, installable: false, mode: "notify", phase: "idle", busy: false, hasBackup: false, notes: "" };
+    const busy = Boolean(u.busy || pending);
+    const canInstall = Boolean(u.available && u.installable && !busy);
+    const canRollback = Boolean(u.hasBackup && !busy);
+    const status = updateStatus(u, error, t);
+    const idx = UPDATE_PHASES.indexOf(u.phase);
+    const showSteps = idx >= 0 || u.busy;
+    const why = busy ? t("updates.why.busy") : !canInstall && !u.available ? t("updates.why.install") : "";
+    const row = { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" };
+    return h("section", { className: "arc-upd", "aria-label": t("connector.updates"), "data-connector-view": "Updates", style: { display: "grid", gap: 12, fontFamily: TEXT_FONT, fontSize: 13, color: INK } },
+      h("style", null, UPDATE_CSS),
+      h("div", { style: { ...row, justifyContent: "space-between" } },
+        h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("connector.updates")),
+        h("span", { style: row }, h(Hint, { label: "About what an update replaces", text: t("updates.hint.scope") }), h(Hint, { label: "About the checksum", text: t("updates.hint.checksum") }))),
+      h("div", { style: row, "data-updates-versions": "true" },
+        h("span", { style: muted }, `${t("updates.installed")}:`), h("code", { style: tagStyle }, u.installed || "unknown"),
+        h("span", { style: muted }, `${t("updates.latest")}:`), h("code", { style: tagStyle }, u.latest || "not checked")),
+      h("div", { style: row, ...(u.restartNeeded ? { "data-updates-restart": "true" } : {}) },
+        h("p", { role: "status", "data-updates-status": "true", title: status, style: { margin: 0, fontSize: 12, opacity: 0.85, fontWeight: u.restartNeeded ? 600 : 400 } }, clampLine(status)),
+        u.restartNeeded ? h(Hint, { label: "About restarting", text: t("updates.hint.restart") }) : null),
+      h("div", { style: row, role: "group", "aria-label": t("updates.mode") },
+        h("span", { style: muted }, `${t("updates.mode")}:`),
+        UPDATE_MODES.map((m) => h("button", { key: m, type: "button", "data-update-mode": m, "aria-pressed": u.mode === m, onClick: () => onAction && onAction({ kind: "mode", mode: m }), style: upBtn(u.mode === m) }, t(`updates.${m}`))),
+        h(Hint, { label: "About update modes", text: t("updates.hint.mode") })),
+      h("div", { style: row },
+        h("button", { type: "button", "data-update-check": "true", disabled: busy, onClick: () => onAction && onAction({ kind: "check" }), style: btnStyle(false) }, t("updates.check")),
+        h("button", { type: "button", "data-update-install": "true", disabled: !canInstall, onClick: () => onAction && onAction({ kind: "install" }), style: upBtn(canInstall) }, t("updates.install")),
+        h("button", { type: "button", "data-update-rollback": "true", disabled: !canRollback, onClick: () => onAction && onAction({ kind: "rollback" }), style: btnStyle(false) }, t("updates.rollback")),
+        h(Hint, { label: "About rolling back", text: t("updates.hint.rollback") })),
+      why ? h("p", { "data-updates-why": "true", style: { margin: 0, fontSize: 12, opacity: 0.68 } }, clampLine(why)) : null,
+      showSteps
+        ? h("div", { "data-updates-progress": "true", style: { display: "grid", gap: 6 } },
+            h("div", { role: "progressbar", "aria-label": t("updates.progress"), "aria-valuemin": 0, "aria-valuemax": UPDATE_PHASES.length, "aria-valuenow": Math.max(idx + 1, 0), style: { height: 4, borderRadius: 2, background: "color-mix(in srgb, currentColor 14%, transparent)", overflow: "hidden" } },
+              h("div", { style: { height: "100%", width: `${Math.round(((Math.max(idx, -1) + 1) / UPDATE_PHASES.length) * 100)}%`, background: "var(--dsw-alias-brand-primary-new-colorprimary-new-color, currentColor)" } })),
+            h("ol", { style: { display: "flex", gap: 10, flexWrap: "wrap", margin: 0, padding: 0, listStyle: "none", fontSize: 12 } },
+              UPDATE_PHASES.map((ph, i) => h("li", { key: ph, "aria-current": i === idx ? "step" : undefined, style: { fontWeight: i === idx ? 600 : 400, opacity: i <= idx ? 1 : 0.68 } }, UPDATE_PHASE_LABEL[ph]))))
+        : null,
+      u.notes ? h("details", { "data-updates-notes": "true", style: { borderTop: HAIRLINE, paddingTop: 8 } }, h("summary", { style: { cursor: "pointer", fontWeight: 600, fontSize: 12 } }, t("updates.notes")), h("pre", { style: { marginTop: 6, fontSize: 12, opacity: 0.85 } }, u.notes)) : null);
+  }
+
+  function UpdatesPanel({ t }) {
+    const [info, setInfo] = React.useState(null);
+    const [error, setError] = React.useState("");
+    const [pending, setPending] = React.useState(false);
+    const post = async (route, body) => {
+      const r = await fetch(route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
+      return r.json().catch(() => null);
+    };
+    const load = async () => {
+      try { const j = await post("api/arc-core/update/state"); if (j && j.ok) { setInfo(j); setError(""); } else setError((j && j.error) || "Could not read the update state."); } catch { setError("Could not read the update state."); }
+    };
+    const act = async (payload) => {
+      setError(""); setPending(true);
+      try { const j = await post("api/arc-core/update/action", payload); if (!j || j.ok === false) setError((j && j.error) || "The action failed."); } catch { setError("The action failed."); }
+      setPending(false);
+      await load();
+    };
+    const busy = Boolean(info && info.busy);
+    React.useEffect(() => {
+      load();
+      const id = setInterval(load, busy ? 1200 : 15000);
+      return () => clearInterval(id);
+    }, [busy]);
+    return h(UpdatesView, { info, error, pending, onAction: act, t });
+  }
+
   function ConnectorView({ connector, detail, onOpenConsent, t }) {
+    if (connector === "Updates") return h(UpdatesPanel, { t });
     const rows = (detail && detail[connector]) || [];
     const titleKey = `connector.${String(connector || "servers").toLowerCase()}`;
     return h("section", {
@@ -462,7 +589,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
               "aria-pressed": isActive,
               onClick: () => onSelectConnector && onSelectConnector(conn),
               style: btnStyle(isActive),
-            }, conn);
+            }, conn === "Updates" && data.update && data.update.available && data.update.latest ? `Updates (${data.update.latest})` : conn);
           }),
           h("button", {
             type: "button",
@@ -785,6 +912,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     View,
     ConsentDialog,
     ConnectorView,
+    UpdatesView,
     ResearchWorkspace,
     WORKSPACES,
     CONNECTORS,
