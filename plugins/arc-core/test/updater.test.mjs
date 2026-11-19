@@ -568,7 +568,7 @@ test('a lock file from another process refuses an update; an old one is cleared'
 test('the test switch refuses the real data folder and the real gateway folder', () => {
   assert.throws(() => createUpdater({ env: ENV }), /ERR_UPDATE_TEST_PATHS/);
   assert.throws(() => createUpdater({ env: ENV, home: path.join(os.homedir(), '.arc'), gatewayDir: tmp('gw') }), /ERR_UPDATE_TEST_PATHS/);
-  assert.throws(() => createUpdater({ env: ENV, home: tmp('h'), gatewayDir: path.join(process.env.LOCALAPPDATA || os.homedir(), 'Programs', 'ArcGateway') }), /ERR_UPDATE_TEST_PATHS/);
+  assert.throws(() => createUpdater({ env: ENV, home: tmp('h'), gatewayDir: path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'ArcGateway') }), /ERR_UPDATE_TEST_PATHS/);
 });
 
 test('without the test switch, the API address and repository cannot be changed', async (t) => {
