@@ -172,7 +172,7 @@ test('URL policy: https GitHub hosts only; loopback only behind the test switch'
   for (const ok of ['https://api.github.com/repos/o/r/releases', 'https://github.com/o/r/releases/download/v1/x.zip', 'https://objects.githubusercontent.com/a', 'https://release-assets.githubusercontent.com/a']) {
     assert.doesNotThrow(() => assertAllowedUrl(ok, {}), ok);
   }
-  for (const bad of ['http://api.github.com/x', 'https://evil.example/x', 'https://github.com.evil.example/x', 'https://user:pw@github.com/x', 'https://github.com:8443/x', 'http://127.0.0.1:9/x', 'https://127.0.0.1/x', 'file:///c:/x', 'https://[::1]/x']) {
+  for (const bad of ['http://api.github.com/x', 'https://evil.example/x', 'https://github.com.evil.example/x', 'https://user:pw@github.com/x', 'https://github.com:8443/x', 'http://127.0.0.1:9/x', 'https://127.0.0.1/x', 'file:///c:/x', 'https://[::1]/x']) { // privacy-scan: allow (a made-up URL with credentials)
     assert.throws(() => assertAllowedUrl(bad, {}), /ERR_UPDATE_HOST/, bad);
   }
   assert.doesNotThrow(() => assertAllowedUrl('http://127.0.0.1:9/x', ENV));
