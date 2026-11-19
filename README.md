@@ -5,11 +5,9 @@
   </picture>
 </p>
 
-<h1 align="center">Arc Harness</h1>
+<p align="center">Predict the future with the flow of your thoughts</p>
 
-<p align="center">
-  <strong>A desktop scientific workbench where the agent that writes a change never approves its own work.</strong>
-</p>
+<p align="center">We build AI-driven computational biology and chemistry around advanced harness-gated approach where the environment make our results humanely acceptable, verifiable and reliable.</p>
 
 <p align="center">
   <a href="../../releases/tag/v0.6.0"><img alt="Release 0.6.0" src="https://img.shields.io/badge/release-0.6.0-54453c?style=flat-square"></a>
@@ -38,7 +36,7 @@
 
 ## Overview
 
-Arc Harness is a local desktop workbench for scientific software and research sessions. Models read and edit workspace files, run shell commands under explicit permission modes, retrieve web documents, and query shared memory. Every non-trivial change passes through an independent verification gate run by a separate model family or deterministic validator before acceptance.
+Arc Harness checks scientific claims one at a time, and the model that built a claim never signs it. Models read and edit workspace files, run shell commands under explicit permission modes, retrieve web documents, and query shared memory, while every non-trivial change passes through an independent verification gate run by a separate model family or deterministic validator.
 
 This repository ships the **Arc Harness 0.6.0** build kit. It contains seven built-in plugins, the unified C2 console, the 1M Library memory index, and the tiered web crawler. It also includes the native Go loopback gateway, six zero-dependency Rust validators, headless benchmark runners, and Windows release packaging tools. Every package, plugin, binary, Electron archive, and release bundle shares one canonical version in [`VERSION`](VERSION), enforced in CI by [`scripts/version-sync.mjs`](scripts/version-sync.mjs).
 
