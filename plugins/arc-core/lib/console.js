@@ -327,13 +327,17 @@ function readGatewayConfigSafe(arcHome) {
 
 function readLocalPluginsSafe(arcHome) {
   const plugins = [];
+  const addons = [];
   const preflights = [];
   try {
     const dir = path.join(arcHome, 'local-plugins');
     if (fs.existsSync(dir)) {
       for (const name of fs.readdirSync(dir)) {
         const full = path.join(dir, name);
-        if (fs.statSync(full).isDirectory()) plugins.push(name);
+        if (!fs.statSync(full).isDirectory()) continue;
+        plugins.push(name);
+        const pkg = readJsonSafe(path.join(full, 'package.json'));
+        addons.push({ id: name, version: String(pkg?.version || ''), description: String(pkg?.description || '').slice(0, 300) });
       }
     }
   } catch {
@@ -351,7 +355,7 @@ function readLocalPluginsSafe(arcHome) {
   } catch {
     // ignore
   }
-  return { plugins, preflights };
+  return { plugins, addons, preflights };
 }
 
 function parseMcpTextBody(rawText) {
@@ -376,6 +380,20 @@ function parseMcpTextBody(rawText) {
     }
   }
   return null;
+}
+
+/** The gateway state in plain words. The raw code stays in `code`, for a hint; `action` names the next step. */
+export function gatewayStatus(gw = {}) {
+  if (gw.reachable) {
+    const n = Array.isArray(gw.routes) ? gw.routes.length : 0;
+    return { state: 'ok', status: `Running, ${n} ${n === 1 ? 'route' : 'routes'}, memory ${gw.cammut ? 'on' : 'off'}.`, code: '', action: '' };
+  }
+  const code = String(gw.status || 'offline');
+  if (code === 'not-checked') return { state: 'idle', status: 'Not checked yet.', code: '', action: 'refresh' };
+  if (code === 'no-fetch') return { state: 'idle', status: 'Cannot be checked from here.', code: '', action: '' };
+  if (/^http-\d+$/.test(code)) return { state: 'attention', status: 'The gateway answered with an error. Check again in a moment.', code, action: 'refresh' };
+  if (code === 'TimeoutError' || code === 'AbortError') return { state: 'attention', status: 'No answer in time. Start the local gateway, then check again.', code, action: 'refresh' };
+  return { state: 'attention', status: 'No answer. Start the local gateway, then check again.', code, action: 'refresh' };
 }
 
 async function probeGatewayHealth(gatewayHost, fetchImpl, timeoutMs = 1200) {
@@ -801,7 +819,7 @@ export function createResearchSessionStore(opts = {}) {
     ledger: { available: false, total: 0, latest: null, recent: [] },
     molecullageData: { available: false, sourcesCount: 231, domainsCount: 8, frozen: null, sources: [] },
     gatewayConfig: { available: false, cammutRecall: false, anthropicPromptCaching: false, defaultReasoningEffort: 'none' },
-    localPlugins: { plugins: [], preflights: [] },
+    localPlugins: { plugins: [], addons: [], preflights: [] },
     molecullageLauncherAvailable: false,
     memoryQuery: '',
     memoryResults: [],
@@ -899,15 +917,13 @@ export function createResearchSessionStore(opts = {}) {
       summary: ev.summary,
       atMs: ev.atMs,
     }));
-    const srvStatus = liveState.gateway.reachable
-      ? `online, ${liveState.gateway.routes.length} routes, cammut ${liveState.gateway.cammut ? 'on' : 'off'}`
-      : `local config (${liveState.gateway.status})`;
+    const srv = gatewayStatus(liveState.gateway);
     const studioStatus = liveState.molecullageData.available
-      ? `ready (${liveState.molecullageData.sourcesCount} sources on disk)`
-      : 'ready';
+      ? `Ready, ${liveState.molecullageData.sourcesCount} sources on disk.`
+      : 'Ready.';
     const keyStatus = liveState.gatewayConfig.available
-      ? `cammutRecall ${liveState.gatewayConfig.cammutRecall ? 'on' : 'off'}, promptCaching ${liveState.gatewayConfig.anthropicPromptCaching ? 'on' : 'off'}`
-      : 'not configured';
+      ? `Memory recall ${liveState.gatewayConfig.cammutRecall ? 'on' : 'off'}, prompt caching ${liveState.gatewayConfig.anthropicPromptCaching ? 'on' : 'off'}.`
+      : 'Not set up yet.';
     const apps = [
       { id: 'molecullage', label: 'Molecullage figure and structure pack', scopes: ['read', 'render'], grants: activeGrants.filter((g) => g.appId.startsWith('molecullage')).length },
       { id: 'inspect', label: 'Scoped archive inspector', scopes: ['read', 'verify'], grants: activeGrants.filter((g) => g.appId.startsWith('inspect')).length },
@@ -922,12 +938,12 @@ export function createResearchSessionStore(opts = {}) {
     }
     return {
       Servers: [
-        { id: 'srv-cammut', label: 'Loopback Cammut gateway', endpoint: gatewayHost, status: srvStatus },
-        { id: 'srv-studio', label: 'Molecullage studio server', endpoint: liveState.molecullageLauncherAvailable ? '~/.arc/molecullage-mcp-launcher.mjs' : 'stdio local', status: studioStatus },
+        { id: 'srv-cammut', label: 'Local Cammut gateway', endpoint: gatewayHost, ...srv },
+        { id: 'srv-studio', label: 'Molecullage studio server', endpoint: liveState.molecullageLauncherAvailable ? '~/.arc/molecullage-mcp-launcher.mjs' : 'stdio local', state: 'ok', status: studioStatus },
       ],
       Keys: [
-        { id: 'key-cammut', label: 'Gateway and memory settings', ref: '~/.arc/gateway-config.json', status: keyStatus },
-        { id: 'key-signing', label: 'Release bundle public key', ref: 'cred://arc-native/release-verify', status: 'pinned' },
+        { id: 'key-cammut', label: 'Gateway and memory settings', ref: '~/.arc/gateway-config.json', state: liveState.gatewayConfig.available ? 'ok' : 'idle', status: keyStatus },
+        { id: 'key-signing', label: 'Release bundle public key', ref: 'cred://arc-native/release-verify', state: 'ok', status: 'Pinned.' },
       ],
       Apps: apps,
       Audit: [...sessionEvents, ...hohEvents].slice(-8),
@@ -960,6 +976,9 @@ export function createResearchSessionStore(opts = {}) {
       memory: {
         ok: true,
         gateway: gatewayHost,
+        ...gatewayStatus(liveState.gateway),
+        recall: Boolean(liveState.gatewayConfig.cammutRecall),
+        configured: Boolean(liveState.gatewayConfig.available),
         reachable: liveState.gateway.reachable,
         routes: liveState.gateway.routes,
         cammut: liveState.gateway.cammut,
@@ -991,6 +1010,7 @@ export function createResearchSessionStore(opts = {}) {
         text: proseText,
         report: detectFormulaicProse(proseText),
       },
+      addons: { ok: true, items: (liveState.localPlugins.addons || []).map((a) => ({ ...a })) },
       consents: listActiveGrants(),
     };
   }

@@ -12,6 +12,7 @@ import {
   createResearchSessionStore,
   serveConsoleRoute,
 } from '../lib/index.js';
+import { gatewayStatus } from '../lib/console.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const panelPath = path.join(here, '../ui/panel.js');
@@ -353,8 +354,9 @@ test('4. Workspaces, Connectors, local Prose rewrite, and Settings render with S
       });
       const nodes = allNodes(connTree);
       const activeBtn = nodes.find((n) => n.props?.['data-connector'] === conn);
-      assert.equal(activeBtn.props['aria-pressed'], true, `${conn} button active`);
-      assert.equal(activeBtn.props.style.fontWeight, 600, `${conn} button highlighted`);
+      assert.equal(activeBtn.props.role, 'tab', `${conn} is a tab`);
+      assert.equal(activeBtn.props['aria-selected'], true, `${conn} tab selected`);
+      assert.equal(activeBtn.props.style.fontWeight, 600, `${conn} tab highlighted`);
       assert.ok(nodes.some((n) => n.props?.['data-connector-view'] === conn), `${conn} connector view rendered`);
       assert.equal(countNestedBorderedBoxes(connTree), 0, `zero nested bordered boxes in ${skinId}/connector:${conn}`);
     }
@@ -500,4 +502,245 @@ test('8. Updates panel source: no blue or violet, no default blue controls, no m
   assert.equal(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|oklch\(/.test(part), false, 'colours come from theme tokens, never from literals');
   assert.equal(/\b(blue|purple|violet|indigo|navy)\b/i.test(part), false);
   assert.match(part, /outline:2px solid currentColor/, 'own focus ring, not the default blue one');
+});
+
+// ---- Console rework (road map 1b.4, sub-step T4; D-20261120-28): top controls, status rows, Settings sections.
+// the visible text of a tree: every string leaf outside a style element
+const leaves = (n) => (n === null || n === undefined || n === false ? [] : typeof n !== 'object' ? [String(n)] : n.type === 'style' ? [] : (n.children || []).flatMap(leaves));
+const noSecretFields = (nodes) => nodes.every((n) => n.props?.type !== 'password');
+
+test('9. Console navigation has at most six top-level controls, tab roles, a second row for connectors and arrow-key focus', () => {
+  const { mod } = loadPanel();
+  const t = makeTranslator(mod.en);
+  const store = createResearchSessionStore({ live: false });
+  let refreshed = 0;
+  const render = () => renderTree({
+    type: mod.View,
+    props: {
+      data: store.snapshot(), failed: false, skin: 'arc', t,
+      onSelectWorkspace: (w) => store.selectWorkspace(w),
+      onSelectConnector: (c) => store.selectConnector(c),
+      onToggleSettings: (o) => store.toggleSettings(o),
+      onRefresh: () => { refreshed += 1; },
+    },
+    children: [],
+  });
+  const topOf = (nodes) => nodes.filter((n) => n.props?.['data-top-control']);
+
+  let tree = render();
+  let nodes = allNodes(tree);
+  assert.deepEqual(topOf(nodes).map((n) => n.props['data-top-control']), ['Research', 'Memory', 'Molecullage', 'Prose', 'Connectors', 'Settings']);
+  const primary = nodes.find((n) => n.props?.['data-console-tabs'] === 'primary');
+  assert.equal(primary.props.role, 'tablist');
+  assert.ok(primary.props['aria-label']);
+  const tabs = allNodes(primary).filter((n) => n.props?.role === 'tab');
+  assert.equal(tabs.length, 5);
+  assert.deepEqual(tabs.filter((n) => n.props['aria-selected'] === true).map((n) => n.props['data-top-control']), ['Research']);
+  for (const tab of tabs) assert.equal(tab.props.tabIndex, tab.props['aria-selected'] ? 0 : -1, 'only the selected tab is in the Tab order');
+  const panel = nodes.find((n) => n.props?.role === 'tabpanel');
+  assert.equal(panel.props['aria-labelledby'], tabs[0].props.id);
+  assert.equal(tabs[0].props['aria-controls'], panel.props.id);
+  // workspace mode: one row, no loose footer, no access line
+  assert.equal(nodes.some((n) => n.props?.['data-console-tabs'] === 'connectors'), false);
+  assert.equal(nodes.some((n) => n.type === 'footer'), false);
+  assert.ok(!leaves(tree).some((w) => /Connector view|30-day grants/.test(w)));
+
+  // the Connectors tab opens the second row, built from the CONNECTORS list
+  tabs.find((n) => n.props['data-top-control'] === 'Connectors').props.onClick();
+  assert.equal(store.head().activePaneMode, 'connector');
+  tree = render();
+  nodes = allNodes(tree);
+  const second = nodes.find((n) => n.props?.['data-console-tabs'] === 'connectors');
+  assert.equal(second.props.role, 'tablist');
+  const subTabs = allNodes(second).filter((n) => n.props?.role === 'tab');
+  assert.deepEqual(subTabs.map((n) => n.props['data-connector']), ['Servers', 'Keys', 'Apps', 'Audit', 'Updates']);
+  assert.deepEqual(allNodes(nodes.find((n) => n.props?.['data-console-tabs'] === 'primary')).filter((n) => n.props?.['aria-selected'] === true).map((n) => n.props['data-top-control']), ['Connectors']);
+  assert.equal(topOf(nodes).length, 6);
+  // Refresh sits in the title row of the view it refreshes
+  const refresh = nodes.find((n) => n.props?.['data-refresh-console'] === 'true');
+  assert.ok(refresh && !refresh.props['data-top-control']);
+  refresh.props.onClick();
+  assert.equal(refreshed, 1);
+
+  // the Cammut tab of the open change fits into the second row beside Updates
+  mod.CONNECTORS.push('Cammut');
+  nodes = allNodes(render());
+  assert.deepEqual(allNodes(nodes.find((n) => n.props?.['data-console-tabs'] === 'connectors')).filter((n) => n.props?.role === 'tab').map((n) => n.props['data-connector']), ['Servers', 'Keys', 'Apps', 'Audit', 'Updates', 'Cammut']);
+  assert.equal(topOf(nodes).length, 6);
+  mod.CONNECTORS.length = 5;
+
+  // arrow keys move focus and wrap; they select nothing (each selection is a server call)
+  const focused = [];
+  const fake = ['a', 'b', 'c'].map((id) => ({ id, focus: () => focused.push(id) }));
+  const key = (k, target) => { let stopped = false; primary.props.onKeyDown({ key: k, target, currentTarget: { querySelectorAll: () => fake }, preventDefault: () => { stopped = true; } }); return stopped; };
+  const before = store.head().activeWorkspace;
+  assert.equal(key('ArrowRight', fake[1]), true);
+  assert.equal(key('ArrowRight', fake[2]), true);
+  assert.equal(key('ArrowLeft', fake[0]), true);
+  assert.equal(key('Home', fake[2]), true);
+  assert.equal(key('End', fake[0]), true);
+  assert.equal(key('a', fake[0]), false);
+  assert.deepEqual(focused, ['c', 'a', 'c', 'a', 'c']);
+  assert.equal(store.head().activeWorkspace, before);
+
+  // the gear opens the console settings; its switches are real switches
+  nodes.find((n) => n.props?.['data-top-control'] === 'Settings').props.onClick();
+  assert.equal(store.head().settingsOpen, true);
+  nodes = allNodes(render());
+  const gear = nodes.find((n) => n.props?.['data-top-control'] === 'Settings');
+  assert.equal(gear.props['aria-pressed'], true);
+  assert.ok(gear.props['aria-label']);
+  const settingsPanel = nodes.find((n) => n.props?.id === 'arc-console-panel');
+  assert.equal(settingsPanel.props.role, 'region', 'no tab is selected, so the content is a plain region');
+  assert.equal(settingsPanel.props['aria-labelledby'], gear.props.id);
+  assert.equal(nodes.filter((n) => n.props?.role === 'tab' && n.props.tabIndex === 0).length, 1, 'one tab stays in the Tab order');
+  for (const sw of nodes.filter((n) => n.props?.['data-operator-switch'])) {
+    assert.equal(sw.props.role, 'switch');
+    assert.equal(sw.props['aria-checked'], false);
+  }
+});
+
+test('10. Status rows use plain words, keep the raw code in a hint and offer the next step', async () => {
+  const { mod } = loadPanel();
+  const t = makeTranslator(mod.en);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-st-'));
+  try {
+    const store = createResearchSessionStore({ arcHome: tmpDir, live: true, fetch: async () => { throw new TypeError('fetch failed'); } });
+    await serveConsoleRoute('/api/arc-core/console/action', { kind: 'refresh' }, store);
+    const detail = store.snapshot().connectorsDetail;
+    const srv = detail.Servers[0];
+    assert.equal(srv.state, 'attention');
+    assert.equal(srv.code, 'TypeError');
+    assert.equal(srv.action, 'refresh');
+    for (const list of [detail.Servers, detail.Keys]) {
+      for (const row of list) {
+        assert.ok(['ok', 'attention', 'idle'].includes(row.state), `${row.id} has a state`);
+        assert.match(row.status, /^[A-Z]/, `${row.id} status is a sentence`);
+        assert.ok(row.status.length <= 90, `${row.id} status fits one line`);
+        assert.doesNotMatch(row.status, /TypeError|local config|cammutRecall|promptCaching|http-\d/, `${row.id} status has no raw code`);
+      }
+    }
+    assert.equal(store.snapshot().memory.state, 'attention');
+    assert.doesNotMatch(store.snapshot().memory.status, /TypeError/);
+    assert.equal(gatewayStatus({ status: 'no-fetch' }).action, '', 'no retry is offered where a retry cannot work');
+    assert.equal(gatewayStatus({ status: 'http-503' }).code, 'http-503');
+    assert.match(gatewayStatus({ reachable: true, routes: ['/a'], cammut: true }).status, /^Running, 1 route, memory on\.$/);
+    store.selectWorkspace('Memory');
+    let memChecks = 0;
+    const memTree = renderTree({ type: mod.View, props: { data: store.snapshot(), failed: false, skin: 'arc', onRefresh: () => { memChecks += 1; }, t }, children: [] });
+    const memRow = allNodes(memTree).find((n) => n.props?.['data-memory-status'] === 'true');
+    assert.ok(memRow, 'the Memory workspace shows the status row');
+    assert.ok(!leaves(memTree).some((w) => /Loopback|status: offline|TypeError/.test(w)));
+    allNodes(memRow).find((n) => n.props?.['data-row-action'] === 'memory').props.onClick();
+    assert.equal(memChecks, 1);
+
+    let refreshed = 0;
+    const view = (connector, d = detail) => renderTree({ type: mod.ConnectorView, props: { connector, detail: d, onRefresh: () => { refreshed += 1; }, t }, children: [] });
+    const srvTree = view('Servers');
+    const srvNodes = allNodes(srvTree);
+    assert.ok(!leaves(srvTree).some((w) => /TypeError|local config/.test(w)), 'the raw code is not in the visible text');
+    assert.ok(srvNodes.some((n) => n.props?.['data-state'] === 'attention'), 'state dot rendered');
+    assert.ok(srvNodes.some((n) => n.props?.role === 'status'), 'status has a status role');
+    const again = srvNodes.find((n) => n.props?.['data-row-action'] === 'srv-cammut');
+    assert.ok(again, 'next step offered on the row');
+    again.props.onClick();
+    assert.equal(refreshed, 1);
+    assert.ok(srvNodes.some((n) => n.props?.['data-hint'] === 'true'), 'details live in a hint');
+    assert.equal(srvNodes.filter((n) => n.props?.['data-row-action']).length, 1, 'rows that are fine show no button');
+
+    store.recordDecision({ branchId: 'b-cdr3-loop', action: 'Park' });
+    const auditTree = view('Audit', store.snapshot().connectorsDetail);
+    assert.ok(!leaves(auditTree).some((w) => /\d{12,}/.test(w)), 'no raw millisecond stamps');
+    assert.ok(leaves(auditTree).some((w) => /^Recorded .*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d/.test(w)), 'the date is written in the language of the page');
+    const midnight = new Date(2026, 10, 20, 0, 5).getTime();
+    assert.ok(leaves(view('Audit', { Audit: [{ id: 'm', kind: 'k', summary: 's', atMs: midnight }] })).some((w) => /00:05/.test(w)), 'five past midnight reads 00:05');
+    const emptyTree = view('Audit', { Audit: [] });
+    assert.ok(allNodes(emptyTree).some((n) => n.props?.['data-empty-state'] === 'Audit'));
+    for (const c of ['Servers', 'Keys', 'Apps', 'Audit']) {
+      for (const w of leaves(view(c, store.snapshot().connectorsDetail))) assert.ok(w.length <= 90, `${c}: "${w}" fits one line`);
+    }
+
+    // a failed first load says so and offers a retry
+    const failTree = renderTree({ type: mod.View, props: { data: null, failed: true, skin: 'arc', onRefresh: () => { refreshed += 1; }, t }, children: [] });
+    const retry = allNodes(failTree).find((n) => n.props?.['data-console-retry'] === 'true');
+    assert.ok(retry);
+    retry.props.onClick();
+    assert.equal(refreshed, 2);
+  } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});
+
+test('11. Settings dialog gets Memory, Connectors, Keys, Add-ons and Updates sections; Updates leaves when its view is absent', () => {
+  const { mod } = loadPanel();
+  const t = makeTranslator(mod.en);
+  const registerAll = () => {
+    const sections = [];
+    const slots = {
+      inject: (name, fn) => { fn(); return () => {}; },
+      register: (opts, comp) => { if (opts.name === 'settings.section') sections.push({ ...opts, comp }); return () => {}; },
+    };
+    mod.apply({ effect: () => {}, locale: { register: () => {}, bind: () => t }, slots, inject: () => {} });
+    return sections;
+  };
+  const sections = registerAll();
+  assert.deepEqual(sections.map((s) => s.id), ['memory', 'connectors', 'keys', 'add-ons', 'updates']);
+  for (const s of sections) {
+    assert.ok(s.order > 10 && s.order < 20, `${s.id} sits between Models (10) and Advanced (20)`);
+    assert.match(s.label(), /^[A-Z][a-z-]+$/, `${s.id} label is one plain word`);
+    assert.equal(typeof s.comp, 'function');
+  }
+  assert.deepEqual(sections.map((s) => s.order), [...sections.map((s) => s.order)].sort((a, b) => a - b));
+  mod.CONNECTORS.length = 4;
+  assert.deepEqual(registerAll().map((s) => s.id), ['memory', 'connectors', 'keys', 'add-ons']);
+  mod.CONNECTORS.push('Updates');
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-ss-'));
+  try {
+    fs.mkdirSync(path.join(tmpDir, 'local-plugins', 'arc-core'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'local-plugins', 'arc-core', 'package.json'), JSON.stringify({ name: 'arc-core', version: '0.6.0', description: 'Shared console' }));
+    fs.mkdirSync(path.join(tmpDir, 'local-plugins', 'arc-theme'), { recursive: true });
+    const store = createResearchSessionStore({ arcHome: tmpDir, live: false });
+    const data = store.snapshot();
+    assert.deepEqual(data.addons.items.map((a) => [a.id, a.version]), [['arc-core', '0.6.0'], ['arc-theme', '']]);
+    let consent = null, refreshed = 0;
+    for (const s of sections) {
+      const tree = renderTree({ type: mod.SettingsSectionView, props: { section: s.id, data, failed: false, onRefresh: () => { refreshed += 1; }, onOpenConsent: (r) => { consent = r; }, t }, children: [] });
+      const nodes = allNodes(tree);
+      assert.equal(tree.props['data-arc-settings'], s.id);
+      assert.equal(countNestedBorderedBoxes(tree), 0, `${s.id}: no nested boxes`);
+      assert.ok(nodes.some((n) => n.type === 'h3'), `${s.id}: has a heading`);
+      assert.ok(noSecretFields(nodes), `${s.id}: no secret field`);
+      for (const w of leaves(tree)) assert.ok(w.length <= 90, `${s.id}: "${w}" fits one line`);
+      assert.ok(!leaves(tree).some((w) => w.includes('·')), `${s.id}: no middle dot`);
+      if (s.id === 'keys') assert.equal(nodes.some((n) => n.type === 'input' || n.type === 'textarea'), false, 'keys are named, never typed');
+      if (s.id === 'memory') {
+        assert.ok(leaves(tree).includes(mod.en['state.unset']), 'recall is not called off when nothing is set up');
+        assert.ok(leaves(tree).some((w) => w.includes('127.0.0.1:7424')));
+        assert.ok(nodes.some((n) => n.props?.role === 'status'));
+        nodes.find((n) => n.props?.['data-refresh-console'] === 'true').props.onClick();
+      }
+      if (s.id === 'connectors') {
+        assert.ok(nodes.some((n) => n.props?.['data-connector-view'] === 'Servers'));
+        assert.ok(nodes.some((n) => n.props?.['data-connector-view'] === 'Apps'));
+        nodes.find((n) => n.props?.['data-connector-consent'] === 'molecullage').props.onClick();
+      }
+      if (s.id === 'updates') {
+        assert.ok(nodes.some((n) => n.props?.['data-connector-view'] === 'Updates'));
+        for (const a of ['data-update-check', 'data-update-install', 'data-update-rollback', 'data-updates-status']) assert.ok(nodes.some((n) => n.props?.[a]), `updates: keeps ${a}`);
+      }
+      if (s.id === 'add-ons') {
+        assert.ok(leaves(tree).includes('arc-core') && leaves(tree).includes('0.6.0'));
+        assert.equal(nodes.some((n) => n.type === 'button' && !n.props?.['data-hint']), false, 'a plain list, no dead controls');
+      }
+    }
+    assert.equal(refreshed, 1);
+    assert.equal(consent.appId, 'molecullage-connector');
+
+    const empty = renderTree({ type: mod.SettingsSectionView, props: { section: 'add-ons', data: { ...data, addons: { ok: true, items: [] } }, t }, children: [] });
+    assert.ok(allNodes(empty).some((n) => n.props?.['data-empty-state'] === 'add-ons'));
+    const loading = renderTree({ type: mod.SettingsSectionView, props: { section: 'memory', data: null, failed: false, t }, children: [] });
+    assert.ok(leaves(loading).includes(mod.en['state.loading']));
+    const failedTree = renderTree({ type: mod.SettingsSectionView, props: { section: 'memory', data: null, failed: true, onRefresh: () => { refreshed += 1; }, t }, children: [] });
+    allNodes(failedTree).find((n) => n.props?.['data-console-retry'] === 'true').props.onClick();
+    assert.equal(refreshed, 2);
+  } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });
