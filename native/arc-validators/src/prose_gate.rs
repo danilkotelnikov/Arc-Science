@@ -330,9 +330,19 @@ pub fn undercuts_en(t: &[String], opens: &HashSet<isize>) -> Vec<Hit> {
     let w = Words { t, lx: lexicon() };
     let n = w.n();
     let mut out = Coll::new();
-    let cond_after = |end: isize| (end + 1..=end + 4).take_while(|&k| k < n).any(|k| w.has("rule_cond", k));
+    // JS clauseStart: back to the token after punctuation or after a conjunction
+    let conj = ["and", "but", "while", "whereas", "so", "because", "although", "though"];
+    let clause_start = |a: isize| {
+        let mut s = a;
+        while s > 0 && !opens.contains(&s) && !conj.iter().any(|c| w.eq(s - 1, c)) {
+            s -= 1;
+        }
+        s
+    };
+    // JS condAfter and adverseNear: both stay inside the clause of the hit
+    let cond_after = |end: isize| (end + 1..=end + 4).take_while(|&k| k < n && !opens.contains(&k)).any(|k| w.has("rule_cond", k));
     let rel_before = |start: isize| (start - 3..start).any(|k| k >= 0 && w.has("rel_front", k));
-    let adverse_near = |a: isize, b: isize| ((a - 5).max(0)..=b).any(|k| w.has("adverse_noun", k));
+    let adverse_near = |a: isize, b: isize| (clause_start(a).max(a - 5)..=b).any(|k| w.has("adverse_noun", k));
     // JS nullSubject and otherActor: a null result ("No adverse events were reported") and work of other people (F102)
     // JS headOf: the last word of the subject before any preposition
     let head_of = |a: isize, b: isize| -> Option<&str> {
@@ -399,14 +409,6 @@ pub fn undercuts_en(t: &[String], opens: &HashSet<isize>) -> Vec<Hit> {
     let other_actor_not = |i: isize| w.has("perfect", i - 1) && marked_other(i - 2) && after_neg(i + 1) != Some("been");
     let other_actor_aux = |i: isize| marked_other(i - 1) && after_neg(i + 2) != Some("been");
     // JS core: the clause of the hit has no subject, or its subject is the author or the project
-    let conj = ["and", "but", "while", "whereas", "so", "because", "although", "though"];
-    let clause_start = |a: isize| {
-        let mut s = a;
-        while s > 0 && !opens.contains(&s) && !conj.iter().any(|c| w.eq(s - 1, c)) {
-            s -= 1;
-        }
-        s
-    };
     let core = |a: isize, b: isize| {
         let s = clause_start(a);
         if (s..a).all(|k| w.has("aux", k) || w.has("filler", k) || w.has("status_now", k)) {
@@ -868,7 +870,7 @@ fn names_limits_words(words: &[String]) -> bool {
 }
 
 fn strip_code_and_urls(raw: &str) -> String {
-    // /`[^`\n]+`/g -> ' ', then /https?:\/\/\S+/g -> ' '
+    // /`([^`\n]+)`/g -> ' $1 ' (the words in a code span are read), then /https?:\/\/\S+/g -> ' '
     let chars: Vec<char> = raw.chars().collect();
     let mut s = String::new();
     let mut i = 0;
@@ -876,6 +878,8 @@ fn strip_code_and_urls(raw: &str) -> String {
         if chars[i] == '`' {
             if let Some(off) = chars[i + 1..].iter().position(|&c| c == '`' || c == '\n') {
                 if off > 0 && chars[i + 1 + off] == '`' {
+                    s.push(' ');
+                    s.extend(&chars[i + 1..i + 1 + off]);
                     s.push(' ');
                     i += off + 2;
                     continue;
@@ -912,15 +916,11 @@ pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'stati
     let body = text.strip_prefix('\u{feff}').unwrap_or(text);
     let rows: Vec<&str> = body.split('\n').map(|r| r.strip_suffix('\r').unwrap_or(r)).collect();
     let mut out = Vec::new();
-    let mut fence = false;
     let mut limits_level = 0usize;
     let mut plain = 0u8;
     for (idx, raw) in rows.iter().enumerate() {
+        // a fence line is no prose; the words inside a fence are read like any line
         if raw.trim_start_matches(is_ws).starts_with("```") {
-            fence = !fence;
-            continue;
-        }
-        if fence {
             continue;
         }
         let hashes = raw.chars().take_while(|&c| c == '#').count();
