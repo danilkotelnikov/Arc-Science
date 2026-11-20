@@ -353,8 +353,8 @@ export function createArcCoreServer(opts = {}) {
     if (Array.isArray(texts)) {
       texts.forEach((entry, idx) => {
         const id = (entry && typeof entry === 'object' && typeof entry.id === 'string' && entry.id.trim()) || `text-${idx + 1}`;
-        // The gate reads every text as public. A limits zone comes from a heading or a label inside the text, never from
-        // the caller, so a builder cannot lower its own failure (R006; F092).
+        // The gate reads every text as public. The caller cannot pick a zone (R006; F092). A limits heading or label written
+        // inside the text is trusted: the gate reads it as the zone it names.
         const r = proseCheck(entry && typeof entry === 'object' ? { text: entry.text, facts: entry.facts, zone: 'public' } : {});
         if (r.error) { failedChecks.push(`prose:${id}`); return; }
         prose.points += r.points;
