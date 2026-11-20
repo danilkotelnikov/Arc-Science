@@ -1,0 +1,287 @@
+# Labelled sentences for the prose gate. One case per line: split|zone|expect|text
+# split: fit = the words on the site on 17 November 2026 and the voice card; dev = the three reworded options of each site line
+#        (CV/site/iso/slogans.md), used to repair the rules after the first run; control = both directions of the rule.
+# zone:  public = text that speaks for the author; limits = a limits section of a report or a page.
+# expect: undercut = at least one sentence announces what the author has not done; clean = none does;
+#         review = the sentence may state a scope or a gap, so the gate marks it for a reader and does not block it.
+# The labels are a reading by the builder of 18 November 2026. The author's verdict replaces a label when he gives one.
+fit|public|undercut|Four research programmes. Each page states the problem, the method, the evidence and what has not been done.
+fit|public|undercut|Base model specified and its code written. Not trained.
+fit|public|undercut|Software release 1.0.0. No simulation outcome yet.
+fit|public|undercut|Model built with random weights. Not trained.
+fit|public|undercut|Review and study design. Nothing has been run.
+fit|public|clean|Computational protein design and molecular modelling, and the tools that keep the work honest.
+fit|public|clean|Programmes send claims to Arc Harness, Cammut remembers, Molecullage draws the figures, and every result ends in a report. Filled pads are built; dashed pads are designed.
+fit|public|clean|Technical reports and papers. Abstracts are on the page and the full text is hosted here or linked.
+fit|public|clean|Arc Science was founded by Dana Kole and Kira Tal.
+fit|public|clean|A design for computational de novo VHH and Fv antibody binders, with a base model specified and training code written.
+fit|public|clean|Generative design of antibody and nanobody binders
+fit|public|clean|Pipeline for computed mutation effects on protein-ligand binding, with every parameter and threshold frozen before any simulation.
+fit|public|clean|Free energy of point mutations in protein-ligand binding
+fit|public|clean|Deep-learning co-folding of viral genomic RNA inside icosahedral capsids, using symmetry quotient graphs and physics-derived attention biases.
+fit|public|clean|Co-folding of viral RNA inside icosahedral capsids
+fit|public|clean|Literature review and study design for deep learning on rare-earth solvent extractants, with out-of-distribution evaluation and calibrated uncertainty.
+fit|public|clean|Deep learning for rare-earth solvent extractants
+fit|public|clean|A scientific harness for claims. The model that builds never signs.
+fit|public|clean|Release 0.5.0 on Windows. Claim graph, gates and ledger run.
+fit|public|clean|A scientific harness whose unit is the claim
+fit|public|clean|One gateway to the tools of an AI agent, and one shared memory.
+fit|public|clean|Running on our server. Library-1M tested in the lab.
+fit|public|clean|One gateway for agent tools and a write-once memory index
+fit|public|clean|A toolkit that builds publication figures of structures, sequences and plots from HTML pages in millimetres, with automatic QA.
+fit|public|clean|Open source, MIT. Tested on Windows 11.
+fit|public|clean|Publication figures built from HTML pages in millimetres
+fit|public|clean|Arc Science: computational protein design and molecular modelling.
+fit|public|clean|Snöggo computes how a mutation changes binding.
+fit|public|clean|We take the real structure, change one residue step by step in the computer, and measure the energy along the way.
+fit|public|clean|We do this in the complex and in the free protein.
+fit|public|clean|The difference tells us whether the mutation helps.
+fit|public|clean|A pharma team uses this before it pays for a synthesis.
+fit|public|clean|Cammut searches four ways, then merges the results by rank.
+fit|public|clean|Arc Chemistry separates neodymium and praseodymium.
+fit|public|clean|Each step saves what it did, so we can check it later.
+fit|public|clean|A prediction ranks a design. Only a lab test can say that it binds.
+fit|public|clean|We pick the design that holds up in every scenario we model.
+dev|public|clean|We design proteins and model molecules on a computer. We also build the tools that check our own results.
+dev|public|clean|Arc Science designs proteins and models molecules in software, and writes the programs that test whether the results hold.
+dev|public|clean|We predict how proteins and molecules behave, and we build the tools that tell us when a prediction is wrong.
+dev|public|undercut|Four programmes. Each page says what the problem is, what we did, what the evidence shows and what is still missing.
+dev|public|undercut|We run four research programmes. Every page lists the problem, the method, the evidence and the work we have not done.
+dev|public|undercut|Four programmes, one page each. A page tells you what we want to solve, how we try it, what we found and what is open.
+dev|public|undercut|Each programme sends its claims to Arc Harness to be checked. Cammut keeps what we learn. Molecullage draws the figures. Every result ends in a report. A filled dot is built, a dashed dot is only planned.
+dev|public|clean|Arc Harness checks our claims, Cammut stores our notes, Molecullage draws our figures, and every result ends in a report. Filled dots are finished tools, dashed dots are designs.
+dev|public|undercut|Three tools serve the four programmes: Arc Harness checks claims, Cammut is the shared memory, Molecullage makes the figures. A filled dot means built, a dashed dot means not built yet.
+dev|public|clean|Our technical reports and papers. Each shows its abstract here, and its full text is here or one link away.
+dev|public|clean|Reports and papers, with the abstract on this page and the full text hosted or linked.
+dev|public|clean|Every report and paper we have. Read the abstract here, then open the full text.
+dev|public|clean|Dana Kole and Kira Tal founded Arc Science.
+dev|public|clean|Arc Science has two founders: Dana Kole and Kira Tal.
+dev|public|clean|We are Dana Kole and Kira Tal, the two founders.
+dev|public|clean|Nimbus designs new antibodies on a computer, starting from nothing. We have specified the base model and written its training code.
+dev|public|clean|We design VHH nanobodies and Fv antibody fragments from scratch in software. The base model is defined and the training code is written.
+dev|public|undercut|A computer method for making new antibody binders. The model is described and its code exists; the model is not trained yet.
+dev|public|undercut|The model is specified and its code is written. It has not been trained.
+dev|public|undercut|We wrote the model and its training code. We have not trained it.
+dev|public|undercut|Design and code are done. Training has not started.
+dev|public|clean|A generative model that designs antibodies and nanobodies
+dev|public|clean|Designing new antibodies and nanobodies with a generative model
+dev|public|clean|Antibody and nanobody design by machine
+dev|public|clean|Snöggo computes how a mutation changes the way a protein binds a ligand. We fix every setting and every pass mark before the first simulation runs.
+dev|public|clean|Snöggo calculates what one mutation does to protein-ligand binding. All parameters and thresholds are written down before we simulate anything.
+dev|public|clean|A pipeline that predicts the effect of a point mutation on binding. We freeze the settings and the pass criteria first, then we simulate.
+dev|public|undercut|Release 1.0.0 is out. We have no simulation result yet.
+dev|public|undercut|The software is released as version 1.0.0, and no simulation has produced a result so far.
+dev|public|undercut|Version 1.0.0 is ready. There is no simulation result to show.
+dev|public|clean|How a point mutation changes binding free energy
+dev|public|clean|What one mutation does to the energy of binding
+dev|public|clean|Binding free energy after a point mutation
+dev|public|clean|RNAv is a neural network that predicts how a virus packs its RNA inside its icosahedral shell. It models one repeating unit of the shell instead of the whole shell, and physical estimates guide where it looks.
+dev|public|clean|A deep-learning model that folds viral RNA together with its protein shell. Symmetry lets it work on one unit at a time, and physics sets its attention.
+dev|public|clean|We fold viral RNA and its capsid together with a neural network. Because the shell repeats, the model sees one unit, not the whole shell.
+dev|public|undercut|The network is built and still has random weights. It has not been trained.
+dev|public|undercut|We built the model. Its weights are random because we have not trained it.
+dev|public|undercut|The model exists. Nobody has trained it yet.
+dev|public|clean|Folding viral RNA together with its capsid
+dev|public|clean|How viral RNA sits inside its shell
+dev|public|clean|Predicting the packed RNA of a virus
+dev|public|clean|A review of the literature and a study plan for using deep learning on rare-earth extractants. The plan tests each model on ligands and laboratories it has never seen, and every prediction comes with an uncertainty range.
+dev|public|clean|We reviewed the work on extractants that separate rare-earth metals and planned a deep-learning study. It tests models on new ligands and new laboratories, and it reports how sure each prediction is.
+dev|public|clean|The review and the study plan for machine learning on rare-earth extraction. The test data differ from the training data on purpose, and every prediction states its uncertainty.
+dev|public|undercut|We wrote the review and the study plan. We have run nothing.
+dev|public|undercut|Review and plan only. No experiment or calculation has been run.
+dev|public|undercut|The review and the design are done. No run has started.
+dev|public|clean|Machine learning for separating rare-earth metals
+dev|public|clean|Predicting rare-earth extraction with deep learning
+dev|public|clean|Choosing extractants for rare-earth separation
+dev|public|clean|Arc Harness checks scientific claims. A claim is a statement with its evidence attached. The model that wrote a claim can never approve it.
+dev|public|clean|We store every statement as a claim with its evidence. A different model or a fixed test checks it. Whoever built a claim does not sign it off.
+dev|public|clean|A program that checks claims, one at a time. The model that builds a claim is never the one that approves it.
+dev|public|clean|Release 0.5.0 runs on Windows. The claim graph, the checks and the ledger work.
+dev|public|clean|Version 0.5.0 for Windows. Claims are linked, checked and logged.
+dev|public|clean|Release 0.5.0 is out for Windows, with the claim graph, the gates and the ledger running.
+dev|public|clean|Software that checks scientific claims one by one
+dev|public|clean|A checking tool that works claim by claim
+dev|public|clean|Claim-by-claim checking for scientific work
+dev|public|clean|One entry point to all the tools an AI agent uses, and one memory that every agent shares.
+dev|public|clean|Cammut connects an AI agent to its tools through one door and gives all agents the same memory.
+dev|public|clean|A single access point for an agent's tools, and a shared memory. A stored note is written once and is not changed.
+dev|public|clean|It runs on our server. We tested the Library-1M version in the lab.
+dev|public|clean|Live on our own server. The Library-1M build passed our lab tests.
+dev|public|clean|In use on our server. Library-1M is tested in the lab.
+dev|public|clean|One door to an agent's tools, and a memory that is written once
+dev|public|clean|An entry point for agent tools, with a memory index that is never rewritten
+dev|public|clean|Agent tools and shared memory in one place
+dev|public|clean|Molecullage builds figures for papers from HTML pages sized in millimetres, and checks each figure automatically.
+dev|public|clean|We write a figure as a web page, in millimetres. Molecullage prints it for a journal and measures it against fixed limits.
+dev|public|clean|Paper figures made from code, with automatic checks of size, type and colour.
+dev|public|clean|Open source under the MIT licence. Tested on Windows 11.
+dev|public|clean|Free to use and change, under the MIT licence. We tested it on Windows 11.
+dev|public|undercut|MIT licence, open source. It runs on Windows 11; we have not tested other systems.
+dev|public|clean|Journal figures made from HTML pages
+dev|public|clean|Figures for papers, built from code
+dev|public|clean|Paper figures drawn in millimetres from a web page
+dev|public|clean|Arc Science designs proteins and models molecules on a computer.
+dev|public|clean|Arc Science: protein design and molecular modelling in software.
+dev|public|clean|A two-person team that designs proteins and models molecules, with the tools to check the results.
+dev|public|undercut|The code passes unit tests on a CPU, but the model has never been trained, so its cost is only derived.
+control|limits|clean|No model has been trained, no weights exist and no sample has been drawn. The manuscript reports no result.
+control|public|undercut|No model has been trained, no weights exist and no sample has been drawn. The manuscript reports no result.
+control|public|clean|A claim that is not tested stays on the lowest rung.
+control|public|clean|No model is trained before the split is frozen.
+control|public|clean|The base model is specified and its training code is written. Training on two A100 cards is the next step.
+# dev2: 90 sentences that Gemini 4 Argon wrote on 18 November 2026 without seeing the rules; its class is the label.
+# First run, before any repair: 5 of 30 caught, 0 false alarms of 60. The rules were widened after that run, so this split is no longer blind.
+dev2|public|undercut|Our model has not yet been trained on the full dataset.
+dev2|public|undercut|The protein simulation experiment did not run to completion in the last test.
+dev2|public|undercut|We still lack a stable benchmark for the molecular dynamics module.
+dev2|public|undercut|Implementation of the GPU-accelerated figure tool remains unfinished.
+dev2|public|undercut|This version of the agent harness lacks support for multi-agent coordination.
+dev2|public|undercut|The proposed memory server architecture awaits further stress testing.
+dev2|public|undercut|We have not implemented the requested cross-platform compatibility features.
+dev2|public|undercut|No integration tests have been performed for the new docking algorithm.
+dev2|public|undercut|The design of the antibody scaffold is only a concept at this stage.
+dev2|public|undercut|Our team has yet to optimize the energy minimization function.
+dev2|public|undercut|Analysis of the binding affinity results is still pending.
+dev2|public|undercut|We lack a robust pipeline for automated protein structure generation.
+dev2|public|review|This specific software harness does not include a visual interface.
+dev2|public|review|No validation data exists for this initial prototype.
+dev2|public|undercut|The system currently lacks a scalable caching mechanism for the memory server.
+dev2|public|undercut|We haven't finalized the API definitions for the external figure tool integration.
+dev2|public|undercut|The simulation module remains a work in progress with no finalized output.
+dev2|public|undercut|Our current code lacks the necessary hooks for real-time performance monitoring.
+dev2|public|undercut|No training has been conducted on the newly imported genomic data.
+dev2|public|undercut|We await the completion of the structural analysis of the protein complex.
+dev2|public|undercut|The agent harness does not yet support asynchronous task execution.
+dev2|public|undercut|Our repository lacks the documentation required for community contributions.
+dev2|public|undercut|We have no confirmed results from the initial phase of the screening.
+dev2|public|undercut|Integration of the new solver into the existing workflow is pending.
+dev2|public|undercut|The tool does not currently support exporting figures in high-resolution formats.
+dev2|public|undercut|We lack an automated way to verify the consistency of the memory server states.
+dev2|public|undercut|The project remains in the early stages with no functional prototype built.
+dev2|public|undercut|No comparison with existing SOTA models has been performed yet.
+dev2|public|undercut|We still need to build the frontend interface for the protein visualization.
+dev2|public|undercut|The current implementation lacks full compliance with the updated data standards.
+dev2|public|clean|The builder never signs its own work to maintain reproducibility.
+dev2|public|clean|A stored note is not changed once it reaches a verified state.
+dev2|public|clean|The simulation models one unit, not the whole shell, to save memory.
+dev2|public|clean|No run starts before the environment settings are fully frozen.
+dev2|public|clean|The figure tool generates vector graphics, not raster images, to ensure quality.
+dev2|public|clean|We provide only the essential components to minimize bundle size.
+dev2|public|clean|Neither of the two models exhibits instability during training.
+dev2|public|clean|The memory server cannot process requests from unauthorized IP addresses.
+dev2|public|clean|Without proper authentication, no data can be accessed from the server.
+dev2|public|clean|Nothing in our architecture relies on proprietary third-party libraries.
+dev2|public|clean|None of the current scripts require elevated permissions to execute.
+dev2|public|clean|The system design does not rely on global mutable state.
+dev2|public|clean|The harness performs validation only after every successful step.
+dev2|public|clean|No user-level interaction is permitted during the autonomous simulation phase.
+dev2|public|clean|The protein design process adheres to strict geometric constraints without exception.
+dev2|public|clean|A figure tool output must never exceed the specified file size limit.
+dev2|public|clean|Neither the protein nor the ligand interacts without forming the required bond.
+dev2|public|clean|Only signed commits are accepted by the automated harness pipeline.
+dev2|public|clean|The memory server ensures that no entry is duplicated in the index.
+dev2|public|clean|Our protocol does not allow for non-deterministic behavior during simulations.
+dev2|public|clean|Neither of the agents acts without consulting the shared memory state.
+dev2|public|clean|The system cannot function correctly without a valid configuration file.
+dev2|public|clean|No modification is possible once the ledger entry has been recorded.
+dev2|public|clean|Without careful calibration, the output of the figure tool is not guaranteed.
+dev2|public|clean|We never share raw genomic data without proper anonymization.
+dev2|public|clean|The simulation engine only uses double-precision floats to maintain accuracy.
+dev2|public|clean|Nothing prevents the harness from running in a completely isolated environment.
+dev2|public|clean|Neither the agent nor the server requires a constant connection.
+dev2|public|clean|No changes are permitted in the production branch without peer approval.
+dev2|public|clean|The system handles all errors without crashing the main process.
+dev2|public|clean|The builder never signs its own work to maintain strict provenance.
+dev2|public|clean|A stored note is not modified without a formal review process.
+dev2|public|clean|The simulator focuses on single units, not on the entire shell, to maintain speed.
+dev2|public|clean|No experiment commences until all environment parameters are fully validated.
+dev2|public|clean|The figure tool is designed to work only with vector data formats.
+dev2|public|clean|Without clear labeling, no structural figure is submitted for publication.
+dev2|public|clean|The agent architecture cannot accept instructions that violate the safety gate.
+dev2|public|clean|Nothing in our framework relies on global mutable state or hidden variables.
+dev2|public|clean|None of our training sets contain synthetic data or simulated protein structures.
+dev2|public|clean|The figure tool ensures that no panel exceeds the standard journal dimensions.
+dev2|public|clean|Our protein models are only used when they satisfy the E(3) symmetry.
+dev2|public|clean|No modification is applied to the ledger once the entry is timestamped.
+dev2|public|clean|The simulation engine runs only on high-performance compute clusters.
+dev2|public|clean|The harness ensures no race conditions arise during multi-agent task execution.
+dev2|public|clean|Neither the protein nor the ligand interacts without the required atomic interface.
+dev2|public|clean|The memory server accepts only verified facts as entries.
+dev2|public|clean|Without a valid certificate, no agent can join the secure communication network.
+dev2|public|clean|Our protocol does not permit non-deterministic behavior during the diffusion process.
+dev2|public|clean|Nothing prevents the harness from operating in a completely air-gapped environment.
+dev2|public|clean|Neither the user nor the system needs to manually clear the cache.
+dev2|public|clean|No changes are permitted to the production repository without peer verification.
+dev2|public|clean|The system handles all runtime errors without requiring a process restart.
+dev2|public|clean|The memory server ensures that no record is duplicated during indexing.
+dev2|public|clean|Our architecture prevents any chain crossing without requiring post-hoc fixing.
+dev2|public|clean|The figure tool cannot produce output if the color contrast is too low.
+dev2|public|clean|We never accept data that does not conform to the project schema.
+dev2|public|clean|No model training is initiated without an explicit instruction from the team.
+dev2|public|clean|Nothing about the current design is incompatible with the existing harness.
+dev2|public|clean|Neither agent takes an action without verifying its compliance with the policy.
+dev2|public|clean|Neither model family outperforms the others without careful calibration.
+# dev3 = null results and facts about other groups, with true undercuts beside them. Written by the builder on 18 November
+# 2026 after review wf_4ee03cb1-ab4 (finding F102); the rules for null results were fitted to this split.
+dev3|public|clean|No adverse events were reported.
+dev3|public|clean|No significant difference was measured between the two arms.
+dev3|public|clean|Earlier groups have not measured the off-rate directly.
+dev3|public|clean|No serious adverse events were observed in either arm.
+dev3|public|clean|No side effects were reported during the trial.
+dev3|public|clean|No change in binding was measured between the two variants.
+dev3|public|clean|No toxicity was measured at the highest dose.
+dev3|public|clean|Previous studies have not tested this epitope.
+dev3|public|clean|Other groups have not reported a structure of the complex.
+dev3|public|clean|The drug lowered blood pressure. No adverse events were reported.
+dev3|public|undercut|No model has been trained.
+dev3|public|undercut|No experiment was run.
+dev3|public|undercut|We have not measured the off-rate.
+dev3|public|undercut|No results have been reported yet.
+dev3|public|undercut|The benchmark has not been run.
+dev3|public|undercut|Our group has not measured the binding affinity.
+dev3|public|undercut|The model shows no difference, and no experiment has been run.
+dev3|public|undercut|The earlier version has not been tested.
+# dev3, round 2: the probes of review wf_8eef9a40-d73. A null noun used as a modifier, another group next to a first-person
+# subject, and the null-result shapes that the first guard missed.
+dev3|public|undercut|No toxicity assay has been run.
+dev3|public|undercut|No interaction model has been trained.
+dev3|public|undercut|No signal pipeline has been built.
+dev3|public|undercut|No changes have been tested.
+dev3|public|undercut|No improvement was implemented.
+dev3|public|undercut|Unlike others, we have not validated the model.
+dev3|public|undercut|Unlike earlier studies, our model has not been trained.
+dev3|public|undercut|Our teams have not tested the build.
+dev3|public|undercut|Our studies have not been replicated.
+dev3|public|undercut|The authors have not validated the model.
+dev3|public|undercut|Our groups have not measured the binding affinity.
+dev3|public|clean|Adverse events were not reported.
+dev3|public|clean|No adverse events have been reported yet.
+dev3|public|clean|Other groups have not yet reported a structure.
+# dev3, round 3: the probes of review wf_0a53c0f4-d5b. A passive clause with an actor noun is the authors' own work; a
+# null noun with "was not measured" says a measurement was not made.
+dev3|public|undercut|Animal studies have not been performed.
+dev3|public|undercut|The validation studies have not been run.
+dev3|public|undercut|The validation studies were not run.
+dev3|public|undercut|Clinical studies have not yet been conducted.
+dev3|public|undercut|Toxicity studies have not been completed.
+dev3|public|undercut|The two papers have not been published.
+dev3|public|undercut|Studies have never been run.
+dev3|public|undercut|Toxicity was not measured.
+dev3|public|undercut|Off-target effects were not measured.
+dev3|public|undercut|Binding changes were not measured.
+dev3|public|undercut|Drug interactions were not recorded.
+dev3|public|clean|Adverse events have not been reported.
+dev3|public|clean|No in vivo effects were measured.
+dev3|public|clean|We note that other groups have not measured the off-rate.
+dev3|public|clean|As we discuss below, previous studies have not tested this epitope.
+# dev3, round 4: the probes of review wf_d9f77b04-4ab. Another group must be marked as other; "our" anywhere before it,
+# "none of", and "by us" after a work verb make the work the authors' own.
+dev3|public|undercut|Clinical studies have not started.
+dev3|public|undercut|Our pilot studies have not tested the dose.
+dev3|public|undercut|Our two teams have not finished the integration.
+dev3|public|undercut|The studies have not measured toxicity.
+dev3|public|undercut|None of the effects were measured.
+dev3|public|undercut|None of the predicted interactions were measured.
+dev3|public|undercut|No changes were measured by us.
+dev3|public|clean|No effects were observed by our team.
+dev3|public|clean|Prior studies have not measured the off-rate.

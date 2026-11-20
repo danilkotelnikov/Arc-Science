@@ -1,0 +1,89 @@
+# Blind probe set for null results and work of other groups (finding F102). One case per line: split|zone|expect|text
+# 85 sentences (43 undercut, 42 clean) that GPT-OSS 120B (Antigravity, gpt-oss-120b-medium) wrote on 18 November 2026
+# without the rules; its class is the label, and a few labels are debatable. Asked for by review wf_0a53c0f4-d5b.
+# Do not tune the rules on this file.
+f102-blind|public|undercut|We have not yet conducted the protein interaction studies described in our manuscript.
+f102-blind|public|clean|No adverse events were observed in the toxicity assays.
+f102-blind|public|undercut|Our group has never performed the toxicity assays for the new antibody.
+f102-blind|public|clean|No significant changes were detected in the molecular dynamics simulations.
+f102-blind|public|undercut|The effects were not observed in our experiments, contrary to expectations.
+f102-blind|public|clean|Earlier groups have not measured the off‑rate of the antibody.
+f102-blind|public|undercut|No changes have been reported by us in the drug and toxicity studies.
+f102-blind|public|clean|Other labs have reported no differences in signal interactions.
+f102-blind|public|undercut|We did not include any signal analysis in this study.
+f102-blind|public|clean|No toxicity events were reported in the recent papers.
+f102-blind|public|undercut|Unlike other groups, we have not measured the off‑rate of the antibody.
+f102-blind|public|clean|Previous groups have not observed any changes in the protein interaction studies.
+f102-blind|public|undercut|Our paper was not submitted to any journal yet.
+f102-blind|public|clean|No significant effects were found in the RNA interaction studies.
+f102-blind|public|undercut|We have not performed any studies on drug metabolism or toxicity.
+f102-blind|public|clean|Other researchers have not detected any adverse events in their toxicity assays.
+f102-blind|public|undercut|No toxicity assay has been carried out by our team.
+f102-blind|public|clean|No differences were observed in the signal pathways across the data sets.
+f102-blind|public|undercut|We have never measured the binding affinities in our experiments.
+f102-blind|public|clean|Earlier groups have reported no changes in the molecular dynamics trajectories.
+f102-blind|public|undercut|Our group did not investigate the protein‑protein interaction signals.
+f102-blind|public|clean|No adverse events were reported in the recent clinical studies.
+f102-blind|public|undercut|Unlike other groups, we have not evaluated the toxicity of the new compound.
+f102-blind|public|clean|No significant signal changes were detected in the data analysis.
+f102-blind|public|undercut|We have not yet analyzed the effects of the antibody on cellular signaling.
+f102-blind|public|clean|Other labs have not observed any differences in the toxicity outcomes.
+f102-blind|public|undercut|Our study was not designed to assess the drug‑induced toxicity.
+f102-blind|public|clean|No changes in the interaction networks were observed in the experiments.
+f102-blind|public|undercut|We have never performed a toxicity assay for the candidate molecule.
+f102-blind|public|clean|Earlier groups have not reported any significant effects in their papers.
+f102-blind|public|undercut|No signal changes were measured by our team in the current work.
+f102-blind|public|clean|No adverse events were observed in the recent animal studies.
+f102-blind|public|undercut|Unlike other groups, we have not carried out the protein dynamics studies.
+f102-blind|public|clean|Other researchers have not detected any toxicity in their assays.
+f102-blind|public|undercut|We have not yet examined the differences between the treatment groups.
+f102-blind|public|clean|No significant differences were found in the molecular interaction studies.
+f102-blind|public|undercut|Our group has not performed any studies on off‑target effects.
+f102-blind|public|clean|Earlier groups have reported no changes in the signal transduction pathways.
+f102-blind|public|undercut|We did not assess the toxicity in the in‑vivo models.
+f102-blind|public|clean|No adverse events were observed in the clinical trial data.
+f102-blind|public|undercut|Unlike other groups, we have not evaluated the drug‑induced signal changes.
+f102-blind|public|clean|Other labs have not found any differences in the interaction assays.
+f102-blind|public|undercut|We have never measured the effects of the molecule on cellular toxicity.
+f102-blind|public|clean|No significant changes were reported in the RNA‑protein interaction studies.
+f102-blind|public|undercut|Our experiments did not include any toxicity assays for the compound.
+f102-blind|public|clean|Earlier groups have not observed any adverse events in their studies.
+f102-blind|public|undercut|We have not yet performed the signal interaction
+f102-blind|public|undercut|We have not yet performed the protein interaction studies.
+f102-blind|public|undercut|Our group has never conducted the toxicity assays for the new antibody.
+f102-blind|public|undercut|We did not observe any effects in our drug and toxicity studies.
+f102-blind|public|clean|No effects were found in the protein interaction studies.
+f102-blind|public|clean|No toxicity was reported in the drug studies.
+f102-blind|public|undercut|We have not reported any changes in the molecular dynamics simulations.
+f102-blind|public|clean|No signal changes were observed in the RNA experiments.
+f102-blind|public|undercut|Our lab has never analyzed the signal interactions in the RNA experiments.
+f102-blind|public|clean|No differences were detected between treatment groups.
+f102-blind|public|undercut|We did not include any toxicity assay in this work.
+f102-blind|public|clean|No off‑rate was measured by any group.
+f102-blind|public|undercut|Our team has not yet examined the differences between treatment groups.
+f102-blind|public|clean|No binding affinities were reported in the recent papers.
+f102-blind|public|undercut|We have not performed any studies on off‑target effects.
+f102-blind|public|clean|No alterations in the interaction networks were found.
+f102-blind|public|undercut|Our experiments did not assess the drug‑induced toxicity.
+f102-blind|public|clean|No adverse events were reported in the clinical trial data.
+f102-blind|public|undercut|We have never measured the effects of the molecule on cellular signaling.
+f102-blind|public|clean|No significant effects were observed in the cellular toxicity assays.
+f102-blind|public|undercut|Our group has not carried out the protein‑protein interaction studies.
+f102-blind|public|clean|No changes were detected in the protein‑protein interaction signals.
+f102-blind|public|undercut|We did not evaluate the toxicity in the in‑vivo models.
+f102-blind|public|clean|No differences were observed in the signal transduction pathways.
+f102-blind|public|clean|No toxicity events were observed in the animal studies.
+f102-blind|public|clean|No significant signal variations were detected in the dataset.
+f102-blind|public|clean|No adverse outcomes were noted in the recent studies.
+f102-blind|public|clean|No changes in the off‑target effects were reported.
+f102-blind|public|undercut|Our team did not measure any signal changes in the current work.
+f102-blind|public|clean|No differences in the drug‑induced toxicity were observed.
+f102-blind|public|undercut|We have not yet performed the signal interaction analyses.
+f102-blind|public|clean|No significant interactions were detected in the RNA‑protein analysis.
+f102-blind|public|undercut|Our lab has not investigated the off‑rate of the antibody.
+f102-blind|public|clean|No effects on cellular signaling were observed.
+f102-blind|public|undercut|We did not conduct any studies on protein dynamics.
+f102-blind|public|undercut|Our group has not examined the differences in the treatment outcomes.
+f102-blind|public|undercut|We have not assessed the toxicity of the new compound.
+f102-blind|public|clean|Previous studies have not observed any toxicity events.
+f102-blind|public|undercut|Our experiments did not include any signal pathway

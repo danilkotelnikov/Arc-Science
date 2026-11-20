@@ -1,0 +1,50 @@
+# Russian sentences for the prose gate. One case per line: split|zone|expect|text
+# split ru = written by the builder on 18 November 2026 from the English site lines and their near misses; the rules
+# for Russian were fitted to this split. Labels follow the gate's design: a sentence that states what exists or what
+# comes next is clean; a sentence that announces what the authors have not done is an undercut.
+ru|public|undercut|Модель описана, код написан. Не обучена.
+ru|public|undercut|Релиз 1.0.0. Результатов моделирования пока нет.
+ru|public|undercut|Модель пока не обучена.
+ru|public|undercut|Эксперимент ещё не проводился.
+ru|public|undercut|Обзор и дизайн исследования. Ничего не запускали.
+ru|public|undercut|Каждая страница описывает задачу, метод, данные и то, что ещё не сделано.
+ru|public|undercut|Сравнение с базовыми методами не проводилось.
+ru|public|undercut|Валидация на реальных данных до сих пор не выполнена.
+ru|public|undercut|Нет результатов на реальных данных.
+ru|public|undercut|Бенчмарк пока не запущен.
+ru|public|undercut|Это только проект.
+ru|public|undercut|Код модели написан, но она ни разу не запускалась.
+ru|public|undercut|Мы ещё не сравнили модель с AlphaFold.
+ru|public|undercut|Измерения на реальном хранилище не проведены.
+ru|public|undercut|Поддержка Linux пока не реализована.
+ru|public|undercut|Сервер пока не поддерживает несколько пользователей.
+ru|public|undercut|Модель не была протестирована на GPU-кластере.
+ru|public|undercut|Публикации по проекту пока нет.
+ru|public|undercut|Нам ещё предстоит обучить модель на полном наборе.
+ru|public|undercut|На данный момент веса не опубликованы.
+ru|public|undercut|Экспериментальная проверка дизайнов отсутствует.
+ru|public|undercut|Расчёты свободной энергии не запускались.
+ru|public|clean|Сервер никогда не хранит пароли в открытом виде.
+ru|public|clean|Дизайн не должен содержать больше двух цистеинов.
+ru|public|clean|Ни один шаг не выполняется на удалённом сервере.
+ru|public|clean|Модель не обучается на данных пациентов.
+ru|public|clean|Пока модель не обучена, ворота закрыты.
+ru|public|clean|Если тест не пройден, кандидат не принимается.
+ru|public|clean|Большинство силовых полей не учитывают поляризацию.
+ru|public|clean|Ни один пациент не пострадал.
+ru|public|clean|Ошибок в журнале не обнаружено.
+ru|public|clean|В отличие от прежних инструментов, наш не требует GPU.
+ru|public|clean|Модель обучена на 1,2 млн последовательностей.
+ru|public|clean|Проверка прошла на всех трёх темах.
+ru|public|clean|Код открыт под лицензией MIT.
+ru|public|clean|Утверждение, которое не проверено, остаётся на нижней ступени.
+ru|public|clean|Ни одна модель не обучается до заморозки разбиения.
+ru|public|clean|Без данных о поляризации метод не применяется.
+ru|public|clean|Сервис ни разу не падал за два года.
+ru|public|clean|Мыши без гена TNF развивали колит.
+ru|public|clean|Расчёт не зависит от выбора начального зерна.
+ru|public|clean|Мы не используем закрытые библиотеки.
+ru|public|clean|Следующий шаг: обучение модели на полном наборе.
+ru|public|clean|Скрипт ничего не запускает без согласия пользователя.
+ru|limits|clean|Модель пока не обучена, и весов нет.
+ru|public|clean|Ограничения:
