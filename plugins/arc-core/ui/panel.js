@@ -766,7 +766,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           h("div", { style: { ...camRow, justifyContent: "space-between" } },
             h("h3", { style: { fontSize: 19, lineHeight: 1.25, fontWeight: 600, letterSpacing: "-0.02em", margin: 0 } }, t("connector.cammut")),
             h(CamHint, { label: "About Cammut servers", text: t("cammut.hint.servers") })),
-          h("p", { role: "status", "data-cammut-status": "true", title: status, style: { margin: 0, fontSize: 12, ...muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, camClamp(status)))),
+          h("p", { role: "status", "data-cammut-status": "true", title: status, style: { margin: 0, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, camClamp(status)))),
       why ? h("p", { "data-cammut-why": "true", style: { margin: 0, fontSize: 12, ...muted } }, camClamp(why)) : null,
       info ? h("div", { role: "tablist", "aria-label": t("connector.cammut"), style: { ...camRow, paddingBottom: 8, borderBottom: HAIRLINE } },
         CAM_TABS.map((k) => h("button", { key: k, type: "button", role: "tab", "aria-selected": tab === k, "data-cammut-tab": k, onClick: () => onTab && onTab(k), style: camTab(tab === k) }, t(`cammut.tab.${k}`)))) : null,
