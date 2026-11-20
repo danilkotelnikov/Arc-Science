@@ -499,6 +499,7 @@ export const memoryRetain = defaultServer.memory.retain;
 export const memoryRecall = defaultServer.memory.recall;
 
 import { createResearchSessionStore, registerConsoleRoutes } from './console.js';
+import { createUpdater } from './updater.js';
 
 function jsonRender(_args, value) {
   return [{ type: 'text', text: JSON.stringify(value === undefined ? null : value, null, 2) }];
@@ -582,6 +583,11 @@ export function apply(ctx, opts = {}) {
   const server = createArcCoreServer(opts);
   const consoleStore = createResearchSessionStore(opts.console || {});
   server.console = consoleStore;
+  // updates of plugins and native programs (updater.js); opts.updater === false turns the feature off
+  const updater = opts.updater === false ? null : (opts.updater && typeof opts.updater.getState === 'function' ? opts.updater : createUpdater(opts.updater || {}));
+  server.updater = updater;
+  // the timer never runs under the test runner or with ARC_UPDATE_DISABLE=1, so a test cannot reach GitHub or the real ~/.arc
+  if (updater && typeof updater.start === 'function' && !process.env.NODE_TEST_CONTEXT && process.env.ARC_UPDATE_DISABLE !== '1') updater.start();
   if (ctx && ctx.tools && typeof ctx.tools.register === 'function') {
     const providerSafeNames = opts.providerSafeNames !== undefined
       ? Boolean(opts.providerSafeNames)
@@ -591,7 +597,7 @@ export function apply(ctx, opts = {}) {
     }
   }
   if (ctx && typeof ctx.inject === 'function') {
-    registerConsoleRoutes(ctx, consoleStore);
+    registerConsoleRoutes(ctx, consoleStore, { updater });
   }
   return server;
 }
@@ -601,5 +607,6 @@ export * from './deploy.js';
 export * from './shelf.js';
 export * from './workshop.js';
 export * from './console.js';
+export * from './updater.js';
 
 

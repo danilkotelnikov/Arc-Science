@@ -2,6 +2,13 @@
 
 All notable changes to Arc Harness are listed here. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). Starting with `0.6.0`, every Arc Harness package, plugin, native Go/Rust binary, Electron shell archive, and release bundle shares one canonical version defined in `VERSION` and enforced by `scripts/version-sync.mjs`.
 
+## [Unreleased]
+
+### Added
+
+- **Updates for an installed copy (`plugins/arc-core/lib/updater.js`, Updates panel in `plugins/arc-core/ui/panel.js`)**: reads the latest plain `x.y.z` GitHub release and downloads the kit zip and `SHA256SUMS.txt`. It checks the zip, every plugin file and both programs. It then swaps the seven plugins (in `~/.arc/local-plugins` and each profile's `node_modules` copy) and the two programs, with one backup. A failed check after the swap rolls back by itself. Modes are `off`, `notify` (default) and `auto`; a manual check, update and roll back work in every mode.
+- **Per-file digests in `RELEASE-MANIFEST.json` (`tools/release-bundle.mjs`)**: a `files` map with the SHA-256 of every file under `plugins/` and `bin/`. The release bundler now calls the system `tar.exe` on Windows, so a GNU tar earlier in `PATH` cannot break the zip step.
+
 ## [0.6.0] - 2026-11-19
 
 ### Added
