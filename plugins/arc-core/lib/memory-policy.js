@@ -1,6 +1,9 @@
 // arc-core memory-policy (2026-11-09): 5-label note policy, R007 secret redaction,
 // write-time near-twin dedupe with supersedes links, read-time active filtering,
 // toggleable rules, and Cammut fail-open circuit breaker (Slices M1, M2, N3a, N3b).
+// S051: optional file persistence (persistFile) and createEmbeddedMemoryServer, the built-in store behind the Hindsight tool names.
+import fs from 'node:fs';
+import path from 'node:path';
 
 export const NOTE_LABELS = Object.freeze({
   type: Object.freeze(['fact', 'decision', 'lesson', 'rule', 'artifact']),
@@ -70,6 +73,32 @@ export function jaccardSimilarity(a, b) {
 export function createMemoryPolicyStore(opts = {}) {
   const notes = [];
   const rules = new Map();
+  const persistFile = typeof opts.persistFile === 'string' && opts.persistFile ? opts.persistFile : '';
+  // a file that exists but does not parse is never overwritten: the store then works in memory only
+  let persistBlocked = false;
+  if (persistFile && fs.existsSync(persistFile)) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(persistFile, 'utf8'));
+      const okNote = (n) => n && typeof n.id === 'string' && typeof n.text === 'string' && n.labels && typeof n.labels === 'object' && Array.isArray(n.tags);
+      const okRule = (r) => r && typeof r.id === 'string' && typeof r.text === 'string';
+      if (!Array.isArray(saved?.notes) || !Array.isArray(saved?.rules) || !saved.notes.every(okNote) || !saved.rules.every(okRule)) throw new Error('wrong shape');
+      for (const n of saved.notes) notes.push(n);
+      for (const r of saved.rules) rules.set(r.id, r);
+    } catch {
+      persistBlocked = true;
+    }
+  }
+  function save() {
+    if (!persistFile || persistBlocked) return;
+    try {
+      fs.mkdirSync(path.dirname(persistFile), { recursive: true });
+      const tmp = `${persistFile}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify({ version: 1, notes, rules: [...rules.values()] }), { mode: 0o600 });
+      fs.renameSync(tmp, persistFile);
+    } catch {
+      // a failed save must not lose the note in memory
+    }
+  }
   const dedupeThreshold = typeof opts.dedupeThreshold === 'number' ? opts.dedupeThreshold : 0.75;
 
   function retainNote(input = {}) {
@@ -127,6 +156,7 @@ export function createMemoryPolicyStore(opts = {}) {
     if (labels.type === 'rule') {
       rules.set(entry.id, { id: entry.id, text: entry.text, enabled: input.enabled !== false });
     }
+    save();
 
     return { ok: true, id: entry.id, note: structuredClone(entry), supersededId };
   }
@@ -153,6 +183,7 @@ export function createMemoryPolicyStore(opts = {}) {
     const r = rules.get(ruleId);
     if (!r) return { ok: false, error: `Unknown rule: ${String(ruleId)}` };
     r.enabled = Boolean(enabled);
+    save();
     return { ok: true, id: r.id, enabled: r.enabled };
   }
 
@@ -205,4 +236,40 @@ export function createCammutClientProfile(opts = {}) {
       failOpen: true,
     }),
   };
+}
+
+const clampInt = (v, lo, hi, dflt) => (Number.isInteger(v) ? Math.min(hi, Math.max(lo, v)) : dflt);
+const noteView = (n) => ({ id: n.id, text: n.text, type: n.labels.type, tags: n.tags, created_at: n.createdAt });
+
+// The built-in store behind the Hindsight tool names: retain, recall, list_memories and list_tags. Written from the public
+// tool descriptions only. Every other tool answers that the built-in store does not have it.
+export function createEmbeddedMemoryServer(store) {
+  async function callTool(tool, args = {}) {
+    if (tool === 'hindsight/retain') {
+      const r = store.retainNote({ text: String(args.content || ''), tags: Array.isArray(args.tags) ? args.tags.map(String).slice(0, 20) : [] });
+      return r.ok ? { ok: true, data: { id: r.id, supersededId: r.supersededId } } : { ok: false, error: r.error };
+    }
+    if (tool === 'hindsight/recall') {
+      if (typeof args.query !== 'string' || !args.query.trim()) return { ok: false, error: 'A query is required' };
+      const tags = Array.isArray(args.tags) ? args.tags : [];
+      const items = store.recallNotes({ query: args.query }).filter((n) => tags.length === 0 || tags.some((t) => n.tags.includes(t)));
+      return { ok: true, data: { results: items.slice(0, clampInt(args.limit, 1, 50, 20)).map(noteView) } };
+    }
+    if (tool === 'hindsight/list_memories') {
+      const tags = Array.isArray(args.tags) ? args.tags : [];
+      const all = store.recallNotes({ query: typeof args.q === 'string' ? args.q : '' }).filter((n) => tags.length === 0 || tags.some((t) => n.tags.includes(t)));
+      const offset = clampInt(args.offset, 0, 1e6, 0), limit = clampInt(args.limit, 0, 100, 100);
+      return { ok: true, data: { items: all.slice(offset, offset + limit).map(noteView), total: all.length } };
+    }
+    if (tool === 'hindsight/list_tags') {
+      const counts = new Map();
+      for (const n of store.recallNotes({})) for (const t of n.tags) counts.set(t, (counts.get(t) || 0) + 1);
+      const q = typeof args.q === 'string' ? args.q.replace(/\*$/, '') : '';
+      const items = [...counts].filter(([t]) => !q || t.startsWith(q)).map(([tag, count]) => ({ tag, count }));
+      const offset = clampInt(args.offset, 0, 1e6, 0), limit = clampInt(args.limit, 0, 100, 100);
+      return { ok: true, data: { items: items.slice(offset, offset + limit), total: items.length } };
+    }
+    return { ok: false, error: `The built-in store has no ${String(tool)} tool` };
+  }
+  return { callTool, tools: ['hindsight/retain', 'hindsight/recall', 'hindsight/list_memories', 'hindsight/list_tags'] };
 }

@@ -115,7 +115,7 @@ test('1. Built-in session read routes (head, timeline, tree, decisions) mount vi
   });
 
   assert.deepEqual(injectedDeps, ['connection']);
-  assert.equal(effects.length, 8);
+  assert.equal(effects.length, 10);
 
   for (const route of [
     '/api/arc-core/session/head',
@@ -126,6 +126,8 @@ test('1. Built-in session read routes (head, timeline, tree, decisions) mount vi
     '/api/arc-core/console/action',
     '/api/arc-core/update/state',
     '/api/arc-core/update/action',
+    '/api/arc-core/cammut/state',
+    '/api/arc-core/cammut/action',
   ]) {
     assert.ok(registered.has(route), `missing route ${route}`);
     const cfg = registered.get(route);
@@ -140,7 +142,7 @@ test('1. Built-in session read routes (head, timeline, tree, decisions) mount vi
   const headJson = await headRes.json();
   assert.equal(headJson.ok, true);
   assert.deepEqual(headJson.workspaces, ['Research', 'Memory', 'Molecullage', 'Prose']);
-  assert.deepEqual(headJson.connectors, ['Servers', 'Keys', 'Apps', 'Audit', 'Updates']);
+  assert.deepEqual(headJson.connectors, ['Servers', 'Keys', 'Apps', 'Audit', 'Cammut', 'Updates']);
   assert.deepEqual(headJson.seats, ['Planner', 'Reviewer', 'Falsifier', 'Vision', 'Prose']);
   assert.equal(headJson.ladderRungs.find((r) => r.id === 'L5').active, false);
   assert.equal(headJson.ladderRungs.find((r) => r.id === 'L6').active, false);
@@ -553,7 +555,7 @@ test('9. Console navigation has at most six top-level controls, tab roles, a sec
   const second = nodes.find((n) => n.props?.['data-console-tabs'] === 'connectors');
   assert.equal(second.props.role, 'tablist');
   const subTabs = allNodes(second).filter((n) => n.props?.role === 'tab');
-  assert.deepEqual(subTabs.map((n) => n.props['data-connector']), ['Servers', 'Keys', 'Apps', 'Audit', 'Updates']);
+  assert.deepEqual(subTabs.map((n) => n.props['data-connector']), ['Servers', 'Keys', 'Apps', 'Audit', 'Cammut', 'Updates']);
   assert.deepEqual(allNodes(nodes.find((n) => n.props?.['data-console-tabs'] === 'primary')).filter((n) => n.props?.['aria-selected'] === true).map((n) => n.props['data-top-control']), ['Connectors']);
   assert.equal(topOf(nodes).length, 6);
   // Refresh sits in the title row of the view it refreshes
@@ -562,10 +564,7 @@ test('9. Console navigation has at most six top-level controls, tab roles, a sec
   refresh.props.onClick();
   assert.equal(refreshed, 1);
 
-  // the Cammut tab of the open change fits into the second row beside Updates
-  mod.CONNECTORS.push('Cammut');
-  nodes = allNodes(render());
-  assert.deepEqual(allNodes(nodes.find((n) => n.props?.['data-console-tabs'] === 'connectors')).filter((n) => n.props?.role === 'tab').map((n) => n.props['data-connector']), ['Servers', 'Keys', 'Apps', 'Audit', 'Updates', 'Cammut']);
+  // the Cammut tab sits in the second row beside Updates, so the top row still has six controls
   assert.equal(topOf(nodes).length, 6);
   mod.CONNECTORS.length = 5;
 
