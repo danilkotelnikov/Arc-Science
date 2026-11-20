@@ -115,7 +115,7 @@ test('1. Built-in session read routes (head, timeline, tree, decisions) mount vi
   });
 
   assert.deepEqual(injectedDeps, ['connection']);
-  assert.equal(effects.length, 6);
+  assert.equal(effects.length, 8);
 
   for (const route of [
     '/api/arc-core/session/head',
@@ -124,6 +124,8 @@ test('1. Built-in session read routes (head, timeline, tree, decisions) mount vi
     '/api/arc-core/session/decisions',
     '/api/arc-core/console/state',
     '/api/arc-core/console/action',
+    '/api/arc-core/update/state',
+    '/api/arc-core/update/action',
   ]) {
     assert.ok(registered.has(route), `missing route ${route}`);
     const cfg = registered.get(route);
@@ -138,7 +140,7 @@ test('1. Built-in session read routes (head, timeline, tree, decisions) mount vi
   const headJson = await headRes.json();
   assert.equal(headJson.ok, true);
   assert.deepEqual(headJson.workspaces, ['Research', 'Memory', 'Molecullage', 'Prose']);
-  assert.deepEqual(headJson.connectors, ['Servers', 'Keys', 'Apps', 'Audit']);
+  assert.deepEqual(headJson.connectors, ['Servers', 'Keys', 'Apps', 'Audit', 'Updates']);
   assert.deepEqual(headJson.seats, ['Planner', 'Reviewer', 'Falsifier', 'Vision', 'Prose']);
   assert.equal(headJson.ladderRungs.find((r) => r.id === 'L5').active, false);
   assert.equal(headJson.ladderRungs.find((r) => r.id === 'L6').active, false);
@@ -337,7 +339,7 @@ test('4. Workspaces, Connectors, local Prose rewrite, and Settings render with S
       }
     }
 
-    for (const conn of ['Servers', 'Keys', 'Apps', 'Audit']) {
+    for (const conn of ['Servers', 'Keys', 'Apps', 'Audit', 'Updates']) {
       store.selectConnector(conn);
       const connTree = renderTree({
         type: mod.View,
@@ -440,12 +442,74 @@ test('6. Console action handles owner notes, verdicts, pins, non-blocking retain
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });
 
+test('7. Updates connector: status line, mode buttons, actions, progress, restart prompt, release notes; helper text lives in Hint popovers', () => {
+  const { mod, source } = loadPanel();
+  const en = makeTranslator(mod.en);
+  const view = (info, error) => renderTree({ type: mod.UpdatesView, props: { info, error, pending: false, onAction: () => {}, t: en }, children: [] });
+  const base = { installed: '0.6.0', latest: '0.6.0', available: false, installable: true, mode: 'notify', phase: 'idle', busy: false, hasBackup: false, notes: '', restartNeeded: false };
+  const find = (tree, key) => allNodes(tree).find((n) => n.props && n.props[key] !== undefined);
+  const text = (n) => allWords(n).join(' ');
+  const btn = (tree, key, val) => allNodes(tree).find((n) => n.type === 'button' && n.props[key] === (val ?? 'true'));
+
+  let tree = view(base);
+  assert.match(text(find(tree, 'data-updates-status')), /up to date/i);
+  assert.equal(text(find(tree, 'data-updates-versions')).includes('0.6.0'), true);
+  assert.equal(btn(tree, 'data-update-install').props.disabled, true, 'nothing newer: Update now is disabled');
+  assert.equal(btn(tree, 'data-update-rollback').props.disabled, true, 'no backup: Roll back is disabled');
+  assert.equal(btn(tree, 'data-update-mode', 'notify').props['aria-pressed'], true);
+  assert.equal(btn(tree, 'data-update-mode', 'auto').props['aria-pressed'], false);
+
+  tree = view({ ...base, latest: '0.7.0', available: true, notes: 'Notes for 0.7.0', hasBackup: true });
+  assert.match(text(find(tree, 'data-updates-status')), /0\.7\.0 is ready/);
+  assert.equal(btn(tree, 'data-update-install').props.disabled, false);
+  assert.equal(btn(tree, 'data-update-rollback').props.disabled, false);
+  assert.ok(find(tree, 'data-updates-notes'), 'release notes show');
+  const calls = [];
+  const onClick = btn(tree, 'data-update-mode', 'auto').props.onClick;
+  assert.equal(typeof onClick, 'function');
+
+  tree = view({ ...base, latest: '0.7.0', available: true, installable: false });
+  assert.match(text(find(tree, 'data-updates-status')), /no installable kit/i);
+  assert.equal(btn(tree, 'data-update-install').props.disabled, true);
+
+  tree = view({ ...base, latest: '0.7.0', available: true, busy: true, phase: 'verifying', message: 'Checking the checksum and every file' });
+  assert.ok(find(tree, 'data-updates-progress'), 'progress phases show while an update runs');
+  assert.equal(allNodes(tree).find((n) => n.props && n.props.role === 'progressbar').props['aria-valuenow'], 2);
+  assert.equal(btn(tree, 'data-update-check').props.disabled, true);
+  assert.match(text(find(tree, 'data-updates-why')), /running/i);
+
+  tree = view({ ...base, installed: '0.7.0', latest: '0.7.0', phase: 'done', restartNeeded: true, hasBackup: true });
+  assert.ok(find(tree, 'data-updates-restart'), 'a restart prompt, never a silent close');
+
+  // R005: the visible one-line texts are at most 90 characters; the long explanations sit in Hint popovers
+  const long = 'x'.repeat(200);
+  const lineTexts = ['data-updates-status', 'data-updates-why'].map((k) => text(find(view({ ...base, busy: true }, long), k)));
+  for (const l of lineTexts) assert.ok(l.length <= 90, `${l.length} chars: ${l}`);
+  assert.equal(allNodes(view(base)).filter((n) => n.props && n.props['data-hint'] === 'true').length >= 4, true);
+  for (const k of Object.keys(mod.en).filter((x) => x.startsWith('updates.hint.'))) assert.ok(mod.en[k].length > 40);
+  for (const [k, v] of Object.entries(mod.en).filter(([x]) => /^updates\.(status|why)\./.test(x))) assert.ok(v.length <= 90, `${k}: ${v.length}`);
+  void calls; void source;
+});
+
+test('8. Updates panel source: no blue or violet, no default blue controls, no middle dot, no HTML injection', () => {
+  const { source } = loadPanel();
+  const start = source.indexOf('// ---- Updates connector'), end = source.indexOf('function ConnectorView');
+  const part = source.slice(start, end);
+  assert.ok(part.length > 1000);
+  assert.equal(/·|·/.test(part), false, 'no middle dot');
+  assert.equal(/dangerouslySetInnerHTML|innerHTML/.test(part), false, 'notes are plain text');
+  assert.equal(/type:\s*"radio"|<progress|type:\s*"range"/.test(part), false, 'no browser-default blue radio, progress or range');
+  assert.equal(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|oklch\(/.test(part), false, 'colours come from theme tokens, never from literals');
+  assert.equal(/\b(blue|purple|violet|indigo|navy)\b/i.test(part), false);
+  assert.match(part, /outline:2px solid currentColor/, 'own focus ring, not the default blue one');
+});
+
 // ---- Console rework (road map 1b.4, sub-step T4; D-20261120-28): top controls, status rows, Settings sections.
 // the visible text of a tree: every string leaf outside a style element
 const leaves = (n) => (n === null || n === undefined || n === false ? [] : typeof n !== 'object' ? [String(n)] : n.type === 'style' ? [] : (n.children || []).flatMap(leaves));
 const noSecretFields = (nodes) => nodes.every((n) => n.props?.type !== 'password');
 
-test('7. Console navigation has at most six top-level controls, tab roles, a second row for connectors and arrow-key focus', () => {
+test('9. Console navigation has at most six top-level controls, tab roles, a second row for connectors and arrow-key focus', () => {
   const { mod } = loadPanel();
   const t = makeTranslator(mod.en);
   const store = createResearchSessionStore({ live: false });
@@ -489,7 +553,7 @@ test('7. Console navigation has at most six top-level controls, tab roles, a sec
   const second = nodes.find((n) => n.props?.['data-console-tabs'] === 'connectors');
   assert.equal(second.props.role, 'tablist');
   const subTabs = allNodes(second).filter((n) => n.props?.role === 'tab');
-  assert.deepEqual(subTabs.map((n) => n.props['data-connector']), ['Servers', 'Keys', 'Apps', 'Audit']);
+  assert.deepEqual(subTabs.map((n) => n.props['data-connector']), ['Servers', 'Keys', 'Apps', 'Audit', 'Updates']);
   assert.deepEqual(allNodes(nodes.find((n) => n.props?.['data-console-tabs'] === 'primary')).filter((n) => n.props?.['aria-selected'] === true).map((n) => n.props['data-top-control']), ['Connectors']);
   assert.equal(topOf(nodes).length, 6);
   // Refresh sits in the title row of the view it refreshes
@@ -498,12 +562,12 @@ test('7. Console navigation has at most six top-level controls, tab roles, a sec
   refresh.props.onClick();
   assert.equal(refreshed, 1);
 
-  // the Updates and Cammut tabs of the two open changes fit into the second row
-  mod.CONNECTORS.push('Updates', 'Cammut');
+  // the Cammut tab of the open change fits into the second row beside Updates
+  mod.CONNECTORS.push('Cammut');
   nodes = allNodes(render());
   assert.deepEqual(allNodes(nodes.find((n) => n.props?.['data-console-tabs'] === 'connectors')).filter((n) => n.props?.role === 'tab').map((n) => n.props['data-connector']), ['Servers', 'Keys', 'Apps', 'Audit', 'Updates', 'Cammut']);
   assert.equal(topOf(nodes).length, 6);
-  mod.CONNECTORS.length = 4;
+  mod.CONNECTORS.length = 5;
 
   // arrow keys move focus and wrap; they select nothing (each selection is a server call)
   const focused = [];
@@ -536,7 +600,7 @@ test('7. Console navigation has at most six top-level controls, tab roles, a sec
   }
 });
 
-test('8. Status rows use plain words, keep the raw code in a hint and offer the next step', async () => {
+test('10. Status rows use plain words, keep the raw code in a hint and offer the next step', async () => {
   const { mod } = loadPanel();
   const t = makeTranslator(mod.en);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-st-'));
@@ -605,7 +669,7 @@ test('8. Status rows use plain words, keep the raw code in a hint and offer the 
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });
 
-test('9. Settings dialog gets Memory, Connectors, Keys and Add-ons sections; Updates joins when its view exists', () => {
+test('11. Settings dialog gets Memory, Connectors, Keys, Add-ons and Updates sections; Updates leaves when its view is absent', () => {
   const { mod } = loadPanel();
   const t = makeTranslator(mod.en);
   const registerAll = () => {
@@ -618,16 +682,16 @@ test('9. Settings dialog gets Memory, Connectors, Keys and Add-ons sections; Upd
     return sections;
   };
   const sections = registerAll();
-  assert.deepEqual(sections.map((s) => s.id), ['memory', 'connectors', 'keys', 'add-ons']);
+  assert.deepEqual(sections.map((s) => s.id), ['memory', 'connectors', 'keys', 'add-ons', 'updates']);
   for (const s of sections) {
     assert.ok(s.order > 10 && s.order < 20, `${s.id} sits between Models (10) and Advanced (20)`);
     assert.match(s.label(), /^[A-Z][a-z-]+$/, `${s.id} label is one plain word`);
     assert.equal(typeof s.comp, 'function');
   }
   assert.deepEqual(sections.map((s) => s.order), [...sections.map((s) => s.order)].sort((a, b) => a - b));
-  mod.CONNECTORS.push('Updates');
-  assert.deepEqual(registerAll().map((s) => s.id), ['memory', 'connectors', 'keys', 'add-ons', 'updates']);
   mod.CONNECTORS.length = 4;
+  assert.deepEqual(registerAll().map((s) => s.id), ['memory', 'connectors', 'keys', 'add-ons']);
+  mod.CONNECTORS.push('Updates');
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-ss-'));
   try {
@@ -658,6 +722,10 @@ test('9. Settings dialog gets Memory, Connectors, Keys and Add-ons sections; Upd
         assert.ok(nodes.some((n) => n.props?.['data-connector-view'] === 'Servers'));
         assert.ok(nodes.some((n) => n.props?.['data-connector-view'] === 'Apps'));
         nodes.find((n) => n.props?.['data-connector-consent'] === 'molecullage').props.onClick();
+      }
+      if (s.id === 'updates') {
+        assert.ok(nodes.some((n) => n.props?.['data-connector-view'] === 'Updates'));
+        for (const a of ['data-update-check', 'data-update-install', 'data-update-rollback', 'data-updates-status']) assert.ok(nodes.some((n) => n.props?.[a]), `updates: keeps ${a}`);
       }
       if (s.id === 'add-ons') {
         assert.ok(leaves(tree).includes('arc-core') && leaves(tree).includes('0.6.0'));

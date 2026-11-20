@@ -138,6 +138,10 @@ Every built-in plugin ships at unified Arc Harness version **`0.6.0`**:
 
 Download **`Arc-Harness-Kit-0.6.0-win-x64.zip`** and **`SHA256SUMS.txt`** from [GitHub Releases](../../releases/tag/v0.6.0), verify the archive digest, extract the kit, and run the build and install steps below. The release bundle includes precompiled `bin/arc-gateway.exe` and `bin/arc-validators.exe` alongside all seven `0.6.0` plugins.
 
+### Update an installed copy
+
+The **Updates** panel of the C2 console reads the latest GitHub release, compares it with the installed version, and can replace the seven plugins and the `arc-gateway.exe` and `arc-validators.exe` programs. Modes are `off`, `notify` (default) and `auto`; a manual check, update and roll back always work. The kit zip is checked against `SHA256SUMS.txt` and every file against `RELEASE-MANIFEST.json` before anything is swapped, and the old files are kept for one roll back. The checksum file comes from the same release, so it proves a complete download, not who built it. The updater does not change `app.asar` or your data in `~/.arc`. Details: [wiki, Install](wiki/Install.md#update-plugins-and-programs).
+
 ### Build from source
 
 ```powershell

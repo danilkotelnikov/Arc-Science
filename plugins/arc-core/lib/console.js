@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const WORKSPACES = Object.freeze(['Research', 'Memory', 'Molecullage', 'Prose']);
-export const CONNECTORS = Object.freeze(['Servers', 'Keys', 'Apps', 'Audit']);
+export const CONNECTORS = Object.freeze(['Servers', 'Keys', 'Apps', 'Audit', 'Updates']);
 export const SEATS = Object.freeze(['Planner', 'Reviewer', 'Falsifier', 'Vision', 'Prose']);
 export const RESEARCH_PANES = Object.freeze(['Map', 'Claims', 'Evidence']);
 export const RESEARCH_VIEWS = Object.freeze(['Map', 'Claims', 'Evidence', 'Release']);
@@ -1040,14 +1040,27 @@ export function createResearchSessionStore(opts = {}) {
   };
 }
 
-export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = createResearchSessionStore()) {
+// extra.updater: the updater of updater.js. Update routes: state (read) and action (POST only, same-origin or loopback pages only).
+const LOOPBACK_ORIGIN = /^(?:127\.0\.0\.1|localhost|\[::1\])$/;
+// The desktop window loads arc-app://app and its requests arrive as http://arc.internal/... with Origin "null" and a loopback Host header
+// (seen in the live test). A web page on a loopback address is local too.
+const isLocalPage = (u) => (u.protocol === 'http:' || u.protocol === 'https:' ? LOOPBACK_ORIGIN.test(u.hostname) || u.hostname === 'arc.internal' : u.protocol === 'arc-app:' && u.hostname === 'app');
+export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = createResearchSessionStore(), extra = {}) {
+  const updater = extra && extra.updater;
   let routePath = '';
+  let method = 'POST', origin = null, pageUrl = null, hostHeader = null, jsonBody = true;
   let payload = maybeBody || {};
   if (typeof reqOrPath === 'string') {
     routePath = reqOrPath;
   } else if (reqOrPath && typeof reqOrPath.url === 'string') {
     const u = new URL(reqOrPath.url, 'http://127.0.0.1');
     routePath = u.pathname;
+    method = String(reqOrPath.method || 'GET').toUpperCase();
+    pageUrl = u;
+    const hdr = (k) => (reqOrPath.headers && typeof reqOrPath.headers.get === 'function' ? reqOrPath.headers.get(k) : null);
+    origin = hdr('origin');
+    hostHeader = hdr('host');
+    jsonBody = /^application\/json(?:;|$)/i.test(hdr('content-type') || '');
     if (reqOrPath.method === 'POST' && typeof reqOrPath.text === 'function') {
       const raw = await reqOrPath.text();
       if (raw && raw.trim()) {
@@ -1072,7 +1085,45 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
   }
   if (clean === 'api/arc-core/console/state') {
     if (typeof store.refreshLive === 'function') await store.refreshLive(false);
-    return store.snapshot();
+    const snap = store.snapshot();
+    if (updater) { const u = updater.getState(); snap.update = { available: u.available && u.installable, latest: u.latest, phase: u.phase, restartNeeded: u.restartNeeded }; }
+    return snap;
+  }
+  if (clean === 'api/arc-core/update/state') {
+    if (!updater) return { ok: false, error: 'Updates are not available in this build.' };
+    return { ok: true, ...updater.getState() };
+  }
+  if (clean === 'api/arc-core/update/action') {
+    if (!updater) return { ok: false, error: 'Updates are not available in this build.' };
+    if (method !== 'POST') return { ok: false, status: 405, error: 'Use POST.' };
+    // Three guards against another web page driving an update:
+    // 1. a JSON content type, which a cross-site form cannot send without the browser asking this server first;
+    // 2. a local address: the Host header of a rebound name (evil.example resolving to 127.0.0.1) is not loopback;
+    // 3. a local Origin when the browser names one ("null" is what the desktop window sends).
+    if (typeof reqOrPath !== 'string') {
+      if (!jsonBody) return { ok: false, status: 415, error: 'Send update actions as application/json.' };
+      const hostName = hostHeader ? hostHeader.replace(/:\d+$/, '') : null;
+      if (hostName ? !LOOPBACK_ORIGIN.test(hostName) : !pageUrl || !isLocalPage(pageUrl)) return { ok: false, status: 403, error: 'Update settings change only from this computer.' };
+      if (origin && origin !== 'null') {
+        let o = null;
+        try { o = new URL(origin); } catch { /* refused below */ }
+        if (!o || !isLocalPage(o)) return { ok: false, status: 403, error: 'This page may not change update settings.' };
+      }
+    }
+    if (payload.kind === 'check') return { ok: true, ...(await updater.check()) };
+    if (payload.kind === 'mode') {
+      try { return { ok: true, ...updater.setMode(payload.mode) }; } catch (err) { return { ok: false, error: String(err.message || err) }; }
+    }
+    if (payload.kind === 'install') {
+      const version = typeof payload.version === 'string' && /^\d+\.\d+\.\d+$/.test(payload.version) ? payload.version : undefined;
+      if (updater.getState().busy) return { ok: false, error: 'An update is already running.' };
+      const run = updater.install({ version });
+      if (payload.wait === true) { const r = await run; return { ...r, state: updater.getState() }; }
+      run.catch(() => {}); // progress comes through update/state
+      return { ok: true, started: true, state: updater.getState() };
+    }
+    if (payload.kind === 'rollback') { const r = await updater.rollback(); return { ...r, state: updater.getState() }; }
+    return { ok: false, error: `Unknown update action: ${String(payload.kind || '')}` };
   }
   if (clean === 'api/arc-core/console/action') {
     if (payload.kind === 'workspace') return store.selectWorkspace(payload.workspace);
@@ -1103,7 +1154,7 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
   return { ok: false, error: `Unknown console route: ${clean}` };
 }
 
-export function registerConsoleRoutes(ctx, store = createResearchSessionStore()) {
+export function registerConsoleRoutes(ctx, store = createResearchSessionStore(), extra = {}) {
   if (!ctx || typeof ctx.inject !== 'function') return [];
   const routes = [
     '/api/arc-core/session/head',
@@ -1112,6 +1163,8 @@ export function registerConsoleRoutes(ctx, store = createResearchSessionStore())
     '/api/arc-core/session/decisions',
     '/api/arc-core/console/state',
     '/api/arc-core/console/action',
+    '/api/arc-core/update/state',
+    '/api/arc-core/update/action',
   ];
   const disposers = [];
   ctx.inject(['connection'], (c) => {
@@ -1127,9 +1180,9 @@ export function registerConsoleRoutes(ctx, store = createResearchSessionStore())
           requestBody: 'buffered',
           fetch: async (req) => {
             try {
-              const body = await serveConsoleRoute(req, {}, store);
+              const body = await serveConsoleRoute(req, {}, store, extra);
               return new Response(JSON.stringify(body), {
-                status: body.ok ? 200 : 400,
+                status: typeof body.status === 'number' ? body.status : (body.ok ? 200 : 400),
                 headers: {
                   'content-type': 'application/json',
                   'cache-control': 'no-store',

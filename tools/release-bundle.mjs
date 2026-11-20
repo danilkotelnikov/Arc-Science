@@ -10,7 +10,8 @@
  * - Compiled native/arc-gateway binary (arc-gateway.exe) when Go is installed
  * - Compiled native/arc-validators binary (arc-validators.exe) when Cargo is installed
  * - Build kit scripts (tools/, lib/, brand/, brandtext/, theme/, policies/, scripts/, installer/)
- * - Release manifest (RELEASE-MANIFEST.json) with Arc Harness version, git commit, and file SHA-256 digests
+ * - Release manifest (RELEASE-MANIFEST.json) with Arc Harness version, git commit, binary digests and a `files` map
+ *   (SHA-256 of every file under plugins/ and bin/); the installed app's updater checks each file against it
  *
  * Usage:
  *   node tools/release-bundle.mjs [--out <dir>] [--skip-native]
@@ -49,7 +50,25 @@ function copyIfExists(src, dst) {
   return true;
 }
 
-export function buildReleaseBundle({ repoRoot = root, outDir, skipNative = false } = {}) {
+/** SHA-256 of every file under plugins/ and bin/ of a staged bundle, keyed by POSIX path from the bundle root. */
+export function manifestFiles(stageDir) {
+  const files = {};
+  const walk = (rel) => {
+    const dir = path.join(stageDir, rel);
+    if (!fs.existsSync(dir)) return;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const r = `${rel}/${e.name}`;
+      if (e.isDirectory()) walk(r);
+      else files[r] = sha256File(path.join(stageDir, r));
+    }
+  };
+  walk('plugins');
+  walk('bin');
+  return files;
+}
+
+/** prebuilt: { 'arc-gateway.exe': Buffer } puts ready binaries in bin/ instead of building them (tests, offline kits). */
+export function buildReleaseBundle({ repoRoot = root, outDir, skipNative = false, prebuilt = null } = {}) {
   const version = readArcVersion(repoRoot);
   const targetDir = path.resolve(outDir || path.join(repoRoot, 'build', 'release'));
   const bundleName = `Arc-Harness-Kit-${version}-win-x64`;
@@ -109,6 +128,15 @@ export function buildReleaseBundle({ repoRoot = root, outDir, skipNative = false
     }
   }
 
+  if (prebuilt) {
+    const binDir = path.join(stageDir, 'bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    for (const [name, bytes] of Object.entries(prebuilt)) {
+      fs.writeFileSync(path.join(binDir, name), bytes);
+      binaries.push({ name, bytes: bytes.length, sha256: sha256File(path.join(binDir, name)) });
+    }
+  }
+
   let gitCommit = 'unknown';
   try {
     gitCommit = runCmd('git', ['rev-parse', 'HEAD'], repoRoot);
@@ -127,12 +155,14 @@ export function buildReleaseBundle({ repoRoot = root, outDir, skipNative = false
     gitCommit,
     plugins,
     binaries,
+    files: manifestFiles(stageDir),
   };
   fs.writeFileSync(path.join(stageDir, 'RELEASE-MANIFEST.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 
   fs.rmSync(zipPath, { force: true });
   if (process.platform === 'win32') {
-    runCmd('tar', ['-a', '-cf', zipPath, '-C', targetDir, bundleName], targetDir);
+    // the system tar (bsdtar) writes zip; a GNU tar earlier in PATH (Git Bash) reads "C:" as a host name
+    runCmd(path.join(process.env.SystemRoot || 'C:\Windows', 'System32', 'tar.exe'), ['-a', '-cf', zipPath, '-C', targetDir, bundleName], targetDir);
   } else {
     runCmd('zip', ['-rq', zipPath, bundleName], targetDir);
   }
