@@ -545,6 +545,15 @@ test('9. Console navigation has at most six top-level controls, tab roles, a sec
   assert.equal(nodes.some((n) => n.type === 'footer'), false);
   assert.ok(!leaves(tree).some((w) => /Connector view|30-day grants/.test(w)));
 
+  // an update that is ready shows on the Connectors tab in every workspace, not only in the second row
+  assert.equal(tabs.find((n) => n.props['data-top-control'] === 'Connectors').props['aria-label'], undefined);
+  const withUpdate = allNodes(renderTree({ type: mod.View, props: { data: { ...store.snapshot(), update: { available: true, latest: '0.7.0' } }, failed: false, skin: 'arc', t }, children: [] }));
+  const connTab = withUpdate.find((n) => n.props?.['data-top-control'] === 'Connectors');
+  assert.equal(connTab.props['aria-label'], 'Connectors, version 0.7.0 is available');
+  assert.ok(allNodes(connTab).some((n) => n.props?.['data-state'] === 'attention'));
+  // a connector without its own view still has a title and an empty line (the Cammut entry of the open change)
+  assert.ok(mod.en['view.cammut'] && mod.en['empty.cammut']);
+
   // the Connectors tab opens the second row, built from the CONNECTORS list
   tabs.find((n) => n.props['data-top-control'] === 'Connectors').props.onClick();
   assert.equal(store.head().activePaneMode, 'connector');
@@ -743,4 +752,35 @@ test('11. Settings dialog gets Memory, Connectors, Keys, Add-ons and Updates sec
     allNodes(failedTree).find((n) => n.props?.['data-console-retry'] === 'true').props.onClick();
     assert.equal(refreshed, 2);
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});
+
+test('12. The console reloads on window focus, and a slow state answer never overwrites a newer one', async () => {
+  const source = fs.readFileSync(panelPath, 'utf8');
+  let loaded;
+  const listeners = {};
+  const answers = []; // one resolver per state request, in the order the requests start
+  const fetchStub = () => new Promise((resolve) => { answers.push((state) => resolve({ ok: true, json: async () => state })); });
+  vm.runInNewContext(source, {
+    window: { __ModuleLoader__: { load: (m) => { loaded = m; } }, addEventListener: (k, fn) => { listeners[k] = fn; }, removeEventListener: (k) => { delete listeners[k]; } },
+    fetch: fetchStub,
+  });
+  const applied = [];
+  const effects = [];
+  const mod = loaded.factory((name) => (name === 'react'
+    ? { createElement: () => null, Fragment: 'fragment', useState: (v) => [v, (x) => { if (x && typeof x === 'object' && x.ok) applied.push(x.tag); }], useEffect: (fn) => { effects.push(fn); } }
+    : {}));
+  const tick = () => new Promise((r) => setImmediate(r));
+
+  mod.useConsole();
+  const cleanup = effects[0](); // the first request starts, and the focus listener is set
+  assert.equal(typeof listeners.focus, 'function');
+  listeners.focus(); // the window gets the focus back: a second request starts
+  assert.equal(answers.length, 2);
+  answers[1]({ ok: true, tag: 'new' }); // the second request answers first
+  await tick(); await tick();
+  answers[0]({ ok: true, tag: 'old' }); // the first request answers late
+  await tick(); await tick();
+  assert.deepEqual(applied, ['new'], 'the late answer of the older request is dropped');
+  cleanup();
+  assert.equal(listeners.focus, undefined, 'the listener is removed with the pane');
 });
