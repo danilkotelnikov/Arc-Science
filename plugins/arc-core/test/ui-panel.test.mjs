@@ -575,7 +575,6 @@ test('9. Console navigation has at most six top-level controls, tab roles, a sec
 
   // the Cammut tab sits in the second row beside Updates, so the top row still has six controls
   assert.equal(topOf(nodes).length, 6);
-  mod.CONNECTORS.length = 5;
 
   // arrow keys move focus and wrap; they select nothing (each selection is a server call)
   const focused = [];
@@ -697,9 +696,11 @@ test('11. Settings dialog gets Memory, Connectors, Keys, Add-ons and Updates sec
     assert.equal(typeof s.comp, 'function');
   }
   assert.deepEqual(sections.map((s) => s.order), [...sections.map((s) => s.order)].sort((a, b) => a - b));
+  const savedConnectors = [...mod.CONNECTORS];
   mod.CONNECTORS.length = 4;
   assert.deepEqual(registerAll().map((s) => s.id), ['memory', 'connectors', 'keys', 'add-ons']);
-  mod.CONNECTORS.push('Updates');
+  mod.CONNECTORS.length = 0;
+  mod.CONNECTORS.push(...savedConnectors);
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-ss-'));
   try {

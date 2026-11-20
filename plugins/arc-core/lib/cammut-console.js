@@ -16,7 +16,7 @@ export function classifyTool(tool) {
   if (typeof tool !== 'string' || !/^hindsight\/[a-z][a-z0-9_]*$/.test(tool)) return 'blocked';
   const name = tool.slice('hindsight/'.length);
   if (name === 'recall' || /^(list|get)_/.test(name)) return 'read';
-  if (/^(delete|clear)_/.test(name)) return 'destructive';
+  if (/^(delete|clear|remove|purge|drop|wipe|reset)_/.test(name) || name.startsWith('forget')) return 'destructive';
   return 'write';
 }
 

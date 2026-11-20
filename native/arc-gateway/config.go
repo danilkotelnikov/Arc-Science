@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -211,6 +212,14 @@ func normUpstream(s string) (string, error) {
 	return strings.TrimRight(u.String(), "/"), nil
 }
 
+func isLoopbackHost(h string) bool {
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
 // mergeCammutPatch sets cammut.upstreams (and cammut.auth) inside raw and keeps authFile, governor and every other field.
 // An empty list is refused: LoadConfig would quietly put the default server back.
 func mergeCammutPatch(raw map[string]any, v any) error {
@@ -252,6 +261,10 @@ func mergeCammutPatch(raw map[string]any, v any) error {
 	}
 	auth := map[string]any{}
 	src := obj(cm["auth"])
+	oldAuth := map[string]any{}
+	for k, val := range src {
+		oldAuth[k] = val
+	}
 	if a, has := p["auth"]; has {
 		src = obj(a)
 		if src == nil {
@@ -276,8 +289,21 @@ func mergeCammutPatch(raw map[string]any, v any) error {
 		auth[n] = name
 	}
 	for _, n := range ups {
-		if _, has := auth[n]; !has && !known[n] {
+		if _, has := auth[n]; has {
+			continue
+		}
+		if old, had := oldAuth[n]; had {
+			auth[n] = old // a patch that leaves a server out of auth keeps its entry, so the AuthFile never reaches it
+		} else if !known[n] {
 			auth[n] = ""
+		}
+	}
+	for n, name := range auth {
+		if name == "" {
+			continue
+		}
+		if u, err := url.Parse(n); err == nil && u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
+			return settingsError("a server with a key must use https unless it is on this computer: " + n)
 		}
 	}
 	cm["upstreams"] = ups
