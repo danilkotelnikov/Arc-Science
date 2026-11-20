@@ -1004,8 +1004,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       const [failed, setFailed] = React.useState(false);
       const [actionError, setActionError] = React.useState("");
       const [pendingConsent, setPendingConsent] = React.useState(null);
+      const [latest] = React.useState({ n: 0 }); // the number of the newest state request of this pane
 
+      // only the newest request may change the view: a slow answer of an older one is dropped
       const refresh = async () => {
+        const mine = ++latest.n;
         try {
           const r = await fetch("api/arc-core/console/state", {
             method: "POST",
@@ -1013,6 +1016,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
             body: "{}",
           });
           const j = r.ok ? await r.json() : null;
+          if (mine !== latest.n) return;
           if (j && j.ok) {
             setData(j);
             setFailed(false);
@@ -1020,7 +1024,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
             setFailed(true);
           }
         } catch {
-          setFailed(true);
+          if (mine === latest.n) setFailed(true);
         }
       };
 
@@ -1162,5 +1166,6 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     SETTINGS_SECTIONS,
     InfoHint,
     StatusDot,
+    useConsole,
   };
 } });
