@@ -1082,15 +1082,18 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
   if (clean.startsWith('api/arc-core/cammut/') && extra && typeof extra.cammut === 'function') {
     // The desktop window sends http://arc.internal/... with Origin "null" (seen in the live test of the update routes).
     // Judge a Cammut request by the same rule as the update routes: a loopback Host (or, without one, a local page),
-    // a local Origin when the browser names one, and a JSON body for a POST. A local request reaches the Cammut guard as 127.0.0.1.
+    // a local Origin when the browser names one, and a JSON body for a POST. Anything else is refused here, so a plain
+    // cross-site form never reaches the Cammut guard. A local request reaches the guard as 127.0.0.1 with no Origin.
     let local = typeof reqOrPath === 'string';
     if (!local) {
-      const hostName = hostHeader ? hostHeader.replace(/:d+$/, '') : null;
+      const hostName = hostHeader ? hostHeader.replace(/:\d+$/, '') : null;
       let originOk = !origin || origin === 'null';
       if (!originOk) { try { originOk = isLocalPage(new URL(origin)); } catch { originOk = false; } }
-      local = (hostName ? LOOPBACK_ORIGIN.test(hostName) : Boolean(pageUrl && isLocalPage(pageUrl))) && originOk && (method !== 'POST' || jsonBody);
+      if (method === 'POST' && !jsonBody) return { ok: false, status: 415, error: 'Send Cammut actions as application/json.' };
+      local = (hostName ? LOOPBACK_ORIGIN.test(hostName) : Boolean(pageUrl && isLocalPage(pageUrl))) && originOk;
     }
-    return extra.cammut({ clean, method, host: local ? '127.0.0.1' : (hostHeader || (pageUrl && pageUrl.host) || ''), origin: local ? null : origin, payload });
+    if (!local) return { ok: false, status: 403, error: 'The Cammut console answers only to this computer\'s own app.' };
+    return extra.cammut({ clean, method, host: '127.0.0.1', origin: null, payload });
   }
   if (clean === 'api/arc-core/session/head') return store.head();
   if (clean === 'api/arc-core/session/timeline') return store.timeline();

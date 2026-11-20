@@ -256,7 +256,11 @@ test('16. serveConsoleRoute hands cammut routes to extra.cammut and lists the Ca
   assert.equal((await call('http://arc.internal/api/arc-core/cammut/action', { 'content-type': 'application/json', origin: 'arc-app://app' })).ok, true);
   assert.equal((await call('http://arc.internal/api/arc-core/cammut/action', { 'content-type': 'application/json', origin: 'arc-app://evil' })).status, 403, 'another app page is refused');
   assert.equal((await call('http://evil.example/api/arc-core/cammut/action', { 'content-type': 'application/json' })).status, 403, 'a page on another host is refused');
-  assert.equal((await call('http://127.0.0.1:7777/api/arc-core/cammut/action', { 'content-type': 'text/plain', origin: 'null' })).status, 403, 'a cross-site form cannot send JSON, so a plain body is refused');
+  assert.equal((await call('http://127.0.0.1:7777/api/arc-core/cammut/action', { 'content-type': 'text/plain', origin: 'null' })).status, 415, 'a cross-site form cannot send JSON, so a plain body is refused');
+  assert.equal((await call('http://127.0.0.1:7777/api/arc-core/cammut/action', { 'content-type': 'text/plain', origin: 'http://localhost:3000' })).status, 415, 'a plain form from another local page is refused too');
+  assert.equal((await call('http://arc.internal/api/arc-core/cammut/action', { host: '127.0.0.1:5140', 'content-type': 'application/json', origin: 'null' })).ok, true, 'a loopback Host with a port is local');
+  assert.equal((await call('http://arc.internal/api/arc-core/cammut/action', { host: 'evil.example:5140', 'content-type': 'application/json', origin: 'null' })).status, 403, 'a rebound name is refused');
+  assert.equal(seen.length, 0, 'a refused request never reaches the Cammut part');
   assert.equal((await call('http://127.0.0.1:7777/api/arc-core/cammut/state', { origin: 'https://evil.example' }, 'GET')).status, 403, 'a foreign page cannot read the state');
 });
 
@@ -349,7 +353,7 @@ test('21. apply mounts the Cammut routes, loads the part on first use and reload
   assert.equal(st.status, 200);
   assert.equal(j.canManage, true);
   assert.equal(j.builtin.available, true);
-  const evil = await registered.get('/api/arc-core/cammut/action').fetch(new Request('http://evil.example/api/arc-core/cammut/action', { method: 'POST', body: '{"kind":"tool-search","query":"x"}' }));
+  const evil = await registered.get('/api/arc-core/cammut/action').fetch(new Request('http://evil.example/api/arc-core/cammut/action', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"kind":"tool-search","query":"x"}' }));
   assert.equal(evil.status, 403);
   const reload = await srv.components.swap('cammut-console');
   assert.equal(reload.ok, true, 'reloads from the file on disk without a restart');
