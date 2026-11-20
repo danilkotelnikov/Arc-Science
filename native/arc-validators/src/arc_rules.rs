@@ -61,6 +61,11 @@ fn has_clipped_status(line: &str) -> bool {
 pub fn lint_prose(text: &str, slide_mode: bool) -> Vec<ProseFinding> {
     let mut findings = Vec::new();
     let clean_text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    // The engine's prose gate, with the lexicon read from plugins/arc-core/lib/prose-gate.js (no copy here).
+    let mut undercuts: std::collections::HashMap<usize, Vec<&'static str>> = std::collections::HashMap::new();
+    for (no, form) in crate::prose_gate::findings(clean_text, "public") {
+        undercuts.entry(no).or_default().push(form);
+    }
 
     for (idx, raw_line) in clean_text.lines().enumerate() {
         let line_no = idx + 1;
@@ -113,6 +118,10 @@ pub fn lint_prose(text: &str, slide_mode: bool) -> Vec<ProseFinding> {
                     detail: "slide header contains a slogan verb".to_string(),
                 });
             }
+        }
+
+        for form in undercuts.get(&line_no).into_iter().flatten() {
+            findings.push(ProseFinding { line: line_no, rule: "SELF_UNDERCUT", detail: format!("announces work that is not done ({})", form) });
         }
     }
 
