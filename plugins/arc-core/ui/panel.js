@@ -606,7 +606,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   // primary button, outlined secondary buttons and inputs. Colours come only from the theme tokens, so all three themes hold.
   const CAM_CSS = ".arc-cam button:focus-visible,.arc-cam summary:focus-visible,.arc-cam input:focus-visible,.arc-cam select:focus-visible,.arc-cam textarea:focus-visible{outline:2px solid currentColor;outline-offset:2px}" +
     ".arc-cam button:disabled{opacity:.5;cursor:not-allowed}.arc-cam pre{white-space:pre-wrap;margin:0;font-family:inherit;max-height:260px;overflow:auto}" +
-    ".arc-cam{animation:arc-cam-rise .5s cubic-bezier(.05,.7,.1,1) both}" +
+    ".arc-cam button:not(:disabled):hover{opacity:.88}.arc-cam{animation:arc-cam-rise .5s cubic-bezier(.05,.7,.1,1) both}" +
     ".arc-cam-cube{position:relative;display:block;flex:none;animation:arc-cam-turn .62s ease-in-out both}" +
     ".arc-cam-cube svg{position:absolute;inset:0;width:100%;height:100%;fill:currentColor}" +
     ".arc-cam-cube .fr{animation:arc-cam-hide .62s both}.arc-cam-cube .fl{animation:arc-cam-show .62s both}" +
@@ -616,7 +616,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "@media (prefers-reduced-motion:reduce){.arc-cam,.arc-cam-cube,.arc-cam-cube .fl,.arc-cam-cube .fr{animation:none}.arc-cam-cube .fr{opacity:0}}";
   const CAM_LINE = "1px solid var(--dsw-alias-line-divider, color-mix(in srgb, currentColor 22%, transparent))";
   // The theme accent, pulled 35% toward the text colour, so the page colour on it reads at 4.5:1 or more in every theme and mode.
-  const CAM_FILL = "color-mix(in srgb, var(--dsw-alias-button-info-fill, currentColor) 65%, var(--dsw-alias-label-primary, currentColor))";
+  const CAM_FILL = "color-mix(in srgb, var(--dsw-alias-button-info-fill, CanvasText) 65%, var(--dsw-alias-label-primary, CanvasText))";
   const camBtn = (active) => ({
     fontFamily: TEXT_FONT,
     fontSize: 13,
@@ -633,6 +633,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       ? { border: `1px solid ${CAM_FILL}`, background: CAM_FILL, color: "var(--dsw-alias-bg-base, Canvas)", fontWeight: 600 }
       : { border: CAM_LINE, background: SURFACE, color: INK, fontWeight: 500 }),
   });
+  const camTab = (active) => ({ ...camBtn(false), ...(active ? { fontWeight: 600, background: "color-mix(in srgb, currentColor 10%, transparent)", border: "1px solid color-mix(in srgb, currentColor 55%, transparent)" } : {}) });
   const camInput = { ...inputStyle, fontSize: 13, padding: "7px 10px", minHeight: 32, border: CAM_LINE, borderRadius: 8, background: SURFACE };
   const CAM_TOP = "M128.00 18.80L220.15 72.00L128.00 125.20L35.85 72.00Z";
   const CAM_LEFT = "M33.43 76.20L125.58 129.40L125.58 235.80L33.43 182.60Z";
@@ -648,12 +649,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   const camClamp = (s, n = 90) => (String(s ?? "").length > n ? String(s).slice(0, n - 1) + "…" : String(s ?? ""));
   const camRow = { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" };
 
-  function CamHint({ label, text }) {
-    const [open, setOpen] = React.useState(false);
-    return h("span", { style: { position: "relative", display: "inline-block" } },
-      h("button", { type: "button", "aria-label": label, "aria-expanded": open, "data-hint": "true", onClick: () => setOpen(!open), style: { ...btnStyle(false), padding: "0 6px", borderRadius: "50%", fontSize: 11, lineHeight: "16px" } }, "?"),
-      open ? h("span", { role: "note", style: { position: "absolute", left: 0, top: "calc(100% + 4px)", zIndex: 5, width: 280, padding: "8px 10px", fontSize: 12, lineHeight: 1.45, background: SURFACE, color: INK, border: HAIRLINE, borderRadius: RADIUS, boxShadow: "0 2px 10px color-mix(in srgb, currentColor 18%, transparent)" } }, text) : null);
-  }
+  // the console hint (InfoHint): a 24 px target, Escape closes it, the note stays inside a narrow pane
+  const CamHint = (props) => h(InfoHint, { align: "row", ...props });
+
 
   function CamServers({ info, busy, onAction, t }) {
     const [url, setUrl] = React.useState("");
@@ -697,7 +695,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         h(CamHint, { label: "About the tool runner", text: t("cammut.hint.tools") })),
       h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 } },
         (st.list || []).map((x) => h("li", { key: x.tool, "data-cammut-tool": x.tool, style: { ...camRow, paddingTop: 6, borderTop: HAIRLINE } },
-          h("button", { type: "button", "aria-pressed": tool === x.tool, onClick: () => onAction && onAction({ kind: "tool-pick", tool: x.tool }), style: camBtn(tool === x.tool) }, x.tool.replace("hindsight/", "")),
+          h("button", { type: "button", "aria-pressed": tool === x.tool, onClick: () => onAction && onAction({ kind: "tool-pick", tool: x.tool }), style: camTab(tool === x.tool) }, x.tool.replace("hindsight/", "")),
           h("code", { "data-cammut-class": x.class, style: tagStyle }, x.class),
           h("span", { style: { ...muted, fontSize: 12 } }, camClamp(x.description))))),
       tool ? h("div", { style: { display: "grid", gap: 6 } },
@@ -708,7 +706,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           h("button", { type: "button", "data-cammut-run": "true", disabled: !parsed, onClick: () => go(), style: camBtn(true) }, t("cammut.tools.run")),
           run && run.needs === "confirm" ? h("button", { type: "button", "data-cammut-confirm": "true", onClick: () => go(true), style: camBtn(false) }, t("cammut.tools.confirm")) : null,
           run && run.needs === "confirm-tool" ? h(React.Fragment, null,
-            h("input", { type: "text", "aria-label": t("cammut.tools.typename"), "data-cammut-confirm-tool": "true", placeholder: t("cammut.tools.typename"), value: typed, onChange: (e) => setTyped(e.target.value), style: { ...camInput, width: 200 } }),
+            h("input", { type: "text", "aria-label": t("cammut.tools.typename"), "data-cammut-confirm-tool": "true", placeholder: t("cammut.tools.typename"), value: typed, onChange: (e) => setTyped(e.target.value), style: { ...camInput, flex: "1 1 160px" } }),
             h("button", { type: "button", "data-cammut-confirm": "true", disabled: typed !== tool, onClick: () => go(tool), style: camBtn(false) }, t("cammut.tools.confirm"))) : null),
         run && run.error ? h("p", { role: "status", style: { margin: 0, fontSize: 12, opacity: 0.85 } }, camClamp(run.error)) : null,
         run && run.ok && run.data !== undefined ? h("details", { open: true, "data-cammut-result": "true" }, h("summary", { style: { cursor: "pointer", fontSize: 12, fontWeight: 600 } }, t("cammut.tools.result")), h("pre", { style: { fontSize: 12 } }, JSON.stringify(run.data, null, 2).slice(0, 4000))) : null,
@@ -765,10 +763,10 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           h("div", { style: { ...camRow, justifyContent: "space-between" } },
             h("h3", { style: { fontSize: 19, lineHeight: 1.25, fontWeight: 600, letterSpacing: "-0.02em", margin: 0 } }, t("connector.cammut")),
             h(CamHint, { label: "About Cammut servers", text: t("cammut.hint.servers") })),
-          h("p", { role: "status", "data-cammut-status": "true", title: status, style: { margin: 0, fontSize: 12, ...muted } }, camClamp(status)))),
+          h("p", { role: "status", "data-cammut-status": "true", title: status, style: { margin: 0, fontSize: 12, ...muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, camClamp(status)))),
       why ? h("p", { "data-cammut-why": "true", style: { margin: 0, fontSize: 12, ...muted } }, camClamp(why)) : null,
       info ? h("div", { role: "tablist", "aria-label": t("connector.cammut"), style: { ...camRow, paddingBottom: 8, borderBottom: HAIRLINE } },
-        CAM_TABS.map((k) => h("button", { key: k, type: "button", role: "tab", "aria-selected": tab === k, "data-cammut-tab": k, onClick: () => onTab && onTab(k), style: camBtn(tab === k) }, t(`cammut.tab.${k}`)))) : null,
+        CAM_TABS.map((k) => h("button", { key: k, type: "button", role: "tab", "aria-selected": tab === k, "data-cammut-tab": k, onClick: () => onTab && onTab(k), style: camTab(tab === k) }, t(`cammut.tab.${k}`)))) : null,
       info && tab === "servers" ? h(CamServers, { info, busy, onAction, t }) : null,
       info && tab === "tools" ? h(CamTools, { tools, onAction, t }) : null,
       info && tab === "observer" ? h(CamObserver, { observer, onAction, t }) : null,

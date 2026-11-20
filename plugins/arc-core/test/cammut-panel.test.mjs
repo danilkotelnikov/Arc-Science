@@ -196,5 +196,7 @@ test('10. The Cammut tab has the look of the Cammut sign-in page: turning AS cub
   assert.match(add.props.style.background, /var\(--dsw-alias-button-info-fill/, 'the main button takes the accent of the theme');
   const remove = nodes.find((n) => n.props?.['data-cammut-remove']);
   assert.match(remove.props.style.border, /^1px solid var\(--dsw-alias-line-divider/, 'secondary buttons are outlined');
+  assert.equal(nodes.filter((n) => /button-info-fill/.test(n.props?.style?.background || '')).length, 1, 'one filled button: the main action; the selected tab is outlined');
+  assert.equal(nodes.find((n) => n.props?.['data-cammut-status']).props.style.whiteSpace, 'nowrap', 'the status stays on one line');
   assert.doesNotMatch(source, /#[0-9a-f]{3,8}\b|rgba?\(/i, 'no fixed colours in the panel');
 });
