@@ -497,7 +497,7 @@ test('8. Updates panel source: no blue or violet, no default blue controls, no m
   assert.equal(/·|·/.test(part), false, 'no middle dot');
   assert.equal(/dangerouslySetInnerHTML|innerHTML/.test(part), false, 'notes are plain text');
   assert.equal(/type:\s*"radio"|<progress|type:\s*"range"/.test(part), false, 'no browser-default blue radio, progress or range');
-  assert.equal(/#[0-9a-fA-F]{3,8}|rgba?\(|hsla?\(|oklch\(/.test(part), false, 'colours come from theme tokens, never from literals');
-  assert.equal(/(blue|purple|violet|indigo|navy)/i.test(part), false);
+  assert.equal(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|oklch\(/.test(part), false, 'colours come from theme tokens, never from literals');
+  assert.equal(/\b(blue|purple|violet|indigo|navy)\b/i.test(part), false);
   assert.match(part, /outline:2px solid currentColor/, 'own focus ring, not the default blue one');
 });

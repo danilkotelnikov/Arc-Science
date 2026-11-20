@@ -1022,10 +1022,13 @@ export function createResearchSessionStore(opts = {}) {
 
 // extra.updater: the updater of updater.js. Update routes: state (read) and action (POST only, same-origin or loopback pages only).
 const LOOPBACK_ORIGIN = /^(?:127\.0\.0\.1|localhost|\[::1\])$/;
+// The desktop window loads arc-app://app and its requests arrive as http://arc.internal/... with Origin "null" and a loopback Host header
+// (seen in the live test). A web page on a loopback address is local too.
+const isLocalPage = (u) => (u.protocol === 'http:' || u.protocol === 'https:' ? LOOPBACK_ORIGIN.test(u.hostname) || u.hostname === 'arc.internal' : u.protocol === 'arc-app:' && u.hostname === 'app');
 export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = createResearchSessionStore(), extra = {}) {
   const updater = extra && extra.updater;
   let routePath = '';
-  let method = 'POST', origin = null, host = null;
+  let method = 'POST', origin = null, pageUrl = null, hostHeader = null, jsonBody = true;
   let payload = maybeBody || {};
   if (typeof reqOrPath === 'string') {
     routePath = reqOrPath;
@@ -1033,8 +1036,11 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
     const u = new URL(reqOrPath.url, 'http://127.0.0.1');
     routePath = u.pathname;
     method = String(reqOrPath.method || 'GET').toUpperCase();
-    host = u.host;
-    origin = reqOrPath.headers && typeof reqOrPath.headers.get === 'function' ? reqOrPath.headers.get('origin') : null;
+    pageUrl = u;
+    const hdr = (k) => (reqOrPath.headers && typeof reqOrPath.headers.get === 'function' ? reqOrPath.headers.get(k) : null);
+    origin = hdr('origin');
+    hostHeader = hdr('host');
+    jsonBody = /^application\/json(?:;|$)/i.test(hdr('content-type') || '');
     if (reqOrPath.method === 'POST' && typeof reqOrPath.text === 'function') {
       const raw = await reqOrPath.text();
       if (raw && raw.trim()) {
@@ -1070,13 +1076,19 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
   if (clean === 'api/arc-core/update/action') {
     if (!updater) return { ok: false, error: 'Updates are not available in this build.' };
     if (method !== 'POST') return { ok: false, status: 405, error: 'Use POST.' };
-    // a page on a rebound name (evil.example resolving to 127.0.0.1) has a non-loopback Host; an opaque Origin ("null") is a sandboxed frame
-    const hostName = String(host || '').replace(/:\d+$/, '');
-    if (!LOOPBACK_ORIGIN.test(hostName)) return { ok: false, status: 403, error: 'Update settings change only from this computer.' };
-    if (origin) {
-      let o = null;
-      try { o = new URL(origin); } catch { /* refused below */ }
-      if (!o || !LOOPBACK_ORIGIN.test(o.hostname)) return { ok: false, status: 403, error: 'This page may not change update settings.' };
+    // Three guards against another web page driving an update:
+    // 1. a JSON content type, which a cross-site form cannot send without the browser asking this server first;
+    // 2. a local address: the Host header of a rebound name (evil.example resolving to 127.0.0.1) is not loopback;
+    // 3. a local Origin when the browser names one ("null" is what the desktop window sends).
+    if (typeof reqOrPath !== 'string') {
+      if (!jsonBody) return { ok: false, status: 415, error: 'Send update actions as application/json.' };
+      const hostName = hostHeader ? hostHeader.replace(/:\d+$/, '') : null;
+      if (hostName ? !LOOPBACK_ORIGIN.test(hostName) : !pageUrl || !isLocalPage(pageUrl)) return { ok: false, status: 403, error: 'Update settings change only from this computer.' };
+      if (origin && origin !== 'null') {
+        let o = null;
+        try { o = new URL(origin); } catch { /* refused below */ }
+        if (!o || !isLocalPage(o)) return { ok: false, status: 403, error: 'This page may not change update settings.' };
+      }
     }
     if (payload.kind === 'check') return { ok: true, ...(await updater.check()) };
     if (payload.kind === 'mode') {

@@ -438,10 +438,13 @@ test('a swap that fails half way restores what it already moved', async (t) => {
   const e = await setup(); t.after(e.cleanup);
   e.srv.state.publish(buildKit('0.7.0'));
   const real = fs.renameSync;
-  const flaky = { ...fs, renameSync: (a, b) => { if (String(b).includes('arc-molecullage') && !String(a).includes('backup')) { const err = new Error('EPERM: busy'); err.code = 'EPERM'; throw err; } return real(a, b); } };
+  const flaky = { ...fs, renameSync: (a, b) => { if (String(b).includes('arc-molecullage') && !String(a).includes('backup')) { const err = new Error('EPERM: busy'); err.code = 'EPERM'; err.path = String(a); err.dest = String(b); throw err; } return real(a, b); } };
   const u = e.make({ fs: flaky });
   const r = await u.install();
   assert.equal(r.ok, false);
+  assert.match(r.error, /^Files of arc-molecullage are in use, so nothing was changed\./, 'plain words, no raw system text (found in the live test)');
+  assert.ok(r.error.length <= 90, r.error);
+  assert.equal(u.getState().skipped, null, 'a file in use is temporary: the version is not marked as bad');
   for (const nme of UPDATE_PLUGINS) assert.equal(marker(e, nme), `export const marker = '${nme}-0.6.0';\n`, nme);
   assert.equal(fs.readFileSync(path.join(e.gatewayDir, 'arc-gateway.exe'), 'utf8'), 'GW-0.6.0');
 });
@@ -602,9 +605,16 @@ test('console routes: state, check, mode, install, rollback; POST only; foreign 
   assert.equal(foreign.status, 403);
   assert.equal((await call('api/arc-core/update/action', { kind: 'check' }, { origin: 'http://127.0.0.1:7777' })).ok, true);
   assert.equal((await call('api/arc-core/update/action', { kind: 'check' }, { origin: 'http://localhost:3000' })).ok, true);
-  assert.equal((await call('api/arc-core/update/action', { kind: 'check' }, { origin: 'null' })).status, 403, 'a sandboxed frame has an opaque origin');
-  const rebound = await serveConsoleRoute(new Request('http://evil.example:7777/api/arc-core/update/action', { method: 'POST', headers: { origin: 'http://evil.example:7777' }, body: '{"kind":"check"}' }), {}, store, { updater: e.u });
-  assert.equal(rebound.status, 403, 'a rebound host name is refused');
+  const act = 'api/arc-core/update/action';
+  const raw = (url, headers, body = '{"kind":"check"}') => serveConsoleRoute(new Request(url, { method: 'POST', headers, body }), {}, store, { updater: e.u });
+  // the desktop window: http://arc.internal/..., Origin "null", JSON body (the shape seen in the live test)
+  assert.equal((await raw(`http://arc.internal/${act}`, { 'content-type': 'application/json', origin: 'null' })).ok, true, 'the desktop window may act');
+  assert.equal((await raw(`http://127.0.0.1:7777/${act}`, { 'content-type': 'text/plain', origin: 'null' })).status, 415, 'a cross-site form cannot send JSON, so a plain body is refused');
+  assert.equal((await raw(`http://127.0.0.1:7777/${act}`, {})).status, 415);
+  assert.equal((await raw(`http://evil.example:7777/${act}`, { 'content-type': 'application/json', origin: 'http://evil.example:7777' })).status, 403, 'a rebound host name is refused');
+  assert.equal((await raw(`http://evil.example:7777/${act}`, { 'content-type': 'application/json' })).status, 403);
+  assert.equal((await raw(`http://arc.internal/${act}`, { 'content-type': 'application/json', origin: 'arc-app://app' })).ok, true);
+  assert.equal((await raw(`http://arc.internal/${act}`, { 'content-type': 'application/json', origin: 'arc-app://evil' })).status, 403);
   const chk = await call('api/arc-core/update/action', { kind: 'check' });
   assert.equal(chk.available, true);
   assert.equal((await call('api/arc-core/update/action', { kind: 'mode', mode: 'auto' })).mode, 'auto');

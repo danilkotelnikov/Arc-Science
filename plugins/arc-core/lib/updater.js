@@ -192,15 +192,16 @@ export function createUpdater(opts = {}) {
   const testSwitch = env.ARC_UPDATE_ALLOW_LOOPBACK === '1';
   const realHome = path.join(os.homedir(), '.arc'), realGw = path.join(env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'ArcGateway');
   if (testSwitch) {
-    // a test must name both folders itself: a forgotten override would swap the user's live files
-    const bad = (p, real) => !p || eqPath(p, real) || (env.ARC_HOME && eqPath(p, env.ARC_HOME));
-    if (bad(opts.home, realHome) || bad(opts.gatewayDir, realGw)) throw fail('ERR_UPDATE_TEST_PATHS', 'with the test switch on, give a throwaway home and gatewayDir');
+    // a test run must name both folders itself (options or ARC_HOME and ARC_UPDATE_GATEWAY_DIR): a forgotten override would swap the user's live files
+    const h = opts.home ?? env.ARC_HOME, g = opts.gatewayDir ?? env.ARC_UPDATE_GATEWAY_DIR;
+    if (!h || !g || eqPath(h, realHome) || eqPath(g, realGw)) throw fail('ERR_UPDATE_TEST_PATHS', 'with the test switch on, give a throwaway home and gatewayDir');
   }
   const home = path.resolve(opts.home ?? (env.ARC_HOME?.trim() || realHome));
-  const gatewayDir = path.resolve(opts.gatewayDir ?? realGw);
+  const gatewayDir = path.resolve(opts.gatewayDir ?? (testSwitch ? env.ARC_UPDATE_GATEWAY_DIR : undefined) ?? realGw);
   const validatorsDirs = (opts.validatorsDirs ?? [gatewayDir, path.join(home, 'bin')]).map((d) => path.resolve(d));
-  const repo = REPO_RE.test(opts.repo || '') && testSwitch ? opts.repo : DEFAULT_REPO;
-  const api = (testSwitch && opts.api ? String(opts.api) : DEFAULT_API).replace(/\/+$/, '');
+  const wantRepo = opts.repo ?? env.ARC_UPDATE_REPO;
+  const repo = testSwitch && REPO_RE.test(wantRepo || '') ? wantRepo : DEFAULT_REPO;
+  const api = (testSwitch && (opts.api ?? env.ARC_UPDATE_API) ? String(opts.api ?? env.ARC_UPDATE_API) : DEFAULT_API).replace(/\/+$/, '');
   const limits = { ...LIMITS, ...(opts.limits || {}) };
   const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
   const run = opts.run ?? ((file, args) => spawnSync(file, args, { encoding: 'utf8', timeout: 10000, windowsHide: true }));
@@ -452,7 +453,9 @@ export function createUpdater(opts = {}) {
       phase('done', `Updated to ${toVersion}. Restart Arc Harness to use it.`);
       return { ok: true, version: toVersion };
     } catch (err) {
-      const msg = clean(err.message, 300);
+      const inUse = ['EPERM', 'EBUSY', 'EACCES'].includes(err.code);
+      const what = inUse && err.path ? path.basename(String(err.path)).replace(/\.arc-new$/, '') : '';
+      const msg = inUse ? `Files of ${what || 'the app'} are in use, so nothing was changed. Close the app and try again` : clean(err.message, 300);
       let rolled = false;
       if (swapped) {
         const errors = await restore(ops);
@@ -462,9 +465,9 @@ export function createUpdater(opts = {}) {
         if (errors.length) save({ skipped: { version: toVersion, reason: `failed: ${msg}`, at: new Date(now()).toISOString() } });
         if (errors.length) { phase('failed', `${msg}. The rollback was not complete: ${errors.join('; ')}`); return { ok: false, error: `${msg}. The rollback was not complete: ${errors.join('; ')}` }; }
       }
-      const transient = err.code === 'ERR_UPDATE_HTTP' || err.code === 'ERR_UPDATE_SIZE' || err.name === 'TimeoutError' || err.name === 'AbortError' || err instanceof TypeError;
+      const transient = inUse || err.code === 'ERR_UPDATE_HTTP' || err.code === 'ERR_UPDATE_SIZE' || err.name === 'TimeoutError' || err.name === 'AbortError' || err instanceof TypeError;
       if (toVersion && !transient) save({ skipped: { version: toVersion, reason: `failed: ${msg}`, at: new Date(now()).toISOString() } });
-      const text = rolled ? `${msg}. The old files were put back (rolled back).` : msg;
+      const text = inUse ? `${msg}.` : rolled ? `${msg}. The old files were put back (rolled back).` : msg;
       phase(rolled ? 'rolled-back' : 'failed', text);
       return { ok: false, error: text };
     } finally {

@@ -230,7 +230,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   const UPDATE_PHASE_LABEL = { downloading: "Download", verifying: "Verify", staging: "Stage", installing: "Install", testing: "Test", done: "Done" };
   const UPDATE_MODES = ["off", "notify", "auto"];
   const UPDATE_CSS = ".arc-upd button:focus-visible,.arc-upd summary:focus-visible{outline:2px solid currentColor;outline-offset:2px}" +
-    ".arc-upd button:disabled{opacity:.5;cursor:not-allowed}.arc-upd pre{white-space:pre-wrap;margin:0;font-family:inherit}";
+    ".arc-upd button:disabled{opacity:.5;cursor:not-allowed}.arc-upd pre{white-space:pre-wrap;margin:0;font-family:inherit}" +
+    ".arc-upd ::selection{background:color-mix(in srgb,currentColor 24%,transparent)}";
   // the C2 primary pair (dark brown on paper, cream on the dark canvas) from the theme tokens
   const upBtn = (active) => ({
     ...btnStyle(false),
@@ -278,8 +279,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       h("div", { style: row, "data-updates-versions": "true" },
         h("span", { style: muted }, `${t("updates.installed")}:`), h("code", { style: tagStyle }, u.installed || "unknown"),
         h("span", { style: muted }, `${t("updates.latest")}:`), h("code", { style: tagStyle }, u.latest || "not checked")),
-      h("div", { style: row, ...(u.restartNeeded ? { "data-updates-restart": "true" } : {}) },
-        h("p", { role: "status", "data-updates-status": "true", title: status, style: { margin: 0, fontSize: 12, opacity: 0.85, fontWeight: u.restartNeeded ? 600 : 400 } }, clampLine(status)),
+      h("div", { style: { ...row, flexWrap: "nowrap", minHeight: 20 }, ...(u.restartNeeded ? { "data-updates-restart": "true" } : {}) },
+        h("p", { role: "status", "data-updates-status": "true", title: status, style: { margin: 0, fontSize: 12, opacity: 0.85, fontWeight: u.restartNeeded ? 600 : 400, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, clampLine(status)),
         u.restartNeeded ? h(Hint, { label: "About restarting", text: t("updates.hint.restart") }) : null),
       h("div", { style: row, role: "group", "aria-label": t("updates.mode") },
         h("span", { style: muted }, `${t("updates.mode")}:`),
@@ -304,6 +305,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   function UpdatesPanel({ t }) {
     const [info, setInfo] = React.useState(null);
     const [error, setError] = React.useState("");
+    const [actionError, setActionError] = React.useState(""); // an action's refusal stays until the next action; a state refresh must not wipe it
     const [pending, setPending] = React.useState(false);
     const post = async (route, body) => {
       const r = await fetch(route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
@@ -313,8 +315,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       try { const j = await post("api/arc-core/update/state"); if (j && j.ok) { setInfo(j); setError(""); } else setError((j && j.error) || "Could not read the update state."); } catch { setError("Could not read the update state."); }
     };
     const act = async (payload) => {
-      setError(""); setPending(true);
-      try { const j = await post("api/arc-core/update/action", payload); if (!j || j.ok === false) setError((j && j.error) || "The action failed."); } catch { setError("The action failed."); }
+      setActionError(""); setPending(true);
+      try { const j = await post("api/arc-core/update/action", payload); if (!j || j.ok === false) setActionError((j && j.error) || "The action failed."); } catch { setActionError("The action failed."); }
       setPending(false);
       await load();
     };
@@ -324,7 +326,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       const id = setInterval(load, busy ? 1200 : 15000);
       return () => clearInterval(id);
     }, [busy]);
-    return h(UpdatesView, { info, error, pending, onAction: act, t });
+    return h(UpdatesView, { info, error: actionError || error, pending, onAction: act, t });
   }
 
   function ConnectorView({ connector, detail, onOpenConsent, t }) {
