@@ -103,7 +103,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "view.keys": "Keys",
     "view.apps": "Apps",
     "view.audit": "Audit",
+    "view.cammut": "Cammut",
     "nav.console": "Console sections",
+    "nav.connectors.update": "Connectors, version {v} is available",
     "nav.console.settings": "Console settings",
     "action.again": "Check again",
     "action.retry": "Try again",
@@ -118,6 +120,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "empty.keys": "No keys yet.",
     "empty.apps": "No apps yet.",
     "empty.audit": "No events yet.",
+    "empty.cammut": "Cammut is not set up yet.",
     "empty.audit.hint": "Decisions, notes and access changes that you make in the console appear here.",
     "empty.addons": "No add-ons installed.",
     "empty.addons.hint": "An add-on appears here after the installer copies it into the local plugins folder.",
@@ -722,6 +725,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const inWorkspaceMode = !settingsOpen && !inConnectorMode;
     const themeEntry = THEMES.find((x) => x.id === skin) || THEMES[0];
     const activeTop = settingsOpen ? "" : inConnectorMode ? "Connectors" : activeWorkspace;
+    const updateReady = Boolean(data && data.update && data.update.available && data.update.latest);
     const connectorLabel = (conn) => (conn === "Updates" && data && data.update && data.update.available && data.update.latest ? `Updates (${data.update.latest})` : conn);
 
     return h("div", {
@@ -765,7 +769,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
               ...(isWorkspace ? { "data-workspace": name } : { "data-connector-group": "true" }),
               onClick: () => (isWorkspace ? onSelectWorkspace && onSelectWorkspace(name) : onSelectConnector && onSelectConnector(activeConnector)),
               style: tabStyle(isActive),
-            }, isWorkspace ? name : t("nav.connectors"));
+              // an update that is ready shows here in every workspace; the second row carries the version
+              ...(!isWorkspace && updateReady ? { "aria-label": t("nav.connectors.update", { v: data.update.latest }), title: t("nav.connectors.update", { v: data.update.latest }), "data-update-ready": "true" } : {}),
+            }, isWorkspace ? name : h("span", { style: { display: "inline-flex", gap: 6, alignItems: "center" } }, t("nav.connectors"), updateReady ? h(StatusDot, { state: "attention" }) : null));
           })),
         h("button", {
           type: "button",
@@ -1031,7 +1037,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       React.useEffect(() => {
         refresh();
         consoleViews.add(refresh);
-        return () => { consoleViews.delete(refresh); };
+        // another window may have changed the state: reload when this window gets the focus back
+        const onFocus = () => { refresh(); };
+        const w = typeof window !== "undefined" && window.addEventListener ? window : null;
+        if (w) w.addEventListener("focus", onFocus);
+        return () => { consoleViews.delete(refresh); if (w) w.removeEventListener("focus", onFocus); };
       }, []);
 
       return { data, failed, actionError, pendingConsent, setPendingConsent, dispatch };

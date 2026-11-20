@@ -545,6 +545,15 @@ test('9. Console navigation has at most six top-level controls, tab roles, a sec
   assert.equal(nodes.some((n) => n.type === 'footer'), false);
   assert.ok(!leaves(tree).some((w) => /Connector view|30-day grants/.test(w)));
 
+  // an update that is ready shows on the Connectors tab in every workspace, not only in the second row
+  assert.equal(tabs.find((n) => n.props['data-top-control'] === 'Connectors').props['aria-label'], undefined);
+  const withUpdate = allNodes(renderTree({ type: mod.View, props: { data: { ...store.snapshot(), update: { available: true, latest: '0.7.0' } }, failed: false, skin: 'arc', t }, children: [] }));
+  const connTab = withUpdate.find((n) => n.props?.['data-top-control'] === 'Connectors');
+  assert.equal(connTab.props['aria-label'], 'Connectors, version 0.7.0 is available');
+  assert.ok(allNodes(connTab).some((n) => n.props?.['data-state'] === 'attention'));
+  // a connector without its own view still has a title and an empty line (the Cammut entry of the open change)
+  assert.ok(mod.en['view.cammut'] && mod.en['empty.cammut']);
+
   // the Connectors tab opens the second row, built from the CONNECTORS list
   tabs.find((n) => n.props['data-top-control'] === 'Connectors').props.onClick();
   assert.equal(store.head().activePaneMode, 'connector');
