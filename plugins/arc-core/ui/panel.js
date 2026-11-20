@@ -22,6 +22,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     { id: "v0", label: "Black and white" },
     { id: "radium", label: "Radium" },
   ];
+  // Top controls (road map 1b.4, 2026-11-20): one tab list of five (the workspaces and one entry for all connectors) and the
+  // console settings button, so at most six. Connectors open a second row built from CONNECTORS.
+  const TOP_TABS = [...WORKSPACES, "Connectors"];
 
   const en = {
     "tab.title": "Arc console",
@@ -72,6 +75,41 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "settings.title": "Console settings",
     "settings.theme": "Active theme",
     "settings.switches": "Operator switches",
+    "view.servers": "Servers",
+    "view.keys": "Keys",
+    "view.apps": "Apps",
+    "view.audit": "Audit",
+    "nav.console": "Console sections",
+    "nav.console.settings": "Console settings",
+    "action.again": "Check again",
+    "action.retry": "Try again",
+    "consent.review": "Review access",
+    "hint.detail": "Technical detail",
+    "hint.code": "The reported cause is {code}. Use this word when you look for the fault.",
+    "status.grants": "Active 30-day grants: {n}",
+    "state.on": "On",
+    "state.off": "Off",
+    "state.unset": "Not set up yet",
+    "empty.servers": "No servers yet.",
+    "empty.keys": "No keys yet.",
+    "empty.apps": "No apps yet.",
+    "empty.audit": "No events yet.",
+    "empty.audit.hint": "Decisions, notes and access changes that you make in the console appear here.",
+    "empty.addons": "No add-ons installed.",
+    "empty.addons.hint": "An add-on appears here after the installer copies it into the local plugins folder.",
+    "settings.nav.memory": "Memory",
+    "settings.nav.connectors": "Connectors",
+    "settings.nav.keys": "Keys",
+    "settings.nav.addons": "Add-ons",
+    "settings.nav.updates": "Updates",
+    "settings.memory.gateway": "Gateway address",
+    "settings.memory.recall": "Memory recall",
+    "settings.memory.labels": "Policy labels",
+    "settings.memory.hint": "Arc Harness reaches shared memory through the local gateway on this computer. Recall adds matching notes to a request. The gateway settings file holds this switch.",
+    "settings.connectors.hint": "Servers are the local programs that Arc Harness talks to. Apps are tool packs. An app works only inside the access that you grant, for one action or for 30 days.",
+    "settings.keys.hint": "Arc Harness shows where each key is kept and never its value. Keys stay in files on this computer and in the system key store. No key is typed on this page.",
+    "settings.addons.hint": "Add-ons are the Arc plugins installed on this computer. The list is for reference. The installer and the updater change it.",
+    "settings.about": "About this page",
   };
 
   const TEXT_FONT = "var(--arc-font-family-text-default, \"Geist\", system-ui, sans-serif)";
@@ -91,12 +129,52 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     borderRadius: RADIUS,
     border: "none",
     cursor: "pointer",
-    color: active ? "var(--dsw-alias-bg-base, currentColor)" : INK,
+    color: active ? "var(--dsw-alias-bg-base, Canvas)" : INK,
     background: active
-      ? "var(--dsw-alias-button-info-fill, color-mix(in srgb, currentColor 88%, transparent))"
+      ? "var(--dsw-alias-brand-primary-new-colorprimary-new-color, currentColor)"
       : "color-mix(in srgb, currentColor 8%, transparent)",
     fontWeight: active ? 600 : 400,
   });
+
+  // a top-level tab: plain text, the selected one carries a rule under it
+  const tabStyle = (active) => ({
+    fontFamily: TEXT_FONT,
+    fontSize: 13,
+    lineHeight: 1.35,
+    minHeight: 28,
+    padding: "4px 2px",
+    border: "none",
+    borderBottom: active ? "2px solid currentColor" : "2px solid transparent",
+    borderRadius: 0,
+    background: "transparent",
+    cursor: "pointer",
+    color: INK,
+    fontWeight: active ? 600 : 400,
+    opacity: active ? 1 : 0.72,
+  });
+  const iconBtnStyle = (active) => ({ ...btnStyle(active), display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 28, minHeight: 28, padding: 0 });
+  const rowWrapStyle = { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" };
+  const titleRowStyle = { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" };
+  const h3Style = { fontSize: 13, fontWeight: 600, margin: 0 };
+  // one visible focus ring for every control of the console and of its Settings pages; hover lifts a resting tab
+  const CONSOLE_CSS = ":is([data-arc-console],[data-arc-settings]) :is(button,input,select,textarea,summary):focus-visible{outline:2px solid currentColor !important;outline-offset:2px}" +
+    ":is([data-arc-console],[data-arc-settings]) button:disabled{opacity:.5;cursor:not-allowed}" +
+    "[data-arc-console] [role=tab]:hover{opacity:1 !important}";
+  const oneLine = (s, n = 90) => (String(s ?? "").length > n ? String(s).slice(0, n - 1) + "\u2026" : String(s ?? ""));
+  // dates follow the language of the app page, never the language of the system
+  const uiLang = () => (typeof document !== "undefined" && document.documentElement && document.documentElement.lang) || "en";
+  const fmtWhen = (ms) => { const d = new Date(Number(ms)); return Number(ms) > 0 && Number.isFinite(d.getTime()) ? d.toLocaleString(uiLang(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) : ""; };
+  // arrow keys move focus along a tab list and wrap; Enter or Space selects, because a selection calls the server
+  const onTabKeys = (e) => {
+    const step = { ArrowRight: 1, ArrowLeft: -1, Home: "first", End: "last" }[e.key];
+    if (!step) return;
+    const tabs = Array.from(e.currentTarget.querySelectorAll("[role=tab]"));
+    if (!tabs.length) return;
+    const at = tabs.indexOf(e.target);
+    const next = step === "first" ? 0 : step === "last" ? tabs.length - 1 : (Math.max(at, 0) + step + tabs.length) % tabs.length;
+    tabs[next].focus();
+    e.preventDefault();
+  };
 
   const tagStyle = {
     fontFamily: MONO_FONT,
@@ -126,6 +204,49 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     return h("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true },
       h("circle", { cx: 12, cy: 12, r: 8.5 }),
       h("path", { d: "M12 3.5v17M3.5 12h17" }));
+  }
+
+  function SettingsIcon({ size = 16 }) {
+    return h("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", "aria-hidden": true },
+      h("path", { d: "M4 6h9M19 6h1M4 12h1M11 12h9M4 18h7M17 18h3" }),
+      h("circle", { cx: 16, cy: 6, r: 2 }), h("circle", { cx: 8, cy: 12, r: 2 }), h("circle", { cx: 14, cy: 18, r: 2 }));
+  }
+
+  // the state of a row as a mark in the text colour: filled is fine, a ring needs attention, a small mark is not checked
+  function StatusDot({ state }) {
+    const look = state === "ok" ? { background: "currentColor" }
+      : state === "attention" ? { boxShadow: "inset 0 0 0 2px currentColor" }
+      : { background: "currentColor", transform: "scale(0.5)" };
+    return h("span", { "data-state": state || "idle", "aria-hidden": true, style: { display: "inline-block", width: 8, height: 8, borderRadius: "50%", flex: "none", ...look } });
+  }
+
+  // helper text lives here (R005). Escape, or focus that leaves the hint, closes it. A click inside the note keeps it open.
+  function InfoHint({ label, text, align = "start" }) {
+    const [open, setOpen] = React.useState(false);
+    const noteId = `arc-hint-${Array.from(String(text)).reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 1000003, 7)}`;
+    return h("span", {
+      style: { position: "relative", display: "inline-flex" },
+      onBlur: (e) => { if (!e.currentTarget?.contains?.(e.relatedTarget)) setOpen(false); },
+      // Escape closes an open hint only; it must not also close the dialog that holds the page
+      onKeyDown: (e) => {
+        if (e.key !== "Escape" || !open) return;
+        e.stopPropagation?.(); e.nativeEvent?.stopImmediatePropagation?.();
+        setOpen(false);
+        e.currentTarget?.querySelector?.("button")?.focus?.();
+      },
+    },
+      h("button", {
+        type: "button", "aria-label": label, "aria-expanded": open, "aria-describedby": open ? noteId : undefined, "data-hint": "true",
+        onClick: () => setOpen(!open),
+        style: { ...iconBtnStyle(false), minWidth: 24, minHeight: 24, borderRadius: "50%", fontSize: 12, lineHeight: 1 },
+      }, "?"),
+      open ? h("span", { role: "note", id: noteId, tabIndex: -1, style: { position: "absolute", top: "calc(100% + 4px)", [align === "end" ? "right" : "left"]: 0, zIndex: 5, width: "min(260px, 70vw)", padding: "8px 10px", fontSize: 12, lineHeight: 1.45, fontWeight: 400, background: "var(--dsw-alias-bg-layer-1, Canvas)", color: INK, border: HAIRLINE, borderRadius: RADIUS, boxShadow: "0 2px 10px color-mix(in srgb, currentColor 18%, transparent)" } }, text) : null);
+  }
+
+  function EmptyState({ id, text, hint, t }) {
+    return h("div", { "data-empty-state": id, style: { ...rowWrapStyle, paddingTop: 8, borderTop: HAIRLINE } },
+      h("span", { style: { ...muted, fontSize: 12 } }, text),
+      hint ? h(InfoHint, { label: t("settings.about"), text: hint }) : null);
   }
 
   function pushToChatComposer(pt, setFb, t) {
@@ -201,55 +322,116 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         onClose ? h("button", { type: "button", onClick: onClose, style: btnStyle(false) }, "Close") : null));
   }
 
-  function ConnectorView({ connector, detail, onOpenConsent, t }) {
+  function ConnectorView({ connector, detail, onOpenConsent, onRefresh, grants, heading = true, t }) {
     const rows = (detail && detail[connector]) || [];
-    const titleKey = `connector.${String(connector || "servers").toLowerCase()}`;
+    const key = String(connector || "servers").toLowerCase();
+    const titleKey = `view.${key}`;
+    const nameRow = (item, name, tag) => h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+      h("span", { style: { ...rowWrapStyle, fontWeight: 600 } }, item.state ? h(StatusDot, { state: item.state }) : null, h("span", { title: String(name) }, oneLine(name, 64))),
+      tag ? h("code", { style: tagStyle }, tag) : null);
     return h("section", {
       "aria-label": t(titleKey),
       "data-connector-view": connector,
       style: { display: "grid", gap: 10 },
     },
-      h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t(titleKey)),
-      h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 } },
-        rows.map((item) =>
-          h("li", { key: item.id, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 4 } },
-            connector === "Servers"
-              ? h(React.Fragment, null,
-                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
-                    h("span", { style: { fontWeight: 600 } }, item.label),
-                    h("code", { style: tagStyle }, item.endpoint)),
-                  h("span", { style: { ...muted, fontSize: 12 } }, item.status))
-              : null,
-            connector === "Keys"
-              ? h(React.Fragment, null,
-                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
-                    h("span", { style: { fontWeight: 600 } }, item.label),
-                    h("code", { style: tagStyle }, item.ref)),
-                  h("span", { style: { ...muted, fontSize: 12 } }, item.status))
-              : null,
-            connector === "Apps"
-              ? h(React.Fragment, null,
-                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
-                    h("span", { style: { fontWeight: 600 } }, item.label),
-                    h("code", { style: tagStyle }, `Active grants: ${item.grants}`)),
-                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline", flexWrap: "wrap" } },
-                    h("span", { style: { ...muted, fontSize: 12 } }, `Scopes: ${(item.scopes || []).join(", ")}`),
-                    onOpenConsent
-                      ? h("button", {
-                          type: "button",
-                          "data-connector-consent": item.id,
-                          onClick: () => onOpenConsent({ appId: `${item.id}-connector`, scopes: item.scopes || ["read"] }),
-                          style: btnStyle(false),
-                        }, "Review access")
-                      : null))
-              : null,
-            connector === "Audit"
-              ? h(React.Fragment, null,
-                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
-                    h("span", { style: { fontWeight: 600 } }, item.summary),
-                    h("code", { style: tagStyle }, item.kind)),
-                  h("span", { style: { ...muted, ...num, fontSize: 12 } }, `Recorded at ${item.atMs}`))
-              : null))));
+      !heading ? null : h("div", { style: titleRowStyle },
+        h("h3", { style: h3Style }, t(titleKey)),
+        h("span", { style: rowWrapStyle },
+          connector === "Apps" && typeof grants === "number" ? h("span", { style: { ...muted, ...num, fontSize: 12 } }, t("status.grants", { n: grants })) : null,
+          onRefresh ? h("button", { type: "button", "data-refresh-console": "true", onClick: () => onRefresh(), style: btnStyle(false) }, t("action.refresh")) : null)),
+      rows.length === 0
+        ? h(EmptyState, { id: connector, text: t(`empty.${key}`), hint: connector === "Audit" ? t("empty.audit.hint") : "", t })
+        : h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 } },
+            rows.map((item) =>
+              h("li", { key: item.id, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 4 } },
+                connector === "Servers" || connector === "Keys"
+                  ? h(React.Fragment, null,
+                      nameRow(item, item.label, connector === "Servers" ? item.endpoint : item.ref),
+                      h("div", { style: rowWrapStyle },
+                        h("span", { role: "status", title: String(item.status || ""), style: { ...muted, fontSize: 12 } }, oneLine(item.status)),
+                        item.action === "refresh" && onRefresh
+                          ? h("button", { type: "button", "data-row-action": item.id, onClick: () => onRefresh(), style: btnStyle(false) }, t("action.again"))
+                          : null,
+                        item.code ? h(InfoHint, { label: t("hint.detail"), text: t("hint.code", { code: item.code }), align: "end" }) : null))
+                  : null,
+                connector === "Apps"
+                  ? h(React.Fragment, null,
+                      nameRow(item, item.label, `Active grants: ${item.grants}`),
+                      h("div", { style: { ...rowWrapStyle, justifyContent: "space-between" } },
+                        h("span", { title: (item.scopes || []).join(", "), style: { ...muted, fontSize: 12 } }, oneLine(`Scopes: ${(item.scopes || []).join(", ")}`, 60)),
+                        onOpenConsent
+                          ? h("button", {
+                              type: "button",
+                              "data-connector-consent": item.id,
+                              onClick: () => onOpenConsent({ appId: `${item.id}-connector`, scopes: item.scopes || ["read"] }),
+                              style: btnStyle(false),
+                            }, t("consent.review"))
+                          : null))
+                  : null,
+                connector === "Audit"
+                  ? h(React.Fragment, null,
+                      nameRow(item, item.summary, item.kind),
+                      h("span", { style: { ...muted, ...num, fontSize: 12 } }, `Recorded ${fmtWhen(item.atMs)}`))
+                  : null))));
+  }
+
+  // one section of the Settings dialog. Pure: every value arrives in props. It reuses the console views.
+  function SettingsSectionView({ section, data, failed, actionError = "", pendingConsent = null, onRefresh, onOpenConsent, onConsent, onCloseConsent, t }) {
+    const navKey = `settings.nav.${String(section || "").replace("-", "")}`;
+    const frame = (...children) => h("div", {
+      "data-arc-settings": section,
+      "data-arc-plugin-pane": "true",
+      style: { display: "grid", gap: 16, maxWidth: 720, fontFamily: TEXT_FONT, fontSize: 13, lineHeight: 1.45, color: INK },
+    }, h("style", null, CONSOLE_CSS), ...children);
+    const title = (hintKey) => h("div", { style: rowWrapStyle },
+      h("h3", { style: { ...h3Style, fontSize: 14 } }, t(navKey)), hintKey ? h(InfoHint, { label: t("settings.about"), text: t(hintKey) }) : null);
+    if (!data) {
+      return frame(title(""),
+        failed
+          ? h("div", { style: rowWrapStyle }, h("span", { role: "alert" }, t("state.error")),
+              onRefresh ? h("button", { type: "button", "data-console-retry": "true", onClick: () => onRefresh(), style: btnStyle(false) }, t("action.retry")) : null)
+          : h("p", { style: { ...muted, margin: 0 } }, t("state.loading")));
+    }
+    const alert = actionError ? h("p", { role: "alert", style: { margin: 0, fontSize: 12 } }, oneLine(actionError)) : null;
+    const line = (label, value) => h("div", { style: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", paddingTop: 8, borderTop: HAIRLINE } },
+      h("span", null, label), value);
+    if (section === "memory") {
+      const m = data.memory || {};
+      return frame(title("settings.memory.hint"), alert,
+        h("div", { style: rowWrapStyle },
+          h(StatusDot, { state: m.state }),
+          h("span", { role: "status", title: String(m.status || "") }, oneLine(m.status)),
+          onRefresh ? h("button", { type: "button", "data-refresh-console": "true", "data-row-action": "memory", onClick: () => onRefresh(), style: btnStyle(false) }, m.action === "refresh" ? t("action.again") : t("action.refresh")) : null,
+          m.code ? h(InfoHint, { label: t("hint.detail"), text: t("hint.code", { code: m.code }) }) : null),
+        line(t("settings.memory.gateway"), h("code", { style: tagStyle }, m.gateway)),
+        line(t("settings.memory.recall"), h("span", { style: { fontWeight: 600 } }, m.configured === false ? t("state.unset") : m.recall ? t("state.on") : t("state.off"))),
+        line(t("settings.memory.labels"), h("span", { style: rowWrapStyle }, (m.labels || []).map((l) => h("code", { key: l, style: tagStyle }, l)))),
+        CONNECTORS.includes("Cammut") ? h(ConnectorView, { connector: "Cammut", t }) : null);
+    }
+    if (section === "connectors") {
+      return frame(title("settings.connectors.hint"), alert,
+        h(ConsentDialog, { pendingConsent, onConsent, onClose: onCloseConsent, t }),
+        h(ConnectorView, { connector: "Servers", detail: data.connectorsDetail, onRefresh, t }),
+        h(ConnectorView, { connector: "Apps", detail: data.connectorsDetail, onOpenConsent, grants: (data.consents || []).length, t }));
+    }
+    if (section === "keys") {
+      return frame(title("settings.keys.hint"), alert, h(ConnectorView, { connector: "Keys", detail: data.connectorsDetail, heading: false, t }));
+    }
+    if (section === "add-ons") {
+      const items = (data.addons && data.addons.items) || [];
+      return frame(title("settings.addons.hint"),
+        items.length === 0
+          ? h(EmptyState, { id: "add-ons", text: t("empty.addons"), hint: t("empty.addons.hint"), t })
+          : h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 } },
+              items.map((a) => h("li", { key: a.id, "data-addon": a.id, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 2 } },
+                h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+                  h("span", { style: { fontWeight: 600 } }, a.id),
+                  a.version ? h("code", { style: tagStyle }, a.version) : null),
+                a.description ? h("span", { title: a.description, style: { ...muted, fontSize: 12 } }, oneLine(a.description)) : null))));
+    }
+    // a section that is one connector view of its own, such as Updates
+    const own = CONNECTORS.find((c) => c.toLowerCase() === section);
+    return frame(own ? h(ConnectorView, { connector: own, detail: data.connectorsDetail, onRefresh, t }) : title(""));
   }
 
   function ResearchWorkspace({
@@ -417,6 +599,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const inConnectorMode = !settingsOpen && activePaneMode === "connector";
     const inWorkspaceMode = !settingsOpen && !inConnectorMode;
     const themeEntry = THEMES.find((x) => x.id === skin) || THEMES[0];
+    const activeTop = settingsOpen ? "" : inConnectorMode ? "Connectors" : activeWorkspace;
+    const connectorLabel = (conn) => (conn === "Updates" && data && data.update && data.update.available && data.update.latest ? `Updates (${data.update.latest})` : conn);
 
     return h("div", {
       "data-arc-console": "c2",
@@ -436,49 +620,44 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         alignContent: "start",
       },
     },
+      h("style", null, CONSOLE_CSS),
       !data && !failed ? h("p", { style: { ...muted, margin: 0 } }, t("state.loading")) : null,
-      failed && !data ? h("p", { role: "alert", style: { ...muted, margin: 0 } }, t("state.error")) : null,
+      failed && !data ? h("div", { style: rowWrapStyle },
+        h("span", { role: "alert" }, t("state.error")),
+        onRefresh ? h("button", { type: "button", "data-console-retry": "true", onClick: () => onRefresh(), style: btnStyle(false) }, t("action.retry")) : null) : null,
 
-      data ? h("header", { style: { display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", paddingBottom: 10, borderBottom: HAIRLINE } },
-        h("nav", { "aria-label": t("nav.workspaces"), style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          WORKSPACES.map((ws) => {
-            const isActive = inWorkspaceMode && activeWorkspace === ws;
+      data ? h("header", { style: { display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-end", borderBottom: HAIRLINE } },
+        h("div", { role: "tablist", "aria-label": t("nav.console"), "data-console-tabs": "primary", onKeyDown: onTabKeys, style: { display: "flex", columnGap: 14, rowGap: 2, flexWrap: "wrap" } },
+          TOP_TABS.map((name, i) => {
+            const isWorkspace = WORKSPACES.includes(name);
+            const isActive = name === activeTop;
             return h("button", {
-              key: ws,
+              key: name,
               type: "button",
-              "data-workspace": ws,
-              "aria-pressed": isActive,
-              onClick: () => onSelectWorkspace && onSelectWorkspace(ws),
-              style: btnStyle(isActive),
-            }, ws);
+              role: "tab",
+              id: `arc-tab-${name}`,
+              "aria-selected": isActive,
+              "aria-controls": "arc-console-panel",
+              tabIndex: isActive || (!activeTop && i === 0) ? 0 : -1,
+              "data-top-control": name,
+              ...(isWorkspace ? { "data-workspace": name } : { "data-connector-group": "true" }),
+              onClick: () => (isWorkspace ? onSelectWorkspace && onSelectWorkspace(name) : onSelectConnector && onSelectConnector(activeConnector)),
+              style: tabStyle(isActive),
+            }, isWorkspace ? name : t("nav.connectors"));
           })),
-        h("div", { "aria-label": t("nav.connectors"), style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          CONNECTORS.map((conn) => {
-            const isActive = inConnectorMode && activeConnector === conn;
-            return h("button", {
-              key: conn,
-              type: "button",
-              "data-connector": conn,
-              "aria-pressed": isActive,
-              onClick: () => onSelectConnector && onSelectConnector(conn),
-              style: btnStyle(isActive),
-            }, conn);
-          }),
-          h("button", {
-            type: "button",
-            "data-settings-toggle": "true",
-            "aria-pressed": settingsOpen,
-            onClick: () => onToggleSettings && onToggleSettings(!settingsOpen),
-            style: btnStyle(settingsOpen),
-          }, t("nav.settings")),
-          onRefresh
-            ? h("button", {
-                type: "button",
-                "data-refresh-console": "true",
-                onClick: () => onRefresh(),
-                style: btnStyle(false),
-              }, t("action.refresh"))
-            : null)) : null,
+        h("button", {
+          type: "button",
+          id: "arc-tab-Settings",
+          "data-top-control": "Settings",
+          "data-settings-toggle": "true",
+          "aria-label": t("nav.console.settings"),
+          title: t("nav.console.settings"),
+          "aria-pressed": settingsOpen,
+          onClick: () => onToggleSettings && onToggleSettings(!settingsOpen),
+          style: { ...iconBtnStyle(settingsOpen), marginBottom: 4 },
+        }, h(SettingsIcon, null))) : null,
+
+      h("div", { role: data ? (activeTop ? "tabpanel" : "region") : undefined, id: "arc-console-panel", "aria-labelledby": data ? `arc-tab-${activeTop || "Settings"}` : undefined, style: { display: "grid", gap: 14, alignContent: "start" } },
 
       h(ConsentDialog, { pendingConsent, onConsent, onClose: onCloseConsent, t }),
 
@@ -498,20 +677,42 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
                   h("span", null, `${r.id} ${r.label}`),
                   h("button", {
                     type: "button",
+                    role: "switch",
                     "data-operator-switch": r.id,
-                    "aria-pressed": r.active,
+                    "aria-checked": Boolean(r.active),
+                    "aria-label": `${r.id} ${r.label}`,
                     onClick: () => onToggleSwitch && onToggleSwitch(r.id, !r.active),
                     style: btnStyle(r.active),
-                  }, r.active ? "On" : "Off")))))
+                  }, r.active ? t("state.on") : t("state.off"))))))
         : null,
 
       data && inConnectorMode
-        ? h(ConnectorView, {
-            connector: activeConnector,
-            detail: data.connectorsDetail,
-            onOpenConsent,
-            t,
-          })
+        ? h(React.Fragment, null,
+            h("div", { role: "tablist", "aria-label": t("nav.connectors"), "data-console-tabs": "connectors", onKeyDown: onTabKeys, style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+              CONNECTORS.map((conn, i) => {
+                const isActive = activeConnector === conn;
+                return h("button", {
+                  key: conn,
+                  type: "button",
+                  role: "tab",
+                  id: `arc-subtab-${conn}`,
+                  "aria-selected": isActive,
+                  "aria-controls": "arc-console-subpanel",
+                  tabIndex: isActive || (!CONNECTORS.includes(activeConnector) && i === 0) ? 0 : -1,
+                  "data-connector": conn,
+                  onClick: () => onSelectConnector && onSelectConnector(conn),
+                  style: btnStyle(isActive),
+                }, connectorLabel(conn));
+              })),
+            h("div", { role: "tabpanel", id: "arc-console-subpanel", "aria-labelledby": `arc-subtab-${activeConnector}` },
+              h(ConnectorView, {
+                connector: activeConnector,
+                detail: data.connectorsDetail,
+                onOpenConsent,
+                onRefresh,
+                grants: (data.consents || []).length,
+                t,
+              })))
         : null,
 
       data && inWorkspaceMode && activeWorkspace === "Research"
@@ -530,7 +731,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       data && inWorkspaceMode && activeWorkspace === "Memory"
         ? h("section", { "aria-label": t("memory.title"), style: { display: "grid", gap: 8 } },
             h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("memory.title")),
-            h("div", { style: num }, `Loopback gateway: ${data.memory.gateway}, status: ${data.memory.reachable ? "online" : "offline"}`),
+            h("div", { "data-memory-status": "true", style: rowWrapStyle },
+              h(StatusDot, { state: data.memory.state }),
+              h("span", { role: "status", title: String(data.memory.status || "") }, oneLine(data.memory.status || (data.memory.reachable ? "Running." : "No answer."))),
+              h("code", { style: tagStyle }, data.memory.gateway),
+              data.memory.action === "refresh" && onRefresh ? h("button", { type: "button", "data-row-action": "memory", onClick: () => onRefresh(), style: btnStyle(false) }, t("action.again")) : null),
             (data.memory.routes || []).length > 0
               ? h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
                   data.memory.routes.map((r) => h("code", { key: r, style: tagStyle }, r)))
@@ -662,23 +867,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
               }, t("chat.use"))))
         : null,
 
-      data && !settingsOpen
-        ? h("footer", { style: { paddingTop: 10, borderTop: HAIRLINE, display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline", flexWrap: "wrap" } },
-            h("span", { style: { ...muted, ...num, fontSize: 12 } },
-              `Connector view: ${activeConnector}, active 30-day grants: ${(data.consents || []).length}`),
-            onOpenConsent
-              ? h("button", {
-                  type: "button",
-                  "data-open-consent": "true",
-                  onClick: () => onOpenConsent({ appId: `${activeConnector.toLowerCase()}-connector`, scopes: ["read", "verify"] }),
-                  style: btnStyle(false),
-                }, "Review access")
-              : null)
-        : null);
+      ));
   }
 
-  function makePane(t) {
-    return function ArcConsolePane() {
+  const consoleViews = new Set(); // the refresh function of every mounted pane or Settings page
+  function useConsole() {
       const [data, setData] = React.useState(null);
       const [failed, setFailed] = React.useState(false);
       const [actionError, setActionError] = React.useState("");
@@ -707,14 +900,24 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         try {
           const r = await fetch("api/arc-core/console/action", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }), j = await r.json().catch(() => null);
           if (!r.ok || !j || j.ok === false) { const err = (j && j.error) || "Action failed"; setActionError(err); setFailed(true); return j || { ok: false, error: err }; }
-          setActionError(""); setFailed(false); await refresh(); return j;
+          setActionError(""); setFailed(false); await refresh();
+          for (const other of consoleViews) if (other !== refresh) other();
+          return j;
         } catch { setActionError("Action failed"); setFailed(true); return { ok: false, error: "Action failed" }; }
       };
 
       React.useEffect(() => {
         refresh();
+        consoleViews.add(refresh);
+        return () => { consoleViews.delete(refresh); };
       }, []);
 
+      return { data, failed, actionError, pendingConsent, setPendingConsent, dispatch };
+  }
+
+  function makePane(t) {
+    return function ArcConsolePane() {
+      const { data, failed, actionError, pendingConsent, setPendingConsent, dispatch } = useConsole();
       const skin =
         typeof document !== "undefined" && document.documentElement && typeof document.documentElement.getAttribute === "function"
           ? document.documentElement.getAttribute("data-arc-skin") || "arc"
@@ -751,9 +954,36 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     };
   }
 
+  const SETTINGS_SECTIONS = [
+    { id: "memory", order: 11 },
+    { id: "connectors", order: 12 },
+    { id: "keys", order: 13 },
+    { id: "add-ons", order: 14 },
+    { id: "updates", order: 15, connector: "Updates" }, // drawn only when the Updates connector view exists
+  ];
+
+  function makeSettingsSection(section, t) {
+    return function ArcSettingsSection() {
+      const { data, failed, actionError, pendingConsent, setPendingConsent, dispatch } = useConsole();
+      return h(SettingsSectionView, {
+        section, data, failed, actionError, pendingConsent, t,
+        onRefresh: () => dispatch({ kind: "refresh" }),
+        onOpenConsent: (req) => setPendingConsent(req),
+        onCloseConsent: () => setPendingConsent(null),
+        onConsent: async (req) => { await dispatch({ kind: "consent", ...req }); setPendingConsent(null); },
+      });
+    };
+  }
+
   function apply(ctx) {
     ctx.effect(() => ctx.locale.register(NS, { en, zh: en }), "arc-core: dictionaries");
     const t = ctx.locale.bind(NS);
+    if (ctx.slots && typeof ctx.slots.inject === "function") {
+      for (const sec of SETTINGS_SECTIONS.filter((x) => !x.connector || CONNECTORS.includes(x.connector))) {
+        const Section = makeSettingsSection(sec.id, t);
+        ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", id: sec.id, order: sec.order, label: () => t(`settings.nav.${sec.id.replace("-", "")}`), locale: NS }, Section));
+      }
+    }
     const Pane = makePane(t);
     const Title = () => h(React.Fragment, null, h(Icon, { size: 16 }), h("span", null, t("tab.title")));
     ctx.inject(["sidebarRightTabs"], (c) => {
@@ -795,5 +1025,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     THEMES,
     en,
     pushToChatComposer,
+    SettingsSectionView,
+    SETTINGS_SECTIONS,
+    InfoHint,
+    StatusDot,
   };
 } });
