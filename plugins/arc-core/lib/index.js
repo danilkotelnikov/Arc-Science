@@ -5,6 +5,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { check as proseGateCheck, repair as proseGateRepair, verifyRewrite as proseGateVerify } from './prose-gate.js';
 
 export const name = 'arc-core';
 export const version = '0.6.0';
@@ -332,9 +333,35 @@ export function createArcCoreServer(opts = {}) {
     return { ok: true, id: record.id, claim: record, count: claims.length };
   }
 
-  function gateCheck({ candidateHash, checks = [], proseErrors = 0 } = {}) {
+  // The text of a candidate is measured here. A count that the caller reports can add a failure; it cannot remove one.
+  function proseCheck({ text, zone = 'public', facts = '', rewrite } = {}) {
+    if (typeof text !== 'string' || !text.trim()) return { ok: false, error: 'Text is required' };
+    const z = ['public', 'report', 'limits'].includes(zone) ? zone : 'public';
+    const f = typeof facts === 'string' ? facts : '';
+    const r = proseGateCheck(text, { zone: z, facts: f });
+    const out = { ok: r.ok, zone: z, points: r.points, words: r.words, per100: r.per100, findings: r.findings };
+    if (!r.ok) { const fix = proseGateRepair(text); out.repair = { text: fix.text, changed: fix.changed, unresolved: fix.unresolved, removed: fix.removed, cut: fix.cut }; }
+    if (typeof rewrite === 'string') out.rewrite = proseGateVerify(text, rewrite, { zone: z, facts: f });
+    return out;
+  }
+
+  function gateCheck({ candidateHash, checks = [], proseErrors = 0, texts = [] } = {}) {
     const normalizedHash = normalizeCandidateHash(candidateHash);
     const failedChecks = [];
+    const prose = { points: 0, findings: [] };
+    if (texts != null && !Array.isArray(texts)) failedChecks.push('texts');
+    if (Array.isArray(texts)) {
+      texts.forEach((entry, idx) => {
+        const id = (entry && typeof entry === 'object' && typeof entry.id === 'string' && entry.id.trim()) || `text-${idx + 1}`;
+        // The gate reads every text as public. The caller cannot pick a zone (R006; F092). A limits heading or label written
+        // inside the text is trusted: the gate reads it as the zone it names.
+        const r = proseCheck(entry && typeof entry === 'object' ? { text: entry.text, facts: entry.facts, zone: 'public' } : {});
+        if (r.error) { failedChecks.push(`prose:${id}`); return; }
+        prose.points += r.points;
+        for (const f of r.findings) prose.findings.push({ id, ...f });
+        if (!r.ok) failedChecks.push(`prose:${id}`);
+      });
+    }
 
     if (!normalizedHash) {
       failedChecks.push('candidateHash');
@@ -372,6 +399,7 @@ export function createArcCoreServer(opts = {}) {
       verdict: ok ? 'accepted' : 'unmet',
       candidateHash: normalizedHash,
       failedChecks,
+      ...(Array.isArray(texts) && texts.length ? { prose } : {}),
     };
   }
 
@@ -412,17 +440,23 @@ export function createArcCoreServer(opts = {}) {
     if (!tagCheck.ok) {
       return { ok: false, error: tagCheck.error };
     }
+    // The prose gate at retain time. A note tagged voice:public speaks for the author and is refused on an error, with
+    // the place, the sentence and an allowed sentence. Any other note reports to the owner and is kept with a tag.
+    const isPublic = tagCheck.tags.includes('voice:public');
+    const prose = proseCheck({ text, zone: isPublic ? 'public' : 'report' });
+    if (isPublic && !prose.ok) return { ok: false, error: 'The prose gate refused this public note', prose };
+    const noted = prose.findings.some((f) => f.rule === 'SELF_UNDERCUT') ? ['prose:undercut'] : [];
 
     const entry = {
       id: `mem-${memoryStore.length + 1}`,
       text: text.trim(),
       context: typeof context === 'string' ? context.trim() : '',
-      tags: tagCheck.tags,
+      tags: [...tagCheck.tags, ...noted.filter((t) => !tagCheck.tags.includes(t))],
       createdAt: new Date().toISOString(),
     };
     memoryStore.push(entry);
     persistMemory();
-    return { ok: true, id: entry.id, entry };
+    return { ok: true, id: entry.id, entry, prose: { points: prose.points, findings: prose.findings } };
   }
 
   function memoryRecall({ query = '', tags = [], budget = 'mid' } = {}) {
@@ -459,6 +493,7 @@ export function createArcCoreServer(opts = {}) {
     'toolpack.load': toolpackLoad,
     'memory.retain': memoryRetain,
     'memory.recall': memoryRecall,
+    'prose.check': proseCheck,
   };
 
   return {
@@ -467,6 +502,7 @@ export function createArcCoreServer(opts = {}) {
     shelf: { search: shelfSearch },
     claim: { record: claimRecord, list: () => [...claims] },
     gate: { check: gateCheck },
+    prose: { check: proseCheck },
     toolpack: { load: toolpackLoad },
     memory: { retain: memoryRetain, recall: memoryRecall, list: () => [...memoryStore] },
     tools,
@@ -517,6 +553,7 @@ const obj = (properties, required, additionalProperties = false) => ({
   additionalProperties,
 });
 const memEntry = () => obj({ id: s(), text: s(), context: s(), tags: arr(s()), createdAt: s() }, ['id', 'text', 'tags', 'createdAt']);
+const proseFinding = () => obj({ id: s(), line: int(), rule: s(), form: s(), severity: s(), sentence: s(), span: s(), allowed: s() }, ['line', 'rule', 'severity', 'sentence', 'span', 'allowed']);
 
 const HOST_TOOL_SPECS = {
   'shelf.search': {
@@ -538,9 +575,9 @@ const HOST_TOOL_SPECS = {
   },
   'gate.check': {
     safeName: 'gate_check',
-    description: 'Verify candidate digest, checks, and prose lint count.',
-    parameters: obj({ candidateHash: s('Candidate sha256.'), checks: arr(obj({ passed: bool(), name: s() }, ['passed'], true), 'Check items.'), proseErrors: int('Prose error count.') }, ['candidateHash', 'checks']),
-    outputSchema: obj({ ok: bool(), verdict: s('', { enum: ['accepted', 'unmet'] }), candidateHash: s(), failedChecks: arr(s()) }, ['ok', 'verdict', 'candidateHash', 'failedChecks']),
+    description: 'Verify candidate digest and checks, and measure the texts of the candidate with the prose gate.',
+    parameters: obj({ candidateHash: s('Candidate sha256.'), checks: arr(obj({ passed: bool(), name: s() }, ['passed'], true), 'Check items.'), proseErrors: int('Prose error count from the caller. It can add a failure and cannot remove one.'), texts: arr(obj({ id: s('Text id.'), text: s('Text of the candidate.'), zone: s('Zone.', { enum: ['public', 'report', 'limits'] }), facts: s('Sentences that say what is not done.') }, ['text']), 'Texts that the gate measures itself.') }, ['candidateHash', 'checks']),
+    outputSchema: obj({ ok: bool(), verdict: s('', { enum: ['accepted', 'unmet'] }), candidateHash: s(), failedChecks: arr(s()), prose: obj({ points: int(), findings: arr(proseFinding()) }, ['points', 'findings']) }, ['ok', 'verdict', 'candidateHash', 'failedChecks']),
   },
   'toolpack.load': {
     safeName: 'toolpack_load',
@@ -564,6 +601,12 @@ const HOST_TOOL_SPECS = {
     description: 'Recall stored facts by query and tags.',
     parameters: obj({ query: s('Search query.'), tags: arr(s(), 'Filter tags.'), budget: s('Budget tier.', { enum: ['low', 'mid', 'high'] }) }),
     outputSchema: obj({ ok: bool(), error: s(), budget: s('', { enum: ['low', 'mid', 'high'] }), count: int(), items: arr(memEntry()) }, ['ok']),
+  },
+  'prose.check': {
+    safeName: 'prose_check',
+    description: 'Check a text for a sentence that announces what the author has not done, and for a claim that the facts deny. Returns the place, the sentence and an allowed sentence.',
+    parameters: obj({ text: s('Text to check.'), zone: s('public: speaks for the author. report: a status report. limits: a limits section.', { enum: ['public', 'report', 'limits'] }), facts: s('Sentences that say what is not done.'), rewrite: s('A rewrite of the text to verify against it.') }, ['text']),
+    outputSchema: obj({ ok: bool(), error: s(), zone: s(), points: int(), words: int(), per100: { type: 'number' }, findings: arr(proseFinding()), repair: obj({ text: s(), changed: int(), unresolved: int(), removed: arr(obj({ line: int(), sentence: s() }, ['line', 'sentence'])), cut: arr(obj({ line: int(), sentence: s(), now: s() }, ['line', 'sentence', 'now'])) }, ['text', 'changed', 'unresolved', 'removed', 'cut']), rewrite: obj({ ok: bool(), reasons: arr(s()), before: int(), after: int() }, ['ok', 'reasons']) }, ['ok']),
   },
 };
 
