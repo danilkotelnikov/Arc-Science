@@ -86,8 +86,9 @@ function makeTasks(site) {
 function armBoxes(rules) {
   const at = rules.indexOf(ANCHOR);
   if (at < 0) throw new Error(`the rule file has no line that starts with "${ANCHOR}"`);
-  const end = rules.indexOf('\n', at) + 1;
-  const withLine = `${rules.slice(0, end)}- ${RULE_LINE}\n${rules.slice(end)}`;
+  const nl = rules.indexOf('\n', at);
+  const end = nl < 0 ? rules.length : nl + 1;
+  const withLine = `${rules.slice(0, end)}${nl < 0 ? '\n' : ''}- ${RULE_LINE}\n${rules.slice(end)}`;
   const box = (name, claudeMd, excludes) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), `bench-prose-${name}-`));
     if (claudeMd) fs.writeFileSync(path.join(dir, 'CLAUDE.md'), claudeMd);
@@ -280,13 +281,18 @@ async function main(argv) {
     // --tasks a,b runs only those tasks and keeps the saved rows of every other task; the rule file must be the same one
     const only = flag('--tasks') ? new Set(flag('--tasks').split(',')) : null;
     if (only && d.rulesSha && d.rulesSha !== sha(rules)) { console.error(`the saved arms used rule file ${d.rulesSha}; this one is ${sha(rules)}`); return 2; }
+    if (only && d.reps && d.reps !== reps) { console.error(`the saved arms have ${d.reps} repeats; --tasks with --reps ${reps} would mix them`); return 2; }
     const jobs = [];
     for (const arm of ['A', 'B', 'C', 'D']) for (const t of d.tasks.filter((x) => !only || only.has(x.id))) for (let rep = 1; rep <= reps; rep += 1) {
       jobs.push(async () => { const r = await call(boxes[arm], t.prompt); return { arm, task: t.id, rep, ok: r.ok, error: r.error, model: r.model, tokensIn: r.tokensIn, tokensOut: r.tokensOut, text: cleanOut(r.text), at: new Date().toISOString() }; });
     }
     const fresh = await pool(jobs, Number(flag('--width', 2)));
     const arms = only ? [...(load().arms || []).filter((r) => !only.has(r.task)), ...fresh] : fresh;
-    console.log(report(merge({ reps, rulesSha: sha(rules), ruleLine: RULE_LINE, ranAt: only ? d.ranAt : new Date().toISOString(), arms }))); return 0;
+    // A label belongs to the text it was given for: drop the labels of every key that this run rewrote.
+    const rewritten = new Set(fresh.map(keyOf));
+    const saved = load().labels;
+    const labels = saved ? { labels: { ...saved, byKey: Object.fromEntries(Object.entries(saved.byKey || {}).filter(([k]) => !rewritten.has(k))) } } : {};
+    console.log(report(merge({ reps, rulesSha: sha(rules), ruleLine: RULE_LINE, ranAt: only ? d.ranAt : new Date().toISOString(), arms, ...labels }))); return 0;
   }
   if (cmd === 'repair') {
     const T = Object.fromEntries(d.tasks.map((t) => [t.id, t]));
@@ -304,7 +310,9 @@ async function main(argv) {
     const have = d.labels?.byKey || {};
     const rows = d.arms.filter((r) => r.ok && (have[keyOf(r)] === undefined || have[keyOf(r)] === null));
     const order = rows.map((r) => ({ r, k: sha(keyOf(r) + d.ranAt) })).sort((x, y) => (x.k < y.k ? -1 : 1)).map((x) => x.r);
-    const res = await labelTexts(order.map((r) => r.text), flag('--judge', d.labels?.judge || 'argon'));
+    const want = flag('--judge', d.labels?.judge || 'argon');
+    if (d.labels?.judge && want !== d.labels.judge && Object.values(have).some((v) => v !== null && v !== undefined)) { console.error(`the saved labels come from judge ${d.labels.judge}; --judge ${want} would mix judges`); return 2; }
+    const res = await labelTexts(order.map((r) => r.text), want);
     const byKey = { ...(load().labels?.byKey || {}), ...Object.fromEntries(order.map((r, i) => [keyOf(r), res.labels[i]])) };
     const calls = [...(d.labels?.calls || []), ...res.calls];
     console.log(report(merge({ labels: { judge: res.judge, model: res.model, question: QUESTION, calls, byKey } }))); return 0;
@@ -312,6 +320,8 @@ async function main(argv) {
   if (cmd === 'fill') {
     // Ask a judge again for the sentences that a failed call left without an answer; the other answers stay as they are.
     const sets = { blind3: loadCases(BLIND), heldout: loadCases(HELDOUT) };
+    const stale = staleSets(d);
+    if (stale.length) { console.error(`the saved judge answers for ${stale.join(', ')} belong to another version of its case file; run the blind command again`); return 2; }
     const runs = load().blind.runs;
     for (const r of runs) {
       const miss = r.answers.map((a, i) => (a === null ? i : -1)).filter((i) => i >= 0);
