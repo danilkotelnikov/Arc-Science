@@ -298,12 +298,49 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   // ---- Cammut connector (S051): servers, tools, observer, parts. Pure CammutView plus a fetching CammutPane.
   const CAM_TABS = ["servers", "tools", "observer", "parts"];
   const CAM_VIEWS = ["memories", "tags", "documents", "recall", "models", "directives", "operations"];
-  const CAM_CSS = ".arc-cam button:focus-visible,.arc-cam summary:focus-visible,.arc-cam input:focus-visible,.arc-cam select:focus-visible{outline:2px solid currentColor;outline-offset:2px}" +
-    ".arc-cam button:disabled{opacity:.5;cursor:not-allowed}.arc-cam pre{white-space:pre-wrap;margin:0;font-family:inherit;max-height:260px;overflow:auto}";
+  // The look of the Cammut sign-in page (Cammut-edge web/src/pages/Login.tsx, 21.XI.2026): turning AS cube, accent
+  // primary button, outlined secondary buttons and inputs. Colours come only from the theme tokens, so all three themes hold.
+  const CAM_CSS = ".arc-cam button:focus-visible,.arc-cam summary:focus-visible,.arc-cam input:focus-visible,.arc-cam select:focus-visible,.arc-cam textarea:focus-visible{outline:2px solid currentColor;outline-offset:2px}" +
+    ".arc-cam button:disabled{opacity:.5;cursor:not-allowed}.arc-cam pre{white-space:pre-wrap;margin:0;font-family:inherit;max-height:260px;overflow:auto}" +
+    ".arc-cam{animation:arc-cam-rise .5s cubic-bezier(.05,.7,.1,1) both}" +
+    ".arc-cam-cube{position:relative;display:block;flex:none;animation:arc-cam-turn .62s ease-in-out both}" +
+    ".arc-cam-cube svg{position:absolute;inset:0;width:100%;height:100%;fill:currentColor}" +
+    ".arc-cam-cube .fr{animation:arc-cam-hide .62s both}.arc-cam-cube .fl{animation:arc-cam-show .62s both}" +
+    "@keyframes arc-cam-turn{0%{transform:scaleX(1)}45%{transform:scaleX(.03)}80%{transform:translateY(3px) scaleX(1)}100%{transform:none}}" +
+    "@keyframes arc-cam-hide{0%,44.9%{opacity:1}45%,100%{opacity:0}}@keyframes arc-cam-show{0%,44.9%{opacity:0}45%,100%{opacity:1}}" +
+    "@keyframes arc-cam-rise{0%{opacity:0;transform:translateY(12px)}100%{opacity:1;transform:none}}" +
+    "@media (prefers-reduced-motion:reduce){.arc-cam,.arc-cam-cube,.arc-cam-cube .fl,.arc-cam-cube .fr{animation:none}.arc-cam-cube .fr{opacity:0}}";
+  const CAM_LINE = "1px solid var(--dsw-alias-line-divider, color-mix(in srgb, currentColor 22%, transparent))";
+  // The theme accent, pulled 35% toward the text colour, so the page colour on it reads at 4.5:1 or more in every theme and mode.
+  const CAM_FILL = "color-mix(in srgb, var(--dsw-alias-button-info-fill, currentColor) 65%, var(--dsw-alias-label-primary, currentColor))";
   const camBtn = (active) => ({
-    ...btnStyle(false),
-    ...(active ? { background: "var(--dsw-alias-brand-primary-new-colorprimary-new-color, currentColor)", color: "var(--dsw-alias-bg-base, Canvas)", fontWeight: 600 } : {}),
+    fontFamily: TEXT_FONT,
+    fontSize: 13,
+    lineHeight: 1,
+    minHeight: 32,
+    padding: "0 14px",
+    borderRadius: 8,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    ...(active
+      ? { border: `1px solid ${CAM_FILL}`, background: CAM_FILL, color: "var(--dsw-alias-bg-base, Canvas)", fontWeight: 600 }
+      : { border: CAM_LINE, background: SURFACE, color: INK, fontWeight: 500 }),
   });
+  const camInput = { ...inputStyle, fontSize: 13, padding: "7px 10px", minHeight: 32, border: CAM_LINE, borderRadius: 8, background: SURFACE };
+  const CAM_TOP = "M128.00 18.80L220.15 72.00L128.00 125.20L35.85 72.00Z";
+  const CAM_LEFT = "M33.43 76.20L125.58 129.40L125.58 235.80L33.43 182.60Z";
+  const CAM_RIGHT = "M130.42 129.40L222.57 76.20L222.57 182.60L130.42 235.80Z";
+  const CAM_L_LETTERS = "M43.61 161.18L54.83 115.85L65.30 121.90L76.51 180.17L67.54 174.99L64.92 161.40L55.20 155.78L52.59 166.36ZM60.06 136.14L63.05 151.68L57.07 148.23ZM82.49 131.83L109.41 147.37L115.39 157.73L115.39 161.18L91.47 147.37L91.47 157.73L115.39 171.54L115.39 202.62L88.47 187.08L82.49 176.72L82.49 173.27L106.42 187.08L106.42 176.72L82.49 162.91Z";
+  const CAM_R_LETTERS = "M140.61 202.62L151.82 144.34L162.29 138.30L173.51 183.63L164.53 188.81L161.92 178.23L152.20 183.84L149.58 197.44ZM157.06 158.59L160.05 170.68L154.07 174.13ZM179.49 128.37L206.40 112.83L212.39 116.29L212.39 119.74L188.46 133.55L188.46 143.91L212.39 130.10L212.39 161.18L185.47 176.72L179.49 173.27L179.49 169.81L203.41 156.00L203.41 145.64L179.49 159.45Z";
+  // The AS cube turns once, from the letters on the right face to the letters on the left face, as on the sign-in page.
+  function CamCube({ size = 40 }) {
+    return h("span", { className: "arc-cam-cube", "data-cammut-cube": "true", role: "img", "aria-label": "Arc Science", style: { width: size, height: size, color: INK } },
+      h("svg", { className: "fl", viewBox: "0 0 256 256", "aria-hidden": "true" }, h("path", { fillRule: "evenodd", d: CAM_TOP + CAM_LEFT + CAM_L_LETTERS + CAM_RIGHT })),
+      h("svg", { className: "fr", viewBox: "0 0 256 256", "aria-hidden": "true" }, h("path", { fillRule: "evenodd", d: CAM_TOP + CAM_LEFT + CAM_RIGHT + CAM_R_LETTERS })));
+  }
   const camClamp = (s, n = 90) => (String(s ?? "").length > n ? String(s).slice(0, n - 1) + "…" : String(s ?? ""));
   const camRow = { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" };
 
@@ -325,7 +362,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         servers.map((sv) => h("li", { key: sv.url, "data-cammut-server": sv.url, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 4 } },
           h("div", { style: { ...camRow, justifyContent: "space-between" } },
             h("code", { style: tagStyle }, sv.url),
-            h("button", { type: "button", "data-cammut-remove": sv.url, disabled: !can || onlyOne, onClick: () => onAction && onAction({ kind: "server-remove", url: sv.url }), style: btnStyle(false) }, t("cammut.servers.remove"))),
+            h("button", { type: "button", "data-cammut-remove": sv.url, disabled: !can || onlyOne, onClick: () => onAction && onAction({ kind: "server-remove", url: sv.url }), style: camBtn(false) }, t("cammut.servers.remove"))),
           h("div", { style: { ...camRow, fontSize: 12 } },
             h("span", { style: muted }, camClamp(sv.status)),
             sv.keyRef ? h("code", { style: tagStyle }, sv.keyRef) : null,
@@ -333,8 +370,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         info.builtin && info.builtin.available ? h("li", { key: "builtin", style: { paddingTop: 8, borderTop: HAIRLINE } }, h("span", { style: muted }, t("cammut.servers.builtin"))) : null),
       servers.length <= 1 && info.canManage ? h("p", { style: { margin: 0, fontSize: 12, ...muted } }, t("cammut.servers.last")) : null,
       h("form", { onSubmit: (e) => { e?.preventDefault?.(); }, style: camRow },
-        h("input", { type: "text", "aria-label": t("cammut.servers.address"), "data-cammut-url": "true", placeholder: "https://memory.example.org", value: url, onChange: (e) => setUrl(e.target.value), style: { ...inputStyle, flex: 2, minWidth: 180 } }),
-        h("input", { type: "text", "aria-label": t("cammut.servers.keyname"), "data-cammut-key": "true", placeholder: t("cammut.servers.keyname"), value: keyName, onChange: (e) => setKeyName(e.target.value), style: { ...inputStyle, flex: 1, minWidth: 120 } }),
+        h("input", { type: "text", "aria-label": t("cammut.servers.address"), "data-cammut-url": "true", placeholder: "https://memory.example.org", value: url, onChange: (e) => setUrl(e.target.value), style: { ...camInput, flex: "1 1 100%" } }),
+        h("input", { type: "text", "aria-label": t("cammut.servers.keyname"), "data-cammut-key": "true", placeholder: t("cammut.servers.keyname"), value: keyName, onChange: (e) => setKeyName(e.target.value), style: { ...camInput, flex: 1, minWidth: 120 } }),
         h("button", { type: "submit", "data-cammut-add": "true", disabled: !can || !url.trim(), onClick: () => onAction && onAction({ kind: "server-add", url: url.trim(), keyRef: keyName.trim() }), style: camBtn(true) }, t("cammut.servers.add")),
         h(CamHint, { label: "About keys", text: t("cammut.hint.keyname") })));
   }
@@ -351,7 +388,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const go = (confirm) => onAction && onAction({ kind: "tool-run", tool, arguments: parsed || {}, ...(confirm !== undefined ? { confirm } : {}) });
     return h("div", { style: { display: "grid", gap: 10 } },
       h("form", { onSubmit: (e) => { e?.preventDefault?.(); }, style: camRow },
-        h("input", { type: "text", "aria-label": t("cammut.tools.query"), "data-cammut-tool-query": "true", placeholder: t("cammut.tools.query"), value: query, onChange: (e) => setQuery(e.target.value), style: { ...inputStyle, flex: 1, minWidth: 160 } }),
+        h("input", { type: "text", "aria-label": t("cammut.tools.query"), "data-cammut-tool-query": "true", placeholder: t("cammut.tools.query"), value: query, onChange: (e) => setQuery(e.target.value), style: { ...camInput, flex: 1, minWidth: 160 } }),
         h("button", { type: "submit", "data-cammut-tool-search": "true", disabled: !query.trim(), onClick: () => onAction && onAction({ kind: "tool-search", query: query.trim() }), style: camBtn(true) }, t("cammut.tools.search")),
         h(CamHint, { label: "About the tool runner", text: t("cammut.hint.tools") })),
       h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 } },
@@ -361,13 +398,13 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           h("span", { style: { ...muted, fontSize: 12 } }, camClamp(x.description))))),
       tool ? h("div", { style: { display: "grid", gap: 6 } },
         h("div", { style: camRow }, h("code", { style: tagStyle }, tool),
-          h("button", { type: "button", onClick: () => onAction && onAction({ kind: "tool-describe", tool }), style: btnStyle(false) }, t("cammut.tools.details"))),
-        h("textarea", { rows: 3, "aria-label": t("cammut.tools.args"), "data-cammut-args": "true", value: args, onChange: (e) => setArgs(e.target.value), style: { ...inputStyle, fontFamily: MONO_FONT } }),
+          h("button", { type: "button", onClick: () => onAction && onAction({ kind: "tool-describe", tool }), style: camBtn(false) }, t("cammut.tools.details"))),
+        h("textarea", { rows: 3, "aria-label": t("cammut.tools.args"), "data-cammut-args": "true", value: args, onChange: (e) => setArgs(e.target.value), style: { ...camInput, fontFamily: MONO_FONT } }),
         h("div", { style: camRow },
           h("button", { type: "button", "data-cammut-run": "true", disabled: !parsed, onClick: () => go(), style: camBtn(true) }, t("cammut.tools.run")),
           run && run.needs === "confirm" ? h("button", { type: "button", "data-cammut-confirm": "true", onClick: () => go(true), style: camBtn(false) }, t("cammut.tools.confirm")) : null,
           run && run.needs === "confirm-tool" ? h(React.Fragment, null,
-            h("input", { type: "text", "aria-label": t("cammut.tools.typename"), "data-cammut-confirm-tool": "true", placeholder: t("cammut.tools.typename"), value: typed, onChange: (e) => setTyped(e.target.value), style: { ...inputStyle, width: 200 } }),
+            h("input", { type: "text", "aria-label": t("cammut.tools.typename"), "data-cammut-confirm-tool": "true", placeholder: t("cammut.tools.typename"), value: typed, onChange: (e) => setTyped(e.target.value), style: { ...camInput, width: 200 } }),
             h("button", { type: "button", "data-cammut-confirm": "true", disabled: typed !== tool, onClick: () => go(tool), style: camBtn(false) }, t("cammut.tools.confirm"))) : null),
         run && run.error ? h("p", { role: "status", style: { margin: 0, fontSize: 12, opacity: 0.85 } }, camClamp(run.error)) : null,
         run && run.ok && run.data !== undefined ? h("details", { open: true, "data-cammut-result": "true" }, h("summary", { style: { cursor: "pointer", fontSize: 12, fontWeight: 600 } }, t("cammut.tools.result")), h("pre", { style: { fontSize: 12 } }, JSON.stringify(run.data, null, 2).slice(0, 4000))) : null,
@@ -385,11 +422,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         h("code", { "data-cammut-readonly": "true", style: tagStyle }, t("cammut.observer.readonly")),
         h(CamHint, { label: "About the observer", text: t("cammut.hint.observer") })),
       h("form", { onSubmit: (e) => { e?.preventDefault?.(); }, style: camRow },
-        h("select", { "aria-label": t("cammut.observer.source"), "data-cammut-source": "true", value: source, onChange: (e) => setSource(e.target.value), style: { ...inputStyle, width: "auto" } },
+        h("select", { "aria-label": t("cammut.observer.source"), "data-cammut-source": "true", value: source, onChange: (e) => setSource(e.target.value), style: { ...camInput, width: "auto" } },
           h("option", { value: "cammut" }, t("cammut.observer.cammut")), h("option", { value: "builtin" }, t("cammut.observer.builtin"))),
-        h("select", { "aria-label": t("cammut.observer.view"), "data-cammut-view": "true", value: view, onChange: (e) => setView(e.target.value), style: { ...inputStyle, width: "auto" } },
+        h("select", { "aria-label": t("cammut.observer.view"), "data-cammut-view": "true", value: view, onChange: (e) => setView(e.target.value), style: { ...camInput, width: "auto" } },
           CAM_VIEWS.map((v) => h("option", { key: v, value: v }, v))),
-        h("input", { type: "text", "aria-label": t("cammut.observer.query"), "data-cammut-observe-q": "true", placeholder: t("cammut.observer.query"), value: q, onChange: (e) => setQ(e.target.value), style: { ...inputStyle, flex: 1, minWidth: 140 } }),
+        h("input", { type: "text", "aria-label": t("cammut.observer.query"), "data-cammut-observe-q": "true", placeholder: t("cammut.observer.query"), value: q, onChange: (e) => setQ(e.target.value), style: { ...camInput, flex: 1, minWidth: 140 } }),
         h("button", { type: "submit", "data-cammut-show": "true", onClick: () => onAction && onAction({ kind: "observe", source, view, q: q.trim() }), style: camBtn(true) }, t("cammut.observer.show"))),
       observer && observer.ok === false ? h("p", { role: "status", style: { margin: 0, fontSize: 12, opacity: 0.85 } }, camClamp(observer.error)) : null,
       list ? (list.length === 0 ? h("p", { style: { margin: 0, fontSize: 12, ...muted } }, t("cammut.observer.empty"))
@@ -408,20 +445,23 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           h("div", { style: { ...camRow, justifyContent: "space-between" } },
             h("span", { style: camRow }, h("code", { style: tagStyle }, c.name), h("span", { style: { ...muted, fontSize: 12 } }, `${c.state}, version ${c.generation}`)),
             h("span", { style: camRow },
-              h("button", { type: "button", "data-cammut-reload": c.name, onClick: () => onAction && onAction({ kind: "component-reload", name: c.name }), style: btnStyle(false) }, t("cammut.parts.reload")),
-              h("button", { type: "button", "data-cammut-rollback": c.name, disabled: !c.canRollback, onClick: () => onAction && onAction({ kind: "component-rollback", name: c.name }), style: btnStyle(false) }, t("cammut.parts.rollback")))),
+              h("button", { type: "button", "data-cammut-reload": c.name, onClick: () => onAction && onAction({ kind: "component-reload", name: c.name }), style: camBtn(false) }, t("cammut.parts.reload")),
+              h("button", { type: "button", "data-cammut-rollback": c.name, disabled: !c.canRollback, onClick: () => onAction && onAction({ kind: "component-rollback", name: c.name }), style: camBtn(false) }, t("cammut.parts.rollback")))),
           c.error ? h("p", { style: { margin: 0, fontSize: 12, ...muted } }, camClamp(c.error)) : null))));
   }
 
   function CammutView({ info, error = "", busy = false, tab = "servers", onTab, observer = null, tools = null, onAction, t }) {
     const status = error || (info ? (info.gateway.reachable ? t("cammut.gateway.on", { host: info.gateway.host }) : t("cammut.gateway.off", { host: info.gateway.host })) : t("cammut.loading"));
     const why = info && !info.canManage ? info.manageReason : "";
-    return h("section", { className: "arc-cam", "aria-label": t("connector.cammut"), "data-connector-view": "Cammut", style: { display: "grid", gap: 12, fontFamily: TEXT_FONT, fontSize: 13, color: INK } },
+    return h("section", { className: "arc-cam", "aria-label": t("connector.cammut"), "data-connector-view": "Cammut", style: { display: "grid", gap: 14, fontFamily: TEXT_FONT, fontSize: 13, lineHeight: 1.5, color: INK } },
       h("style", null, CAM_CSS),
-      h("div", { style: { ...camRow, justifyContent: "space-between" } },
-        h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("connector.cammut")),
-        h(CamHint, { label: "About Cammut servers", text: t("cammut.hint.servers") })),
-      h("p", { role: "status", "data-cammut-status": "true", title: status, style: { margin: 0, fontSize: 12, opacity: 0.85 } }, camClamp(status)),
+      h("div", { "data-cammut-head": "true", style: { display: "flex", gap: 12, alignItems: "center" } },
+        h(CamCube, { size: 40 }),
+        h("div", { style: { display: "grid", gap: 2, minWidth: 0, flex: 1 } },
+          h("div", { style: { ...camRow, justifyContent: "space-between" } },
+            h("h3", { style: { fontSize: 19, lineHeight: 1.25, fontWeight: 600, letterSpacing: "-0.02em", margin: 0 } }, t("connector.cammut")),
+            h(CamHint, { label: "About Cammut servers", text: t("cammut.hint.servers") })),
+          h("p", { role: "status", "data-cammut-status": "true", title: status, style: { margin: 0, fontSize: 12, ...muted } }, camClamp(status)))),
       why ? h("p", { "data-cammut-why": "true", style: { margin: 0, fontSize: 12, ...muted } }, camClamp(why)) : null,
       info ? h("div", { role: "tablist", "aria-label": t("connector.cammut"), style: { ...camRow, paddingBottom: 8, borderBottom: HAIRLINE } },
         CAM_TABS.map((k) => h("button", { key: k, type: "button", role: "tab", "aria-selected": tab === k, "data-cammut-tab": k, onClick: () => onTab && onTab(k), style: camBtn(tab === k) }, t(`cammut.tab.${k}`)))) : null,

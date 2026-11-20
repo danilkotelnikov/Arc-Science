@@ -177,3 +177,24 @@ test('9. The Cammut connector renders inside the console and the pane is a conta
   assert.ok(nodes.some((n) => n.props?.['data-connector'] === 'Cammut' && n.props['aria-pressed'] === true));
   assert.ok(nodes.some((n) => n.props?.['data-connector-view'] === 'Cammut'));
 });
+
+test('10. The Cammut tab has the look of the Cammut sign-in page: turning AS cube, accent main button, theme colours only', () => {
+  const { mod, source } = loadPanel();
+  const t = makeTranslator(mod.en);
+  const tree = render(mod, { tab: 'servers' }, t);
+  const nodes = allNodes(tree);
+  const head = nodes.find((n) => n.props?.['data-cammut-head']);
+  assert.ok(head, 'the tab opens with a head row');
+  const cube = allNodes(head).find((n) => n.props?.['data-cammut-cube']);
+  assert.ok(cube && cube.props.role === 'img' && cube.props['aria-label'] === 'Arc Science', 'the head shows the AS cube as an image');
+  assert.equal(allNodes(cube).filter((n) => n.type === 'svg').length, 2, 'two faces: letters right, then letters left');
+  assert.ok(allNodes(head).some((n) => n.type === 'h3' && n.children.includes('Cammut')), 'the head names Cammut');
+  const style = nodes.find((n) => n.type === 'style').children.join('');
+  assert.match(style, /@keyframes arc-cam-turn/);
+  assert.match(style, /prefers-reduced-motion:reduce\)\{[^}]*\.arc-cam-cube[^}]*animation:none/, 'the cube stays still when the system asks for less motion');
+  const add = nodes.find((n) => n.props?.['data-cammut-add']);
+  assert.match(add.props.style.background, /var\(--dsw-alias-button-info-fill/, 'the main button takes the accent of the theme');
+  const remove = nodes.find((n) => n.props?.['data-cammut-remove']);
+  assert.match(remove.props.style.border, /^1px solid var\(--dsw-alias-line-divider/, 'secondary buttons are outlined');
+  assert.doesNotMatch(source, /#[0-9a-f]{3,8}\b|rgba?\(/i, 'no fixed colours in the panel');
+});
