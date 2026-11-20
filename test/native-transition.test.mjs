@@ -387,6 +387,45 @@ test('N8: all 6 native Rust validator modules match Node golden vectors byte-for
   assert.deepEqual(runNativeValidatorCli('vector-svg', [], invalidIcon), validateSvg(invalidIcon));
 });
 
+test('N8b: the Rust prose gate reads the engine lexicon and gives the JS verdict on every case file, held-out and blind included', async () => {
+  const { loadCases, HELDOUT, BLIND3, RU_CASES, RU_BLIND, F102_BLIND, BLIND4, F102_BLIND2, RU_BLIND2 } = await import('../tools/prose-gate.mjs');
+  const { check } = await import('../plugins/arc-core/lib/prose-gate.js');
+  // Multi-line cases cross the zone code (headings, labels, lists, fences, CR, U+2028) and the probes of review wf_48e95a53-271.
+  const zoneCases = [
+    '# Nimbus\n## Limits\nNo model has been trained.\n## Method\nNothing has been run.',
+    '# Arc\n\n## API rate limits\n\nThe model is not trained.',
+    '# Pushing the limits of design\nNo model has been trained.',
+    'Snöggo runs.\n\nLimits:\n- Not trained.\n- No outcome yet.\n\nNothing has been run.',
+    'Limits:\nThe model is not trained.',
+    '```\nNot trained.\n```\nThe model is built.',
+    '# Title\rThe model is not trained.',
+    '# Limits\rThe model is not trained.\nNo model was trained.',
+    'Not trained.\u0085If the split is frozen we train.',
+    'Not http:// trained.',
+    'The model is not trаined.',
+    'The model is not trained (см. ниже).',
+    'The tool does not include модуль экспорта.',
+    'Your data stays local and is never published.',
+    '## Ограничения\n- Модель не обучена.',
+    // two bands (S049): a block replaces the mark it overlaps; a mark with a trigger phrase of the console rewrite
+    'No model is trained so far.',
+    'Other groups have not reported it so far, but we did.',
+    'Not trained, and no adverse events were reported.',
+  ].map((text) => ({ zone: 'public', text }));
+  const cases = [...loadCases(), ...loadCases(RU_CASES), ...loadCases(HELDOUT), ...loadCases(BLIND3), ...loadCases(RU_BLIND), ...loadCases(F102_BLIND), ...loadCases(BLIND4), ...loadCases(F102_BLIND2), ...loadCases(RU_BLIND2), ...zoneCases];
+  assert.ok(cases.length >= 1070, `${cases.length} cases`);
+  const js = cases.map((c) => {
+    const f = check(c.text, { zone: c.zone }).findings;
+    return f.some((x) => x.rule === 'SELF_UNDERCUT') ? 'undercut' : f.some((x) => x.rule === 'UNSURE_ABSENCE') ? 'review' : 'clean';
+  });
+  const rust = runNativeValidatorCli('prose-gate', [], cases.map((c) => `${c.zone}|${c.text.replace(/\n/g, '\\n')}`).join('\n'));
+  const differ = cases.map((c, i) => (rust[i] === js[i] ? null : `rust ${rust[i]}, js ${js[i]}: ${JSON.stringify(c.text)}`)).filter(Boolean);
+  assert.deepEqual(differ, []);
+  // Line by line too: the lint of every case, joined into one text, gives the same findings in Rust and JS.
+  const joined = [...cases.filter((c) => c.zone === 'public').map((c) => c.text.replace(/[\r\n\u2028\u2029\u0085]/g, ' ')), ...zoneCases.map((c) => c.text)].join('\n');
+  assert.deepEqual(runNativeValidatorCli('arc-rules', [], joined).findings, lintProse(joined).findings);
+});
+
 test('N9: first-run setup stores keys in credentialStore only and public-repo readiness passes', (t) => {
   const tmpProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-firstrun-'));
   t.after(() => fs.rmSync(tmpProfile, { recursive: true, force: true }));
