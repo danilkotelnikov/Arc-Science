@@ -1,0 +1,186 @@
+# Blind set 3 for the prose gate. One case per line: split|zone|expect|text
+# 181 sentences (88 undercut, 93 clean) that GPT-OSS 120B (through Antigravity, model gpt-oss-120b-medium) wrote on 18 November 2026 in two calls,
+# without the rules of the gate or the judge question; its class is the label (A = undercut, B = clean). Exact duplicates and
+# one malformed line were removed. Antigravity loads its installed global rules, which describe the habit in prose but hold
+# none of the word lists. Do not tune the rules or the judge on this file: it measures both on wording their builder did not see.
+blind3|public|undercut|Our predictor reaches 85% accuracy, not yet benchmarked.
+blind3|public|clean|The method works without requiring external GPUs.
+blind3|public|undercut|The antibody library covers 10⁶ sequences, not yet benchmarked.
+blind3|public|clean|Our algorithm operates only on sequences under 500 residues.
+blind3|public|undercut|We have curated a protein set, built a simulation engine, and designed a UI, but have not validated the results.
+blind3|public|clean|The software does not accept ambiguous amino‑acid codes.
+blind3|public|undercut|We have collected RNA structures, generated models, and integrated a viewer, but have not performed free‑energy calculations.
+blind3|public|clean|The model never exceeds a computational cost of 10 GFLOPs.
+blind3|public|undercut|The harness, which currently lacks a memory server, will be expanded in the next release.
+blind3|public|clean|Results are provided that are not influenced by stochastic noise.
+blind3|public|undercut|The AI agent framework, which currently lacks a memory server, will be expanded in the next release.
+blind3|public|clean|The approach lacks dependence on experimental structures.
+blind3|public|undercut|So far, we have not executed long‑timescale molecular dynamics simulations.
+blind3|public|clean|The pipeline can handle up to 1000 simulations concurrently.
+blind3|public|undercut|So far, we have not compared our method against the state‑of‑the‑art benchmark.
+blind3|public|clean|The framework offers no built‑in visualization, encouraging external tools.
+blind3|public|undercut|At present, the chemistry module does not include quantum‑mechanical corrections.
+blind3|public|clean|Our design ensures that data are processed without manual intervention.
+blind3|public|undercut|At present, the RNA folding tool lacks stochastic sampling.
+blind3|public|clean|The protocol excludes any reliance on proprietary software.
+blind3|public|undercut|For now, the free‑energy calculation feature is missing from the suite.
+blind3|public|clean|The system operates only when a valid license key is present.
+blind3|public|undercut|For now, the visualization of binding pockets is absent.
+blind3|public|clean|The analysis deliberately avoids using deprecated APIs.
+blind3|public|undercut|The absence of wet‑lab data is noted in the methods section.
+blind3|public|clean|The platform delivers results without sacrificing accuracy.
+blind3|public|undercut|The absence of experimental validation is noted in the discussion.
+blind3|public|clean|Our codebase is organized without redundant modules.
+blind3|public|undercut|The project suffers from the absence of wet‑lab data for antibody binding assays.
+blind3|public|clean|The algorithm produces predictions that are not affected by temperature fluctuations.
+blind3|public|undercut|The analysis is limited by the absence of wet‑lab data for protein stability.
+blind3|public|clean|The tool generates outputs that are not dependent on random seed variations.
+blind3|public|undercut|Integration with the external database is pending, not yet integrated.
+blind3|public|clean|The workflow runs only after all dependencies are resolved.
+blind3|public|undercut|Cloud deployment is pending, not yet integrated.
+blind3|public|clean|The method ensures that no data leakage occurs during training.
+blind3|public|undercut|The figure draft is complete, pending validation.
+blind3|public|clean|The software supports batch processing without manual restarts.
+blind3|public|undercut|The benchmark table is assembled, pending validation.
+blind3|public|clean|Our implementation respects memory limits and does not exceed allocated RAM.
+blind3|public|undercut|Training is scheduled for the spring.
+blind3|public|clean|The algorithm maintains performance even when input sizes vary.
+blind3|public|undercut|The numbers in this section are targets.
+blind3|public|clean|The approach remains robust without hyper‑parameter tuning.
+blind3|public|undercut|Wet‑lab testing is the next milestone.
+blind3|public|clean|The pipeline includes a checkpoint system that never loses intermediate results.
+blind3|public|undercut|Data deposition will occur after publication.
+blind3|public|clean|The method is designed to avoid bias in dataset selection.
+blind3|public|undercut|Model deployment is planned for Q1 2027.
+blind3|public|clean|The software provides error messages that are not cryptic.
+blind3|public|undercut|Funding applications are underway.
+blind3|public|clean|The system can process data streams without interruption.
+blind3|public|undercut|The software release candidate will be shared in June.
+blind3|public|clean|The framework offers scalability that does not compromise precision.
+blind3|public|undercut|User documentation is being drafted.
+blind3|public|clean|The implementation is thread‑safe and does not cause race conditions.
+blind3|public|undercut|Collaboration with the structural biology group is in discussion.
+blind3|public|clean|The tool can be extended without rewriting core functions.
+blind3|public|undercut|A patent filing is anticipated later this year.
+blind3|public|clean|The method yields results that are not sensitive to minor sequence variations.
+blind3|public|undercut|The codebase will be containerized soon.
+blind3|public|clean|The architecture supports plug‑ins without altering existing code.
+blind3|public|undercut|Public benchmarks are slated for next quarter.
+blind3|public|clean|The algorithm achieves convergence without excessive iterations.
+blind3|public|undercut|A conference presentation is prepared.
+blind3|public|clean|The model inference runs without requiring GPU acceleration.
+blind3|public|undercut|The tutorial video series will be recorded.
+blind3|public|clean|The system logs events without exposing sensitive information.
+blind3|public|undercut|Integration with cloud storage is planned.
+blind3|public|clean|The pipeline operates only under Linux environments.
+blind3|public|undercut|The reproducibility checklist is being finalized.
+blind3|public|clean|The analysis excludes any use of proprietary datasets.
+blind3|public|undercut|A preprint will be posted after peer review.
+blind3|public|clean|The method guarantees that no duplicate entries exist in the final report.
+blind3|public|undercut|The algorithmic optimization phase is upcoming.
+blind3|public|clean|The software avoids memory leaks by design.
+blind3|public|undercut|The hardware acceleration module is under design.
+blind3|public|clean|The framework can be deployed without additional licensing costs.
+blind3|public|undercut|The outreach workshop is scheduled for autumn.
+blind3|public|clean|The code adheres to standards that are not deprecated.
+blind3|public|undercut|No benchmark results are available for the latest version.
+blind3|public|clean|The pipeline does not include a step for automated data annotation.
+blind3|public|undercut|There is no support for GPU acceleration.
+blind3|public|clean|The model never exceeds a memory footprint of 2 GB.
+blind3|public|undercut|The code does not include a gradient optimizer.
+blind3|public|clean|The method cannot process sequences longer than 2 kb without segmentation.
+blind3|public|undercut|We do not have a trained model for membrane proteins.
+blind3|public|clean|The workflow cannot handle missing input files gracefully.
+blind3|public|undercut|The pipeline cannot yet predict antibody‑antigen affinity.
+blind3|public|clean|The tool neither supports nor requires external databases.
+blind3|public|undercut|Neither the dataset nor the model includes post‑translational modifications.
+blind3|public|clean|The software does not generate visual legends automatically.
+blind3|public|undercut|The software lacks an API for external querying.
+blind3|public|clean|The implementation never writes to the user's home directory.
+blind3|public|undercut|Currently, the system does not perform free‑energy perturbation.
+blind3|public|clean|The algorithm operates only on validated sequences.
+blind3|public|undercut|The current release does not support multi‑chain complexes.
+blind3|public|clean|The method produces outputs that are not affected by rounding errors.
+blind3|public|undercut|The implementation is missing a module for solvent effects.
+blind3|public|clean|The codebase avoids the use of global variables.
+blind3|public|undercut|We have not yet implemented a memory server for agents.
+blind3|public|clean|The framework is designed to prevent deadlocks.
+blind3|public|undercut|The project has not secured funding for experimental validation.
+blind3|public|clean|The system ensures that no duplicate calculations occur.
+blind3|public|undercut|The manuscript does not contain any figures of the MD trajectories.
+blind3|public|clean|The tool provides metrics that are not influenced by sample size.
+blind3|public|undercut|No statistical
+blind3|public|undercut|Model training is slated for the upcoming quarter.
+blind3|public|clean|The algorithm operates on sequences up to 800 residues without performance loss.
+blind3|public|undercut|The release lacks a trained model for membrane proteins.
+blind3|public|clean|Our design incorporates thermodynamic cycles to enhance free‑energy accuracy.
+blind3|public|clean|The workflow uses a deterministic seed to ensure reproducibility.
+blind3|public|undercut|No benchmarking against the latest CASP challenge has been performed yet.
+blind3|public|clean|The software enforces strict input validation to prevent malformed entries.
+blind3|public|undercut|The pipeline still cannot process glycosylated protein sequences.
+blind3|public|clean|The method leverages transfer learning to improve antibody affinity predictions.
+blind3|public|undercut|There is no support for cross‑species orthology prediction at this time.
+blind3|public|clean|The system processes data streams in real time without buffering delays.
+blind3|public|undercut|The algorithm never evaluated against the recent deep learning baseline.
+blind3|public|clean|The pipeline includes a modular plugin architecture that simplifies extensions.
+blind3|public|undercut|The dataset lacks experimental validation of predicted RNA structures.
+blind3|public|clean|The codebase follows PEP‑8 styling guidelines across all modules.
+blind3|public|undercut|Our system does not yet handle variable‑length peptide inputs.
+blind3|public|clean|The tool provides detailed provenance metadata for each generated figure.
+blind3|public|undercut|The software currently lacks an automated hyper‑parameter search.
+blind3|public|clean|The framework utilizes low‑precision arithmetic to accelerate inference.
+blind3|public|undercut|The figure generation tool does not produce scalable vector graphics.
+blind3|public|clean|The implementation applies a Bayesian prior to regularize model weights.
+blind3|public|undercut|The method has not been tested on GPU clusters.
+blind3|public|clean|The analysis incorporates a consensus scoring scheme for ligand ranking.
+blind3|public|undercut|The project has no access to high‑resolution cryo‑EM data.
+blind3|public|clean|The software supports exporting results in JSON, CSV, and HDF5 formats.
+blind3|public|clean|The protocol excludes any reliance on proprietary chemical libraries.
+blind3|public|undercut|The codebase still does not incorporate a solvent‑modeling module.
+blind3|public|clean|The method guarantees that output files are timestamped automatically.
+blind3|public|undercut|The analysis cannot yet account for post‑translational modifications.
+blind3|public|clean|The algorithm maintains numerical stability even at extreme temperature values.
+blind3|public|clean|The pipeline can parallelize up to 64 simulations concurrently.
+blind3|public|clean|The system logs all operations with structured JSON logs for auditability.
+blind3|public|clean|The tool is compatible with both Windows and Linux environments.
+blind3|public|undercut|The framework never includes a built‑in statistical power
+blind3|public|clean|The algorithm processes protein sequences using a convolutional attention mechanism.
+blind3|public|undercut|Integration of a GPU‑accelerated inference server is planned for next release.
+blind3|public|clean|Users can customize scoring functions via a simple plugin API.
+blind3|public|undercut|Training of the transformer model is scheduled for Q2 2027.
+blind3|public|clean|The software exports results in both CSV and Parquet formats.
+blind3|public|undercut|Release lacks a trained model for membrane proteins.
+blind3|public|clean|Input validation rejects any malformed FASTA entries.
+blind3|public|clean|The tool automatically logs runtime metadata to a centralized server.
+blind3|public|undercut|No benchmark results are available for the latest version of the algorithm.
+blind3|public|clean|The framework provides built‑in support for unit testing via pytest.
+blind3|public|undercut|Not yet validated the predicted binding affinities experimentally.
+blind3|public|clean|The system caches intermediate files to reduce I/O overhead.
+blind3|public|undercut|Current release does not support RNA‑protein interaction modeling.
+blind3|public|clean|The application includes a RESTful endpoint for remote job submission.
+blind3|public|undercut|Adding support for non‑canonical amino acids is planned for the upcoming milestone.
+blind3|public|clean|The codebase includes comprehensive type hints for all public functions.
+blind3|public|undercut|Development of an automated hyper‑parameter tuning pipeline is upcoming.
+blind3|public|clean|The pipeline can be executed within a Docker container for reproducibility.
+blind3|public|undercut|Upcoming figure generation module will support scalable vector graphics.
+blind3|public|clean|The model inference runs on CPU cores without requiring GPU resources.
+blind3|public|undercut|Project will incorporate benchmark against the latest AlphaFold DB in summer.
+blind3|public|clean|The software does not write temporary files to the user's home directory.
+blind3|public|undercut|User‑friendly graphical interface is slated for the beta version.
+blind3|public|clean|The analysis avoids any reliance on proprietary third‑party libraries.
+blind3|public|undercut|Inclusion of a collaborative annotation feature is on the development plan.
+blind3|public|clean|The system enforces strict type checking at runtime.
+blind3|public|undercut|Expansion of the antibody‑design module to include camelid nanobodies is on the roadmap.
+blind3|public|clean|The engine provides deterministic outputs given identical inputs.
+blind3|public|undercut|Implementation of a solvent‑effects calculator is targeted for the next iteration.
+blind3|public|clean|The codebase follows the Apache 2.0 license throughout the repository.
+blind3|public|undercut|New module for quantum‑chemical property prediction is scheduled for Q3.
+blind3|public|clean|The implementation never compromises on numerical precision.
+blind3|public|undercut|Deployment of the system on edge devices is planned for later this year.
+blind3|public|clean|The framework operates fully offline after installation.
+blind3|public|undercut|Benchmark suite will include additional protein‑folding challenges later this year.
+blind3|public|clean|The model incorporates physicochemical features without using hand‑crafted rules.
+blind3|public|undercut|Documentation will include a quick‑start guide for new users.
+blind3|public|clean|The system automatically cleans up temporary directories after each run.
+blind3|public|undercut|The release will feature a modular plugin architecture for extensibility.
+blind3|public|clean|The tool integrates seamlessly with Jupyter notebooks for interactive analysis

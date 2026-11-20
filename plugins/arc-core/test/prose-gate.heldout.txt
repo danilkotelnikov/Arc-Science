@@ -1,0 +1,82 @@
+# Held-out sentences for the prose gate. One case per line: split|zone|expect|text
+# 78 sentences that Claude Sonnet 5.5 wrote on 18 November 2026 in a clean folder, without seeing the rules; its class is the label.
+# Do not tune the rules on this file. It measures what the rules do on wording that their builder did not see.
+# First run: 21 of 39 caught, 2 false alarms of 39. A rule change that uses these lines makes this file a development split.
+heldout|public|undercut|We have not yet trained a full-scale version of the model; the checkpoint released here is a small prototype.
+heldout|public|clean|The server never stores raw credentials and keeps only hashed tokens.
+heldout|public|undercut|The binding affinity of the designed proteins was never measured in the wet lab.
+heldout|public|clean|Unlike earlier tools, our harness does not require a GPU.
+heldout|public|undercut|No experimental validation exists for these designs.
+heldout|public|clean|Designs must not contain more than two cysteines.
+heldout|public|undercut|The memory server has no support for multi-user access yet.
+heldout|public|clean|Most force fields do not capture electronic polarization.
+heldout|public|undercut|Benchmarks against other agent harnesses are still to come.
+heldout|public|clean|The simulation runs without any restraints on the backbone.
+heldout|public|undercut|Runs beyond 100 ns did not finish, so we report nothing past that point.
+heldout|public|clean|Nothing in the pipeline depends on proprietary software.
+heldout|public|undercut|Our figure tool exports SVG and PDF; a PNG exporter is planned, but nothing has been written.
+heldout|public|clean|Only residues within 8 Å of the ligand are mutated.
+heldout|public|undercut|We did not run the ablation on the larger dataset.
+heldout|public|clean|Neither the temperature nor the pressure is allowed to drift by more than 1%.
+heldout|public|undercut|Free energy calculations remain on our roadmap.
+heldout|public|clean|Proteins with no disulfide bonds are generally easier to express in E. coli.
+heldout|public|undercut|The harness currently lacks a sandboxed execution layer.
+heldout|public|clean|Agents cannot write outside their working directory.
+heldout|public|undercut|Crystal structures of the designs have not been solved.
+heldout|public|clean|No force field is accurate for every system.
+heldout|public|undercut|We haven't compared against AlphaFold-based baselines.
+heldout|public|clean|Early versions of AlphaFold could not predict complexes reliably.
+heldout|public|undercut|Replica-exchange sampling is an idea at this stage, not an implementation.
+heldout|public|clean|The model was trained on sequences that do not appear in the test set.
+heldout|public|undercut|The planned retrieval module exists only as a design document.
+heldout|public|clean|Without the cofactor, the enzyme is inactive.
+heldout|public|undercut|There is no evaluation on real clinical data.
+heldout|public|clean|Memories are never deleted automatically.
+heldout|public|undercut|Expression tests were scheduled for this autumn but have not started.
+heldout|public|clean|If no checkpoint is found, the script starts from scratch.
+heldout|public|undercut|We were unable to reproduce the reported speedup on GPUs.
+heldout|public|clean|The figure tool does not change the aspect ratio of your plots.
+heldout|public|undercut|In our tests the agent never ran on tasks longer than ten steps.
+heldout|public|clean|Only the last 50 messages are kept in context.
+heldout|public|undercut|Only the encoder has been built; the decoder is still missing.
+heldout|public|clean|No group has yet reported a crystal structure of this complex.
+heldout|public|undercut|Statistical significance testing was left out of this first release.
+heldout|public|clean|This tool is not a replacement for wet-lab validation, and we say so in the documentation.
+heldout|public|undercut|Documentation for the plugin API is not written.
+heldout|public|clean|The API is stable, and no breaking changes are expected before version 2.0.
+heldout|public|undercut|Whether the method generalizes to membrane proteins is untested.
+heldout|public|clean|We report no results from unpublished data; every number comes from the public benchmark.
+heldout|public|undercut|We do not yet have a trained force field for lipids.
+heldout|public|clean|The protocol cannot be run on a laptop for systems above 100,000 atoms.
+heldout|public|undercut|A web interface is something we hope to build someday.
+heldout|public|clean|Still, the best designs bind with nanomolar affinity.
+heldout|public|undercut|Stability under heat was not assayed.
+heldout|public|clean|Neither method needs multiple sequence alignments.
+heldout|public|undercut|Memory compaction is not implemented, so the store grows without bound.
+heldout|public|clean|There is nothing to install; the demo runs in the browser.
+heldout|public|undercut|The preprint reports simulations of one system, and we did not simulate the others.
+heldout|public|clean|Not all trajectories are shown here; the rest are in the archive.
+heldout|public|undercut|Despite the name, the tool does not yet do 3D rendering.
+heldout|public|clean|Binding was measured in triplicate, and no outlier was removed.
+heldout|public|undercut|Windows support has not been tested.
+heldout|public|clean|Never commit API keys to the repository.
+heldout|public|undercut|No ablations were run for the reward function.
+heldout|public|clean|The benchmark has only 20 targets, so each is weighted equally.
+heldout|public|undercut|The second-generation designs exist only on the computer; none has been ordered as DNA.
+heldout|public|clean|Our server is not open to the public, and access requires a lab account.
+heldout|public|undercut|We have not released the training data.
+heldout|public|clean|Hydrogen bonds were counted only when the donor–acceptor distance was below 3.5 Å.
+heldout|public|undercut|Scaling to a million memories is untried.
+heldout|public|clean|The harness does not assume a particular language model.
+heldout|public|undercut|Large-scale benchmarking is future work.
+heldout|public|clean|Weights are not updated during inference.
+heldout|public|undercut|Mutational scanning has not been done on any of the variants.
+heldout|public|clean|Every design was expressed without a purification tag and still folded correctly.
+heldout|public|undercut|This version cannot yet resume interrupted runs.
+heldout|public|clean|The solvent model is the same in all runs, so the results are directly comparable.
+heldout|public|undercut|We never tested the figure tool with journal templates other than Nature's.
+heldout|public|clean|None of the designs aggregated in the assay.
+heldout|public|undercut|Our claims are limited to simulation, and no wet-lab confirmation was attempted.
+heldout|public|clean|Nobody on the team needs a license to run the code, since it is released under MIT.
+heldout|public|undercut|The agent has not been evaluated with open-weight models.
+heldout|public|clean|Each agent still has its own memory namespace, and no two share one.
