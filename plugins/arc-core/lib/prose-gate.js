@@ -150,11 +150,11 @@ function undercuts(t, opens = new Set()) {
   const has = (set, i) => i >= 0 && i < t.length && set.has(t[i]);
   const skip = (i, max) => { let k = i; let n = 0; while (n < max && has(L.filler, k)) { k += 1; n += 1; } return k; };
   // "No model is trained before the split is frozen" states a procedure. It is no status.
-  const condAfter = (end) => { for (let k = end + 1; k <= end + 4 && k < t.length; k += 1) if (L.rule_cond.has(t[k])) return true; return false; };
+  const condAfter = (end) => { for (let k = end + 1; k <= end + 4 && k < t.length && !opens.has(k); k += 1) if (L.rule_cond.has(t[k])) return true; return false; };
   // "A claim that is not tested stays on the lowest rung" restricts a noun. It is no status.
   const relBefore = (start) => { for (let k = start - 1; k >= start - 3 && k >= 0; k -= 1) if (L.rel_front.has(t[k])) return true; return false; };
   // "No errors have been reported", "the service has never crashed": a missing harm is a result, not missing work (F094)
-  const adverseNear = (a, b) => { for (let k = Math.max(0, a - 5); k <= b; k += 1) if (L.adverse_noun.has(t[k])) return true; return false; };
+  const adverseNear = (a, b) => { for (let k = Math.max(clauseStart(a), a - 5); k <= b; k += 1) if (L.adverse_noun.has(t[k])) return true; return false; };
   // A null result (F102): the head of the subject names an observation and the verb reports one. "No adverse events were
   // reported" and "no change in binding was measured" are results; "no toxicity assay has been run" (head: assay) and
   // "no changes have been tested" (verb: tested) announce missing work. The head is the last word before any preposition.
@@ -483,7 +483,9 @@ export function repair(text, { drop = true } = {}) {
   let changed = 0;
   const removed = [];
   const cut = [];
+  const limits = new Set(zoneLines(text, 'public').filter((z) => z.zone === 'limits').map((z) => z.no));   // check() exempts these lines, so repair keeps them
   const lines = String(text ?? '').split('\n').map((line, idx) => {
+    if (limits.has(idx + 1)) return line;
     const parts = line.split(SENTENCE_END);
     const kept = [];
     for (const s of parts) {
@@ -522,14 +524,12 @@ function zoneLines(text, zone) {
   // Plain text: a label line with a limits word, over a list, opens a limits zone for that list. It ends at a blank line.
   // A label with no list under it is an ordinary line and is checked.
   const out = [];
-  let fence = false;
   let limitsLevel = 0;
   let plain = 0;                                        // 1: a label waits for its list; 2: inside the list
   const rows = String(text ?? '').replace(/^﻿/, '').split(/\r?\n/);
   const listFollows = (idx) => { for (let k = idx + 1; k < rows.length; k += 1) if (rows[k].trim()) return LIST_ITEM.test(rows[k]); return false; };
   for (const [idx, raw] of rows.entries()) {
-    if (/^\s*```/.test(raw)) { fence = !fence; continue; }
-    if (fence) continue;
+    if (/^\s*```/.test(raw)) continue;   // a fence line is no prose; the words inside a fence are read like any line
     const head = /^(#{1,6})\s+(.*)$/.exec(raw);
     if (head) {
       const level = head[1].length;
@@ -541,7 +541,7 @@ function zoneLines(text, zone) {
     if (!raw.trim()) { if (plain === 2) plain = 0; continue; }
     if (isLimitsLabel(raw) && listFollows(idx)) { plain = 1; continue; }
     if (plain && (LIST_ITEM.test(raw) || (plain === 2 && /^\s{2,}\S/.test(raw)))) plain = 2; else plain = 0;
-    const line = raw.replace(/`[^`\n]+`/g, ' ').replace(/https?:\/\/\S+/g, ' ');
+    const line = raw.replace(/`([^`\n]+)`/g, ' $1 ').replace(/https?:\/\/\S+/g, ' ');
     if (line.trim()) out.push({ no: idx + 1, line, zone: limitsLevel || plain === 2 ? 'limits' : zone });
   }
   return out;
