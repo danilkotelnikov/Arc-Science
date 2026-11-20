@@ -92,8 +92,10 @@ export function createComponentHost() {
 const LOOPBACK_NAME = /^(?:127\.0\.0\.1|localhost|\[::1\])$/;
 const fail = (status, error) => ({ ok: false, status, error });
 
-// A page on a rebound name (evil.example that resolves to 127.0.0.1) has a non-loopback Host.
-// An Origin of "null" is a sandboxed frame. Both are refused. Actions need POST.
+// A page on a rebound name (evil.example that resolves to 127.0.0.1) has a non-loopback Host and is refused.
+// An Origin of "null" that reaches this guard is refused too. The desktop window also sends "null", so
+// serveConsoleRoute (console.js) judges a console request first: a local one arrives here as 127.0.0.1 with no Origin.
+// Actions need POST.
 function guard(req, needPost) {
   if (!LOOPBACK_NAME.test(String(req.host || '').replace(/:\d+$/, ''))) return fail(403, 'The Cammut console answers only on this computer.');
   if (req.origin) {
