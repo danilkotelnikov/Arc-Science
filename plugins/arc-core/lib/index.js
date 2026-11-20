@@ -4,6 +4,7 @@
  * deterministic gate checks, scope-gated toolpack loading and memory.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 export const name = 'arc-core';
@@ -499,6 +500,8 @@ export const memoryRetain = defaultServer.memory.retain;
 export const memoryRecall = defaultServer.memory.recall;
 
 import { createResearchSessionStore, registerConsoleRoutes } from './console.js';
+import { createComponentHost, serveCammutRoute } from './components.js';
+import { createMemoryPolicyStore, createEmbeddedMemoryServer } from './memory-policy.js';
 
 function jsonRender(_args, value) {
   return [{ type: 'text', text: JSON.stringify(value === undefined ? null : value, null, 2) }];
@@ -582,6 +585,21 @@ export function apply(ctx, opts = {}) {
   const server = createArcCoreServer(opts);
   const consoleStore = createResearchSessionStore(opts.console || {});
   server.console = consoleStore;
+  // The Cammut console is a part that loads on first use and can be swapped while the app runs (components.js).
+  // Under the test runner it never reads the real data home: notes stay in memory and only a fake fetch reaches the gateway.
+  const components = createComponentHost();
+  const cc = { ...(opts.console || {}), ...(opts.cammut || {}) };
+  const arcHome = cc.arcHome || process.env.ARC_HOME || path.join(os.homedir(), '.arc');
+  const persist = cc.live !== false && !process.env.NODE_TEST_CONTEXT;
+  let embedded = null;
+  components.register('cammut-console', {
+    load: async (gen) => {
+      const mod = await import(`./cammut-console.js?g=${gen}`);
+      embedded = embedded || createEmbeddedMemoryServer(createMemoryPolicyStore(persist ? { persistFile: path.join(arcHome, 'memory', 'notes.json') } : {}));
+      return mod.createCammutConsole({ fetch: cc.fetch, gatewayHost: cc.gatewayHost, arcHome, embedded });
+    },
+  });
+  server.components = components;
   if (ctx && ctx.tools && typeof ctx.tools.register === 'function') {
     const providerSafeNames = opts.providerSafeNames !== undefined
       ? Boolean(opts.providerSafeNames)
@@ -591,7 +609,7 @@ export function apply(ctx, opts = {}) {
     }
   }
   if (ctx && typeof ctx.inject === 'function') {
-    registerConsoleRoutes(ctx, consoleStore);
+    registerConsoleRoutes(ctx, consoleStore, { cammut: (req) => serveCammutRoute(req, components) });
   }
   return server;
 }
@@ -601,5 +619,6 @@ export * from './deploy.js';
 export * from './shelf.js';
 export * from './workshop.js';
 export * from './console.js';
+export * from './components.js';
 
 

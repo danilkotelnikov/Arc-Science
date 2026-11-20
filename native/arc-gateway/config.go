@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -80,7 +81,10 @@ type Governor struct {
 type Cammut struct {
 	Upstreams []string `json:"upstreams"` // tried in order; the next one only when the connection fails
 	AuthFile  string   `json:"authFile"`  // JSON file with mcpServers.cammut.headers.Authorization
-	Governor  Governor `json:"governor"`
+	// Auth names the key of one upstream (a name in .credentials.yaml refs). An upstream with an entry never
+	// gets the AuthFile header; "" means no Authorization header at all. Upstreams without an entry keep AuthFile.
+	Auth     map[string]string `json:"auth,omitempty"`
+	Governor Governor          `json:"governor"`
 }
 
 type Caching struct {
@@ -169,6 +173,11 @@ func SaveSettings(patch map[string]any) (Config, error) {
 			raw[k] = v
 		}
 	}
+	if v, ok := patch["cammut"]; ok {
+		if err := mergeCammutPatch(raw, v); err != nil {
+			return Config{}, err
+		}
+	}
 	b, _ := json.MarshalIndent(raw, "", "  ")
 	if err := os.MkdirAll(Home(), 0o700); err != nil {
 		return Config{}, err
@@ -177,6 +186,119 @@ func SaveSettings(patch map[string]any) (Config, error) {
 		return Config{}, err
 	}
 	return LoadConfig(), nil
+}
+
+// settingsError is a refused settings patch (the caller sent something wrong), as opposed to a failed write.
+type settingsError string
+
+func (e settingsError) Error() string { return string(e) }
+
+const maxCammutUpstreams = 8
+
+var keyRefName = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
+
+// normUpstream returns the address without a trailing slash, or an error text. Only http and https, a host,
+// no user name or password, no query and no fragment: a secret must never sit in the address.
+func normUpstream(s string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(s))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return "", fmt.Errorf("a Cammut address must be http or https with a host: %q", s)
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Contains(s, "?") || strings.Contains(s, "#") {
+		return "", fmt.Errorf("a Cammut address holds no user name, password, query or fragment")
+	}
+	u.Host = strings.ToLower(u.Host)
+	return strings.TrimRight(u.String(), "/"), nil
+}
+
+// mergeCammutPatch sets cammut.upstreams (and cammut.auth) inside raw and keeps authFile, governor and every other field.
+// An empty list is refused: LoadConfig would quietly put the default server back.
+func mergeCammutPatch(raw map[string]any, v any) error {
+	p := obj(v)
+	list, ok := p["upstreams"].([]any)
+	if p == nil || !ok || len(list) == 0 || len(list) > maxCammutUpstreams {
+		return settingsError(fmt.Sprintf("cammut.upstreams must list 1 to %d addresses", maxCammutUpstreams))
+	}
+	ups := make([]string, 0, len(list))
+	seen := map[string]bool{}
+	for _, it := range list {
+		s, _ := it.(string)
+		n, err := normUpstream(s)
+		if err != nil {
+			return settingsError(err.Error())
+		}
+		if seen[n] {
+			return settingsError("a Cammut address is listed twice: " + n)
+		}
+		seen[n] = true
+		ups = append(ups, n)
+	}
+	cm := obj(raw["cammut"])
+	if cm == nil {
+		cm = map[string]any{}
+	}
+	// a server that is new in this patch starts with an empty key entry, so the owner's AuthFile never reaches it
+	known := map[string]bool{}
+	if old, ok := cm["upstreams"].([]any); ok {
+		for _, o := range old {
+			if str, _ := o.(string); str != "" {
+				known[strings.TrimRight(str, "/")] = true
+			}
+		}
+	} else {
+		for _, d := range defaultConfig().Cammut.Upstreams {
+			known[d] = true
+		}
+	}
+	auth := map[string]any{}
+	src := obj(cm["auth"])
+	if a, has := p["auth"]; has {
+		src = obj(a)
+		if src == nil {
+			return settingsError("cammut.auth must be an object")
+		}
+	}
+	for k, val := range src {
+		n, err := normUpstream(k)
+		name, isStr := val.(string)
+		if _, has := p["auth"]; has && !isStr {
+			return settingsError("a key name must be text")
+		}
+		if err != nil || !seen[n] {
+			if _, has := p["auth"]; has {
+				return settingsError("cammut.auth names a server that is not in the list: " + k)
+			}
+			continue // a removed server drops its key entry
+		}
+		if name != "" && !keyRefName.MatchString(name) {
+			return settingsError("a key name holds only letters, digits and underscores")
+		}
+		auth[n] = name
+	}
+	for _, n := range ups {
+		if _, has := auth[n]; !has && !known[n] {
+			auth[n] = ""
+		}
+	}
+	cm["upstreams"] = ups
+	if len(auth) > 0 {
+		cm["auth"] = auth
+	} else {
+		delete(cm, "auth")
+	}
+	raw["cammut"] = cm
+	return nil
+}
+
+// cammutAuthFor picks the Authorization value for one upstream: its own key, nothing, or the AuthFile header.
+func cammutAuthFor(c Config, base string, refs map[string]string) (value string, own bool) {
+	if ref, ok := c.Cammut.Auth[strings.TrimRight(base, "/")]; ok {
+		if ref == "" || refs[ref] == "" {
+			return "", true
+		}
+		return "Bearer " + refs[ref], true
+	}
+	return CammutAuth(c), false
 }
 
 // writeAtomic writes beside the target and renames, so a crash never leaves half a file.

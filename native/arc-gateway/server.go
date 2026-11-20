@@ -231,7 +231,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request, cfg Config
 			}
 		}
 		writeJSON(w, 200, map[string]any{"defaultReasoningEffort": cfg.DefaultReasoningEffort, "forceReasoningEffort": cfg.ForceReasoningEffort,
-			"temperature": cfg.Temperature, "maxTokens": cfg.MaxTokens, "keys": keys})
+			"temperature": cfg.Temperature, "maxTokens": cfg.MaxTokens, "keys": keys, "cammut": cammutSummary(cfg, refs)})
 		return
 	}
 	if !s.tokenOK(r.Header.Get("X-Arc-Gateway-Token")) {
@@ -252,6 +252,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request, cfg Config
 	}
 	updated, err := SaveSettings(body)
 	if err != nil {
+		var se settingsError
+		if errors.As(err, &se) {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
@@ -278,9 +283,7 @@ func (s *Server) handleCammut(w http.ResponseWriter, r *http.Request, cfg Config
 		cr = capRequest(body, g)
 	}
 	h := copyReqHeaders(r)
-	if auth := CammutAuth(cfg); auth != "" {
-		h.Set("Authorization", auth)
-	}
+	refs := LoadRefs()
 	var up *http.Response
 	var lastErr error
 	for _, base := range cfg.Cammut.Upstreams {
@@ -294,6 +297,12 @@ func (s *Server) handleCammut(w http.ResponseWriter, r *http.Request, cfg Config
 			continue
 		}
 		req.Header = h.Clone()
+		// each server gets only its own Authorization: the owner file never goes to an added server
+		if auth, own := cammutAuthFor(cfg, base, refs); auth != "" {
+			req.Header.Set("Authorization", auth)
+		} else if own {
+			req.Header.Del("Authorization")
+		}
 		up, err = s.cammut.Do(req)
 		if err == nil {
 			s.cammutUp.Store(base, "")
@@ -1148,4 +1157,18 @@ func (s *Server) tuneRequest(p map[string]any, cfg Config, rt *Route) bool {
 	}
 	s.sigs.inject(p, rt.Auth == "vertex")
 	return injectedThinking
+}
+
+// cammutSummary lists the servers for the settings reader: addresses, key names and whether each key has a value, never the value.
+func cammutSummary(cfg Config, refs map[string]string) map[string]any {
+	present := map[string]bool{}
+	auth := map[string]string{}
+	for _, u := range cfg.Cammut.Upstreams {
+		k := strings.TrimRight(u, "/")
+		if ref, ok := cfg.Cammut.Auth[k]; ok {
+			auth[k] = ref
+			present[k] = ref != "" && refs[ref] != ""
+		}
+	}
+	return map[string]any{"upstreams": cfg.Cammut.Upstreams, "auth": auth, "keyPresent": present, "authFile": cfg.Cammut.AuthFile != ""}
 }

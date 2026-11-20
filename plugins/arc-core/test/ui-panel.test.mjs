@@ -114,7 +114,7 @@ test('1. Built-in session read routes (head, timeline, tree, decisions) mount vi
   });
 
   assert.deepEqual(injectedDeps, ['connection']);
-  assert.equal(effects.length, 6);
+  assert.equal(effects.length, 8);
 
   for (const route of [
     '/api/arc-core/session/head',
@@ -137,7 +137,7 @@ test('1. Built-in session read routes (head, timeline, tree, decisions) mount vi
   const headJson = await headRes.json();
   assert.equal(headJson.ok, true);
   assert.deepEqual(headJson.workspaces, ['Research', 'Memory', 'Molecullage', 'Prose']);
-  assert.deepEqual(headJson.connectors, ['Servers', 'Keys', 'Apps', 'Audit']);
+  assert.deepEqual(headJson.connectors, ['Servers', 'Keys', 'Apps', 'Audit', 'Cammut']);
   assert.deepEqual(headJson.seats, ['Planner', 'Reviewer', 'Falsifier', 'Vision', 'Prose']);
   assert.equal(headJson.ladderRungs.find((r) => r.id === 'L5').active, false);
   assert.equal(headJson.ladderRungs.find((r) => r.id === 'L6').active, false);

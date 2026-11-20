@@ -2,6 +2,15 @@
 
 All notable changes to Arc Harness are listed here. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). Starting with `0.6.0`, every Arc Harness package, plugin, native Go/Rust binary, Electron shell archive, and release bundle shares one canonical version defined in `VERSION` and enforced by `scripts/version-sync.mjs`.
 
+## [Unreleased]
+
+### Added
+
+- **Cammut console tab (`plugins/arc-core`)**: a Cammut connector in the C2 console with Servers, Tools, Observer and Parts. It adds and removes Cammut servers in the gateway (`cammut.upstreams`, per-server key names, no key values), runs Hindsight tools with confirm classes (read, write, delete), and browses memory read-only. Routes: `api/arc-core/cammut/state` and `api/arc-core/cammut/action` (POST only, loopback Host and Origin).
+- **Built-in memory store (`memory-policy.js`)**: `persistFile` for the policy store and `createEmbeddedMemoryServer`, a small store behind the Hindsight tool names retain, recall, list_memories and list_tags.
+- **Hot-swappable parts (`components.js`)**: parts load on first use, swap while the app runs after a self-test, and roll back when the new copy fails.
+- **Gateway (`native/arc-gateway`)**: `cammut.upstreams` and `cammut.auth` (server address to key name) can be saved through `POST /api/config` with the token. An added server never receives the owner's `authFile` header.
+
 ## [0.6.0] - 2026-11-19
 
 ### Added

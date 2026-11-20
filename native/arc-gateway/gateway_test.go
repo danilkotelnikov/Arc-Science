@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -729,5 +730,192 @@ func TestVertex429NormalizesTransientQuotaWordingToRateLimit(t *testing.T) {
 	}
 	if !strings.Contains(bodyLower, "rate_limit_exceeded") {
 		t.Fatalf("expected rate_limit_exceeded in normalized 429 body: %s", bodyLower)
+	}
+}
+
+// --- Cammut servers: settings patch and per-server keys (slice S051) ---
+
+func writeGatewayJSON(t *testing.T, home, text string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(home, "gateway.json"), []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSaveSettingsMergesCammutUpstreamsAndKeepsTheRest(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ARC_HOME", home)
+	writeGatewayJSON(t, home, `{"routes":[{"prefix":"/p/v1","target":"http://127.0.0.1:1"}],"cammut":{"upstreams":["http://127.0.0.1:7421"],"authFile":"~/x.json","governor":{"enabled":true,"maxChars":9000}}}`)
+	_, err := SaveSettings(map[string]any{"cammut": map[string]any{
+		"upstreams": []any{"http://127.0.0.1:7421", "https://memory.example.org/cammut"},
+		"auth":      map[string]any{"https://memory.example.org/cammut": "VPS_KEY"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	b, _ := os.ReadFile(filepath.Join(home, "gateway.json"))
+	_ = json.Unmarshal(b, &raw)
+	c := raw["cammut"].(map[string]any)
+	if c["authFile"] != "~/x.json" || c["governor"].(map[string]any)["maxChars"].(float64) != 9000 {
+		t.Fatalf("authFile or governor lost: %v", c)
+	}
+	if len(c["upstreams"].([]any)) != 2 || c["auth"].(map[string]any)["https://memory.example.org/cammut"] != "VPS_KEY" {
+		t.Fatalf("patch not applied: %v", c)
+	}
+	if len(raw["routes"].([]any)) != 1 {
+		t.Fatalf("routes lost")
+	}
+	// removing a server drops its key entry too
+	if _, err := SaveSettings(map[string]any{"cammut": map[string]any{"upstreams": []any{"http://127.0.0.1:7421"}}}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = os.ReadFile(filepath.Join(home, "gateway.json"))
+	_ = json.Unmarshal(b, &raw)
+	if a, ok := raw["cammut"].(map[string]any)["auth"]; ok && len(a.(map[string]any)) != 0 {
+		t.Fatalf("stale key entry kept: %v", a)
+	}
+}
+
+func TestSaveSettingsRefusesBadCammutPatch(t *testing.T) {
+	t.Setenv("ARC_HOME", t.TempDir())
+	bad := map[string]map[string]any{
+		"empty list":      {"upstreams": []any{}},
+		"not a list":      {"upstreams": "http://a"},
+		"ftp scheme":      {"upstreams": []any{"ftp://a.example"}},
+		"userinfo":        {"upstreams": []any{"https://user:pw" + "@a.example"}},
+		"query":           {"upstreams": []any{"https://a.example/?k=v"}},
+		"no host":         {"upstreams": []any{"https:///x"}},
+		"duplicate":       {"upstreams": []any{"https://a.example", "https://a.example/"}},
+		"key for unknown": {"upstreams": []any{"https://a.example"}, "auth": map[string]any{"https://b.example": "K"}},
+		"bad key name":    {"upstreams": []any{"https://a.example"}, "auth": map[string]any{"https://a.example": "sk-abc def"}},
+		"too many":        {"upstreams": []any{"http://1.x", "http://2.x", "http://3.x", "http://4.x", "http://5.x", "http://6.x", "http://7.x", "http://8.x", "http://9.x"}},
+	}
+	for name, p := range bad {
+		_, err := SaveSettings(map[string]any{"cammut": p})
+		var se settingsError
+		if err == nil || !errors.As(err, &se) {
+			t.Errorf("%s: want a settingsError, got %v", name, err)
+		}
+	}
+	if _, err := os.Stat(configPath()); err == nil {
+		t.Errorf("a refused patch wrote gateway.json")
+	}
+}
+
+func TestConfigGetListsCammutServersWithoutKeyValues(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Cammut.Upstreams = []string{"http://127.0.0.1:7421", "https://m.example"}
+	cfg.Cammut.Auth = map[string]string{"https://m.example": "TEST_KEY"}
+	ts, _ := setup(t, cfg)
+	defer ts.Close()
+	r := do(t, ts, "GET", "/api/config", "", nil)
+	b, _ := io.ReadAll(r.Body)
+	if strings.Contains(string(b), "sk-test-123") {
+		t.Fatalf("key value leaked: %s", b)
+	}
+	var got struct {
+		Cammut struct {
+			Upstreams  []string          `json:"upstreams"`
+			Auth       map[string]string `json:"auth"`
+			KeyPresent map[string]bool   `json:"keyPresent"`
+		} `json:"cammut"`
+	}
+	_ = json.Unmarshal(b, &got)
+	if len(got.Cammut.Upstreams) != 2 || got.Cammut.Auth["https://m.example"] != "TEST_KEY" || !got.Cammut.KeyPresent["https://m.example"] {
+		t.Fatalf("got %s", b)
+	}
+}
+
+func TestConfigPostCammutNeedsTokenAndAnswersBadPatchWith400(t *testing.T) {
+	cfg := defaultConfig()
+	ts, home := setup(t, cfg)
+	defer ts.Close()
+	body := `{"cammut":{"upstreams":["https://m.example"]}}`
+	if r := do(t, ts, "POST", "/api/config", body, nil); r.StatusCode != 401 {
+		t.Fatalf("no token: %d", r.StatusCode)
+	}
+	tok, _ := os.ReadFile(filepath.Join(home, ".gateway-token"))
+	h := map[string]string{"X-Arc-Gateway-Token": strings.TrimSpace(string(tok))}
+	if r := do(t, ts, "POST", "/api/config", `{"cammut":{"upstreams":["ftp://x"]}}`, h); r.StatusCode != 400 {
+		t.Fatalf("bad patch: %d", r.StatusCode)
+	}
+	if r := do(t, ts, "POST", "/api/config", body, h); r.StatusCode != 200 {
+		t.Fatalf("good patch: %d", r.StatusCode)
+	}
+	if got := LoadConfig().Cammut.Upstreams; len(got) != 1 || got[0] != "https://m.example" {
+		t.Fatalf("saved %v", got)
+	}
+}
+
+func TestCammutAuthIsPerServer(t *testing.T) {
+	var gotA, gotB, gotC string
+	mk := func(dst *string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			*dst = r.Header.Get("Authorization")
+			io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+		}))
+	}
+	a, b, c := mk(&gotA), mk(&gotB), mk(&gotC)
+	defer a.Close()
+	defer b.Close()
+	defer c.Close()
+	home := t.TempDir()
+	t.Setenv("ARC_HOME", home)
+	_ = os.WriteFile(filepath.Join(home, ".credentials.yaml"), []byte("version: 1\nrefs:\n  B_KEY: key-for-b\n"), 0o600)
+	af := filepath.Join(home, "auth.json")
+	_ = os.WriteFile(af, []byte(`{"mcpServers":{"cammut":{"headers":{"Authorization":"Bearer owner-token"}}}}`), 0o600)
+	for _, tc := range []struct {
+		name string
+		up   string
+		auth map[string]string
+		got  *string
+		want string
+	}{
+		{"legacy server keeps the owner file", a.URL, nil, &gotA, "Bearer owner-token"},
+		{"added server uses its own key", b.URL, map[string]string{b.URL: "B_KEY"}, &gotB, "Bearer key-for-b"},
+		{"added server without key gets no header", c.URL, map[string]string{c.URL: ""}, &gotC, ""},
+	} {
+		cfg := defaultConfig()
+		cfg.Cammut.AuthFile = af
+		cfg.Cammut.Upstreams = []string{tc.up}
+		cfg.Cammut.Auth = tc.auth
+		s := NewServer(func() Config { return cfg })
+		ts := httptest.NewServer(s)
+		cfg.Port = localPort(ts)
+		r := do(t, ts, "POST", "/cammut/mcp", `{"jsonrpc":"2.0","id":1,"method":"ping"}`, map[string]string{"Authorization": "Bearer caller-token"})
+		r.Body.Close()
+		ts.Close()
+		if *tc.got != tc.want {
+			t.Errorf("%s: header %q, want %q", tc.name, *tc.got, tc.want)
+		}
+	}
+}
+
+// Argon review (S051): a server added without an auth entry must get an empty one, so the owner file never reaches it.
+func TestSaveSettingsGivesEveryNewServerAnEmptyKeyEntry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ARC_HOME", home)
+	writeGatewayJSON(t, home, `{"cammut":{"upstreams":["http://127.0.0.1:7421"],"authFile":"~/x.json"}}`)
+	if _, err := SaveSettings(map[string]any{"cammut": map[string]any{"upstreams": []any{"http://127.0.0.1:7421", "https://added.example"}}}); err != nil {
+		t.Fatal(err)
+	}
+	c := LoadConfig().Cammut
+	if ref, ok := c.Auth["https://added.example"]; !ok || ref != "" {
+		t.Fatalf("added server has no empty key entry: %v", c.Auth)
+	}
+	if _, ok := c.Auth["http://127.0.0.1:7421"]; ok {
+		t.Fatalf("the old server was changed: %v", c.Auth)
+	}
+	// a non-string key name is refused
+	_, err := SaveSettings(map[string]any{"cammut": map[string]any{"upstreams": []any{"https://a.example"}, "auth": map[string]any{"https://a.example": 123}}})
+	var se settingsError
+	if !errors.As(err, &se) {
+		t.Fatalf("want settingsError, got %v", err)
+	}
+	// host letters are lower-cased so the same server cannot be listed twice
+	_, err = SaveSettings(map[string]any{"cammut": map[string]any{"upstreams": []any{"https://A.example", "https://a.example"}}})
+	if !errors.As(err, &se) {
+		t.Fatalf("want duplicate refused, got %v", err)
 	}
 }

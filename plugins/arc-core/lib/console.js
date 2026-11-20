@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const WORKSPACES = Object.freeze(['Research', 'Memory', 'Molecullage', 'Prose']);
-export const CONNECTORS = Object.freeze(['Servers', 'Keys', 'Apps', 'Audit']);
+export const CONNECTORS = Object.freeze(['Servers', 'Keys', 'Apps', 'Audit', 'Cammut']);
 export const SEATS = Object.freeze(['Planner', 'Reviewer', 'Falsifier', 'Vision', 'Prose']);
 export const RESEARCH_PANES = Object.freeze(['Map', 'Claims', 'Evidence']);
 export const RESEARCH_VIEWS = Object.freeze(['Map', 'Claims', 'Evidence', 'Release']);
@@ -354,7 +354,7 @@ function readLocalPluginsSafe(arcHome) {
   return { plugins, preflights };
 }
 
-function parseMcpTextBody(rawText) {
+export function parseMcpTextBody(rawText) {
   const trimmed = String(rawText || '').trim();
   if (!trimmed) return null;
   if (trimmed.startsWith('{')) {
@@ -398,72 +398,74 @@ async function probeGatewayHealth(gatewayHost, fetchImpl, timeoutMs = 1200) {
   }
 }
 
-async function recallCammutMemory(gatewayHost, query, opts = {}, fetchImpl) {
-  if (!fetchImpl) return { ok: false, error: 'Fetch unavailable', items: [] };
+// One MCP tool call through the gateway (/cammut/mcp). name is a gateway tool: cammut_call, cammut_search, cammut_describe or cammut_servers.
+// Returns { ok, status, text, parsed, rpcError, toolError, error }. ok means the HTTP call worked and the reply holds no JSON-RPC error.
+export async function cammutMcp(gatewayHost, name, args = {}, opts = {}) {
+  const fetchImpl = opts.fetchImpl || (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null);
+  if (!fetchImpl) return { ok: false, status: 0, text: '', parsed: null, rpcError: null, toolError: false, error: 'Fetch unavailable' };
   try {
-    const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(2500) : undefined;
-    const defaultTag = process.env.ARC_PROJECT_TAG || 'project:arc-harness';
-    const tags = Array.isArray(opts.tags) && opts.tags.length > 0 ? opts.tags : [defaultTag];
-    const budget = typeof opts.budget === 'string' && opts.budget ? opts.budget : 'low';
+    const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(opts.timeoutMs || 2500) : undefined;
     const res = await fetchImpl(`http://${gatewayHost}/cammut/mcp`, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json, text/event-stream',
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: Date.now(),
-        method: 'tools/call',
-        params: {
-          name: 'cammut_call',
-          arguments: {
-            tool: 'hindsight/recall',
-            arguments: { query, tags, budget },
-          },
-        },
-      }),
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name, arguments: args } }),
       signal,
     });
     const rawText = await res.text();
     const parsed = parseMcpTextBody(rawText);
-    const contentText = parsed?.result?.content?.[0]?.text || rawText;
-    let payloadJson = null;
-    try {
-      payloadJson = JSON.parse(contentText);
-    } catch {
-      payloadJson = null;
-    }
-    const rawItems = Array.isArray(payloadJson?.results)
-      ? payloadJson.results
-      : Array.isArray(payloadJson?.facts)
-        ? payloadJson.facts
-        : Array.isArray(payloadJson)
-          ? payloadJson
-          : contentText
-            ? [{ text: String(contentText).slice(0, 280), context: 'cammut' }]
-            : [];
-    const items = rawItems.slice(0, 8).map((item, idx) => ({
-      id: String(item?.id || `mem-${idx + 1}`),
-      text: redactSecretText(String(item?.text || item?.content || item?.summary || item || '').slice(0, 280)),
-      context: redactSecretText(String(item?.context || item?.type || 'memory').slice(0, 80)),
-    }));
-    return { ok: Boolean(res.ok && !parsed?.error), items, error: parsed?.error ? String(parsed.error.message || 'rpc-error') : null };
+    const text = parsed?.result?.content?.[0]?.text || rawText;
+    const rpcError = parsed?.error ? String(parsed.error.message || 'rpc-error') : null;
+    const toolError = Boolean(parsed?.result?.isError);
+    const error = rpcError || (toolError ? String(text).slice(0, 200) : (!res.ok ? `HTTP ${res.status}` : (!parsed ? 'Invalid MCP reply' : null)));
+    return { ok: Boolean(res.ok && !rpcError), status: res.status, text, parsed, rpcError, toolError, error };
   } catch (err) {
-    return { ok: false, error: redactSecretText(err?.message || 'Cammut recall failed'), items: [] };
+    return { ok: false, status: 0, text: '', parsed: null, rpcError: null, toolError: false, error: redactSecretText(err?.message || 'Cammut call failed') };
   }
+}
+
+// A Hindsight tool through the gateway, for example cammutCall(host, 'hindsight/recall', { query }).
+export function cammutCall(gatewayHost, tool, args = {}, opts = {}) {
+  return cammutMcp(gatewayHost, 'cammut_call', { tool, arguments: args }, opts);
+}
+
+async function recallCammutMemory(gatewayHost, query, opts = {}, fetchImpl) {
+  if (!fetchImpl) return { ok: false, error: 'Fetch unavailable', items: [] };
+  const defaultTag = process.env.ARC_PROJECT_TAG || 'project:arc-harness';
+  const tags = Array.isArray(opts.tags) && opts.tags.length > 0 ? opts.tags : [defaultTag];
+  const budget = typeof opts.budget === 'string' && opts.budget ? opts.budget : 'low';
+  const r = await cammutCall(gatewayHost, 'hindsight/recall', { query, tags, budget }, { fetchImpl, timeoutMs: 2500 });
+  if (r.status === 0) return { ok: false, error: redactSecretText(r.error || 'Cammut recall failed'), items: [] };
+  const contentText = r.text;
+  let payloadJson = null;
+  try {
+    payloadJson = JSON.parse(contentText);
+  } catch {
+    payloadJson = null;
+  }
+  const rawItems = Array.isArray(payloadJson?.results)
+    ? payloadJson.results
+    : Array.isArray(payloadJson?.facts)
+      ? payloadJson.facts
+      : Array.isArray(payloadJson)
+        ? payloadJson
+        : contentText
+          ? [{ text: String(contentText).slice(0, 280), context: 'cammut' }]
+          : [];
+  const items = rawItems.slice(0, 8).map((item, idx) => ({
+    id: String(item?.id || `mem-${idx + 1}`),
+    text: redactSecretText(String(item?.text || item?.content || item?.summary || item || '').slice(0, 280)),
+    context: redactSecretText(String(item?.context || item?.type || 'memory').slice(0, 80)),
+  }));
+  return { ok: r.ok, items, error: r.rpcError };
 }
 
 async function retainCammutMemory(gatewayHost, content, opts = {}, fetchImpl) {
   if (!fetchImpl || !content) return { ok: false, error: 'Fetch unavailable' };
-  try {
-    const sig = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(1500) : undefined;
-    const tags = Array.isArray(opts.tags) && opts.tags.length ? opts.tags : [process.env.ARC_PROJECT_TAG || 'project:arc-harness', 'source:arc-console'];
-    const pl = { jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name: 'cammut_call', arguments: { tool: 'hindsight/retain', arguments: { content: sStr(content, 600), context: sStr(opts.context || 'arc-console review', 120), tags } } } };
-    const res = await fetchImpl(`http://${gatewayHost}/cammut/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify(pl), signal: sig });
-    const p = parseMcpTextBody(await res.text()), e = p?.error || (p?.result?.isError ? { message: 'rpc-tool-error' } : null);
-    return { ok: Boolean(res.ok && p && !e), error: e ? sStr(e.message || 'rpc-error', 120) : (!p ? 'Invalid MCP reply' : null) };
-  } catch (err) { return { ok: false, error: sStr(err?.message || 'Cammut retain failed', 120) }; }
+  const tags = Array.isArray(opts.tags) && opts.tags.length ? opts.tags : [process.env.ARC_PROJECT_TAG || 'project:arc-harness', 'source:arc-console'];
+  const r = await cammutCall(gatewayHost, 'hindsight/retain', { content: sStr(content, 600), context: sStr(opts.context || 'arc-console review', 120), tags }, { fetchImpl, timeoutMs: 1500 });
+  if (r.status === 0) return { ok: false, error: sStr(r.error || 'Cammut retain failed', 120) };
+  const e = r.rpcError || (r.toolError ? 'rpc-tool-error' : null);
+  return { ok: Boolean(r.ok && r.parsed && !e), error: e ? sStr(e, 120) : (!r.parsed ? 'Invalid MCP reply' : null) };
 }
 const CONSOLE_TARGET_TYPES = new Set(['session', 'branch', 'claim', 'evidence', 'source', 'release']);
 const VERDICT_MAP = Object.freeze(Object.assign(Object.create(null), { approve: 'Approve', revise: 'Revise', hold: 'Hold' }));
@@ -1020,14 +1022,19 @@ export function createResearchSessionStore(opts = {}) {
   };
 }
 
-export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = createResearchSessionStore()) {
+// extra.cammut: async ({ clean, method, host, origin, payload }) => body, the Cammut console routes (components.js serveCammutRoute).
+export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = createResearchSessionStore(), extra = {}) {
   let routePath = '';
+  let method = 'POST', origin = null, host = null;
   let payload = maybeBody || {};
   if (typeof reqOrPath === 'string') {
     routePath = reqOrPath;
   } else if (reqOrPath && typeof reqOrPath.url === 'string') {
     const u = new URL(reqOrPath.url, 'http://127.0.0.1');
     routePath = u.pathname;
+    method = String(reqOrPath.method || 'GET').toUpperCase();
+    host = u.host;
+    origin = reqOrPath.headers && typeof reqOrPath.headers.get === 'function' ? reqOrPath.headers.get('origin') : null;
     if (reqOrPath.method === 'POST' && typeof reqOrPath.text === 'function') {
       const raw = await reqOrPath.text();
       if (raw && raw.trim()) {
@@ -1043,6 +1050,7 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) payload = {};
 
   const clean = routePath.replace(/^\/+/, '');
+  if (clean.startsWith('api/arc-core/cammut/') && extra && typeof extra.cammut === 'function') return extra.cammut({ clean, method, host, origin, payload });
   if (clean === 'api/arc-core/session/head') return store.head();
   if (clean === 'api/arc-core/session/timeline') return store.timeline();
   if (clean === 'api/arc-core/session/tree') return store.tree();
@@ -1083,7 +1091,7 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
   return { ok: false, error: `Unknown console route: ${clean}` };
 }
 
-export function registerConsoleRoutes(ctx, store = createResearchSessionStore()) {
+export function registerConsoleRoutes(ctx, store = createResearchSessionStore(), extra = {}) {
   if (!ctx || typeof ctx.inject !== 'function') return [];
   const routes = [
     '/api/arc-core/session/head',
@@ -1092,6 +1100,8 @@ export function registerConsoleRoutes(ctx, store = createResearchSessionStore())
     '/api/arc-core/session/decisions',
     '/api/arc-core/console/state',
     '/api/arc-core/console/action',
+    '/api/arc-core/cammut/state',
+    '/api/arc-core/cammut/action',
   ];
   const disposers = [];
   ctx.inject(['connection'], (c) => {
@@ -1107,9 +1117,9 @@ export function registerConsoleRoutes(ctx, store = createResearchSessionStore())
           requestBody: 'buffered',
           fetch: async (req) => {
             try {
-              const body = await serveConsoleRoute(req, {}, store);
+              const body = await serveConsoleRoute(req, {}, store, extra);
               return new Response(JSON.stringify(body), {
-                status: body.ok ? 200 : 400,
+                status: typeof body.status === 'number' ? body.status : (body.ok ? 200 : 400),
                 headers: {
                   'content-type': 'application/json',
                   'cache-control': 'no-store',
