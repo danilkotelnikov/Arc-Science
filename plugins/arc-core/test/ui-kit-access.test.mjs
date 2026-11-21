@@ -88,10 +88,18 @@ test('kit styles keep the sizes of the host app, stay under the kit root, and ta
   assert.match(css, /\.ak-seg button\{[^}]*height:28px/);
   assert.match(css, /\.ak-row\{[^}]*padding:14px 0/);
   for (const rule of css.split('}').map((r) => r.trim()).filter(Boolean)) assert.ok(rule.startsWith('[data-arc-kit]'), `a rule leaves the kit root: ${rule.slice(0, 60)}`);
-  // no fixed colour in any form: no hex, no colour function with numbers, no colour name
-  // (a name inside another word, such as white-space or the token --ak-brown, is no colour)
-  const fixed = css.match(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|(?<![-\w])(black|white|red|green|gr[ae]y|silver|blue|navy|violet|purple|indigo|orange|yellow|brown|pink)(?![-\w])/gi);
-  assert.equal(fixed, null, `fixed colours in the kit styles: ${fixed}`);
+  // An allow-list, so a colour in any other form fails. In each declaration that can carry a colour, and in each kit token,
+  // only theme variables, color-mix in srgb, currentColor, transparent, Canvas, numbers and three layout words may stand.
+  const allowed = new Set(['var', 'color-mix', 'in', 'srgb', 'currentColor', 'transparent', 'Canvas', 'solid', 'inset', 'none']);
+  const stray = (value) => (value.replace(/--[\w-]+/g, ' ').replace(/\d*\.?\d+(px|%|em|rem)?/g, ' ').match(/[A-Za-z#][\w-]*/g) || []).filter((w) => !allowed.has(w));
+  let seen = 0;
+  for (const m of css.matchAll(/[;{]\s*(--ak-[\w-]+|color|background|border(?:-(?:top|bottom|left|right|color))?|box-shadow|outline(?:-color)?|fill|stroke)\s*:([^;}]*)/g)) {
+    seen++;
+    assert.deepEqual(stray(m[2]), [], `the declaration "${m[1]}:${m[2].trim()}" holds a colour that is no theme colour`);
+  }
+  assert.ok(seen >= 25, `the colour check read only ${seen} declarations`);
+  // the check itself must catch a colour name, a hex value and a colour function
+  for (const bad of ['teal', '#abc', 'oklab(0.5 0.1 0.1)', 'color(display-p3 1 0 0)', 'tomato']) assert.notDeepEqual(stray(bad), [], `the check lets ${bad} through`);
   assert.ok(!css.includes('·'));
 });
 
@@ -172,6 +180,13 @@ test('Access: the question names the app, states only what the action does, and 
   assert.equal(dialog.props['aria-describedby'], conseq.props.id);
   assert.equal(text(conseq), `The grant for ${LONG} ends now. The app can ask again.`);
   assert.ok(text(conseq).length <= 90, `${text(conseq).length} characters`);
+  // a very long app label and a very long grant id are cut, so the line never passes 90 characters
+  const wide = 'W'.repeat(120);
+  const longApp = { consents: [{ appId: 'pack-connector', scopes: [], expiresAtMs: NOW + DAY * 3 }, { appId: wide, scopes: [], expiresAtMs: NOW + DAY * 3 }], connectorsDetail: { Apps: [{ id: 'pack', label: wide }] } };
+  for (const id of ['pack-connector', wide]) {
+    const line = text(all(dialogOf(page({ data: longApp, ending: id })), (n) => has(n, 'ak-conseq'))[0]);
+    assert.ok(line.length <= 90 && line.length >= 80, `${line.length} characters for a 120 character name`);
+  }
   // the app does not yet check a grant before a tool call, so the text must not promise that
   assert.doesNotMatch(text(dialog), /no longer|cannot use|can not use|blocked/i);
 });
@@ -202,7 +217,10 @@ test('Access, Keys: a row says what the entry is and where it is kept; no value 
   assert.equal(all(tree, (n) => n.type === 'input' || n.type === 'textarea').length, 0);
   assert.equal(all(rowsOf(tree, 'key')[0], (n) => n.type === 'button').length, 0, 'a plain list, no dead control');
   // fields that could hold a value never reach the page, in any view
-  for (const tab of ['apps', 'keys', 'activity']) assert.ok(!text(page({ tab })).includes('CANARY'), `${tab} shows a field it must not show`);
+  for (const tab of ['apps', 'keys', 'activity']) assert.ok(!JSON.stringify(page({ tab })).includes('CANARY'), `${tab} carries a field it must not carry, as text or as an attribute`);
+  // long lines of the backend are cut to one line of 90 characters
+  const long = page({ tab: 'keys', data: { ...data, connectorsDetail: { ...data.connectorsDetail, Keys: [{ id: 'k', label: 'L'.repeat(200), ref: 'r'.repeat(200), state: 'ok', status: 'S'.repeat(200) }] } } });
+  for (const leaf of all(long, (n) => has(n, 'name') || has(n, 'sub') || has(n, 'mono')).map(text)) assert.ok(leaf.length <= 90, `a key line has ${leaf.length} characters`);
 });
 
 test('Access, Activity: each entry shows what happened, its kind and its time; an empty list says so', () => {
@@ -211,6 +229,9 @@ test('Access, Activity: each entry shows what happened, its kind and its time; a
   assert.ok(text(rows[0]).includes('Grant for 30 days for molecullage-connector'));
   assert.equal(text(all(rows[0], (n) => has(n, 'mono'))[0]), 'consent-grant');
   assert.equal(text(all(rows[0], (n) => has(n, 'sub'))[0]), '21 Nov, 12:00');
+  const wordy = page({ tab: 'activity', data: { ...data, connectorsDetail: { ...data.connectorsDetail, Audit: [{ id: 'x', kind: 'k'.repeat(200), summary: 'A'.repeat(200), atMs: NOW }] } } });
+  for (const leaf of all(wordy, (n) => has(n, 'mono') || has(n, 'sub')).map(text)) assert.ok(leaf.length <= 90, `an activity line has ${leaf.length} characters`);
+  assert.equal(text(all(rowsOf(wordy, 'activity')[0], (n) => has(n, 'name'))[0]).replace(/ k+\u2026$/, '').length, 90);
   const empty = page({ tab: 'activity', data: { ...data, connectorsDetail: { ...data.connectorsDetail, Audit: [] } } });
   assert.equal(text(all(empty, (n) => has(n, 'ak-empty'))[0]), 'Nothing was recorded yet.');
 });
@@ -241,18 +262,27 @@ test('Access on a real store: the three views show what the backend sends, and E
     // every visible line of the page fits the one-line limit of helper text, on real data
     for (const tab of ['apps', 'keys', 'activity']) for (const leaf of all(render({ tab }), (n) => ['p', 'h1'].includes(n.type) || has(n, 'sub') || has(n, 'name')).map(text)) assert.ok(leaf.length <= 90, `"${leaf}" is longer than one line`);
 
-    // the console tab grants access under the id "<app>-connector"; the Access page must show and end exactly that grant
-    assert.equal(store.applyConsent({ appId: 'molecullage-connector', scopes: ['read', 'render'], mode: 'Grant for 30 days' }).ok, true);
+    // the console tab makes a grant from its "Review access" button; the Access page must show and end exactly that grant
+    let asked = null;
+    const consoleApps = expand({ type: mod.ConnectorView, props: { connector: 'Apps', detail: store.snapshot().connectorsDetail, grants: 0, onOpenConsent: (req) => { asked = JSON.parse(JSON.stringify(req)); }, t }, children: [] });
+    all(consoleApps, (n) => n.props?.['data-connector-consent'] === 'molecullage')[0].props.onClick();
+    assert.equal(asked.appId, 'molecullage-connector');
+    assert.equal(store.applyConsent({ ...asked, mode: 'Grant for 30 days' }).ok, true);
+    // a second grant of the same app, to prove that End access ends one grant and leaves the other
+    assert.equal(store.applyConsent({ appId: 'molecullage-batch', scopes: ['read'], mode: 'Grant for 30 days' }).ok, true);
+    assert.equal(rowsOf(render(), 'app').filter((r) => button(r, 'End access')).length, 2);
     const sent = [];
     const withGrant = render({ ending: 'molecullage-connector', onEnd: (req) => sent.push(JSON.parse(JSON.stringify(req))) });
     const row = rowsOf(withGrant, 'app')[0];
     assert.match(text(all(row, (n) => has(n, 'ak-status'))[0]), /^Until \d{1,2} \w+$/);
+    assert.equal(row.props['data-id'], 'molecullage-connector');
     assert.ok(button(row, 'End access'));
     assert.ok(text(all(dialogOf(withGrant), (n) => has(n, 'ak-conseq'))[0]).length <= 90);
     button(dialogOf(withGrant), 'End access').props.onClick();
     assert.deepEqual(sent, [{ appId: 'molecullage-connector', mode: 'Revoke' }]);
     assert.equal(store.applyConsent(sent[0]).ok, true);
-    assert.ok(rowsOf(render(), 'app').every((r) => text(all(r, (n) => has(n, 'ak-status'))[0]) === 'No access'), 'the grant is gone from the store');
+    const left = rowsOf(render(), 'app').filter((r) => button(r, 'End access'));
+    assert.deepEqual(left.map((r) => r.props['data-id']), ['molecullage-batch'], 'that grant is gone from the store, and the other grant of the app stays');
     assert.ok(names(render({ tab: 'activity' }), 'activity').some((n) => n.includes('Revoked molecullage-connector')), 'the end of the grant is on record');
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
@@ -302,4 +332,30 @@ test('texts of the Access page follow the writing rules', () => {
     assert.ok(!s.includes('·') && !/!!!/.test(s), k);
     assert.ok(s.length <= 90, `${k} has ${s.length} characters`);
   }
+});
+
+test('Access: two grants of one app have a row each, each names its grant, and End access ends only the chosen one', () => {
+  const twin = { consents: [{ appId: 'molecullage-connector', scopes: ['read'], expiresAtMs: NOW + 9 * DAY }, { appId: 'molecullage-batch', scopes: ['render'], expiresAtMs: NOW + 9 * DAY }], connectorsDetail: { Apps: [{ id: 'molecullage', label: LONG }] } };
+  const calls = [];
+  const view = mount((m) => m.kit.AccessPage, { data: twin, t, nowMs: NOW, onEnd: (req) => calls.push(JSON.parse(JSON.stringify(req))) });
+  const rows = rowsOf(view.render(), 'app');
+  assert.deepEqual(rows.map((r) => r.props['data-id']), ['molecullage-connector', 'molecullage-batch']);
+  assert.deepEqual(rows.map((r) => text(all(r, (n) => has(n, 'mono'))[0])), ['molecullage-connector', 'molecullage-batch'], 'each row shows the id of its grant');
+  assert.deepEqual(rows.map((r) => button(r, 'End access').props['aria-label']), ['End access for molecullage-connector', 'End access for molecullage-batch']);
+  button(rows[1], 'End access').props.onClick({ currentTarget: null });
+  const dialog = dialogOf(view.render());
+  assert.equal(text(all(dialog, (n) => n.type === 'h2')[0]), 'End access for molecullage-batch?');
+  button(dialog, 'End access').props.onClick();
+  assert.deepEqual(calls, [{ appId: 'molecullage-batch', mode: 'Revoke' }]);
+});
+
+test('Access: the page calls the same hooks before and after its data arrives, as React requires', () => {
+  // the app opens the page without data and draws it again when the state arrives; a hook that runs only then breaks React
+  const counts = [];
+  let n = 0;
+  const React = { createElement, Fragment: 'fragment', useState: (v) => { n++; return [v, () => {}]; }, useRef: () => { n++; return { current: null }; }, useEffect: () => { n++; } };
+  const m = loadPanel(React);
+  for (const props of [{ data: null }, { data: null, failed: true }, { data }, { data, ending: 'stray-tool' }]) { n = 0; m.kit.AccessPage({ t, nowMs: NOW, ...props }); counts.push(n); }
+  assert.ok(counts[0] > 0);
+  assert.deepEqual(counts, [counts[0], counts[0], counts[0], counts[0]], `hook calls differ between renders: ${counts}`);
 });

@@ -478,15 +478,13 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const [tab, setTab] = React.useState(firstTab);
     const [ending, setEnding] = React.useState(firstEnding); // the id of the grant in question
     const back = React.useRef ? React.useRef(null) : { current: null };
+    const [, setTick] = React.useState(0);
     const frame = (...kids) => h("div", { "data-arc-settings": "access", "data-arc-kit": "true", "data-arc-plugin-pane": "true" }, h("style", null, KIT_CSS), ...kids);
     const title = (acts = null) => h("div", { className: "ak-title" }, h("h1", null, t("settings.nav.access")), h("p", null, t("access.sub")), h("div", { className: "acts" }, acts));
-    if (!data) {
-      return frame(title(), failed
-        ? h(React.Fragment, null, h("p", { role: "alert", className: "ak-alert" }, t("state.error")), h(KBtn, { look: "outline", small: true, label: t("action.retry"), onClick: onRefresh }))
-        : h("p", { role: "status", className: "ak-empty" }, t("access.loading")));
-    }
-    const detail = data.connectorsDetail || {}, listed = detail.Apps || [];
-    const live = (data.consents || []).filter((g) => g && typeof g.appId === "string" && Number(g.expiresAtMs) > nowMs);
+    // React needs the same hooks on every render, so the page computes on an empty state before its data arrives
+    // and returns its loading view only after the last hook.
+    const state = data || {}, detail = state.connectorsDetail || {}, listed = detail.Apps || [];
+    const live = (state.consents || []).filter((g) => g && typeof g.appId === "string" && Number(g.expiresAtMs) > nowMs);
     // One row for each active grant, so none stays hidden. A grant belongs to an app by the rule of the store: its id starts
     // with the id of the app; when two app ids fit, the longer one owns it. A grant of no listed app shows under its own id.
     // An app without a grant shows "No access".
@@ -494,13 +492,25 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const rows = [];
     for (const a of listed) {
       const mine = live.filter((g) => owner(g) === a);
-      for (const g of mine) rows.push({ key: g.appId, name: a.label, mono: false, grant: g });
-      if (!mine.length) rows.push({ key: `app:${a.id}`, name: a.label, mono: false, grant: null });
+      for (const g of mine) rows.push({ key: g.appId, name: a.label, ask: mine.length > 1 ? g.appId : a.label, tail: mine.length > 1 ? g.appId : "", mono: false, grant: g });
+      if (!mine.length) rows.push({ key: `app:${a.id}`, name: a.label, ask: a.label, tail: "", mono: false, grant: null });
     }
-    for (const g of live) if (!owner(g)) rows.push({ key: g.appId, name: g.appId, mono: true, grant: g });
+    for (const g of live) if (!owner(g)) rows.push({ key: g.appId, name: g.appId, ask: g.appId, tail: "", mono: true, grant: g });
     const target = rows.find((r) => r.grant && r.grant.appId === ending) || null;
     // a grant that left by another way (its time ended, a refresh dropped it) also closes its question
     React.useEffect(() => { if (ending && !target) setEnding(null); });
+    // a grant that reaches its end time leaves the list by itself: one timer waits for the nearest end and draws the page again
+    React.useEffect(() => {
+      const next = Math.min(...live.map((g) => Number(g.expiresAtMs)));
+      if (!Number.isFinite(next) || typeof setTimeout !== "function") return undefined;
+      const id = setTimeout(() => setTick((n) => n + 1), Math.min(Math.max(next - Date.now(), 0) + 50, 2147483647));
+      return () => clearTimeout(id);
+    });
+    if (!data) {
+      return frame(title(), failed
+        ? h(React.Fragment, null, h("p", { role: "alert", className: "ak-alert" }, t("state.error")), h(KBtn, { look: "outline", small: true, label: t("action.retry"), onClick: onRefresh }))
+        : h("p", { role: "status", className: "ak-empty" }, t("access.loading")));
+    }
     // after the question closes, the focus goes back to its button; after End access that button is gone, so it goes to the open tab
     const close = (done) => {
       const from = back.current, root = from && from.closest ? from.closest("[data-arc-kit]") : null;
@@ -514,10 +524,10 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     let list = null;
     if (tab === "apps") {
       list = rows.length === 0 ? empty("access.empty.apps") : rows.map((r) => h(KRow, {
-        key: r.key, kind: "app", id: r.key, name: oneLine(r.name, 60), mono: r.mono, chips: r.grant ? words(r.grant.scopes) : [],
+        key: r.key, kind: "app", id: r.key, name: oneLine(r.name, 60), mono: r.mono, tail: r.tail ? h("span", { className: "mono" }, oneLine(r.tail, 48)) : null, chips: r.grant ? words(r.grant.scopes) : [],
         end: h(React.Fragment, null,
           h(KStatus, { text: r.grant ? until(r.grant) : t("access.none") }),
-          r.grant ? h(KBtn, { look: "outline", small: true, label: t("access.end"), aria: t("access.end.label", { app: oneLine(r.name, 60) }), onClick: (e) => { back.current = e && e.currentTarget ? e.currentTarget : null; setEnding(r.grant.appId); } }) : null),
+          r.grant ? h(KBtn, { look: "outline", small: true, label: t("access.end"), aria: t("access.end.label", { app: oneLine(r.ask, 60) }), onClick: (e) => { back.current = e && e.currentTarget ? e.currentTarget : null; setEnding(r.grant.appId); } }) : null),
       }));
     } else if (tab === "keys") {
       const keys = detail.Keys || [];
@@ -528,10 +538,10 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     } else {
       const events = detail.Audit || [];
       list = events.length === 0 ? empty("access.empty.activity") : events.map((r) => h(KRow, {
-        key: r.id, kind: "activity", id: r.id, name: oneLine(r.summary, 120), tail: h("span", { className: "mono" }, r.kind), sub: dayTime(r.atMs),
+        key: r.id, kind: "activity", id: r.id, name: oneLine(r.summary, 90), tail: h("span", { className: "mono" }, oneLine(r.kind, 40)), sub: dayTime(r.atMs),
       }));
     }
-    const app = target ? oneLine(target.name, 43) : ""; // the consequence line stays inside 90 characters
+    const app = target ? oneLine(target.ask, 43) : ""; // the consequence line stays inside 90 characters
     return frame(
       title(tab === "keys" ? h(InfoHint, { label: t("settings.about"), text: t("access.key.hint"), align: "end", glyph: h(Ic, { n: "info" }) }) : null),
       actionError ? h("p", { role: "alert", className: "ak-alert" }, oneLine(actionError)) : null,
