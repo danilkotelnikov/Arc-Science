@@ -488,14 +488,16 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const detail = data.connectorsDetail || {}, listed = detail.Apps || [];
     const live = (data.consents || []).filter((g) => g && typeof g.appId === "string" && Number(g.expiresAtMs) > nowMs);
     // One row for each active grant, so none stays hidden. A grant belongs to an app by the rule of the store: its id starts
-    // with the id of the app. A grant of no listed app shows under its own id. An app without a grant shows "No access".
-    const rows = [], shown = new Set();
+    // with the id of the app; when two app ids fit, the longer one owns it. A grant of no listed app shows under its own id.
+    // An app without a grant shows "No access".
+    const owner = (g) => listed.filter((a) => g.appId.startsWith(a.id)).sort((x, y) => String(y.id).length - String(x.id).length)[0] || null;
+    const rows = [];
     for (const a of listed) {
-      const mine = live.filter((g) => g.appId.startsWith(a.id) && !shown.has(g.appId));
-      for (const g of mine) { shown.add(g.appId); rows.push({ key: g.appId, name: a.label, mono: false, grant: g }); }
-      if (!live.some((g) => g.appId.startsWith(a.id))) rows.push({ key: `app:${a.id}`, name: a.label, mono: false, grant: null });
+      const mine = live.filter((g) => owner(g) === a);
+      for (const g of mine) rows.push({ key: g.appId, name: a.label, mono: false, grant: g });
+      if (!mine.length) rows.push({ key: `app:${a.id}`, name: a.label, mono: false, grant: null });
     }
-    for (const g of live) if (!shown.has(g.appId)) { shown.add(g.appId); rows.push({ key: g.appId, name: g.appId, mono: true, grant: g }); }
+    for (const g of live) if (!owner(g)) rows.push({ key: g.appId, name: g.appId, mono: true, grant: g });
     const target = rows.find((r) => r.grant && r.grant.appId === ending) || null;
     // a grant that left by another way (its time ended, a refresh dropped it) also closes its question
     React.useEffect(() => { if (ending && !target) setEnding(null); });
@@ -507,7 +509,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       if (go && typeof setTimeout === "function") setTimeout(() => { if (go.isConnected) go.focus(); }, 0);
     };
     const words = (list) => (Array.isArray(list) ? list : []).filter((x) => typeof x === "string").map((x) => oneLine(x, 40));
-    const until = (g) => t("access.until", { date: Number(g.expiresAtMs) - nowMs < DAY_MS ? dayTime(g.expiresAtMs) : monthDay(g.expiresAtMs) });
+    const until = (g) => t("access.until", { date: Number(g.expiresAtMs) - nowMs <= DAY_MS ? dayTime(g.expiresAtMs) : monthDay(g.expiresAtMs) });
     const empty = (key) => h("p", { className: "ak-empty" }, t(key));
     let list = null;
     if (tab === "apps") {

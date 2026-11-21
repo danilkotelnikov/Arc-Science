@@ -123,6 +123,9 @@ test('Access, Apps: every active grant has a row, with what it covers, when it e
   assert.equal(text(all(stray, (n) => has(n, 'ak-status'))[0]), 'Until 21 Nov, 12:01');
   assert.equal(all(stray, (n) => n.type === 'button').length, 1);
   assert.equal(dialogOf(tree), null, 'no question at rest');
+  // two app ids that start alike: the grant goes to the longer id, and the shorter app still has its row
+  const alike = page({ data: { consents: [{ appId: 'inspect-connector', scopes: [], expiresAtMs: NOW + 5 * DAY }], connectorsDetail: { Apps: [{ id: 'in', label: 'Inbox' }, { id: 'inspect', label: 'Inspector' }] } } });
+  assert.deepEqual(rowsOf(alike, 'app').map((r) => [text(all(r, (n) => has(n, 'name'))[0]), text(all(r, (n) => has(n, 'ak-status'))[0])]), [['Inbox', 'No access'], ['Inspector', 'Until 26 Nov']]);
 });
 
 test('Access, Apps: End access asks first; Cancel, the close button and Escape end nothing; the action ends only that grant', () => {
