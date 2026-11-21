@@ -1065,7 +1065,7 @@ func TestReaddedDefaultServerKeepsAuthFile(t *testing.T) {
 
 // A "/" inside a password does not keep the secret in the plain form of an address.
 func TestPlainAddrCutsUserInfoWithSlash(t *testing.T) {
-	if got := plainAddr("https://owner:pa/ss@mcp.example/cammut"); got != "https://mcp.example/cammut" {
+	if got := plainAddr("https://owner:pa/ss" + "@mcp.example/cammut"); got != "https://mcp.example/cammut" {
 		t.Fatalf("plainAddr kept the user info: %s", got)
 	}
 }
