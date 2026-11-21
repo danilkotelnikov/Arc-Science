@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const name = 'arc-core';
-export const version = '0.6.0';
+export const version = '0.6.1';
 export const inject = ['tools'];
 
 export const DEFAULT_SHELF = Object.freeze([
