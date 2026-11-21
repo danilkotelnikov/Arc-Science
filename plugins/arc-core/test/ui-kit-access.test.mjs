@@ -938,7 +938,7 @@ test('Updates, channel: a version newer than the channel says so; Go back asks f
   assert.equal(sent.length, 0);
   button(parts(), 'Go back to 0.6.1').props.onClick({ currentTarget: null });
   button(dialogOf(view.render()), 'Go back').props.onClick({});
-  same(sent, [{ kind: 'install', back: true }], 'the updater takes the target from the channel');
+  same(sent, [{ kind: 'install', back: true, version: '0.6.1', channel: 'release' }], 'the action carries what the question named, for the updater to compare');
   // no files to go back to, an update that runs, a restart that is due: no Go back
   const noKit = await realState({ installed: '0.7.0-beta.2', releases: [rel('0.6.1', { kit: false })] });
   assert.equal(text(all(rowOf(upage(noKit), 'parts'), (n) => has(n, 'ak-status'))[0]), 'Newer than Release');
@@ -946,7 +946,7 @@ test('Updates, channel: a version newer than the channel says so; Go back asks f
     assert.equal(all(upage(info), (n) => n.type === 'button' && /^Go back/.test(text(n))).length, 0);
   }
   // a question that can no longer be acted on closes by itself
-  for (const info of [derive(ahead, { ahead: false }), derive(ahead, { busy: true, phase: 'downloading' })]) {
+  for (const info of [derive(ahead, { ahead: false }), derive(ahead, { busy: true, phase: 'downloading' }), derive(ahead, { installable: false, reason: 'no-kit' }), derive(ahead, { restartNeeded: true })]) {
     const stale = mount((m) => m.kit.UpdatesPage, { info, t, asking: 'back' });
     assert.equal(dialogOf(stale.render()), null);
     assert.equal(stale.states[0], null);
@@ -976,6 +976,10 @@ test('Updates: an error line starts with its plain words, without the code name 
   const ready = await realState({ releases: [rel('0.6.1')] });
   const line = (message) => text(alertsOf(upage(derive(ready, { phase: 'failed', failed: true, message })))[0]);
   assert.equal(line('ERR_UPDATE_HTTP: HTTP 404 from github.com'), 'HTTP 404 from github.com');
+  // the raw text of the line, which the helper above would trim
+  const raw = (message) => alertsOf(upage(derive(ready, { phase: 'failed', failed: true, message })))[0].children[0];
+  assert.equal(raw('ERR_UPDATE_HTTP: HTTP 404 from github.com'), 'HTTP 404 from github.com');
+  assert.equal(raw('ERR_UPDATE_SUMS:sss is a word'), 'sss is a word', 'only the code name, the colon and the space after it go');
   assert.equal(line('ERR_UPDATE_CHECKSUM: the kit zip does not match its checksum'), 'the kit zip does not match its checksum');
   assert.equal(line('Could not reach GitHub or read its answer: ERR_X: y'), 'Could not reach GitHub or read its answer: ERR_X: y', 'only a code at the very start is dropped');
   assert.equal(text(alertsOf(upage(ready, { error: 'ERR_UPDATE_SIZE: the download is too large' }))[0]), 'the download is too large');

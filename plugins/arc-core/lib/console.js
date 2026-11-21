@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseVersion } from './updater.js';
+import { CHANNELS as UPDATE_CHANNELS, parseVersion } from './updater.js';
 
 export const WORKSPACES = Object.freeze(['Research', 'Memory', 'Molecullage', 'Prose']);
 export const CONNECTORS = Object.freeze(['Servers', 'Keys', 'Apps', 'Audit', 'Cammut', 'Updates']);
@@ -1140,15 +1140,23 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
       return { ok: true, ...(await updater.check()) }; // the answer holds the newest version of the new channel
     }
     if (payload.kind === 'install') {
-      // a version name reaches the updater only in the one strict form; Go back names no version at all
-      const version = parseVersion(payload.version) ? payload.version : undefined;
+      // A version name passes only in the one strict form; a name in another form is refused and never turns into
+      // another action. Go back names no target: what its question named travels along only to be compared.
+      if ('version' in payload && !parseVersion(payload.version)) return { ok: false, error: 'Not a version name.' };
+      const version = payload.version;
+      let request = { version };
+      if (payload.back === true) {
+        if (version && !UPDATE_CHANNELS.includes(payload.channel)) return { ok: false, error: 'Unknown channel.' };
+        request = version ? { back: true, expect: { version, channel: payload.channel } } : { back: true };
+      }
       if (updater.getState().busy) return { ok: false, error: 'An update is already running.' };
-      const run = updater.install(payload.back === true ? { back: true } : { version });
+      // an install that ends with an error before its first step (the folder of the updater cannot be made) is a refusal too
+      const run = updater.install(request).then((r) => r, (err) => ({ ok: false, error: `The update could not start: ${String((err && err.message) || err).slice(0, 200)}` }));
       if (payload.wait === true) { const r = await run; return { ...r, state: updater.getState() }; }
-      run.catch(() => {}); // progress comes through update/state
+      // progress comes through update/state
       // An install that the updater refuses at once (another process holds the lock) has ended before the next turn of the
       // event loop. Its refusal is the answer then; a real install is still at its first read and answers "started".
-      const early = await Promise.race([run.catch(() => null), new Promise((resolve) => setImmediate(() => resolve(null)))]);
+      const early = await Promise.race([run, new Promise((resolve) => setImmediate(() => resolve(null)))]);
       if (early && early.ok === false) return { ok: false, error: String(early.error || 'The update did not start.'), state: updater.getState() };
       return { ok: true, started: true, state: updater.getState() };
     }

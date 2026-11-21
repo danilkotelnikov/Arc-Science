@@ -32,7 +32,8 @@ const fail = (code, msg) => Object.assign(new Error(`${code}: ${msg}`), { code }
 
 // ---- versions and releases
 // A version is x.y.z, x.y.z-beta.N or x.y.z-alpha.N, and nothing else. Every place that reads a version uses this one reader.
-const VERSION_RE = /^(\d{1,9})\.(\d{1,9})\.(\d{1,9})(?:-(alpha|beta)\.(\d{1,9}))?$/;
+// No number has a leading zero, so one version has one spelling in a tag, a kit name and a package file.
+const VERSION_RE = /^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})(?:-(alpha|beta)\.(0|[1-9]\d{0,8}))?$/;
 export const CHANNELS = Object.freeze(['release', 'beta', 'alpha']); // each channel also sees what the ones before it see
 const STAGE = Object.freeze({ alpha: 0, beta: 1, '': 2 }); // inside one x.y.z: every alpha, then every beta, then the final
 /** { nums: [x, y, z], pre: '' | 'beta' | 'alpha', n } for a version in the one strict form, or null. */
@@ -303,10 +304,11 @@ export function createUpdater(opts = {}) {
 
   // ---- check
   const check = async () => (mem.busy ? getState() : doCheck());
-  async function doCheck() {
+  // forChannel: the channel of the update that asked for this check. An update reads its channel once, at its start.
+  async function doCheck(forChannel) {
     phase('checking');
     try {
-      const { channel } = settings(); // read now: another window of the app may have changed it
+      const channel = forChannel || settings().channel; // read now: another window of the app may have changed it
       let all = [];
       // GitHub lists the newest releases first. A full page with no version for this channel can hide one on an older page
       // (a final behind many pre-releases), so up to three pages are read.
@@ -319,7 +321,8 @@ export function createUpdater(opts = {}) {
       }
       mem.releases = all;
       const top = pickRelease(mem.releases, undefined, channel);
-      save({ lastCheck: top ? { channel, latest: top.version, installable: Boolean(top.kit), reason: top.kit ? '' : 'no-kit', releaseUrl: top.url, notes: top.notes, checkedAt: new Date(now()).toISOString() } : { channel, latest: null, installable: false, reason: 'no-release', checkedAt: new Date(now()).toISOString() } });
+      // A check that ends after the channel changed must not take the place of the result for the new channel.
+      if (settings().channel === channel) save({ lastCheck: top ? { channel, latest: top.version, installable: Boolean(top.kit), reason: top.kit ? '' : 'no-kit', releaseUrl: top.url, notes: top.notes, checkedAt: new Date(now()).toISOString() } : { channel, latest: null, installable: false, reason: 'no-release', checkedAt: new Date(now()).toISOString() } });
       phase('idle', top ? '' : 'No release with a plain version number was found.');
     } catch (err) {
       phase('failed', `Could not reach GitHub or read its answer: ${clean(err.message, 200)}`);
@@ -486,7 +489,8 @@ export function createUpdater(opts = {}) {
   // ---- install
   // back: go back to the newest version of the channel when the installed one is newer (after a change to a calmer channel).
   // It is the only way to an older version. It takes no version from the caller, and automatic install never uses it.
-  async function install({ version, auto = false, back = false } = {}) {
+  // expect: what the Go back question named ({ version, channel }). It is only compared with the target, never used as one.
+  async function install({ version, auto = false, back = false, expect = null } = {}) {
     if (back && auto) return { ok: false, error: 'Automatic install never goes back to an older version.' };
     if (mem.busy || !lock()) return { ok: false, error: 'An update is already running.' };
     mem.busy = true;
@@ -500,13 +504,18 @@ export function createUpdater(opts = {}) {
         F.rmSync(journalFile, { force: true });
       }
       if (!journal()) await prevBack(); // an update that stopped before or during its swap left the earlier backup aside
-      const st = await doCheck();
+      const channel = settings().channel; // read once, here: the check and the pick below use this one value
+      const st = await doCheck(channel);
       if (st.phase === 'failed') return { ok: false, error: st.message };
-      const { channel } = settings(); // read now, like the check above
       const named = back ? undefined : version;
       const pick = pickRelease(mem.releases, named, channel);
       if (!pick) return { ok: false, error: named ? `Release ${clean(named, 40)} was not found.` : 'No release was found.' };
       toVersion = pick.version;
+      if (back && expect && (expect.version !== toVersion || expect.channel !== channel)) {
+        const moved = 'The newest version of the channel changed. Look at the page again.';
+        phase('idle', moved);
+        return { ok: false, error: moved };
+      }
       const installed = readInstalled();
       const order = compareVersions(toVersion, installed);
       if (back && order >= 0) { phase('idle', `The installed version ${installed} is not newer than the newest ${channel} version.`); return { ok: false, error: `The installed version ${installed} is not newer than the newest ${channel} version.` }; }

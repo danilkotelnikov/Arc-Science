@@ -707,7 +707,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     // channel is already Alpha.
     React.useEffect(() => {
       if (!info || !asking) return;
-      const gone = (asking === "rollback" && (!info.hasBackup || info.busy)) || (asking === "back" && (!info.ahead || info.busy)) || (asking === "alpha" && info.channel === "alpha");
+      const gone = (asking === "rollback" && (!info.hasBackup || info.busy)) || (asking === "back" && (!info.ahead || info.busy || !info.installable || info.restartNeeded)) || (asking === "alpha" && info.channel === "alpha");
       if (gone) setAsking(null);
     });
     const frame = (...kids) => h("div", { "data-arc-settings": "updates", "data-arc-kit": "true", "data-arc-plugin-pane": "true" }, h("style", null, KIT_CSS), ...kids);
@@ -735,7 +735,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     // the updater says whether its last step failed; a roll back the user asked for is no failure and only waits for a restart
     const failed = typeof u.failed === "boolean" ? u.failed : u.phase === "failed";
     // the updater starts some messages with its code name (ERR_UPDATE_HTTP: ...); the line shows the plain words
-    const trouble = String(error || (failed ? u.message || "" : "")).replace(/^ERR_[A-Z0-9_]+:s*/, "");
+    const trouble = String(error || (failed ? u.message || "" : "")).replace(/^ERR_[A-Z0-9_]+:\s*/, "");
     const kept = u.backupVersion && u.backupVersion !== "0.0.0" ? ver(u.backupVersion) : ""; // 0.0.0 stands for a version nobody could read
     const need = (icon, key) => h("span", { className: "ak-need" }, h(Ic, { n: icon }), t(key));
     const mark = running
@@ -819,7 +819,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       }) : null,
       asking === "back" && canGoBack ? h(Confirm, {
         t, title: t("upd.goback.title", { v: ver(u.latest) }), text: t("upd.back.conseq", { v: ver(u.latest) }), action: t("upd.goback.go"),
-        onClose: close, onConfirm: () => { act({ kind: "install", back: true }); close(true); },
+        // what the question named goes along, so the updater can refuse when the newest version or the channel changed meanwhile
+        onClose: close, onConfirm: () => { act({ kind: "install", back: true, version: String(u.latest), channel: chan }); close(true); },
       }) : null);
   }
 
