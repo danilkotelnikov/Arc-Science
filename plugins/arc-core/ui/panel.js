@@ -734,7 +734,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       : t(checked ? "upd.ver.3" : "upd.ver.2", { i: ver(u.installed), n: ver(u.latest), date: checked });
     // the updater says whether its last step failed; a roll back the user asked for is no failure and only waits for a restart
     const failed = typeof u.failed === "boolean" ? u.failed : u.phase === "failed";
-    const trouble = String(error || (failed ? u.message || "" : ""));
+    // the updater starts some messages with its code name (ERR_UPDATE_HTTP: ...); the line shows the plain words
+    const trouble = String(error || (failed ? u.message || "" : "")).replace(/^ERR_[A-Z0-9_]+:s*/, "");
     const kept = u.backupVersion && u.backupVersion !== "0.0.0" ? ver(u.backupVersion) : ""; // 0.0.0 stands for a version nobody could read
     const need = (icon, key) => h("span", { className: "ak-need" }, h(Ic, { n: icon }), t(key));
     const mark = running

@@ -971,3 +971,12 @@ test('Updates, channel: the new questions add no hook, and every line holds a fu
     assert.ok(s.length <= 90, k + ' has ' + s.length + ' characters with a long version');
   }
 });
+
+test('Updates: an error line starts with its plain words, without the code name of the updater', async () => {
+  const ready = await realState({ releases: [rel('0.6.1')] });
+  const line = (message) => text(alertsOf(upage(derive(ready, { phase: 'failed', failed: true, message })))[0]);
+  assert.equal(line('ERR_UPDATE_HTTP: HTTP 404 from github.com'), 'HTTP 404 from github.com');
+  assert.equal(line('ERR_UPDATE_CHECKSUM: the kit zip does not match its checksum'), 'the kit zip does not match its checksum');
+  assert.equal(line('Could not reach GitHub or read its answer: ERR_X: y'), 'Could not reach GitHub or read its answer: ERR_X: y', 'only a code at the very start is dropped');
+  assert.equal(text(alertsOf(upage(ready, { error: 'ERR_UPDATE_SIZE: the download is too large' }))[0]), 'the download is too large');
+});
