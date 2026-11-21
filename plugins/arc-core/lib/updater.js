@@ -227,7 +227,7 @@ export function createUpdater(opts = {}) {
     }
   };
 
-  const mem = { token: crypto.randomBytes(8).toString('hex'), phase: 'idle', message: '', busy: false, restartNeeded: false, healthy: null, releases: [], skippedBinaries: [], counter: 0 };
+  const mem = { token: crypto.randomBytes(8).toString('hex'), phase: 'idle', message: '', busy: false, restartNeeded: false, healthy: null, undone: false, releases: [], skippedBinaries: [], counter: 0 };
   const settings = () => { const s = readJson(settingsFile, {}); return { mode: MODES.includes(s.mode) ? s.mode : 'notify', intervalHours: Number.isInteger(s.intervalHours) && s.intervalHours >= 1 && s.intervalHours <= 168 ? s.intervalHours : 12 }; };
   const persisted = () => readJson(stateFile, {});
   const save = (patch) => writeJson(stateFile, { ...persisted(), ...patch });
@@ -249,6 +249,8 @@ export function createUpdater(opts = {}) {
       phase: mem.phase, message: mem.message, busy: mem.busy, mode: st.mode, intervalHours: st.intervalHours,
       hasBackup: Boolean(j && j.status === 'complete'), backupVersion: j && j.status === 'complete' ? j.fromVersion : null,
       skipped: p.skipped || null, skippedBinaries: mem.skippedBinaries, restartNeeded: mem.restartNeeded, healthy: mem.healthy,
+      // the last step failed: a failed step, or a failed update that was put back. A roll back the user asked for is no failure.
+      failed: mem.phase === 'failed' || (mem.phase === 'rolled-back' && mem.undone),
     };
   }
   const phase = (ph, message = '') => { mem.phase = ph; mem.message = message; if (opts.onPhase) { try { opts.onPhase(getState()); } catch { /* a listener must not stop an update */ } } };
@@ -527,6 +529,7 @@ export function createUpdater(opts = {}) {
       const transient = inUse || err.code === 'ERR_UPDATE_HTTP' || err.code === 'ERR_UPDATE_SIZE' || err.name === 'TimeoutError' || err.name === 'AbortError' || err instanceof TypeError;
       if (toVersion && !transient) save({ skipped: { version: toVersion, reason: `failed: ${msg}`, at: new Date(now()).toISOString() } });
       const text = inUse ? `${msg}.` : rolled ? `${msg}. The old files were put back (rolled back).` : msg;
+      mem.undone = rolled;
       phase(rolled ? 'rolled-back' : 'failed', text);
       return { ok: false, error: text };
     } finally {
@@ -561,7 +564,7 @@ export function createUpdater(opts = {}) {
       // Roll back goes one step. An older backup that a cut-short clean-up left behind must not show up as a second step.
       else { try { await dropPrev(); } catch { /* the next update clears it */ } }
       save({ skipped: { version: j.toVersion, reason: 'rolled-back', at: new Date(now()).toISOString() } });
-      mem.restartNeeded = true; mem.healthy = true;
+      mem.restartNeeded = true; mem.healthy = true; mem.undone = false;
       sweep();
       phase('rolled-back', `Back to ${j.fromVersion}. Restart Arc Harness to use it.`);
       return { ok: true, version: j.fromVersion };

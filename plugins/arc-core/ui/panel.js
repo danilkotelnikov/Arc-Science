@@ -223,6 +223,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "upd.back.hint": "Roll back puts the earlier add-ons and programs back. Install it then skips the version you left.",
     "upd.back.title": "Roll back to {v}?",
     "upd.back.conseq": "Version {v} returns after a restart. Your settings and notes stay.",
+    "upd.earlier.unknown": "Version unknown",
+    "upd.back.title.any": "Roll back to the earlier version?",
+    "upd.back.conseq.any": "The earlier version returns after a restart. Your settings and notes stay.",
     "upd.notes": "What changed in {v}",
     "upd.mode": "When a new version appears",
     "upd.mode.off": "Do nothing",
@@ -232,7 +235,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "upd.auto.title": "Install new versions without asking?",
     "upd.auto.conseq": "A new version then installs by itself and works after the next start of the app.",
     "upd.auto.go": "Install without asking",
-    "upd.skip": "Skips {v} after a failure or a roll back. Update now still installs it.",
+    "upd.skip": "Skips {v} after a failure or a roll back.",
   };
 
   const TEXT_FONT = "var(--arc-font-family-text-default, \"Geist\", system-ui, sans-serif)";
@@ -675,8 +678,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const [asking, setAsking] = React.useState(firstAsking); // "rollback" or "auto": the open question
     const [open, setOpen] = React.useState(firstOpen); // the notes of the newest version
     const back = React.useRef ? React.useRef(null) : { current: null };
-    // a kept version that left by another way (a new update, a roll back elsewhere) also closes its question
-    React.useEffect(() => { if (asking === "rollback" && info && !info.hasBackup) setAsking(null); });
+    // a kept version that left by another way (a new update, a roll back elsewhere) closes its question; so does an update
+    // that starts, because the updater refuses a roll back while it runs
+    React.useEffect(() => { if (asking === "rollback" && info && (!info.hasBackup || info.busy)) setAsking(null); });
     const frame = (...kids) => h("div", { "data-arc-settings": "updates", "data-arc-kit": "true", "data-arc-plugin-pane": "true" }, h("style", null, KIT_CSS), ...kids);
     const title = (acts = null) => h("div", { className: "ak-title" }, h("h1", null, t("settings.nav.updates")), h("p", null, t("upd.sub")), h("div", { className: "acts" }, acts));
     if (!info) {
@@ -695,8 +699,10 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const versions = !u.installed || u.installed === "0.0.0" ? t("upd.ver.unknown")
       : !u.latest ? t("upd.ver.1", { i: ver(u.installed) })
       : t(checked ? "upd.ver.3" : "upd.ver.2", { i: ver(u.installed), n: ver(u.latest), date: checked });
-    // a failed update is an error; a roll back the user asked for only waits for a restart
-    const trouble = String(error || (u.phase === "failed" || (u.phase === "rolled-back" && !u.restartNeeded) ? u.message || "" : ""));
+    // the updater says whether its last step failed; a roll back the user asked for is no failure and only waits for a restart
+    const failed = typeof u.failed === "boolean" ? u.failed : u.phase === "failed";
+    const trouble = String(error || (failed ? u.message || "" : ""));
+    const kept = u.backupVersion && u.backupVersion !== "0.0.0" ? ver(u.backupVersion) : ""; // 0.0.0 stands for a version nobody could read
     const need = (icon, key) => h("span", { className: "ak-need" }, h(Ic, { n: icon }), t(key));
     const mark = running
       ? h(React.Fragment, null,
@@ -704,18 +710,21 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           h("span", { className: "ak-meter", role: "progressbar", "aria-label": t("updates.progress"), "aria-valuemin": 0, "aria-valuemax": steps, "aria-valuenow": stepAt + 1 },
             h("i", { style: { width: `${Math.round(((stepAt + 1) / steps) * 100)}%` } })))
       : u.phase === "checking" ? h(KStatus, { text: t("upd.s.checking") })
-      : u.restartNeeded ? h(React.Fragment, null, need("update", "upd.s.restart"), about(t("settings.about"), t("updates.hint.restart")))
       : u.healthy === false ? need("warn", "upd.s.broken")
+      : u.restartNeeded ? h(React.Fragment, null, need("update", "upd.s.restart"), about(t("settings.about"), t("updates.hint.restart")))
       : !u.latest ? h(KStatus, { text: t(u.checkedAt ? "upd.s.norelease" : "upd.s.unchecked") })
       : u.available && u.installable ? need("warn", "upd.s.needs")
       : u.available ? h(KStatus, { text: t("upd.s.nokit") })
       : h(KStatus, { text: t("upd.s.current"), dot: "on" });
     const left = (Array.isArray(u.skippedBinaries) ? u.skippedBinaries : []).filter((x) => typeof x === "string").slice(0, 4).map((x) => oneLine(x, 40));
     const skips = u.mode === "auto" && u.available && u.skipped && u.skipped.version === u.latest;
-    const close = () => {
+    // after a question closes, the focus goes back to its control. After a confirmed roll back that button is off,
+    // so the focus goes to the choice list, which is never off.
+    const close = (done) => {
       const from = back.current;
       setAsking(null);
-      if (from && typeof setTimeout === "function") setTimeout(() => { if (from.isConnected) from.focus(); }, 0);
+      const go = (done === true && from && from.closest && from.closest("[data-arc-kit]")?.querySelector(".ak-dd")) || from;
+      if (go && typeof setTimeout === "function") setTimeout(() => { if (go.isConnected) go.focus(); }, 0);
     };
     const ask = (what, from) => { back.current = from || null; setAsking(what); };
     return frame(
@@ -729,7 +738,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           end: h(React.Fragment, null, mark, canInstall ? h(KBtn, { look: "outline", small: true, icon: "download", label: t("updates.install"), onClick: () => act({ kind: "install" }) }) : null),
         }),
         u.hasBackup ? h(KRow, {
-          kind: "earlier", id: "earlier", name: t("upd.earlier"), sub: ver(u.backupVersion || ""),
+          kind: "earlier", id: "earlier", name: t("upd.earlier"), sub: kept || t("upd.earlier.unknown"),
           end: h(React.Fragment, null, about(t("settings.about"), t("upd.back.hint")),
             h(KBtn, { look: "outline", small: true, icon: "undo", label: t("updates.rollback"), disabled: busy, onClick: (e) => ask("rollback", e && e.currentTarget) })),
         }) : null,
@@ -745,9 +754,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
             onChange: (m, from) => (m === "auto" ? ask("auto", from) : act({ kind: "mode", mode: m })),
           }),
         })),
-      asking === "rollback" && u.hasBackup ? h(Confirm, {
-        t, title: t("upd.back.title", { v: ver(u.backupVersion || "") }), text: t("upd.back.conseq", { v: ver(u.backupVersion || "") }), action: t("updates.rollback"),
-        onClose: close, onConfirm: () => { act({ kind: "rollback" }); close(); },
+      asking === "rollback" && u.hasBackup && !u.busy ? h(Confirm, {
+        t, title: kept ? t("upd.back.title", { v: kept }) : t("upd.back.title.any"), text: kept ? t("upd.back.conseq", { v: kept }) : t("upd.back.conseq.any"), action: t("updates.rollback"),
+        onClose: close, onConfirm: () => { act({ kind: "rollback" }); close(true); },
       }) : null,
       asking === "auto" ? h(Confirm, {
         t, title: t("upd.auto.title"), text: t("upd.auto.conseq"), action: t("upd.auto.go"),

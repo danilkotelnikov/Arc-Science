@@ -458,7 +458,7 @@ test('Updates: a release with no files, no release at all, the newest version an
   assert.match(text(alertsOf(tree)[0]), /^Could not reach GitHub/);
   assert.equal(button(tree, 'Check now').props.disabled, false, 'a failed check can run again');
   // a check that runs now
-  const checking = upage(derive(failed, { phase: 'checking', message: '' }));
+  const checking = upage(derive(failed, { phase: 'checking', message: '', failed: false }));
   assert.equal(text(all(rowOf(checking, 'parts'), (n) => has(n, 'ak-status'))[0]), 'Checking');
   assert.equal(alertsOf(checking).length, 0);
 });
@@ -535,7 +535,7 @@ test('Updates: after an update the page asks for a restart and keeps the earlier
 test('Updates: a failed update shows one line with the whole message one click away; a roll back by the user is no error', async () => {
   const ready = await realState({ releases: [rel('0.6.1')] });
   const long = `Files of arc-hoh are in use, so nothing was changed. Close the app and try again. ${'x'.repeat(200)}`;
-  const view = mount((m) => m.kit.UpdatesPage, { info: derive(ready, { phase: 'failed', message: long }), t });
+  const view = mount((m) => m.kit.UpdatesPage, { info: derive(ready, { phase: 'failed', failed: true, message: long }), t });
   let tree = view.render();
   assert.equal(alertsOf(tree).length, 1);
   assert.ok(text(alertsOf(tree)[0]).length <= 90);
@@ -545,18 +545,23 @@ test('Updates: a failed update shows one line with the whole message one click a
   tree = view.render();
   assert.ok(all(tree, (n) => n.props?.role === 'note').some((n) => text(n) === long), 'the hint holds the whole message');
   // a short message needs no second place
-  assert.equal(all(upage(derive(ready, { phase: 'failed', message: 'Short.' })), (n) => n.props?.['aria-label'] === 'The whole message').length, 0);
+  assert.equal(all(upage(derive(ready, { phase: 'failed', failed: true, message: 'Short.' })), (n) => n.props?.['aria-label'] === 'The whole message').length, 0);
   // the updater put the old files back after a failed swap: an error
-  const undone = upage(derive(ready, { phase: 'rolled-back', message: 'Bad kit. The old files were put back (rolled back).' }));
+  const undone = upage(derive(ready, { phase: 'rolled-back', failed: true, message: 'Bad kit. The old files were put back (rolled back).' }));
   assert.match(text(alertsOf(undone)[0]), /old files were put back/);
+  // the same failure while an earlier update still waits for its restart: the error must not hide behind the restart note
+  const both = upage(derive(ready, { phase: 'rolled-back', failed: true, restartNeeded: true, message: 'Bad kit. The old files were put back (rolled back).' }));
+  assert.match(text(alertsOf(both)[0]), /old files were put back/);
   // the user rolled back: a restart is due, and nothing went wrong
-  const back = upage(derive(ready, { phase: 'rolled-back', message: 'Back to 0.6.0. Restart Arc Harness to use it.', restartNeeded: true, healthy: true }));
+  const back = upage(derive(ready, { phase: 'rolled-back', failed: false, message: 'Back to 0.6.0. Restart Arc Harness to use it.', restartNeeded: true, healthy: true }));
   assert.equal(alertsOf(back).length, 0);
   assert.match(text(rowOf(back, 'parts')), /Restart to finish/);
   assert.equal(button(back, 'Update now'), undefined, 'no second swap before the restart');
   // files that could not all be put back
-  const broken = upage(derive(ready, { phase: 'failed', message: 'The rollback was not complete: arc-core', healthy: false }));
+  const broken = upage(derive(ready, { phase: 'failed', failed: true, message: 'The rollback was not complete: arc-core', healthy: false }));
   assert.match(text(rowOf(broken, 'parts')), /Not complete/);
+  // files that are not complete stay marked after the next check and beside a restart that is due
+  assert.match(text(rowOf(upage(derive(ready, { healthy: false, restartNeeded: true })), 'parts')), /Not complete/);
   assert.equal(alertsOf(broken).length, 1);
   // a refusal of the last action
   assert.equal(text(alertsOf(upage(ready, { error: 'An update is already running.' }))[0]), 'An update is already running.');
@@ -714,7 +719,7 @@ test('Updates: the page calls the same hooks in every state and with every view 
   const views = [
     { info: null }, { info: null, error: 'Refused.' }, { info: ready }, { info: ready, error: 'Refused.' }, { info: ready, pending: true },
     { info: derive(ready, { busy: true, phase: 'installing' }) }, { info: derive(kept, { restartNeeded: true, phase: 'done' }) },
-    { info: derive(ready, { phase: 'failed', message: 'm'.repeat(200) }) }, { info: ready, asking: 'auto' }, { info: kept, asking: 'rollback' }, { info: ready, open: true },
+    { info: derive(ready, { phase: 'failed', failed: true, message: 'm'.repeat(200) }) }, { info: ready, asking: 'auto' }, { info: kept, asking: 'rollback' }, { info: ready, open: true },
   ];
   const counts = views.map((props) => { n = 0; m.kit.UpdatesPage({ t, ...props }); return n; });
   assert.ok(counts[0] > 0);
@@ -734,6 +739,45 @@ test('texts of the Updates page follow the writing rules', () => {
   // untrusted text of a release cannot stretch a line: the version comes cut, the notes are capped by the updater
   const odd = upage({ installed: '9'.repeat(300), latest: '8'.repeat(300), available: true, installable: true, reason: '', releaseUrl: '', notes: 'n', checkedAt: null, phase: 'idle', message: '', busy: false, mode: 'notify', intervalHours: 12, hasBackup: true, backupVersion: '7'.repeat(300), skipped: null, skippedBinaries: [], restartNeeded: false, healthy: null });
   for (const leaf of all(odd, (n) => has(n, 'sub') || has(n, 'ak-status') || n.type === 'button').map(text)) assert.ok(leaf.length <= 90, `a line has ${leaf.length} characters`);
+});
+
+test('Updates: an update that starts closes an open Roll back question, since the updater refuses a roll back while it runs', async () => {
+  const ready = await realState({ releases: [rel('0.6.1')] });
+  const sent = [];
+  const view = mount((m) => m.kit.UpdatesPage, { info: derive(ready, { hasBackup: true, backupVersion: '0.6.0', busy: true, phase: 'downloading' }), t, asking: 'rollback', onAction: (a) => sent.push(a) });
+  assert.equal(dialogOf(view.render()), null, 'no question offers Roll back while an update runs');
+  assert.equal(view.states[0], null);
+  assert.match(updaterSource, /async function rollback\(\) \{\s+if \(mem\.busy \|\| !lock\(\)\) return \{ ok: false/);
+});
+
+test('Updates: an earlier version that nobody could read is not shown as a number', async () => {
+  const ready = await realState({ releases: [rel('0.6.1')] });
+  const tree = upage(derive(ready, { hasBackup: true, backupVersion: '0.0.0' }), { asking: 'rollback' });
+  assert.equal(text(all(rowOf(tree, 'earlier'), (n) => has(n, 'sub'))[0]), 'Version unknown');
+  const dlg = dialogOf(tree);
+  assert.equal(text(all(dlg, (n) => n.type === 'h2')[0]), 'Roll back to the earlier version?');
+  assert.ok(!text(dlg).includes('0.0.0'));
+  assert.ok(text(all(dlg, (n) => has(n, 'ak-conseq'))[0]).length <= 90);
+});
+
+test('Updates: after a question closes, the focus goes to a control that can take it', async () => {
+  const ready = await realState({ releases: [rel('0.6.1')] });
+  const pick = { isConnected: true, n: 0, focus() { this.n++; } };
+  const from = { isConnected: true, n: 0, focus() { this.n++; }, closest: () => ({ querySelector: (sel) => (sel === '.ak-dd' ? pick : null) }) };
+  const view = mount((m) => m.kit.UpdatesPage, { info: derive(ready, { hasBackup: true, backupVersion: '0.6.0' }), t, onAction: () => {} }, { globals: { setTimeout: (fn) => fn() } });
+  const ask = () => button(rowOf(view.render(), 'earlier'), 'Roll back').props.onClick({ currentTarget: from });
+  ask();
+  button(dialogOf(view.render()), 'Cancel').props.onClick({});
+  assert.deepEqual([from.n, pick.n], [1, 0], 'Cancel gives the focus back to the Roll back button');
+  ask();
+  button(dialogOf(view.render()), 'Roll back').props.onClick({});
+  assert.deepEqual([from.n, pick.n], [1, 1], 'after Roll back its button is off, so the choice list takes the focus');
+});
+
+test('Updates: release notes are a wrapped text of limited height, so a long line cannot stretch the page', () => {
+  assert.match(mod.kit.CSS, /\.ak-notes\{[^}]*max-height:240px;overflow:auto[^}]*white-space:pre-wrap;overflow-wrap:anywhere/);
+  const tree = upage({ installed: '0.6.0', latest: '0.6.1', available: true, installable: true, notes: 'x'.repeat(5000), phase: 'idle', mode: 'notify', skippedBinaries: [] }, { open: true });
+  assert.equal(all(tree, (n) => has(n, 'ak-notes'))[0].children[0].length, 1200);
 });
 
 test('Updates: a Roll back question whose kept version is gone closes by itself', async () => {

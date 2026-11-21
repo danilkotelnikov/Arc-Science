@@ -393,6 +393,7 @@ test('rollback restores every plugin copy and binary, remembers the version, and
   assert.equal(s.installed, '0.6.0');
   assert.equal(s.hasBackup, false);
   assert.deepEqual({ v: s.skipped.version, why: s.skipped.reason }, { v: '0.7.0', why: 'rolled-back' });
+  assert.deepEqual({ phase: s.phase, failed: s.failed, restart: s.restartNeeded }, { phase: 'rolled-back', failed: false, restart: true }, 'a roll back the user asked for is no failure');
   // auto mode skips 0.7.0 …
   e.u.setMode('auto');
   const t1 = await e.u.tick();
@@ -420,6 +421,9 @@ test('post-swap failure rolls back by itself and remembers the version as failed
   assert.equal(r.ok, false);
   assert.match(r.error, /rolled back/i);
   assert.equal(u.getState().phase, 'rolled-back');
+  assert.equal(u.getState().failed, true, 'a failed update that was put back is a failure');
+  // a roll back by the user after it clears the mark, although the phase has the same name
+  assert.equal((await e.make().getState()).failed, false, 'a fresh process reports no failure');
   for (const n of UPDATE_PLUGINS) assert.equal(marker(e, n), `export const marker = '${n}-0.6.0';\n`);
   assert.equal(fs.readFileSync(path.join(e.gatewayDir, 'arc-gateway.exe'), 'utf8'), 'GW-0.6.0');
   assert.deepEqual({ v: u.getState().skipped.version, why: u.getState().skipped.reason.split(':')[0] }, { v: '0.7.0', why: 'failed' });
