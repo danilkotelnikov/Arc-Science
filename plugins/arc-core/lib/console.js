@@ -335,6 +335,7 @@ function readLocalPluginsSafe(arcHome) {
       for (const name of fs.readdirSync(dir)) {
         const full = path.join(dir, name);
         if (!fs.statSync(full).isDirectory()) continue;
+        if (name.endsWith('.arc-new')) continue; // the unfinished copy of an update that was held; the next update removes it
         plugins.push(name);
         const pkg = readJsonSafe(path.join(full, 'package.json'));
         addons.push({ id: name, version: String(pkg?.version || ''), description: String(pkg?.description || '').slice(0, 300) });

@@ -1,0 +1,187 @@
+# Blind set 4 for the prose gate. One case per line: split|zone|expect|text
+# 180 sentences (60 undercut, 120 clean) that Gemini 4 Argon (Antigravity, gemini-4-argon-high) wrote on 18.XI.2026 in one
+# call, with the first prompt of blind set 3 and without the rules of the gate or the judge question; its class is the label
+# (A = undercut, B = clean). The answer came back printed twice, so 180 exact repeats were dropped. Gemini 4 Hydrogen, one of
+# the two judges, shares the writer's family; the Claude Haiku judge is the only reader from another family on this set.
+# Antigravity loads its installed global rules, which describe the habit in prose but hold none of the word lists.
+# Do not tune the rules or the judge on this file. Blind set 3 (GPT-OSS 120B) stays as the older split.
+blind4|public|clean|The method is only applicable to proteins smaller than 500 residues.
+blind4|public|undercut|Training is scheduled for the spring.
+blind4|public|clean|We do not recommend this approach for membrane-bound complexes.
+blind4|public|clean|Our tool still requires manual input for initial structure alignment.
+blind4|public|undercut|The numbers in this section are targets.
+blind4|public|clean|The model cannot generalize to unseen protein families.
+blind4|public|undercut|Wet-lab testing is the next milestone.
+blind4|public|undercut|Future work will include structural validation.
+blind4|public|clean|No other group has published a similar approach for RNA folding.
+blind4|public|clean|The calculation is only accurate within a 2kcal/mol margin.
+blind4|public|undercut|Our team plans to incorporate lipid-protein interactions.
+blind4|public|undercut|We will soon perform the requested benchmarking suite.
+blind4|public|clean|We never store user credentials in the memory server.
+blind4|public|clean|Nothing about this design violates standard molecular physics principles.
+blind4|public|undercut|Full dataset integration remains a priority for the next quarter.
+blind4|public|undercut|Characterization of these variants is slated for later this year.
+blind4|public|clean|None of the current datasets contain high-resolution experimental data.
+blind4|public|clean|The algorithm works without needing additional training data.
+blind4|public|undercut|The implementation of the new API is under active development.
+blind4|public|undercut|We expect the updated documentation to be ready by December.
+blind4|public|clean|Only trained professionals should use this high-precision software.
+blind4|public|clean|We cannot guarantee performance on systems with low memory.
+blind4|public|undercut|These simulations will run in the following phase.
+blind4|public|undercut|Additional thermodynamic sampling is on the research roadmap.
+blind4|public|clean|Neither method is computationally efficient for large systems.
+blind4|public|clean|The protocol is yet to be widely adopted by the community.
+blind4|public|undercut|Code optimization is in the current task backlog.
+blind4|public|undercut|Experimental verification will proceed upon prototype stability.
+blind4|public|clean|We still observe minor drift in our MD simulations.
+blind4|public|clean|Until now, no standard harness existed for these agents.
+blind4|public|undercut|We foresee a transition to GPU-accelerated calculations.
+blind4|public|undercut|The team is currently building the new visualization module.
+blind4|public|clean|Before using this tool, you must initialize the workspace.
+blind4|public|clean|The lack of standardized datasets limits current performance benchmarks.
+blind4|public|undercut|We anticipate releasing the source code next month.
+blind4|public|undercut|Data collection from the high-throughput screen is in progress.
+blind4|public|clean|Absent significant hardware upgrades, we limit batch sizes.
+blind4|public|clean|Our planned future work includes support for multi-platform deployment.
+blind4|public|undercut|The integration of the memory server will happen after testing.
+blind4|public|undercut|We will define the final benchmarks in the upcoming document.
+blind4|public|clean|The model is still sensitive to minor variations in input sequences.
+blind4|public|clean|We do not allow public access to the proprietary database.
+blind4|public|undercut|Our model has not been trained on this specific dataset.
+blind4|public|undercut|We do not have the wet-lab data for these predictions.
+blind4|public|clean|The system is only designed for protein structure prediction tasks.
+blind4|public|clean|No other tool provides this level of customization for agents.
+blind4|public|undercut|The free-energy calculation is not yet validated.
+blind4|public|undercut|The antibody design workflow lacks a full automation pipeline.
+blind4|public|clean|We never use black-box models in our scientific workflows.
+blind4|public|clean|Nothing in the current architecture relies on external APIs.
+blind4|public|undercut|There are no benchmarks available for this method.
+blind4|public|undercut|The RNA folding module is missing its secondary structure prediction.
+blind4|public|clean|The software cannot run without a valid configuration file.
+blind4|public|clean|Neither approach is suitable for modeling disordered protein regions.
+blind4|public|undercut|We do not support multi-chain complex modeling yet.
+blind4|public|undercut|The memory server has no persistent storage implementation.
+blind4|public|clean|Only a small subset of the training data is publicly available.
+blind4|public|clean|We are still refining the parameters for free-energy calculations.
+blind4|public|undercut|The figure generation tool does not handle large-scale datasets.
+blind4|public|undercut|The current code is not optimized for production.
+blind4|public|clean|The protocol until now has been restricted to internal usage.
+blind4|public|clean|Before the final release, we perform rigorous internal validation.
+blind4|public|undercut|We lack the necessary parameters for the docking experiment.
+blind4|public|undercut|This feature is not yet supported in the public release.
+blind4|public|clean|The lack of unified standards is a persistent challenge for the field.
+blind4|public|clean|Absent an external source, we generate our own training data.
+blind4|public|undercut|No experimental structural data exists for these complexes.
+blind4|public|undercut|The library has not been tested against the latest version of PyTorch.
+blind4|public|clean|Our planned experiments will address these specific limitations.
+blind4|public|clean|The library is still in a pre-release versioning state.
+blind4|public|undercut|Our documentation does not provide instructions for deployment.
+blind4|public|undercut|There is no automated test for this component.
+blind4|public|clean|We do not support dynamic structural changes in this version.
+blind4|public|clean|The figure tool is only intended for static publication plots.
+blind4|public|undercut|We have not received feedback on the user interface design.
+blind4|public|undercut|This module lacks unit tests for edge cases.
+blind4|public|clean|No other repository provides this level of agentic orchestration.
+blind4|public|clean|We never compromise on the accuracy of the protein structures.
+blind4|public|undercut|The project does not currently support collaborative editing.
+blind4|public|undercut|We have not established a clear license for the software package.
+blind4|public|clean|Nothing is more important than rigorous validation of our results.
+blind4|public|clean|The memory server cannot handle more than a thousand concurrent sessions.
+blind4|public|undercut|The research does not cover all possible protein conformations.
+blind4|public|undercut|We do not offer support for Windows-based systems yet.
+blind4|public|clean|Neither platform is optimized for long-duration MD simulations.
+blind4|public|clean|Only administrators can configure the system settings.
+blind4|public|undercut|The proposed design is still only a concept.
+blind4|public|undercut|This module does not incorporate temperature-dependent stability.
+blind4|public|clean|We still struggle with the convergence of these simulations.
+blind4|public|clean|The protocol until today remained largely theoretical.
+blind4|public|undercut|We have not performed a comparison with industry-standard tools.
+blind4|public|undercut|There is no clear integration strategy for these services.
+blind4|public|clean|Before committing code, we run the full test suite.
+blind4|public|clean|The lack of documentation makes this module harder for beginners.
+blind4|public|undercut|The lab has not published the results in a journal yet.
+blind4|public|undercut|We do not have sufficient data for a statistical analysis.
+blind4|public|clean|Absent high-quality inputs, the results will be unreliable.
+blind4|public|clean|Our planned development will address these scalability issues.
+blind4|public|undercut|The current setup is not designed for real-time applications.
+blind4|public|undercut|The tool lacks an export function for scientific publication formats.
+blind4|public|clean|The module is still subject to frequent API updates.
+blind4|public|clean|We do not claim this model is the state-of-the-art approach.
+blind4|public|undercut|We do not provide a graphical user interface for this pipeline.
+blind4|public|undercut|No evaluation metrics were defined in the initial plan.
+blind4|public|clean|The harness is only intended for local agent orchestrations.
+blind4|public|clean|No other lab provides the same integration level for MD data.
+blind4|public|undercut|Our simulation pipeline is not fully automated.
+blind4|public|undercut|The software has not undergone security audits.
+blind4|public|clean|We never cut corners in our free-energy calculations.
+blind4|public|clean|Nothing in the codebase is licensed for commercial use.
+blind4|public|undercut|We do not have access to a large-scale computing cluster.
+blind4|public|undercut|The project is not ready for external contributions.
+blind4|public|clean|The system cannot be used without a local installation.
+blind4|public|clean|Neither user interface was designed for casual navigation.
+blind4|public|undercut|There are no predefined protocols for this experiment.
+blind4|public|undercut|The team has not completed the transition to the new infrastructure.
+blind4|public|clean|Only researchers with valid credentials have access to the data.
+blind4|public|clean|We still need to confirm these results with experimental data.
+blind4|public|undercut|We do not maintain a repository for the historical data.
+blind4|public|undercut|This prototype does not implement the proposed consensus algorithm.
+blind4|public|clean|The tool until recently was in closed-beta development.
+blind4|public|clean|Before deploying to production, we require full QA approval.
+blind4|public|clean|The lack of a GUI is an intentional design choice for this tool.
+blind4|public|clean|Absent this patch, the system may fail on specific datasets.
+blind4|public|clean|Our planned roadmap is subject to change based on project needs.
+blind4|public|clean|The structure is still being analyzed by our computational team.
+blind4|public|clean|We do not provide long-term storage for experimental files.
+blind4|public|clean|The tool is only for academic and research purposes.
+blind4|public|clean|No other method achieves this level of accuracy for RNA.
+blind4|public|clean|We never share our unpublished results without permission.
+blind4|public|clean|Nothing about this approach relies on proprietary software.
+blind4|public|clean|The system cannot work without GPU support for MD.
+blind4|public|clean|Neither author is affiliated with a commercial institution.
+blind4|public|clean|Only registered users can download the software.
+blind4|public|clean|We still wait for the final datasets from our collaborators.
+blind4|public|clean|The tool until this week was unavailable to the public.
+blind4|public|clean|Before publication, we verify all figures with external reviewers.
+blind4|public|clean|The lack of standardization hinders the benchmarking process.
+blind4|public|clean|Absent a robust dataset, we cannot train reliable models.
+blind4|public|clean|Our planned improvements will enhance the system speed.
+blind4|public|clean|The research group focuses on novel antibody design protocols.
+blind4|public|clean|Our molecular dynamics suite utilizes optimized force fields.
+blind4|public|clean|Free-energy calculations are central to our binding affinity research.
+blind4|public|clean|RNA folding simulations require significant computational resources.
+blind4|public|clean|Machine learning offers powerful tools for analyzing chemical datasets.
+blind4|public|clean|We develop robust software harnesses for autonomous agent systems.
+blind4|public|clean|A memory server facilitates long-term context for agentic workflows.
+blind4|public|clean|The figure tool generates high-quality plots for journals.
+blind4|public|clean|Antibody structures are refined using iterative energy minimization.
+blind4|public|clean|Computational chemistry accelerates the pace of drug discovery.
+blind4|public|clean|RNA secondary structure influences the overall molecular stability.
+blind4|public|clean|Our agent harness supports modular tool integration.
+blind4|public|clean|The memory server stores stateful data between sessions.
+blind4|public|clean|Scientific figures communicate complex data to the reader.
+blind4|public|clean|Molecular dynamics tracks protein behavior over time.
+blind4|public|clean|Machine learning models predict protein-ligand interaction strength.
+blind4|public|clean|Agentic systems improve the efficiency of research tasks.
+blind4|public|clean|The lab maintains several open-source software projects.
+blind4|public|clean|Accurate free-energy results are essential for drug design.
+blind4|public|clean|Protein design involves predicting stable fold conformations.
+blind4|public|clean|Research progress depends on shared computational infrastructure.
+blind4|public|clean|Software engineering practices strengthen our lab protocols.
+blind4|public|clean|The team members collaborate on multidisciplinary projects.
+blind4|public|clean|Novel algorithms enable faster molecular structure prediction.
+blind4|public|clean|Agentic tools automate repetitive experimental tasks.
+blind4|public|clean|Data management is vital for reproducible research.
+blind4|public|clean|Our lab emphasizes rigorous validation in all research.
+blind4|public|clean|The software codebase follows industry-standard quality guidelines.
+blind4|public|clean|Computational tools simplify complex scientific data analysis.
+blind4|public|clean|We publish our research in top-tier scientific journals.
+blind4|public|clean|Our methodology integrates both theory and experimental data.
+blind4|public|clean|The group develops innovative antibody therapeutics.
+blind4|public|clean|MD simulations reveal transient protein-ligand interactions.
+blind4|public|clean|Machine learning enhances our predictive accuracy significantly.
+blind4|public|clean|Effective agent design requires clear goal definitions.
+blind4|public|clean|Scientific figures highlight key findings in our studies.
+blind4|public|clean|The memory server supports persistent agentic interactions.
+blind4|public|clean|Lab collaborations foster scientific progress and innovation.
+blind4|public|clean|Computational methodologies advance modern protein research.
+blind4|public|clean|Our team contributes to the open-source scientific community.

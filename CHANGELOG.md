@@ -13,6 +13,13 @@ All notable changes to Arc Harness are listed here. The format follows [Keep a C
 - **Hot-swappable parts (`components.js`)**: parts load on first use, swap while the app runs after a self-test, and roll back when the new copy fails.
 - **Gateway (`native/arc-gateway`)**: `cammut.upstreams` and `cammut.auth` (server address to key name) can be saved through `POST /api/config` with the token. An added server never receives the owner's `authFile` header.
 
+### Fixed
+
+- **A failed update leaves the earlier backup in place (`plugins/arc-core/lib/updater.js`)**: before a swap, the backup of the update before it moves to `updates/backup-prev` and `<program>.arc-backup-prev`. A swap that fails puts it back, so Roll back keeps working; a swap that lands drops it. A step that never ran can no longer pull an older program back in.
+- **A new copy that stays locked no longer blocks the rollback (`updater.js`)**: the old folder or program returns first, and the unfinished `.arc-new` copy is cleared afterwards. A copy that is still held stays until the next update removes it, and the add-on list skips it.
+- **The test switch checks the folders it uses (`updater.js`)**: a folder name of only spaces counts as not given.
+- **A refusal no longer hides the restart prompt (`plugins/arc-core/ui/panel.js`)**: the Updates view shows an action's refusal only while the update state is the one the user acted on, and drops it for good once that state changes.
+
 ## [0.6.0] - 2026-11-19
 
 ### Added

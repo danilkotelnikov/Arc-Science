@@ -1,0 +1,85 @@
+# Second blind probe set for null results and work of other groups (finding F102). One case per line: split|zone|expect|text
+# 80 sentences (40 undercut, 40 clean) that Gemini 4 Argon (Antigravity, gemini-4-argon-high) wrote on 18.XI.2026 with the
+# prompt of the first probe set and without the rules; its class is the label. The answer came back printed twice, so 80
+# exact repeats were dropped. Gemini 4 Hydrogen, one of the two judges, shares the writer's family.
+# Do not tune the rules on this file. The first probe set (GPT-OSS 120B) stays as the older split.
+f102-blind2|public|undercut|We have not yet completed the toxicity assay for this protein variant.
+f102-blind2|public|clean|No adverse events were observed in the toxicity studies of this antibody.
+f102-blind2|public|undercut|Our studies on these interaction effects have not been finalized.
+f102-blind2|public|clean|Earlier groups have not measured the off-rate for these protein interactions.
+f102-blind2|public|undercut|Unlike other groups, we have not explored the signal changes in these molecular dynamics.
+f102-blind2|public|clean|No significant difference was detected in the interaction signals.
+f102-blind2|public|undercut|Toxicity studies for this antibody were not initiated by our team.
+f102-blind2|public|clean|Other researchers have not yet investigated the drug toxicity effects in this model.
+f102-blind2|public|undercut|We have never reported the interaction signals in our previous papers.
+f102-blind2|public|clean|No toxicity effects were reported in the recent RNA studies.
+f102-blind2|public|undercut|The difference in binding affinity has not been evaluated in our current model.
+f102-blind2|public|clean|Previous papers have not addressed the interaction signals of these groups.
+f102-blind2|public|undercut|We have not performed the RNA interaction tests for these groups.
+f102-blind2|public|clean|No changes in binding signals were observed during the molecular dynamics studies.
+f102-blind2|public|undercut|The toxicity signals have not been analyzed in our recent software development.
+f102-blind2|public|clean|A separate research group has not evaluated the drug toxicity in their papers.
+f102-blind2|public|undercut|Our group has not yet examined the drug effects in this toxicity paper.
+f102-blind2|public|clean|No interaction signals were found in the toxicity assay data.
+f102-blind2|public|undercut|No toxicity assay has been completed for these antibody interactions.
+f102-blind2|public|clean|Academic groups have not yet finalized the study on these interaction effects.
+f102-blind2|public|undercut|We have not gathered the interaction data required for these drug studies.
+f102-blind2|public|clean|No drug toxicity was detected in the protein interaction events.
+f102-blind2|public|undercut|The interaction effects have not been measured in our protein design process.
+f102-blind2|public|clean|Different research groups have not reported on the difference in signal changes.
+f102-blind2|public|undercut|Our team has not looked at the signals for these particular changes.
+f102-blind2|public|clean|No adverse interaction signals were observed in these molecular studies.
+f102-blind2|public|undercut|We have not conducted toxicity tests for these molecular dynamics events.
+f102-blind2|public|clean|Independent groups have not yet explored the toxicity changes in these groups.
+f102-blind2|public|undercut|These toxicity studies have not been addressed by our research group.
+f102-blind2|public|clean|No significant changes were found in the drug toxicity levels.
+f102-blind2|public|undercut|We have not yet observed the interaction differences in our software tests.
+f102-blind2|public|clean|Other teams have not completed the RNA interaction study of these groups.
+f102-blind2|public|undercut|The drug effects have not been characterized in our current papers.
+f102-blind2|public|clean|No toxicity was reported for these interaction signals in the study.
+f102-blind2|public|undercut|Our team has not explored the interaction signals in these RNA studies.
+f102-blind2|public|clean|Previous work by other groups has not explored these molecular dynamics events.
+f102-blind2|public|undercut|We have not finalized the toxicity study for these molecular interactions.
+f102-blind2|public|clean|No signal difference was detected in the protein interaction experiments.
+f102-blind2|public|undercut|The signal difference has not been documented in our drug development papers.
+f102-blind2|public|clean|Clinical research groups have not yet measured the toxicity effects of this drug.
+f102-blind2|public|undercut|We have not tested the toxicity of these design groups.
+f102-blind2|public|clean|No adverse effects were observed in the toxicity interaction tests.
+f102-blind2|public|undercut|Our group has not yet studied the interaction signals in these events.
+f102-blind2|public|clean|External papers have not yet assessed the signal changes in these molecular studies.
+f102-blind2|public|undercut|We have not completed the interaction analysis for these papers.
+f102-blind2|public|clean|No significant changes were observed in the antibody design studies.
+f102-blind2|public|undercut|The effects of these signals have not been verified in our design.
+f102-blind2|public|clean|Research groups in the field have not finalized the study of these interactions.
+f102-blind2|public|undercut|We have not explored the toxicity changes in these design studies.
+f102-blind2|public|clean|No signals were found in the RNA toxicity experiments.
+f102-blind2|public|undercut|Our research has not yet addressed the toxicity effects in these groups.
+f102-blind2|public|clean|Prior research groups have not examined the interaction effects in these papers.
+f102-blind2|public|undercut|We have not performed the interaction signals comparison in our studies.
+f102-blind2|public|clean|No toxicity effects were observed during the interaction analysis.
+f102-blind2|public|undercut|The drug toxicity interaction signals have not been assessed by our lab.
+f102-blind2|public|clean|Other investigators have not yet documented the difference in these studies.
+f102-blind2|public|undercut|We have not yet reported the difference in these molecular studies.
+f102-blind2|public|clean|No adverse interaction signals were reported in the drug studies.
+f102-blind2|public|undercut|Our protein design has not accounted for these toxicity effects.
+f102-blind2|public|clean|External groups have not yet verified the signal changes in these molecular design studies.
+f102-blind2|public|undercut|We have not finalized the signal study for these interaction papers.
+f102-blind2|public|clean|No changes in toxicity effects were detected by the researchers.
+f102-blind2|public|undercut|These drug effects have not been investigated in our current work.
+f102-blind2|public|clean|Other labs have not measured the interaction differences in these papers.
+f102-blind2|public|undercut|We have not conducted the RNA signal assay for these studies.
+f102-blind2|public|clean|No signal differences were observed in the protein toxicity data.
+f102-blind2|public|undercut|The molecular dynamics interaction effects have not been determined by us.
+f102-blind2|public|clean|Earlier studies have not addressed the interaction signals in these antibody groups.
+f102-blind2|public|undercut|Our team has not yet examined the toxicity signals in these groups.
+f102-blind2|public|clean|No adverse events were detected during the RNA toxicity studies.
+f102-blind2|public|undercut|We have not evaluated the difference in the interaction data.
+f102-blind2|public|clean|Other researchers have not yet investigated the toxicity effects in their molecular dynamics work.
+f102-blind2|public|undercut|These design studies have not been completed by our software lab.
+f102-blind2|public|clean|No interaction effects were reported in the protein studies.
+f102-blind2|public|undercut|We have not explored the signals in these toxicity events.
+f102-blind2|public|clean|Independent groups have not finalized the paper on drug toxicity signals.
+f102-blind2|public|undercut|The RNA interaction study has not been addressed in our papers.
+f102-blind2|public|clean|No significant differences were observed in these interaction signals.
+f102-blind2|public|undercut|We have not compared the effects of these molecular groups.
+f102-blind2|public|clean|Earlier papers have not reported the toxicity changes in these groups.
