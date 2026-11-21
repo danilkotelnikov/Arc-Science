@@ -236,6 +236,22 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "upd.auto.conseq": "A new version then installs by itself and works after the next start of the app.",
     "upd.auto.go": "Install without asking",
     "upd.skip": "Skips {v} after a failure or a roll back.",
+    "upd.chan": "Channel",
+    "upd.chan.release": "Release",
+    "upd.chan.beta": "Beta",
+    "upd.chan.alpha": "Alpha",
+    "upd.chan.release.sub": "Tested versions.",
+    "upd.chan.beta.sub": "The next version, for a try before its release.",
+    "upd.chan.alpha.sub": "The earliest versions. A version can break.",
+    "upd.chan.hint": "Release has tested versions. Beta also has the next version, for a try before its release. Alpha also has the earliest versions, which can break.",
+    "upd.alpha.title": "Switch to Alpha?",
+    "upd.alpha.conseq": "Alpha versions are the earliest and can break. You can switch back.",
+    "upd.alpha.conseq.auto": "Alpha versions are the earliest and can break. They then install by themselves.",
+    "upd.alpha.go": "Switch to Alpha",
+    "upd.s.ahead": "Newer than {channel}",
+    "upd.goback": "Go back to {v}",
+    "upd.goback.title": "Go back to {v}?",
+    "upd.goback.go": "Go back",
   };
 
   const TEXT_FONT = "var(--arc-font-family-text-default, \"Geist\", system-ui, sans-serif)";
@@ -441,6 +457,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     " .ak-seg{display:inline-flex;gap:2px;padding:4px;border-radius:10px;background:var(--ak-hover)}",
     " .ak-seg button{height:28px;padding:0 16px;border:0;border-radius:8px;background:transparent;font:inherit;font-size:13px;line-height:20px;font-weight:500;color:var(--ak-label-2);white-space:nowrap;cursor:pointer}",
     " .ak-seg button[aria-selected=true]{background:var(--ak-layer);color:var(--ak-label);box-shadow:0 0 0 .5px var(--ak-line-3),0 4px 16px color-mix(in srgb,var(--ak-label) 4%,transparent)}",
+    " .ak-seg button[aria-pressed=true]{background:var(--ak-layer);color:var(--ak-label);box-shadow:0 0 0 .5px var(--ak-line-3),0 4px 16px color-mix(in srgb,var(--ak-label) 4%,transparent)}",
+    " .ak-seg button:disabled{opacity:.4;cursor:not-allowed}",
     " .ak-rows{margin-top:8px}",
     " .ak-row{display:flex;gap:12px 16px;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:.5px solid var(--ak-line-2)}",
     " .ak-rows>.ak-row:last-child{border-bottom:0}",
@@ -482,7 +500,13 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     return h("button", { type: "button", className: ["ak-btn", look, small ? "sm" : ""].filter(Boolean).join(" "), "aria-label": aria || undefined, onClick, disabled, autoFocus }, icon ? h(Ic, { n: icon }) : null, label);
   }
   // a switch between the views of one page: arrow keys move the focus, a click or Enter selects
-  function Seg({ label, value, options, onChange }) {
+  // With `pressed`, the same look is a choice of one setting: a group of pressed buttons, no tabs. The choice that is already
+  // set sends nothing.
+  function Seg({ label, value, options, onChange, pressed = false, disabled = false }) {
+    if (pressed) {
+      return h("div", { className: "ak-seg", role: "group", "aria-label": label },
+        options.map(([id, text]) => h("button", { key: id, type: "button", "aria-pressed": value === id, "data-seg": id, disabled, onClick: (e) => { if (value !== id && onChange) onChange(id, e && e.currentTarget); } }, text)));
+    }
     return h("div", { className: "ak-seg", role: "tablist", "aria-label": label, onKeyDown: onTabKeys },
       options.map(([id, text]) => h("button", { key: id, type: "button", role: "tab", id: `ak-tab-${id}`, "aria-selected": value === id, tabIndex: value === id ? 0 : -1, "data-seg": id, onClick: () => onChange && onChange(id) }, text)));
   }
@@ -678,9 +702,14 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const [asking, setAsking] = React.useState(firstAsking); // "rollback" or "auto": the open question
     const [open, setOpen] = React.useState(firstOpen); // the notes of the newest version
     const back = React.useRef ? React.useRef(null) : { current: null };
-    // a kept version that left by another way (a new update, a roll back elsewhere) closes its question; so does an update
-    // that starts, because the updater refuses a roll back while it runs
-    React.useEffect(() => { if (asking === "rollback" && info && (!info.hasBackup || info.busy)) setAsking(null); });
+    // A question that can no longer be acted on closes by itself: the kept version left by another way, or an update started
+    // (the updater refuses a roll back and a second update while one runs); the app is no longer ahead of its channel; the
+    // channel is already Alpha.
+    React.useEffect(() => {
+      if (!info || !asking) return;
+      const gone = (asking === "rollback" && (!info.hasBackup || info.busy)) || (asking === "back" && (!info.ahead || info.busy)) || (asking === "alpha" && info.channel === "alpha");
+      if (gone) setAsking(null);
+    });
     const frame = (...kids) => h("div", { "data-arc-settings": "updates", "data-arc-kit": "true", "data-arc-plugin-pane": "true" }, h("style", null, KIT_CSS), ...kids);
     const title = (acts = null) => h("div", { className: "ak-title" }, h("h1", null, t("settings.nav.updates")), h("p", null, t("upd.sub")), h("div", { className: "acts" }, acts));
     if (!info) {
@@ -696,6 +725,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const running = Boolean(u.busy) && stepAt >= 0 && stepAt < steps;
     const busy = Boolean(u.busy || pending);
     const canInstall = Boolean(u.available && u.installable && !busy && !u.restartNeeded);
+    const chan = UPDATE_CHANNELS.includes(u.channel) ? u.channel : "release"; // an answer without a channel was made for Release
+    // Go back is the only way to an older version: the updater takes the target from the channel, the page names none
+    const canGoBack = Boolean(u.ahead && u.installable && !busy && !u.restartNeeded);
     const checked = u.checkedAt ? dayTime(Date.parse(u.checkedAt)) : "";
     const versions = !u.installed || u.installed === "0.0.0" ? t("upd.ver.unknown")
       : !u.latest ? t("upd.ver.1", { i: ver(u.installed) })
@@ -714,6 +746,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       : u.healthy === false ? need("warn", "upd.s.broken")
       : u.restartNeeded ? h(React.Fragment, null, need("update", "upd.s.restart"), about(t("settings.about"), t("updates.hint.restart")))
       : !u.latest ? h(KStatus, { text: t(u.checkedAt ? "upd.s.norelease" : "upd.s.unchecked") })
+      : u.ahead ? h(KStatus, { text: t("upd.s.ahead", { channel: t(`upd.chan.${chan}`) }) })
       : u.available && u.installable ? need("warn", "upd.s.needs")
       : u.available ? h(KStatus, { text: t("upd.s.nokit") })
       : h(KStatus, { text: t("upd.s.current"), dot: "on" });
@@ -739,9 +772,19 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       trouble.length > 90 ? about(t("upd.detail"), oneLine(trouble, 600), "start") : null,
       h("div", { className: "ak-rows" },
         h(KRow, {
+          kind: "channel", id: "channel", name: t("upd.chan"), tail: about(t("settings.about"), t("upd.chan.hint"), "start"), sub: t(`upd.chan.${chan}.sub`),
+          end: h(Seg, {
+            pressed: true, disabled: busy, label: t("upd.chan"), value: chan, options: UPDATE_CHANNELS.map((c) => [c, t(`upd.chan.${c}`)]),
+            // Alpha versions can break, so this choice asks once
+            onChange: (c, from) => (c === "alpha" ? ask("alpha", from) : act({ kind: "channel", channel: c })),
+          }),
+        }),
+        h(KRow, {
           kind: "parts", id: "parts", name: t("upd.parts"), sub: versions,
           tail: h(React.Fragment, null, about(t("settings.about"), t("updates.hint.scope"), "start"), left.length ? about(t("upd.left.label"), t("upd.left", { names: left.join(", ") }), "start") : null),
-          end: h(React.Fragment, null, mark, canInstall ? h(KBtn, { look: "outline", small: true, icon: "download", label: t("updates.install"), onClick: () => act({ kind: "install" }) }) : null),
+          end: h(React.Fragment, null, mark,
+            canInstall ? h(KBtn, { look: "outline", small: true, icon: "download", label: t("updates.install"), onClick: () => act({ kind: "install" }) }) : null,
+            canGoBack ? h(KBtn, { look: "outline", small: true, icon: "undo", label: t("upd.goback", { v: ver(u.latest) }), onClick: (e) => ask("back", e && e.currentTarget) }) : null),
         }),
         u.hasBackup ? h(KRow, {
           kind: "earlier", id: "earlier", name: t("upd.earlier"), sub: kept || t("upd.earlier.unknown"),
@@ -767,6 +810,15 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       asking === "auto" ? h(Confirm, {
         t, title: t("upd.auto.title"), text: t("upd.auto.conseq"), action: t("upd.auto.go"),
         onClose: close, onConfirm: () => { act({ kind: "mode", mode: "auto" }); close(); },
+      }) : null,
+      // with automatic install on, an alpha installs without a further question, and the line says so
+      asking === "alpha" && chan !== "alpha" ? h(Confirm, {
+        t, title: t("upd.alpha.title"), text: t(u.mode === "auto" ? "upd.alpha.conseq.auto" : "upd.alpha.conseq"), action: t("upd.alpha.go"),
+        onClose: close, onConfirm: () => { act({ kind: "channel", channel: "alpha" }); close(); },
+      }) : null,
+      asking === "back" && canGoBack ? h(Confirm, {
+        t, title: t("upd.goback.title", { v: ver(u.latest) }), text: t("upd.back.conseq", { v: ver(u.latest) }), action: t("upd.goback.go"),
+        onClose: close, onConfirm: () => { act({ kind: "install", back: true }); close(true); },
       }) : null);
   }
 
@@ -774,6 +826,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   const UPDATE_PHASES = ["downloading", "verifying", "staging", "installing", "testing", "done"];
   const UPDATE_PHASE_LABEL = { downloading: "Download", verifying: "Verify", staging: "Stage", installing: "Install", testing: "Test", done: "Done" };
   const UPDATE_MODES = ["off", "notify", "auto"];
+  const UPDATE_CHANNELS = ["release", "beta", "alpha"];
   const UPDATE_CSS = ".arc-upd button:focus-visible,.arc-upd summary:focus-visible{outline:2px solid currentColor;outline-offset:2px}" +
     ".arc-upd button:disabled{opacity:.5;cursor:not-allowed}.arc-upd pre{white-space:pre-wrap;margin:0;font-family:inherit}" +
     ".arc-upd ::selection{background:color-mix(in srgb,currentColor 24%,transparent)}";

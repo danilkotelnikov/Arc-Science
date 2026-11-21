@@ -369,7 +369,7 @@ const rel = (v, { kit = true, body = '' } = {}) => ({
   tag_name: `v${v}`, draft: false, prerelease: false, html_url: `https://github.com/o/r/releases/tag/v${v}`, body,
   assets: kit ? [{ name: `Arc-Harness-Kit-${v}-win-x64.zip`, browser_download_url: 'http://127.0.0.1:9/kit.zip' }, { name: 'SHA256SUMS.txt', browser_download_url: 'http://127.0.0.1:9/sums.txt' }] : [],
 });
-async function realState({ installed = '0.6.0', releases = null, offline = false, mode = '' } = {}) {
+async function realState({ installed = '0.6.0', releases = null, offline = false, mode = '', channel = '' } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-updpage-')), home = path.join(root, '.arc');
   try {
     fs.mkdirSync(path.join(home, 'local-plugins', 'arc-core'), { recursive: true });
@@ -377,6 +377,7 @@ async function realState({ installed = '0.6.0', releases = null, offline = false
     const fetchImpl = async () => { if (offline) throw new TypeError('fetch failed'); return new Response(JSON.stringify(releases), { status: 200 }); };
     const u = createUpdater({ home, gatewayDir: path.join(root, 'gw'), env: UENV, api: 'http://127.0.0.1:9', repo: 'o/r', fetchImpl, now: () => NOW });
     if (mode) u.setMode(mode);
+    if (channel) u.setChannel(channel);
     if (releases || offline) await u.check();
     return JSON.parse(JSON.stringify(u.getState()));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -805,8 +806,11 @@ test('Updates: a hint at the start of a line opens toward the page, and a hint a
   };
   assert.equal(side('The whole message'), 'left', 'the hint under the title starts at the page edge, so its note goes right');
   assert.equal(side('Programs that were not replaced'), 'left');
-  assert.equal(side('About this page', 0), 'left', 'the hint beside the name of the parts');
-  assert.equal(side('About this page', 1), 'right', 'the hint beside Roll back, at the end of its row');
+  // the four hints named About this page, in the order of the rows: channel, parts, Roll back, the choice for new versions
+  assert.equal(side('About this page', 0), 'left', 'the hint beside the word Channel');
+  assert.equal(side('About this page', 1), 'left', 'the hint beside the name of the parts');
+  assert.equal(side('About this page', 2), 'right', 'the hint beside Roll back, at the end of its row');
+  assert.equal(side('About this page', 3), 'left', 'the hint beside the choice for new versions');
 });
 
 test('Updates: the buttons stay held until the page has the state that follows an action', async () => {
@@ -834,4 +838,136 @@ test('Updates: the buttons stay held until the page has the state that follows a
   assert.ok(seen.length >= 1, 'the state was read again after the action');
   assert.equal(seen[0], true, 'the waiting mark is still set while the fresh state is on its way');
   assert.equal(view.states[3], false, 'and it is cleared afterwards');
+});
+
+// ---- the channel row (S058)
+const chanButtons = (tree) => all(rowOf(tree, 'channel'), (n) => n.type === 'button' && n.props['aria-pressed'] !== undefined);
+
+test('Updates, channel: three pressed buttons, the chosen one marked; Release and Beta switch at once', async () => {
+  const onRelease = await realState({ releases: [rel('0.6.1'), rel('0.7.0-beta.1')] });
+  assert.equal(onRelease.channel, 'release');
+  assert.equal(onRelease.latest, '0.6.1', 'the real updater keeps the beta away from Release');
+  const sent = [];
+  const tree = upage(onRelease, { onAction: (a) => sent.push(a) });
+  const row = rowOf(tree, 'channel');
+  assert.equal(rowsOf(tree, 'channel').length, 1);
+  assert.equal(all(tree, (n) => n.props?.['data-row'])[0].props['data-row'], 'channel', 'the channel is the first row, as in the approved screen');
+  const group = all(row, (n) => n.props?.role === 'group')[0];
+  assert.equal(group.props['aria-label'], 'Channel');
+  assert.deepEqual(chanButtons(tree).map(text), ['Release', 'Beta', 'Alpha']);
+  assert.deepEqual(chanButtons(tree).map((b) => b.props['aria-pressed']), [true, false, false]);
+  assert.equal(all(row, (n) => n.props?.role === 'tab' || n.props?.role === 'tablist').length, 0, 'a setting is no set of tabs');
+  assert.equal(text(all(row, (n) => has(n, 'sub'))[0]), 'Tested versions.');
+  chanButtons(tree)[0].props.onClick({ currentTarget: null });
+  assert.equal(sent.length, 0, 'the channel that is already set sends nothing');
+  chanButtons(tree)[1].props.onClick({ currentTarget: null });
+  same(sent, [{ kind: 'channel', channel: 'beta' }]);
+  // on Beta the real updater offers the beta, and the row says what Beta is
+  const onBeta = await realState({ channel: 'beta', releases: [rel('0.6.1'), rel('0.7.0-beta.1')] });
+  assert.equal(onBeta.latest, '0.7.0-beta.1');
+  const beta = upage(onBeta);
+  assert.deepEqual(chanButtons(beta).map((b) => b.props['aria-pressed']), [false, true, false]);
+  assert.equal(text(all(rowOf(beta, 'channel'), (n) => has(n, 'sub'))[0]), 'The next version, for a try before its release.');
+  assert.match(text(rowOf(beta, 'parts')), /Installed 0\.6\.0, newest 0\.7\.0-beta\.1/);
+  assert.ok(button(rowOf(beta, 'parts'), 'Update now'));
+  // while an update runs the channel waits
+  const busy = upage(derive(onRelease, { busy: true, phase: 'installing' }));
+  assert.deepEqual(chanButtons(busy).map((b) => b.props.disabled), [true, true, true]);
+  // a state without a channel (an older answer) reads as Release
+  const { channel: dropped, ...old } = onRelease;
+  assert.equal(dropped, 'release');
+  assert.deepEqual(chanButtons(upage(old)).map((b) => b.props['aria-pressed']), [true, false, false]);
+  assert.match(mod.kit.CSS, /\.ak-seg button\[aria-pressed=true\]\{/);
+});
+
+test('Updates, channel: Alpha asks first, and the question says what the updater then does in the chosen mode', async () => {
+  const notify = await realState({ releases: [rel('0.6.1')] });
+  const sent = [];
+  const view = mount((m) => m.kit.UpdatesPage, { info: notify, t, onAction: (a) => sent.push(a) });
+  chanButtons(view.render())[2].props.onClick({ currentTarget: null });
+  assert.equal(sent.length, 0, 'Alpha waits for the answer');
+  let dlg = dialogOf(view.render());
+  assert.equal(text(all(dlg, (n) => n.type === 'h2')[0]), 'Switch to Alpha?');
+  let line = text(all(dlg, (n) => has(n, 'ak-conseq'))[0]);
+  assert.ok(line.length <= 90);
+  assert.match(line, /can break/);
+  assert.match(line, /switch back/);
+  assert.ok(!/each change|every change/.test(line), 'versions are published by hand, so the line promises none after each change');
+  button(dlg, 'Cancel').props.onClick({});
+  assert.equal(dialogOf(view.render()), null);
+  assert.equal(sent.length, 0);
+  chanButtons(view.render())[2].props.onClick({ currentTarget: null });
+  button(dialogOf(view.render()), 'Switch to Alpha').props.onClick({});
+  same(sent, [{ kind: 'channel', channel: 'alpha' }]);
+  assert.equal(dialogOf(view.render()), null);
+  // with automatic install the question says that alphas then install by themselves, which is what the updater does
+  const auto = await realState({ mode: 'auto', releases: [rel('0.6.1')] });
+  dlg = dialogOf(upage(auto, { asking: 'alpha' }));
+  line = text(all(dlg, (n) => has(n, 'ak-conseq'))[0]);
+  assert.ok(line.length <= 90);
+  assert.match(line, /install by themselves/);
+  assert.match(updaterSource, /async function tick\(\)[\s\S]*?await install\(\{ auto: true \}\)/);
+  assert.match(updaterSource, /const pick = pickRelease\(mem\.releases, named, channel\);/);
+  // a question about a channel that is already set closes by itself
+  const onAlpha = await realState({ channel: 'alpha', releases: [rel('0.6.1')] });
+  const stale = mount((m) => m.kit.UpdatesPage, { info: onAlpha, t, asking: 'alpha' });
+  stale.render();
+  assert.equal(stale.states[0], null);
+  assert.deepEqual(chanButtons(stale.render()).map((b) => b.props['aria-pressed']), [false, false, true]);
+  assert.equal(text(all(rowOf(stale.render(), 'channel'), (n) => has(n, 'sub'))[0]), 'The earliest versions. A version can break.');
+});
+
+test('Updates, channel: a version newer than the channel says so; Go back asks first and names no version to the backend', async () => {
+  const ahead = await realState({ installed: '0.7.0-beta.2', releases: [rel('0.6.1'), rel('0.7.0-beta.3')] });
+  assert.deepEqual({ latest: ahead.latest, ahead: ahead.ahead, available: ahead.available }, { latest: '0.6.1', ahead: true, available: false }, 'the real updater reports the state');
+  const sent = [];
+  const view = mount((m) => m.kit.UpdatesPage, { info: ahead, t, onAction: (a) => sent.push(a) });
+  const parts = () => rowOf(view.render(), 'parts');
+  assert.equal(text(all(parts(), (n) => has(n, 'ak-status'))[0]), 'Newer than Release');
+  assert.equal(button(parts(), 'Update now'), undefined);
+  assert.equal(all(parts(), (n) => has(n, 'ak-dot') && has(n, 'on')).length, 0, 'it is not marked as up to date');
+  button(parts(), 'Go back to 0.6.1').props.onClick({ currentTarget: null });
+  assert.equal(sent.length, 0);
+  const dlg = dialogOf(view.render());
+  assert.equal(text(all(dlg, (n) => n.type === 'h2')[0]), 'Go back to 0.6.1?');
+  const line = text(all(dlg, (n) => has(n, 'ak-conseq'))[0]);
+  assert.ok(line.length <= 90);
+  assert.match(line, /0\.6\.1/);
+  assert.match(line, /restart/);
+  button(dlg, 'Cancel').props.onClick({});
+  assert.equal(sent.length, 0);
+  button(parts(), 'Go back to 0.6.1').props.onClick({ currentTarget: null });
+  button(dialogOf(view.render()), 'Go back').props.onClick({});
+  same(sent, [{ kind: 'install', back: true }], 'the updater takes the target from the channel');
+  // no files to go back to, an update that runs, a restart that is due: no Go back
+  const noKit = await realState({ installed: '0.7.0-beta.2', releases: [rel('0.6.1', { kit: false })] });
+  assert.equal(text(all(rowOf(upage(noKit), 'parts'), (n) => has(n, 'ak-status'))[0]), 'Newer than Release');
+  for (const info of [noKit, derive(ahead, { busy: true, phase: 'downloading' }), derive(ahead, { restartNeeded: true })]) {
+    assert.equal(all(upage(info), (n) => n.type === 'button' && /^Go back/.test(text(n))).length, 0);
+  }
+  // a question that can no longer be acted on closes by itself
+  for (const info of [derive(ahead, { ahead: false }), derive(ahead, { busy: true, phase: 'downloading' })]) {
+    const stale = mount((m) => m.kit.UpdatesPage, { info, t, asking: 'back' });
+    assert.equal(dialogOf(stale.render()), null);
+    assert.equal(stale.states[0], null);
+  }
+  // on Beta the same computer is offered the newer beta instead
+  const onBeta = await realState({ installed: '0.7.0-beta.2', channel: 'beta', releases: [rel('0.6.1'), rel('0.7.0-beta.3')] });
+  assert.match(text(rowOf(upage(onBeta), 'parts')), /Needs update/);
+});
+
+test('Updates, channel: the new questions add no hook, and every line holds a full version number', async () => {
+  const ready = await realState({ releases: [rel('0.6.1')] });
+  const ahead = await realState({ installed: '0.7.0-beta.2', releases: [rel('0.6.1')] });
+  let n = 0;
+  const React = { createElement, Fragment: 'fragment', useState: (v) => { n++; return [v, () => {}]; }, useRef: () => { n++; return { current: null }; }, useEffect: () => { n++; } };
+  const m = loadPanel(React);
+  const counts = [{ info: null }, { info: ready }, { info: ready, asking: 'alpha' }, { info: ahead }, { info: ahead, asking: 'back' }].map((props) => { n = 0; m.kit.UpdatesPage({ t, ...props }); return n; });
+  assert.ok(counts[0] > 0);
+  assert.deepEqual(counts, counts.map(() => counts[0]), 'hook calls differ between renders: ' + counts);
+  // the longest version the updater accepts and the page shows is cut at 20 characters
+  for (const k of Object.keys(mod.en).filter((x) => x.startsWith('upd.') && !x.endsWith('.hint'))) {
+    const s = mod.en[k].replace(/\{(v|i|n)\}/g, '0.10.10-alpha.123456').replace(/\{date\}/g, '21 Nov, 12:00').replace(/\{channel\}/g, 'Release');
+    assert.ok(s.length <= 90, k + ' has ' + s.length + ' characters with a long version');
+  }
 });

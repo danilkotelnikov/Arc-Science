@@ -1115,6 +1115,11 @@ test('no silent downgrade: ahead of the channel, automatic install and a plain i
   assert.equal(hidden.ok, false, 'a version the channel may not see cannot be named');
   assert.match(hidden.error, /was not found/);
   assert.equal(at(), before);
+  // automatic install and Go back never combine, also while a Go back would be possible
+  const never = await e.u.install({ back: true, auto: true });
+  assert.equal(never.ok, false);
+  assert.match(never.error, /never goes back/);
+  assert.equal(at(), before);
   // Go back takes its target from the channel, never from the caller
   const back = await e.u.install({ back: true, version: '0.6.0' });
   assert.equal(back.ok, true, back.error);
@@ -1198,4 +1203,21 @@ test('console routes: the channel is set and checked at once; Go back and a vers
   assert.equal(back.ok, true, back.error);
   assert.equal(back.version, '0.6.1');
   assert.equal(back.state.installed, '0.6.1');
+});
+
+test('a roll back the user asks for after a failed update is no failure, although both end in the same phase', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.7.0'));
+  // the gateway of 0.7.1 passes its check as a staged copy and fails it in its installed place
+  const u = e.make({ run: (file, args) => (file.startsWith(e.gatewayDir) && fs.readFileSync(file, 'utf8') === 'GW-0.7.1' ? { status: 1, stdout: '', stderr: 'dies' } : fakeRun(file, args)) });
+  assert.equal((await u.install()).ok, true);
+  e.srv.state.publish(buildKit('0.7.1'));
+  const bad = await u.install();
+  assert.equal(bad.ok, false);
+  let s = u.getState();
+  assert.deepEqual({ phase: s.phase, failed: s.failed, installed: s.installed, backup: s.backupVersion }, { phase: 'rolled-back', failed: true, installed: '0.7.0', backup: '0.6.0' });
+  const back = await u.rollback();
+  assert.equal(back.ok, true, back.error);
+  s = u.getState();
+  assert.deepEqual({ phase: s.phase, failed: s.failed, installed: s.installed }, { phase: 'rolled-back', failed: false, installed: '0.6.0' });
 });
