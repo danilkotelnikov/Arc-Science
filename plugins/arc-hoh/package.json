@@ -1,6 +1,6 @@
 {
   "name": "arc-hoh",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Harness^2 (Google) and Harness-of-Harness inside Arc Harness: operating contract, hash-chained ledger, deterministic accept gate, patch replay gate, hypothesis tree, claim graph, Dawid-Skene source reliability, branch budgets, Intuition Router, Cammut brief and Trace tab.",
   "icon": "icon.svg",
   "type": "module",

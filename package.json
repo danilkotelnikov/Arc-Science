@@ -1,6 +1,6 @@
 {
   "name": "arc-harness-kit",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "Build kit, Arc plugins, C2 unified console, installer and Rust validators for Arc Harness",
   "license": "MIT",
