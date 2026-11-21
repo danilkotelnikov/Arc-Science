@@ -197,6 +197,42 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "access.empty.keys": "No key is listed yet.",
     "access.empty.activity": "Nothing was recorded yet.",
     "access.loading": "Loading…",
+    "upd.sub": "The version of the Arc parts on this computer, and how new ones arrive.",
+    "upd.parts": "Arc add-ons and programs",
+    "upd.ver.unknown": "Installed version unknown",
+    "upd.ver.1": "Installed {i}",
+    "upd.ver.2": "Installed {i}, newest {n}",
+    "upd.ver.3": "Installed {i}, newest {n}, checked {date}",
+    "upd.s.unchecked": "Not checked yet",
+    "upd.s.norelease": "No release found",
+    "upd.s.checking": "Checking",
+    "upd.s.needs": "Needs update",
+    "upd.s.nokit": "No installable files yet",
+    "upd.s.current": "Up to date",
+    "upd.s.restart": "Restart to finish",
+    "upd.s.broken": "Not complete",
+    "upd.phase.downloading": "Downloading",
+    "upd.phase.verifying": "Checking the files",
+    "upd.phase.staging": "Unpacking",
+    "upd.phase.installing": "Installing",
+    "upd.phase.testing": "Testing",
+    "upd.detail": "The whole message",
+    "upd.left.label": "Programs that were not replaced",
+    "upd.left": "Not found on this computer, so not replaced: {names}.",
+    "upd.earlier": "Version before the last update",
+    "upd.back.hint": "Roll back puts the earlier add-ons and programs back. Install it then skips the version you left.",
+    "upd.back.title": "Roll back to {v}?",
+    "upd.back.conseq": "Version {v} returns after a restart. Your settings and notes stay.",
+    "upd.notes": "What changed in {v}",
+    "upd.mode": "When a new version appears",
+    "upd.mode.off": "Do nothing",
+    "upd.mode.notify": "Tell me",
+    "upd.mode.auto": "Install it",
+    "upd.mode.hint": "Do nothing never looks for new versions. Tell me looks and shows them here. Install it also installs them. Check now and Update now work with every choice.",
+    "upd.auto.title": "Install new versions without asking?",
+    "upd.auto.conseq": "A new version then installs by itself and works after the next start of the app.",
+    "upd.auto.go": "Install without asking",
+    "upd.skip": "Skips {v} after a failure or a roll back. Update now still installs it.",
   };
 
   const TEXT_FONT = "var(--arc-font-family-text-default, \"Geist\", system-ui, sans-serif)";
@@ -423,6 +459,17 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     " .ak-modal h2{margin:0;font-size:16px;line-height:24px;font-weight:500}",
     " .ak-conseq{margin:0;padding:8px 24px 0;font-size:13px;line-height:20px;color:var(--ak-label-2)}",
     " .ak-modal footer{display:flex;justify-content:flex-end;gap:8px;padding:20px 24px 24px}",
+    " .ak-pick{position:relative;display:inline-flex}",
+    " .ak-dd{display:inline-flex;align-items:center;justify-content:space-between;gap:10px;height:36px;padding:0 10px 0 14px;border:0;border-radius:10px;background:var(--ak-hover);font:inherit;font-size:14px;line-height:22px;color:var(--ak-label);white-space:nowrap;cursor:pointer}",
+    " .ak-dd:hover{background:var(--ak-pressed)}",
+    " .ak-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:5;display:grid;min-width:100%;padding:4px;border-radius:10px;background:var(--ak-layer);box-shadow:0 0 0 .5px var(--ak-line-3),0 4px 16px color-mix(in srgb,var(--ak-label) 8%,transparent)}",
+    " .ak-menu button{display:flex;align-items:center;justify-content:space-between;gap:12px;height:32px;padding:0 10px;border:0;border-radius:6px;background:transparent;font:inherit;font-size:14px;line-height:22px;color:var(--ak-label);white-space:nowrap;cursor:pointer}",
+    " .ak-menu button:hover,[data-arc-kit] .ak-menu button:focus-visible{background:var(--ak-hover)}",
+    " .ak-need{display:inline-flex;align-items:center;gap:4px;font-size:13px;line-height:20px;font-weight:500;white-space:nowrap}",
+    " .ak-meter{width:96px;height:4px;border-radius:2px;background:var(--ak-line-3);overflow:hidden;flex:none}",
+    " .ak-meter i{display:block;height:100%;background:var(--ak-brown)}",
+    " .ak-fold{margin-left:-10px}",
+    " .ak-notes{margin:8px 0 0;max-height:240px;overflow:auto;font-size:13px;line-height:20px;color:var(--ak-label-2);white-space:pre-wrap;overflow-wrap:anywhere}",
   ].map((rule) => "[data-arc-kit]" + rule).join("");
 
   function Ic({ n, size = 16 }) {
@@ -466,6 +513,39 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         h("footer", null,
           h(KBtn, { look: "outline", label: t("access.cancel"), onClick: onClose, autoFocus: true }),
           h(KBtn, { look: "primary", label: action, onClick: onConfirm }))));
+  }
+
+  // a choice of one value from a short list. Escape closes the open list only, so the Settings dialog behind it stays.
+  // Arrow keys open the list and move in it; focus that leaves the control closes it.
+  function Pick({ label, value, options, onChange }) {
+    const [open, setOpen] = React.useState(false);
+    const now = options.find(([id]) => id === value);
+    const keys = (e) => {
+      if (e.key === "Escape") {
+        if (!open) return;
+        e.stopPropagation?.(); e.nativeEvent?.stopImmediatePropagation?.();
+        setOpen(false);
+        e.currentTarget?.querySelector?.("button")?.focus?.();
+        return;
+      }
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault?.();
+      if (!open) { setOpen(true); return; }
+      const list = Array.from(e.currentTarget?.querySelectorAll?.("[role=option]") || []);
+      const at = list.indexOf(e.currentTarget?.ownerDocument?.activeElement);
+      const to = e.key === "ArrowDown" ? (at + 1) % list.length : (at <= 0 ? list.length : at) - 1;
+      list[to]?.focus?.();
+    };
+    const choose = (id, e) => {
+      const trigger = e?.currentTarget?.closest?.(".ak-pick")?.querySelector?.("button") || null;
+      trigger?.focus?.();
+      setOpen(false);
+      if (id !== value && onChange) onChange(id, trigger);
+    };
+    return h("span", { className: "ak-pick", onKeyDown: keys, onBlur: (e) => { if (!e.currentTarget?.contains?.(e.relatedTarget)) setOpen(false); } },
+      h("button", { type: "button", className: "ak-dd", "aria-haspopup": "listbox", "aria-expanded": open, "aria-label": `${label}: ${now ? now[1] : ""}`, onClick: () => setOpen(!open) }, now ? now[1] : "", h(Ic, { n: "down" })),
+      open ? h("div", { className: "ak-menu", role: "listbox", "aria-label": label },
+        options.map(([id, text]) => h("button", { key: id, type: "button", role: "option", "aria-selected": id === value, "data-opt": id, tabIndex: -1, autoFocus: id === value, onClick: (e) => choose(id, e) }, text, id === value ? h(Ic, { n: "check" }) : null))) : null);
   }
 
   const monthDay = (ms) => { const d = new Date(Number(ms)); return Number(ms) > 0 && Number.isFinite(d.getTime()) ? `${d.getDate()} ${new Intl.DateTimeFormat(uiLang(), { month: "short" }).format(d)}` : ""; };
@@ -588,6 +668,93 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         onClose ? h("button", { type: "button", onClick: onClose, style: btnStyle(false) }, "Close") : null));
   }
 
+  // Settings, Updates: the version of the Arc parts, the earlier version, what changed, and what happens with a new version.
+  // Pure: the update state and every action arrive in props. `asking` and `open` set the first question and the open notes; a test uses them.
+  // One kit replaces the add-ons and both programs, so the page has one row and one Update now for them.
+  function UpdatesPage({ info, error = "", pending = false, asking: firstAsking = null, open: firstOpen = false, onAction, onRefresh, t }) {
+    const [asking, setAsking] = React.useState(firstAsking); // "rollback" or "auto": the open question
+    const [open, setOpen] = React.useState(firstOpen); // the notes of the newest version
+    const back = React.useRef ? React.useRef(null) : { current: null };
+    // a kept version that left by another way (a new update, a roll back elsewhere) also closes its question
+    React.useEffect(() => { if (asking === "rollback" && info && !info.hasBackup) setAsking(null); });
+    const frame = (...kids) => h("div", { "data-arc-settings": "updates", "data-arc-kit": "true", "data-arc-plugin-pane": "true" }, h("style", null, KIT_CSS), ...kids);
+    const title = (acts = null) => h("div", { className: "ak-title" }, h("h1", null, t("settings.nav.updates")), h("p", null, t("upd.sub")), h("div", { className: "acts" }, acts));
+    if (!info) {
+      return frame(title(), error
+        ? h(React.Fragment, null, h("p", { role: "alert", className: "ak-alert" }, oneLine(error)), h(KBtn, { look: "outline", small: true, label: t("action.retry"), onClick: onRefresh }))
+        : h("p", { role: "status", className: "ak-empty" }, t("access.loading")));
+    }
+    const u = info, act = (a) => { if (onAction) onAction(a); };
+    const ver = (v) => oneLine(v, 20); // a version comes from a release or a local file: it is cut like any outside text
+    const about = (label, text) => h(InfoHint, { label, text, align: "end", glyph: h(Ic, { n: "info" }) });
+    const steps = UPDATE_PHASES.length - 1, stepAt = UPDATE_PHASES.indexOf(u.phase); // the last phase, done, is no step
+    const running = Boolean(u.busy) && stepAt >= 0 && stepAt < steps;
+    const busy = Boolean(u.busy || pending);
+    const canInstall = Boolean(u.available && u.installable && !busy && !u.restartNeeded);
+    const checked = u.checkedAt ? dayTime(Date.parse(u.checkedAt)) : "";
+    const versions = !u.installed || u.installed === "0.0.0" ? t("upd.ver.unknown")
+      : !u.latest ? t("upd.ver.1", { i: ver(u.installed) })
+      : t(checked ? "upd.ver.3" : "upd.ver.2", { i: ver(u.installed), n: ver(u.latest), date: checked });
+    // a failed update is an error; a roll back the user asked for only waits for a restart
+    const trouble = String(error || (u.phase === "failed" || (u.phase === "rolled-back" && !u.restartNeeded) ? u.message || "" : ""));
+    const need = (icon, key) => h("span", { className: "ak-need" }, h(Ic, { n: icon }), t(key));
+    const mark = running
+      ? h(React.Fragment, null,
+          h(KStatus, { text: t(`upd.phase.${u.phase}`) }),
+          h("span", { className: "ak-meter", role: "progressbar", "aria-label": t("updates.progress"), "aria-valuemin": 0, "aria-valuemax": steps, "aria-valuenow": stepAt + 1 },
+            h("i", { style: { width: `${Math.round(((stepAt + 1) / steps) * 100)}%` } })))
+      : u.phase === "checking" ? h(KStatus, { text: t("upd.s.checking") })
+      : u.restartNeeded ? h(React.Fragment, null, need("update", "upd.s.restart"), about(t("settings.about"), t("updates.hint.restart")))
+      : u.healthy === false ? need("warn", "upd.s.broken")
+      : !u.latest ? h(KStatus, { text: t(u.checkedAt ? "upd.s.norelease" : "upd.s.unchecked") })
+      : u.available && u.installable ? need("warn", "upd.s.needs")
+      : u.available ? h(KStatus, { text: t("upd.s.nokit") })
+      : h(KStatus, { text: t("upd.s.current"), dot: "on" });
+    const left = (Array.isArray(u.skippedBinaries) ? u.skippedBinaries : []).filter((x) => typeof x === "string").slice(0, 4).map((x) => oneLine(x, 40));
+    const skips = u.mode === "auto" && u.available && u.skipped && u.skipped.version === u.latest;
+    const close = () => {
+      const from = back.current;
+      setAsking(null);
+      if (from && typeof setTimeout === "function") setTimeout(() => { if (from.isConnected) from.focus(); }, 0);
+    };
+    const ask = (what, from) => { back.current = from || null; setAsking(what); };
+    return frame(
+      title(h(KBtn, { look: "outline", icon: "update", label: t("updates.check"), disabled: busy, onClick: () => act({ kind: "check" }) })),
+      trouble ? h("p", { role: "alert", className: "ak-alert" }, oneLine(trouble)) : null,
+      trouble.length > 90 ? about(t("upd.detail"), oneLine(trouble, 600)) : null,
+      h("div", { className: "ak-rows" },
+        h(KRow, {
+          kind: "parts", id: "parts", name: t("upd.parts"), sub: versions,
+          tail: h(React.Fragment, null, about(t("settings.about"), t("updates.hint.scope")), left.length ? about(t("upd.left.label"), t("upd.left", { names: left.join(", ") })) : null),
+          end: h(React.Fragment, null, mark, canInstall ? h(KBtn, { look: "outline", small: true, icon: "download", label: t("updates.install"), onClick: () => act({ kind: "install" }) }) : null),
+        }),
+        u.hasBackup ? h(KRow, {
+          kind: "earlier", id: "earlier", name: t("upd.earlier"), sub: ver(u.backupVersion || ""),
+          end: h(React.Fragment, null, about(t("settings.about"), t("upd.back.hint")),
+            h(KBtn, { look: "outline", small: true, icon: "undo", label: t("updates.rollback"), disabled: busy, onClick: (e) => ask("rollback", e && e.currentTarget) })),
+        }) : null,
+        u.notes && u.latest ? h("div", { className: "ak-row", "data-row": "notes" },
+          h("div", { className: "text" },
+            h("button", { type: "button", className: "ak-btn sm ak-fold", "aria-expanded": open, onClick: () => setOpen(!open) }, h(Ic, { n: open ? "down" : "back" }), t("upd.notes", { v: ver(u.latest) })),
+            open ? h("div", { className: "ak-notes" }, String(u.notes).slice(0, 1200)) : null)) : null,
+        h(KRow, {
+          kind: "mode", id: "mode", name: t("upd.mode"), tail: about(t("settings.about"), t("upd.mode.hint")), sub: skips ? t("upd.skip", { v: ver(u.latest) }) : "",
+          end: h(Pick, {
+            label: t("upd.mode"), value: u.mode, options: UPDATE_MODES.map((m) => [m, t(`upd.mode.${m}`)]),
+            // automatic install changes the app without a further question, so this choice asks once
+            onChange: (m, from) => (m === "auto" ? ask("auto", from) : act({ kind: "mode", mode: m })),
+          }),
+        })),
+      asking === "rollback" && u.hasBackup ? h(Confirm, {
+        t, title: t("upd.back.title", { v: ver(u.backupVersion || "") }), text: t("upd.back.conseq", { v: ver(u.backupVersion || "") }), action: t("updates.rollback"),
+        onClose: close, onConfirm: () => { act({ kind: "rollback" }); close(); },
+      }) : null,
+      asking === "auto" ? h(Confirm, {
+        t, title: t("upd.auto.title"), text: t("upd.auto.conseq"), action: t("upd.auto.go"),
+        onClose: close, onConfirm: () => { act({ kind: "mode", mode: "auto" }); close(); },
+      }) : null);
+  }
+
   // ---- Updates connector: plugins and native programs, from GitHub releases (arc-core/lib/updater.js)
   const UPDATE_PHASES = ["downloading", "verifying", "staging", "installing", "testing", "done"];
   const UPDATE_PHASE_LABEL = { downloading: "Download", verifying: "Verify", staging: "Stage", installing: "Install", testing: "Test", done: "Done" };
@@ -657,7 +824,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       u.notes ? h("details", { "data-updates-notes": "true", style: { borderTop: HAIRLINE, paddingTop: 8 } }, h("summary", { style: { cursor: "pointer", fontWeight: 600, fontSize: 12, padding: "4px 0" } }, t("updates.notes")), h("pre", { style: { marginTop: 6, fontSize: 12, opacity: 0.85 } }, u.notes)) : null);
   }
 
-  function UpdatesPanel({ t }) {
+  // the update state, its refresh and its actions, shared by the console tab and the Settings page
+  function useUpdater() {
     const [info, setInfo] = React.useState(null);
     const [error, setError] = React.useState("");
     // An action's refusal belongs to the picture the user acted on. It stays in view while that picture holds: a plain refresh
@@ -690,7 +858,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       const id = setInterval(load, busy ? 1200 : 15000);
       return () => clearInterval(id);
     }, [busy]);
-    return h(UpdatesView, { info, error: refusal || error, pending, onAction: act, t });
+    return { info, error: refusal || error, pending, act, load };
+  }
+  function UpdatesPanel({ t }) {
+    const u = useUpdater();
+    return h(UpdatesView, { info: u.info, error: u.error, pending: u.pending, onAction: u.act, t });
   }
 
   function ConnectorView({ connector, detail, onOpenConsent, onRefresh, grants, heading = true, t }) {
@@ -801,9 +973,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
                   a.version ? h("code", { style: tagStyle }, a.version) : null),
                 a.description ? h("span", { title: a.description, style: { ...muted, fontSize: 12 } }, oneLine(a.description)) : null))));
     }
-    // a section that is one connector view of its own, such as Updates
-    const own = CONNECTORS.find((c) => c.toLowerCase() === section);
-    return frame(own ? h(ConnectorView, { connector: own, detail: data.connectorsDetail, onRefresh, t }) : title(""));
+    return frame(title(""));
   }
 
 
@@ -1568,6 +1738,12 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         });
       };
     }
+    if (section === "updates") {
+      return function ArcUpdatesSection() {
+        const u = useUpdater();
+        return h(UpdatesPage, { info: u.info, error: u.error, pending: u.pending, onAction: u.act, onRefresh: u.load, t });
+      };
+    }
     return function ArcSettingsSection() {
       const { data, failed, actionError, pendingConsent, setPendingConsent, dispatch } = useConsole();
       return h(SettingsSectionView, {
@@ -1617,7 +1793,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     name: "arc-core",
     inject: ["slots", "locale"],
     apply,
-    kit: { ICONS, CSS: KIT_CSS, Ic, Btn: KBtn, Seg, Status: KStatus, Row: KRow, Confirm, AccessPage },
+    kit: { ICONS, CSS: KIT_CSS, Ic, Btn: KBtn, Seg, Status: KStatus, Row: KRow, Pick, Confirm, AccessPage, UpdatesPage },
     View,
     ConsentDialog,
     ConnectorView,

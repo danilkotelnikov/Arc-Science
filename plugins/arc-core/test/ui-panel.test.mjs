@@ -714,8 +714,8 @@ test('11. Settings dialog gets Memory, Connectors, Access, Add-ons and Updates s
     const data = store.snapshot();
     assert.deepEqual(data.addons.items.map((a) => [a.id, a.version]), [['arc-core', '0.6.0'], ['arc-theme', '']]);
     let consent = null, refreshed = 0;
-    // the Access page is a page of the rewrite with its own tests (ui-kit-access.test.mjs)
-    for (const s of sections.filter((x) => x.id !== 'access')) {
+    // the Access and Updates pages are pages of the rewrite with their own tests (ui-kit-access.test.mjs)
+    for (const s of sections.filter((x) => x.id !== 'access' && x.id !== 'updates')) {
       const tree = renderTree({ type: mod.SettingsSectionView, props: { section: s.id, data, failed: false, onRefresh: () => { refreshed += 1; }, onOpenConsent: (r) => { consent = r; }, t }, children: [] });
       const nodes = allNodes(tree);
       assert.equal(tree.props['data-arc-settings'], s.id);
@@ -735,10 +735,6 @@ test('11. Settings dialog gets Memory, Connectors, Access, Add-ons and Updates s
         assert.ok(nodes.some((n) => n.props?.['data-connector-view'] === 'Servers'));
         // the apps moved to the Access page of the rewrite; the console tab keeps the review of an app's access
         assert.equal(nodes.some((n) => n.props?.['data-connector-view'] === 'Apps'), false);
-      }
-      if (s.id === 'updates') {
-        assert.ok(nodes.some((n) => n.props?.['data-connector-view'] === 'Updates'));
-        for (const a of ['data-update-check', 'data-update-install', 'data-update-rollback', 'data-updates-status']) assert.ok(nodes.some((n) => n.props?.[a]), `updates: keeps ${a}`);
       }
       if (s.id === 'add-ons') {
         assert.ok(leaves(tree).includes('arc-core') && leaves(tree).includes('0.6.0'));

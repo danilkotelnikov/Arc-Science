@@ -1,5 +1,5 @@
-// arc-core console rewrite, step 1 (S053, S055): the shared kit (own icons, buttons, rows, switch of views, confirm dialog)
-// and the Access page of the Settings dialog, built from the approved prototype.
+// arc-core console rewrite (S053): the shared kit (own icons, buttons, rows, switch of views, choice list, confirm dialog),
+// the Access page (S055) and the Updates page (S057) of the Settings dialog, built from the approved prototype.
 // The page lists and ends grant records, shows where keys are kept, and lists what the console recorded.
 // One test renders it from a real store snapshot, so the fixtures below cannot drift from the backend unseen.
 import test from 'node:test';
@@ -10,6 +10,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { createResearchSessionStore } from '../lib/index.js';
+import { createUpdater } from '../lib/updater.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const source = fs.readFileSync(path.join(here, '../ui/panel.js'), 'utf8');
@@ -35,7 +36,7 @@ function expand(node) {
 function mount(pick, props, { globals = {}, seed = {} } = {}) {
   const states = { ...seed }, refs = {}; let i = 0, j = 0, effects = [];
   const React = { createElement, Fragment: 'fragment',
-    useState: (v) => { const k = i++; if (!(k in states)) states[k] = v; return [states[k], (n) => { states[k] = n; }]; },
+    useState: (v) => { const k = i++; if (!(k in states)) states[k] = v; return [states[k], (n) => { states[k] = typeof n === 'function' ? n(states[k]) : n; }]; },
     useRef: (v) => { const k = j++; if (!(k in refs)) refs[k] = { current: v }; return refs[k]; },
     useEffect: (fn) => { effects.push(fn); } };
   const m = loadPanel(React, globals);
@@ -358,4 +359,387 @@ test('Access: the page calls the same hooks before and after its data arrives, a
   for (const props of [{ data: null }, { data: null, failed: true }, { data }, { data, ending: 'stray-tool' }]) { n = 0; m.kit.AccessPage({ t, nowMs: NOW, ...props }); counts.push(n); }
   assert.ok(counts[0] > 0);
   assert.deepEqual(counts, [counts[0], counts[0], counts[0], counts[0]], `hook calls differ between renders: ${counts}`);
+});
+
+// =====================================================================================================
+// Settings, Updates (S057): the page of the rewrite on today's updater. Every state below starts from a real updater
+// in a throwaway folder with a scripted release list, so the page is tested on what the updater truly reports.
+const UENV = { ARC_UPDATE_ALLOW_LOOPBACK: '1' };
+const rel = (v, { kit = true, body = '' } = {}) => ({
+  tag_name: `v${v}`, draft: false, prerelease: false, html_url: `https://github.com/o/r/releases/tag/v${v}`, body,
+  assets: kit ? [{ name: `Arc-Harness-Kit-${v}-win-x64.zip`, browser_download_url: 'http://127.0.0.1:9/kit.zip' }, { name: 'SHA256SUMS.txt', browser_download_url: 'http://127.0.0.1:9/sums.txt' }] : [],
+});
+async function realState({ installed = '0.6.0', releases = null, offline = false, mode = '' } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-updpage-')), home = path.join(root, '.arc');
+  try {
+    fs.mkdirSync(path.join(home, 'local-plugins', 'arc-core'), { recursive: true });
+    if (installed) fs.writeFileSync(path.join(home, 'local-plugins', 'arc-core', 'package.json'), JSON.stringify({ name: 'arc-core', version: installed }));
+    const fetchImpl = async () => { if (offline) throw new TypeError('fetch failed'); return new Response(JSON.stringify(releases), { status: 200 }); };
+    const u = createUpdater({ home, gatewayDir: path.join(root, 'gw'), env: UENV, api: 'http://127.0.0.1:9', repo: 'o/r', fetchImpl, now: () => NOW });
+    if (mode) u.setMode(mode);
+    if (releases || offline) await u.check();
+    return JSON.parse(JSON.stringify(u.getState()));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+// a later state of the same updater: only fields the updater really sends may change
+const derive = (base, over) => { for (const k of Object.keys(over)) assert.ok(k in base, `the updater state has no field ${k}`); return { ...base, ...over }; };
+const upage = (info, props = {}) => expand({ type: mod.kit.UpdatesPage, props: { info, t, ...props }, children: [] });
+const rowOf = (tree, kind) => rowsOf(tree, kind)[0] || null;
+const alertsOf = (tree) => all(tree, (n) => n.props?.role === 'alert');
+const same = (a, b) => assert.equal(JSON.stringify(a), JSON.stringify(b)); // values made inside the panel come from another realm
+const updaterSource = fs.readFileSync(path.join(here, '../lib/updater.js'), 'utf8');
+
+test('Updates: before the first check the page names the installed version and offers Check now', async () => {
+  const fresh = await realState();
+  assert.equal(fresh.latest, null);
+  const sent = [];
+  const tree = upage(fresh, { onAction: (a) => sent.push(a) });
+  assert.equal(tree.props['data-arc-settings'], 'updates');
+  assert.equal(tree.props['data-arc-kit'], 'true');
+  assert.equal(text(all(tree, (n) => n.type === 'h1')[0]), 'Updates');
+  const parts = rowOf(tree, 'parts');
+  assert.equal(text(all(parts, (n) => has(n, 'sub'))[0]), 'Installed 0.6.0');
+  assert.match(text(parts), /Not checked yet/);
+  assert.equal(button(tree, 'Update now'), undefined);
+  assert.equal(rowOf(tree, 'earlier'), null, 'no earlier version is kept yet');
+  assert.equal(rowOf(tree, 'notes'), null);
+  assert.equal(alertsOf(tree).length, 0);
+  assert.match(text(rowOf(tree, 'mode')), /When a new version appears/);
+  assert.equal(text(all(rowOf(tree, 'mode'), (n) => n.props?.['aria-haspopup'] === 'listbox')[0]), 'Tell me');
+  button(tree, 'Check now').props.onClick();
+  same(sent, [{ kind: 'check' }]);
+  // a computer where the installed version cannot be read
+  const unknown = await realState({ installed: '' });
+  assert.equal(unknown.installed, '0.0.0');
+  assert.equal(text(all(rowOf(upage(unknown), 'parts'), (n) => has(n, 'sub'))[0]), 'Installed version unknown');
+});
+
+test('Updates: a newer release shows Needs update; Update now sends one install action; What changed shows the notes as plain text', async () => {
+  const body = 'Fixes <b>one</b> thing.\n- second line';
+  const ready = await realState({ releases: [rel('0.6.0'), rel('0.6.1', { body })] });
+  assert.equal(ready.available && ready.installable, true, 'the real updater offers the release');
+  const sent = [];
+  const view = mount((m) => m.kit.UpdatesPage, { info: ready, t, onAction: (a) => sent.push(a) });
+  let tree = view.render();
+  const parts = rowOf(tree, 'parts');
+  assert.equal(text(all(parts, (n) => has(n, 'sub'))[0]), 'Installed 0.6.0, newest 0.6.1, checked 21 Nov, 12:00');
+  assert.match(text(parts), /Needs update/);
+  button(parts, 'Update now').props.onClick();
+  same(sent, [{ kind: 'install' }]);
+  const fold = all(rowOf(tree, 'notes'), (n) => n.type === 'button')[0];
+  assert.equal(text(fold), 'What changed in 0.6.1');
+  assert.equal(fold.props['aria-expanded'], false);
+  assert.equal(all(tree, (n) => has(n, 'ak-notes')).length, 0);
+  fold.props.onClick();
+  tree = view.render();
+  assert.equal(all(rowOf(tree, 'notes'), (n) => n.type === 'button')[0].props['aria-expanded'], true);
+  const notes = all(tree, (n) => has(n, 'ak-notes'))[0];
+  assert.deepEqual(notes.children, [body], 'the notes are one text node, so their markup stays text');
+  assert.equal(notes.props.dangerouslySetInnerHTML, undefined);
+});
+
+test('Updates: a release with no files, no release at all, the newest version and a failed check each say so', async () => {
+  const cases = [
+    [await realState({ releases: [rel('0.6.1', { kit: false })] }), 'No installable files yet'],
+    [await realState({ releases: [] }), 'No release found'],
+    [await realState({ releases: [rel('0.6.0')] }), 'Up to date'],
+  ];
+  for (const [info, word] of cases) {
+    const tree = upage(info);
+    assert.equal(text(all(rowOf(tree, 'parts'), (n) => has(n, 'ak-status'))[0]), word);
+    assert.equal(button(tree, 'Update now'), undefined, `${word}: nothing to install`);
+    assert.equal(alertsOf(tree).length, 0, `${word}: no error`);
+  }
+  assert.equal(all(rowOf(upage(cases[2][0]), 'parts'), (n) => has(n, 'ak-dot') && has(n, 'on')).length, 1, 'only the newest version carries the filled mark');
+  assert.equal(all(rowOf(upage(cases[0][0]), 'parts'), (n) => has(n, 'ak-dot') && has(n, 'on')).length, 0);
+  const failed = await realState({ offline: true });
+  assert.equal(failed.phase, 'failed');
+  const tree = upage(failed);
+  assert.match(text(alertsOf(tree)[0]), /^Could not reach GitHub/);
+  assert.equal(button(tree, 'Check now').props.disabled, false, 'a failed check can run again');
+  // a check that runs now
+  const checking = upage(derive(failed, { phase: 'checking', message: '' }));
+  assert.equal(text(all(rowOf(checking, 'parts'), (n) => has(n, 'ak-status'))[0]), 'Checking');
+  assert.equal(alertsOf(checking).length, 0);
+});
+
+test('Updates: while an update runs, each real step has a word and a place on the progress bar, and the buttons wait', async () => {
+  const ready = await realState({ releases: [rel('0.6.1')] });
+  const steps = ['downloading', 'verifying', 'staging', 'installing', 'testing'];
+  const words = new Set();
+  steps.forEach((ph, i) => {
+    const tree = upage(derive(ready, { busy: true, phase: ph, message: `Step ${ph}`, hasBackup: true, backupVersion: '0.5.9' }));
+    const bar = all(tree, (n) => n.props?.role === 'progressbar')[0];
+    assert.equal(bar.props['aria-valuemin'], 0);
+    assert.equal(bar.props['aria-valuemax'], steps.length);
+    assert.equal(bar.props['aria-valuenow'], i + 1);
+    assert.equal(bar.props['aria-label'], 'Update progress');
+    const word = text(all(rowOf(tree, 'parts'), (n) => has(n, 'ak-status'))[0]);
+    assert.ok(word.length > 3, `the step ${ph} has no word`);
+    words.add(word);
+    assert.equal(button(tree, 'Update now'), undefined);
+    assert.equal(button(tree, 'Check now').props.disabled, true);
+    assert.equal(button(tree, 'Roll back').props.disabled, true);
+  });
+  assert.equal(words.size, steps.length, 'each step has its own word');
+  // every step the updater names has a look on the page
+  const named = new Set([...updaterSource.matchAll(/phase\('([a-z-]+)'/g)].map((m) => m[1]));
+  assert.ok(named.size >= 7, `the updater source names only ${named.size} steps`);
+  for (const ph of named) assert.ok(['idle', 'checking', 'failed', 'rolled-back', 'done', ...steps].includes(ph), `the page has no look for the step ${ph}`);
+  // an action of the page that has not answered yet also holds the buttons
+  const waiting = upage(ready, { pending: true });
+  assert.equal(button(waiting, 'Check now').props.disabled, true);
+  assert.equal(button(waiting, 'Update now'), undefined);
+});
+
+test('Updates: after an update the page asks for a restart and keeps the earlier version; Roll back asks first', async () => {
+  const base = await realState({ installed: '0.6.1', releases: [rel('0.6.1')] });
+  const info = derive(base, { phase: 'done', message: 'Updated to 0.6.1. Restart Arc Harness to use it.', restartNeeded: true, healthy: true, hasBackup: true, backupVersion: '0.6.0' });
+  const sent = [];
+  const view = mount((m) => m.kit.UpdatesPage, { info, t, onAction: (a) => sent.push(a) });
+  let tree = view.render();
+  assert.match(text(rowOf(tree, 'parts')), /Restart to finish/);
+  assert.equal(all(tree, (n) => n.type === 'button' && /restart/i.test(text(n))).length, 0, 'the app never closes itself, so no button says it does');
+  assert.equal(alertsOf(tree).length, 0);
+  const earlier = () => rowOf(view.render(), 'earlier');
+  assert.match(text(earlier()), /Version before the last update/);
+  assert.equal(text(all(earlier(), (n) => has(n, 'sub'))[0]), '0.6.0');
+  assert.equal(dialogOf(tree), null);
+  const ask = () => button(earlier(), 'Roll back').props.onClick({ currentTarget: null });
+  ask();
+  const dlg = dialogOf(view.render());
+  assert.equal(text(all(dlg, (n) => n.type === 'h2')[0]), 'Roll back to 0.6.0?');
+  const line = text(all(dlg, (n) => has(n, 'ak-conseq'))[0]);
+  assert.ok(line.length <= 90, `the question line has ${line.length} characters`);
+  assert.match(line, /0\.6\.0/);
+  assert.match(line, /restart/);
+  // the line promises a restart, and the updater does ask for one after a roll back
+  assert.match(updaterSource, /async function rollback\(\)[\s\S]*?mem\.restartNeeded = true/);
+  button(dlg, 'Cancel').props.onClick();
+  assert.equal(dialogOf(view.render()), null);
+  ask();
+  all(dialogOf(view.render()), (n) => n.type === 'button' && n.props['aria-label'] === 'Close')[0].props.onClick();
+  assert.equal(dialogOf(view.render()), null);
+  ask();
+  let stopped = 0;
+  dialogOf(view.render()).props.onKeyDown({ key: 'Escape', stopPropagation: () => { stopped++; }, nativeEvent: { stopImmediatePropagation: () => { stopped++; } } });
+  assert.equal(stopped, 2, 'Escape closes the question and not the Settings dialog behind it');
+  assert.equal(dialogOf(view.render()), null);
+  assert.equal(sent.length, 0, 'nothing was rolled back so far');
+  ask();
+  button(dialogOf(view.render()), 'Roll back').props.onClick();
+  same(sent, [{ kind: 'rollback' }]);
+  assert.equal(dialogOf(view.render()), null);
+});
+
+test('Updates: a failed update shows one line with the whole message one click away; a roll back by the user is no error', async () => {
+  const ready = await realState({ releases: [rel('0.6.1')] });
+  const long = `Files of arc-hoh are in use, so nothing was changed. Close the app and try again. ${'x'.repeat(200)}`;
+  const view = mount((m) => m.kit.UpdatesPage, { info: derive(ready, { phase: 'failed', message: long }), t });
+  let tree = view.render();
+  assert.equal(alertsOf(tree).length, 1);
+  assert.ok(text(alertsOf(tree)[0]).length <= 90);
+  assert.match(text(rowOf(tree, 'parts')), /Needs update/, 'the update can be tried again');
+  const whole = all(tree, (n) => n.type === 'button' && n.props['aria-label'] === 'The whole message')[0];
+  whole.props.onClick();
+  tree = view.render();
+  assert.ok(all(tree, (n) => n.props?.role === 'note').some((n) => text(n) === long), 'the hint holds the whole message');
+  // a short message needs no second place
+  assert.equal(all(upage(derive(ready, { phase: 'failed', message: 'Short.' })), (n) => n.props?.['aria-label'] === 'The whole message').length, 0);
+  // the updater put the old files back after a failed swap: an error
+  const undone = upage(derive(ready, { phase: 'rolled-back', message: 'Bad kit. The old files were put back (rolled back).' }));
+  assert.match(text(alertsOf(undone)[0]), /old files were put back/);
+  // the user rolled back: a restart is due, and nothing went wrong
+  const back = upage(derive(ready, { phase: 'rolled-back', message: 'Back to 0.6.0. Restart Arc Harness to use it.', restartNeeded: true, healthy: true }));
+  assert.equal(alertsOf(back).length, 0);
+  assert.match(text(rowOf(back, 'parts')), /Restart to finish/);
+  assert.equal(button(back, 'Update now'), undefined, 'no second swap before the restart');
+  // files that could not all be put back
+  const broken = upage(derive(ready, { phase: 'failed', message: 'The rollback was not complete: arc-core', healthy: false }));
+  assert.match(text(rowOf(broken, 'parts')), /Not complete/);
+  assert.equal(alertsOf(broken).length, 1);
+  // a refusal of the last action
+  assert.equal(text(alertsOf(upage(ready, { error: 'An update is already running.' }))[0]), 'An update is already running.');
+  // programs the update could not find on this computer
+  const left = mount((m) => m.kit.UpdatesPage, { info: derive(ready, { skippedBinaries: ['arc-validators.exe', 'n'.repeat(300)] }), t });
+  const mark = all(left.render(), (n) => n.type === 'button' && n.props['aria-label'] === 'Programs that were not replaced')[0];
+  mark.props.onClick();
+  const note = all(left.render(), (n) => n.props?.role === 'note').map(text).find((s) => s.includes('arc-validators.exe'));
+  assert.ok(note && note.length <= 200, 'the note names the programs and stays short');
+  assert.equal(all(upage(ready), (n) => n.props?.['aria-label'] === 'Programs that were not replaced').length, 0);
+});
+
+test('Updates: the choice for new versions has three options; Install it asks first and says only what the updater does', async () => {
+  const base = await realState({ releases: [rel('0.6.1')] });
+  assert.equal(base.mode, 'notify');
+  const sent = [];
+  const view = mount((m) => m.kit.UpdatesPage, { info: base, t, onAction: (a) => sent.push(a) });
+  const trigger = () => all(rowOf(view.render(), 'mode'), (n) => n.props?.['aria-haspopup'] === 'listbox')[0];
+  const options = () => all(view.render(), (n) => n.props?.role === 'option');
+  assert.equal(trigger().props['aria-expanded'], false);
+  assert.equal(options().length, 0);
+  trigger().props.onClick();
+  assert.equal(trigger().props['aria-expanded'], true);
+  assert.deepEqual(options().map(text), ['Do nothing', 'Tell me', 'Install it']);
+  assert.deepEqual(options().map((o) => o.props['aria-selected']), [false, true, false]);
+  options()[1].props.onClick({ currentTarget: null });
+  assert.equal(sent.length, 0, 'the choice that is already set sends nothing');
+  trigger().props.onClick();
+  options()[0].props.onClick({ currentTarget: null });
+  same(sent, [{ kind: 'mode', mode: 'off' }]);
+  assert.equal(options().length, 0, 'the list closes after a choice');
+  trigger().props.onClick();
+  options()[2].props.onClick({ currentTarget: null });
+  assert.equal(sent.length, 1, 'Install it waits for the answer');
+  const dlg = dialogOf(view.render());
+  assert.equal(text(all(dlg, (n) => n.type === 'h2')[0]), 'Install new versions without asking?');
+  const line = text(all(dlg, (n) => has(n, 'ak-conseq'))[0]);
+  assert.ok(line.length <= 90);
+  assert.match(line, /installs by itself/);
+  assert.match(line, /next start/);
+  // what the line says is what the updater does in this mode: it installs, and the new parts wait for a restart
+  assert.match(updaterSource, /async function tick\(\)[\s\S]*?await install\(\{ auto: true \}\)/);
+  assert.match(updaterSource, /mem\.healthy = true; mem\.restartNeeded = true;/);
+  button(dlg, 'Cancel').props.onClick();
+  assert.equal(sent.length, 1);
+  assert.equal(dialogOf(view.render()), null);
+  trigger().props.onClick();
+  options()[2].props.onClick({ currentTarget: null });
+  button(dialogOf(view.render()), 'Install without asking').props.onClick();
+  same(sent[1], { kind: 'mode', mode: 'auto' });
+  assert.equal(dialogOf(view.render()), null);
+  // the three choices are the three modes the updater accepts
+  for (const [id, word] of [['off', 'Do nothing'], ['notify', 'Tell me'], ['auto', 'Install it']]) {
+    const st = await realState({ mode: id });
+    assert.equal(st.mode, id);
+    assert.equal(text(all(rowOf(upage(st), 'mode'), (n) => n.props?.['aria-haspopup'] === 'listbox')[0]), word);
+  }
+  // a version that automatic install leaves out is named, and only in that mode
+  const auto = await realState({ mode: 'auto', releases: [rel('0.6.1')] });
+  const skipped = { version: '0.6.1', reason: 'rolled-back', at: new Date(NOW).toISOString() };
+  const sub = (info) => text(all(rowOf(upage(info), 'mode'), (n) => has(n, 'sub'))[0]);
+  assert.match(sub(derive(auto, { skipped })), /^Skips 0\.6\.1/);
+  assert.ok(sub(derive(auto, { skipped })).length <= 90);
+  assert.equal(sub(derive(base, { skipped })), '');
+  assert.equal(sub(auto), '');
+  assert.match(updaterSource, /if \(auto && sk && sk\.version === toVersion\) return/);
+});
+
+test('the kit choice list: a labelled button and a list; Escape closes only the list; arrows move; focus that leaves closes it', () => {
+  const picked = [];
+  const view = mount((m) => m.kit.Pick, { label: 'Kind', value: 'b', options: [['a', 'First'], ['b', 'Second'], ['c', 'Third']], onChange: (v) => picked.push(v) });
+  const btn = () => all(view.render(), (n) => n.props?.['aria-haspopup'] === 'listbox')[0];
+  const list = () => all(view.render(), (n) => n.props?.role === 'listbox')[0] || null;
+  assert.equal(btn().props['aria-label'], 'Kind: Second');
+  assert.equal(text(btn()), 'Second');
+  assert.equal(list(), null);
+  const stops = { n: 0 }, focus = { n: 0 };
+  const key = (k, extra = {}) => view.render().props.onKeyDown({ key: k, preventDefault: () => {}, stopPropagation: () => { stops.n++; }, nativeEvent: { stopImmediatePropagation: () => { stops.n++; } }, currentTarget: { querySelector: () => ({ focus: () => { focus.n++; } }), querySelectorAll: () => [], ownerDocument: {} }, ...extra });
+  key('Escape');
+  assert.equal(stops.n, 0, 'a closed list leaves Escape to the Settings dialog');
+  btn().props.onClick();
+  assert.equal(list().props['aria-label'], 'Kind');
+  assert.equal(all(list(), (n) => n.props?.role === 'option' && n.props['aria-selected'] === true)[0].props.autoFocus, true, 'the list opens on the chosen option');
+  key('Escape');
+  assert.equal(stops.n, 2);
+  assert.equal(focus.n, 1, 'the focus goes back to the button');
+  assert.equal(list(), null);
+  key('ArrowDown');
+  assert.ok(list(), 'the arrow key opens the list');
+  const made = ['a', 'b', 'c'].map((id) => ({ id, focused: 0, focus() { this.focused++; } }));
+  const at = (i) => ({ currentTarget: { querySelector: () => null, querySelectorAll: () => made, ownerDocument: { activeElement: made[i] } } });
+  key('ArrowDown', at(1)); assert.equal(made[2].focused, 1);
+  key('ArrowDown', at(2)); assert.equal(made[0].focused, 1, 'the last option leads to the first');
+  key('ArrowUp', at(0)); assert.equal(made[2].focused, 2, 'the first option leads to the last');
+  view.render().props.onBlur({ currentTarget: { contains: () => true }, relatedTarget: {} });
+  assert.ok(list(), 'focus inside the list keeps it open');
+  view.render().props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null });
+  assert.equal(list(), null);
+  btn().props.onClick();
+  all(list(), (n) => n.props?.role === 'option')[2].props.onClick({ currentTarget: null });
+  assert.deepEqual(picked, ['c']);
+});
+
+test('Updates: before the state arrives the page says so; a refused read shows the sentence of the server and one retry', () => {
+  const loading = upage(null);
+  assert.equal(loading.props['data-arc-settings'], 'updates');
+  assert.match(text(all(loading, (n) => n.props?.role === 'status')[0]), /Loading/);
+  assert.equal(rowsOf(loading, 'parts').length, 0);
+  let again = 0;
+  const off = upage(null, { error: 'Updates are not available in this build.', onRefresh: () => { again++; } });
+  assert.equal(text(alertsOf(off)[0]), 'Updates are not available in this build.');
+  button(off, 'Try again').props.onClick();
+  assert.equal(again, 1);
+  assert.equal(rowsOf(off, 'parts').length, 0);
+  assert.equal(button(off, 'Check now'), undefined);
+});
+
+test('Settings draws the new page for its Updates entry: it reads the update state, and Check now reaches the backend as one action', async () => {
+  const state = { ok: true, ...(await realState({ releases: [rel('0.6.1')] })) };
+  const posts = [];
+  const fetch = async (url, init) => { posts.push([url, JSON.parse(init.body)]); return { ok: true, json: async () => (String(url).endsWith('/state') ? state : { ok: true }) }; };
+  const tick = () => new Promise((r) => setImmediate(r));
+  let entry = null;
+  // the component that Settings registers for the entry "updates"; slot 0 of its state holds the update state
+  const view = mount((m) => {
+    if (!entry) {
+      const sections = [];
+      const slots = { inject: (name, fn) => { fn(); return () => {}; }, register: (opts, comp) => { if (opts.name === 'settings.section') sections.push({ ...opts, comp }); return () => {}; } };
+      m.apply({ effect: () => {}, locale: { register: () => {}, bind: () => t }, slots, inject: () => {} });
+      entry = sections.find((s) => s.id === 'updates');
+    }
+    return entry.comp;
+  }, {}, { globals: { fetch, setInterval: () => 0, clearInterval: () => {} }, seed: { 0: state } });
+  const first = view.render();
+  assert.equal(entry.label(), 'Updates');
+  assert.equal(first.props['data-arc-settings'], 'updates');
+  assert.equal(first.props['data-arc-kit'], 'true');
+  assert.equal(all(first, (n) => n.props?.['data-connector-view'] === 'Updates').length, 0, 'Settings no longer draws the view of the console tab');
+  await tick();
+  assert.ok(posts.some(([url]) => url === 'api/arc-core/update/state'), 'the page reads the update state');
+  button(view.render(), 'Check now').props.onClick();
+  await tick(); await tick();
+  same(posts.filter(([url]) => url === 'api/arc-core/update/action').map(([, body]) => body), [{ kind: 'check' }]);
+  // the console tab keeps its own view on the same state
+  const tab = expand({ type: mod.UpdatesView, props: { info: state, t }, children: [] });
+  assert.equal(tab.props['data-connector-view'], 'Updates');
+});
+
+test('Updates: the page calls the same hooks in every state and with every view open, as React requires', async () => {
+  const ready = await realState({ releases: [rel('0.6.1', { body: 'Notes.' })] });
+  const kept = derive(ready, { hasBackup: true, backupVersion: '0.6.0' });
+  let n = 0;
+  const React = { createElement, Fragment: 'fragment', useState: (v) => { n++; return [v, () => {}]; }, useRef: () => { n++; return { current: null }; }, useEffect: () => { n++; } };
+  const m = loadPanel(React);
+  const views = [
+    { info: null }, { info: null, error: 'Refused.' }, { info: ready }, { info: ready, error: 'Refused.' }, { info: ready, pending: true },
+    { info: derive(ready, { busy: true, phase: 'installing' }) }, { info: derive(kept, { restartNeeded: true, phase: 'done' }) },
+    { info: derive(ready, { phase: 'failed', message: 'm'.repeat(200) }) }, { info: ready, asking: 'auto' }, { info: kept, asking: 'rollback' }, { info: ready, open: true },
+  ];
+  const counts = views.map((props) => { n = 0; m.kit.UpdatesPage({ t, ...props }); return n; });
+  assert.ok(counts[0] > 0);
+  assert.deepEqual(counts, counts.map(() => counts[0]), `hook calls differ between renders: ${counts}`);
+});
+
+test('texts of the Updates page follow the writing rules', () => {
+  const keys = Object.keys(mod.en).filter((k) => k.startsWith('upd.'));
+  assert.ok(keys.length >= 25, `only ${keys.length} texts`);
+  for (const k of keys) {
+    const s = mod.en[k];
+    assert.ok(/^[A-Z]/.test(s), `${k} starts with a capital letter`);
+    assert.ok(!s.includes('·') && !/!|, not /.test(s), k);
+    // a hint may hold more; every visible line fits one line, also with a version number in it
+    if (!k.endsWith('.hint')) assert.ok(s.replace(/\{\w+\}/g, '00.00.00').length <= 90, `${k} has ${s.length} characters`);
+  }
+  // untrusted text of a release cannot stretch a line: the version comes cut, the notes are capped by the updater
+  const odd = upage({ installed: '9'.repeat(300), latest: '8'.repeat(300), available: true, installable: true, reason: '', releaseUrl: '', notes: 'n', checkedAt: null, phase: 'idle', message: '', busy: false, mode: 'notify', intervalHours: 12, hasBackup: true, backupVersion: '7'.repeat(300), skipped: null, skippedBinaries: [], restartNeeded: false, healthy: null });
+  for (const leaf of all(odd, (n) => has(n, 'sub') || has(n, 'ak-status') || n.type === 'button').map(text)) assert.ok(leaf.length <= 90, `a line has ${leaf.length} characters`);
+});
+
+test('Updates: a Roll back question whose kept version is gone closes by itself', async () => {
+  const ready = await realState({ releases: [rel('0.6.1')] });
+  assert.equal(ready.hasBackup, false);
+  const view = mount((m) => m.kit.UpdatesPage, { info: ready, t, asking: 'rollback' });
+  assert.equal(dialogOf(view.render()), null);
+  assert.equal(view.states[0], null, 'the question is closed, so it cannot come back with a later kept version');
 });
