@@ -352,9 +352,8 @@ export function createUpdater(opts = {}) {
    */
   async function setPrevAside(ops) {
     // What still carries the "earlier backup" names here is the leftover of a clean-up that was cut short: the journal in place
-    // owns the current backup. It goes first, so a leftover can never be taken for the backup that is set aside below.
-    for (const f of prevFiles()) await moveAside(f, false);
-    if (F.existsSync(prevRoot)) await moveAside(prevRoot, true);
+    // owns the current backup. The leftover goes first, so it can never be taken for the backup that is set aside below.
+    await dropPrev();
     if (F.existsSync(backupRoot)) await mv(backupRoot, prevRoot);
     for (const op of ops) {
       if (op.kind !== 'file' || !op.backup || !F.existsSync(op.backup)) continue;
@@ -375,8 +374,12 @@ export function createUpdater(opts = {}) {
     try { F.rmSync(backupRoot, { recursive: true, force: true }); } catch { await moveAside(backupRoot, true); }
     await mv(prevRoot, backupRoot);
   }
-  /** After a swap that landed: the folder first, so a half-dropped backup can never come back without its programs. */
+  /**
+   * Drop the set-aside backup. Its journal goes first, in one small delete: without the journal, nothing that is left
+   * here can count as a backup again, whatever stops the rest. Then the folder, then the programs' copies.
+   */
   async function dropPrev() {
+    F.rmSync(path.join(prevRoot, 'backup.json'), { force: true });
     if (F.existsSync(prevRoot)) await moveAside(prevRoot, true);
     for (const f of prevFiles()) await moveAside(f, false);
   }
@@ -543,6 +546,9 @@ export function createUpdater(opts = {}) {
       if (!j || !['complete', 'swapping'].includes(j.status)) return { ok: false, error: 'There is no backup to roll back to.' };
       const errors = await restore(j.ops);
       if (errors.length) { phase('failed', `The rollback was not complete: ${errors.join('; ')}`); return { ok: false, error: `The rollback was not complete: ${errors.join('; ')}` }; }
+      // Roll back goes one step. An older backup that a cut-short clean-up left behind stops counting before this journal goes,
+      // so a process that dies in the lines below cannot leave it as a second step.
+      if (j.status === 'complete') { try { F.rmSync(path.join(prevRoot, 'backup.json'), { force: true }); } catch { /* dropped below */ } }
       F.rmSync(journalFile, { force: true });
       try { F.rmSync(backupRoot, { recursive: true, force: true }); } catch { /* swept later */ }
       // undoing a swap that was cut short leaves the files as they were before it: its earlier backup counts again

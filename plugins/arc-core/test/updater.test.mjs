@@ -859,3 +859,54 @@ test('repair 3: the earlier backup comes back even when the empty backup folder 
   assert.equal(rb.ok, true, rb.error);
   allAt(e, '0.6.0');
 });
+
+// ---- Faults that the independent reader found in the repairs above (second read, 21.XI.2026). Each failed before its fix.
+// A leftover of the 0.6.0 backup: 0.8.0 landed, but its clean-up could not move the set-aside folder away.
+async function leftoverAfterUpdate(t) {
+  const e = await threeVersions(t);
+  const prevRoot = path.join(e.home, 'updates', 'backup-prev');
+  const u = e.make({ fs: { ...fs, renameSync: (a, b) => { if (String(a) === prevRoot && String(b).includes(`${path.sep}stale${path.sep}`)) throw new Error('the process died here'); return fs.renameSync(a, b); } } });
+  assert.equal((await u.install()).ok, true);
+  allAt(e, '0.8.0');
+  return { e, prevRoot, prevJournal: path.join(prevRoot, 'backup.json') };
+}
+const diesAt = (when) => {
+  let dead = false;
+  const gone = () => { throw new Error('the process died here'); };
+  return { isDead: () => dead, fs: { ...fs,
+    renameSync: (a, b) => { if (dead) gone(); if (when(String(a), String(b))) { dead = true; gone(); } return fs.renameSync(a, b); },
+    writeFileSync: (...a) => (dead ? gone() : fs.writeFileSync(...a)), rmSync: (...a) => (dead ? gone() : fs.rmSync(...a)), mkdirSync: (...a) => (dead ? gone() : fs.mkdirSync(...a)),
+  } };
+};
+
+test('repair 4: a Roll back that dies in its clean-up does not leave an older backup that counts', async (t) => {
+  const { e, prevRoot } = await leftoverAfterUpdate(t);
+  const d = diesAt((a) => a === prevRoot);
+  await e.make({ fs: d.fs }).rollback().catch(() => {});
+  assert.equal(d.isDead(), true, 'the process died while it moved the leftover away');
+  fs.rmSync(path.join(e.home, 'updates', 'lock'), { force: true });
+  allAt(e, '0.7.0');
+  const v = e.make();
+  assert.notEqual(v.getState().backupVersion, '0.6.0', 'the older backup must not come back as a second Roll back');
+  await v.rollback();
+  allAt(e, '0.7.0');
+  assert.equal(v.getState().hasBackup, false);
+});
+
+test('repair 5: a leftover folder never keeps its journal once its programs are cleared', async (t) => {
+  const { e, prevRoot, prevJournal } = await leftoverAfterUpdate(t);
+  e.srv.state.publish(buildKit('0.9.0'));
+  // the next update dies while it clears the leftover, at the move of the leftover folder
+  const d = diesAt((a) => a === prevRoot);
+  await e.make({ fs: d.fs }).install().catch(() => {});
+  assert.equal(d.isDead(), true);
+  const programsLeft = fs.readdirSync(e.gatewayDir).concat(fs.readdirSync(e.binDir)).some((f) => f.endsWith(PREV));
+  assert.equal(fs.existsSync(prevJournal) && !programsLeft, false, 'a journal without its programs would bring back half a backup');
+  fs.rmSync(path.join(e.home, 'updates', 'lock'), { force: true });
+  allAt(e, '0.8.0');
+  const v = e.make();
+  assert.equal(v.getState().backupVersion, '0.7.0');
+  assert.equal((await v.rollback()).ok, true);
+  allAt(e, '0.7.0');
+  assert.equal(v.getState().hasBackup, false);
+});
