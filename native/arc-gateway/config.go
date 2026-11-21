@@ -206,10 +206,29 @@ func normUpstream(s string) (string, error) {
 		return "", fmt.Errorf("a Cammut address must be http or https with a host: %q", s)
 	}
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Contains(s, "?") || strings.Contains(s, "#") {
-		return "", fmt.Errorf("a Cammut address holds no user name, password, query or fragment")
+		return "", fmt.Errorf("a Cammut address holds no user name, password, query or fragment: %q. Remove this server and add it again without them", plainAddr(s))
 	}
 	u.Host = strings.ToLower(u.Host)
 	return strings.TrimRight(u.String(), "/"), nil
+}
+
+// plainAddr is the address without user name, password, query and fragment, so an error text can name it and hold no secret.
+func plainAddr(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, "?#"); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.Index(s, "://"); i >= 0 {
+		rest := s[i+3:]
+		host := rest
+		if j := strings.Index(rest, "/"); j >= 0 {
+			host = rest[:j]
+		}
+		if at := strings.LastIndex(host, "@"); at >= 0 {
+			s = s[:i+3] + rest[at+1:]
+		}
+	}
+	return strings.TrimRight(s, "/")
 }
 
 func isLoopbackHost(h string) bool {
@@ -254,9 +273,12 @@ func mergeCammutPatch(raw map[string]any, v any) error {
 				known[strings.TrimRight(str, "/")] = true
 			}
 		}
-	} else {
+	}
+	// LoadConfig puts the default server in place of a missing or empty list, so the same list counts as known here:
+	// the default server keeps the owner's AuthFile when the console posts it back.
+	if len(known) == 0 {
 		for _, d := range defaultConfig().Cammut.Upstreams {
-			known[d] = true
+			known[strings.TrimRight(d, "/")] = true
 		}
 	}
 	auth := map[string]any{}

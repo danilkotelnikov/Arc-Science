@@ -19,6 +19,7 @@ import {
 } from '../lib/cammut-console.js';
 import { createComponentHost, serveCammutRoute } from '../lib/components.js';
 import { createMemoryPolicyStore, createEmbeddedMemoryServer } from '../lib/memory-policy.js';
+import { plainServerUrl } from '../lib/cammut-console.js';
 
 const TOKEN = 'a'.repeat(64);
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json' } });
@@ -63,8 +64,8 @@ const mk = (gw, extra = {}) => createCammutConsole({ fetch: gw.fetch, gatewayHos
 
 test('1. Tool classes are default-deny: only list, get and recall run freely', () => {
   for (const t of ['hindsight/list_memories', 'hindsight/list_tags', 'hindsight/get_mental_model', 'hindsight/recall']) assert.equal(classifyTool(t), 'read', t);
-  for (const t of ['hindsight/retain', 'hindsight/reflect', 'hindsight/create_directive', 'hindsight/refresh_mental_model', 'hindsight/update_bank', 'hindsight/brand_new_tool']) assert.equal(classifyTool(t), 'write', t);
-  for (const t of ['hindsight/delete_bank', 'hindsight/delete_document', 'hindsight/clear_memories', 'hindsight/clear_mental_model', 'hindsight/delete_knowledge_node']) assert.equal(classifyTool(t), 'destructive', t);
+  for (const t of ['hindsight/retain', 'hindsight/reflect', 'hindsight/create_directive', 'hindsight/refresh_mental_model', 'hindsight/update_bank', 'hindsight/set_mission', 'hindsight/add_tag']) assert.equal(classifyTool(t), 'write', t);
+  for (const t of ['hindsight/delete_bank', 'hindsight/delete_document', 'hindsight/clear_memories', 'hindsight/clear_mental_model', 'hindsight/delete_knowledge_node', 'hindsight/purge_bank', 'hindsight/erase_bank', 'hindsight/prune_memories', 'hindsight/truncate_bank', 'hindsight/revoke_key', 'hindsight/forget', 'hindsight/brand_new_tool']) assert.equal(classifyTool(t), 'destructive', t);
   for (const t of ['github/create_issue', 'github/list_issues', 'hindsight/', 'hindsight', '', 'hindsight/../x', 'hindsight/list memories', 42, null]) assert.equal(classifyTool(t), 'blocked', String(t));
 });
 
@@ -429,4 +430,36 @@ test('27. Adding a server beside one written with capital letters still reads ba
   const r = await mk(gw).addServer({ url: 'https://new.example.org/cammut' });
   assert.equal(r.ok, true, r.error);
   assert.equal(gw.state.upstreams.length, 3);
+});
+
+test('28. The tool runner can save a note in the built-in store, behind the same confirm, and the Observer shows it', async () => {
+  const gw = fakeGateway();
+  const c = mk(gw, { embedded: createEmbeddedMemoryServer(createMemoryPolicyStore({})) });
+  const before = gw.state.calls.length;
+  const list = await c.searchTools({ source: 'builtin', query: '' });
+  assert.deepEqual(list.tools.map((x) => [x.tool, x.class]), [['hindsight/retain', 'write'], ['hindsight/recall', 'read'], ['hindsight/list_memories', 'read'], ['hindsight/list_tags', 'read']]);
+  const args = { content: 'The lab meeting moved to Thursday', tags: ['topic:lab'] };
+  const ask = await c.runTool({ source: 'builtin', tool: 'hindsight/retain', arguments: args });
+  assert.deepEqual([ask.ok, ask.needs], [false, 'confirm'], 'a write to the built-in store needs the confirm too');
+  assert.equal((await c.observe({ source: 'builtin', view: 'memories' })).data.items.length, 0, 'nothing is saved before the confirm');
+  const done = await c.runTool({ source: 'builtin', tool: 'hindsight/retain', arguments: args, confirm: true });
+  assert.equal(done.ok, true);
+  const mem = await c.observe({ source: 'builtin', view: 'memories' });
+  assert.equal(mem.data.items.length, 1, 'the Observer shows the saved note');
+  assert.equal((await c.runTool({ source: 'builtin', tool: 'hindsight/delete_bank', arguments: {}, confirm: 'hindsight/delete_bank' })).ok, false, 'the built-in store has no delete tool');
+  assert.equal((await c.runTool({ source: 'builtin', tool: 'hindsight/retain', arguments: { content: 'my key sk-' + 'x'.repeat(30) }, confirm: true })).ok, false, 'a secret is refused before the store');
+  assert.equal(gw.state.calls.length, before, "the built-in store makes no network call");
+});
+
+test('29. An address saved with a user name or a query is shown without them and can still be removed', async () => {
+  assert.equal(plainServerUrl('https://user:pw' + '@MCP.example/cammut/?key=abc#x'), 'https://mcp.example/cammut');
+  assert.equal(plainServerUrl('http://127.0.0.1:7421/'), 'http://127.0.0.1:7421');
+  const gw = fakeGateway({ upstreams: ['http://127.0.0.1:7421', 'https://mcp.example/cammut?key=abc'], auth: {} });
+  const c = mk(gw);
+  const st = await c.state();
+  assert.deepEqual(st.servers.map((x) => x.url), ['http://127.0.0.1:7421', 'https://mcp.example/cammut']);
+  assert.equal(JSON.stringify(st).includes('key=abc'), false, 'the panel never gets the query');
+  const out = await c.removeServer({ url: 'https://mcp.example/cammut' });
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.servers.map((x) => x.url), ['http://127.0.0.1:7421']);
 });

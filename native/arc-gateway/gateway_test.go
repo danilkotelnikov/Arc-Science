@@ -919,3 +919,47 @@ func TestSaveSettingsGivesEveryNewServerAnEmptyKeyEntry(t *testing.T) {
 		t.Fatalf("want duplicate refused, got %v", err)
 	}
 }
+
+// A hand-edited empty list makes LoadConfig use the default server. The console then posts that server back:
+// it is known, so it gets no empty key entry and the owner's AuthFile still reaches it.
+func TestSaveSettingsKeepsAuthFileForDefaultServerAfterEmptyList(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ARC_HOME", home)
+	writeGatewayJSON(t, home, `{"cammut":{"upstreams":[],"authFile":"~/x.json"}}`)
+	def := defaultConfig().Cammut.Upstreams[0]
+	if _, err := SaveSettings(map[string]any{"cammut": map[string]any{"upstreams": []any{def, "https://memory.example.org"}}}); err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	b, _ := os.ReadFile(filepath.Join(home, "gateway.json"))
+	_ = json.Unmarshal(b, &raw)
+	auth, _ := raw["cammut"].(map[string]any)["auth"].(map[string]any)
+	if _, has := auth[strings.TrimRight(def, "/")]; has {
+		t.Fatalf("the default server got a key entry, so the AuthFile no longer reaches it: %v", auth)
+	}
+	if v, has := auth["https://memory.example.org"]; !has || v != "" {
+		t.Fatalf("the new server must start with an empty key entry: %v", auth)
+	}
+}
+
+// A refused address is named in the error, without its user name, password or query.
+func TestBadCammutAddressIsNamedWithoutItsSecret(t *testing.T) {
+	t.Setenv("ARC_HOME", t.TempDir())
+	addr := "https://owner:hunter2" + "@mcp.example/cammut?key=abc123"
+	_, err := SaveSettings(map[string]any{"cammut": map[string]any{"upstreams": []any{"http://127.0.0.1:7421", addr}}})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "https://mcp.example/cammut") {
+		t.Errorf("the error does not name the address: %s", msg)
+	}
+	for _, secret := range []string{"hunter2", "owner", "abc123"} {
+		if strings.Contains(msg, secret) {
+			t.Errorf("the error holds %q: %s", secret, msg)
+		}
+	}
+	if got := plainAddr("http://127.0.0.1:7421/"); got != "http://127.0.0.1:7421" {
+		t.Errorf("plainAddr changed a plain address: %s", got)
+	}
+}

@@ -107,6 +107,8 @@ test('4. Tools tab: search, class badges, confirm for writes, typed name for del
   const base = render(mod, { tab: 'tools', tools: { list, run: null } }, t);
   const nodes = allNodes(base);
   assert.ok(nodes.some((n) => n.props?.['data-cammut-tool-query']));
+  const src = nodes.find((n) => n.props?.['data-cammut-tool-source']);
+  assert.deepEqual(allNodes(src).filter((n) => n.type === 'option').map((n) => n.props.value), ['cammut', 'builtin'], 'the runner can use the built-in store, so a note can be saved there');
   assert.equal(nodes.filter((n) => n.props?.['data-cammut-tool']).length, 3);
   assert.ok(nodes.some((n) => n.props?.['data-cammut-class'] === 'destructive'));
   const w = render(mod, { tab: 'tools', tools: { list, tool: 'hindsight/create_directive', run: { ok: false, needs: 'confirm', error: 'This changes memory. Confirm to run it.' } } }, t);

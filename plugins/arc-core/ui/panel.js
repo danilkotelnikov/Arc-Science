@@ -134,7 +134,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "cammut.parts.rollback": "Roll back",
     "cammut.hint.servers": "Arc Harness asks these Cammut servers in order and tries the next one only when a connection fails. A key is never typed here. Enter the key in the gateway settings page and write only its name below.",
     "cammut.hint.keyname": "A key name points to a key kept in the gateway credential file. A server without a key name receives no key at all, and never the owner key file.",
-    "cammut.hint.tools": "This runner calls the Hindsight tools of the connected Cammut server. Reading runs at once. Changing memory asks you to confirm. Deleting asks you to type the tool name.",
+    "cammut.hint.tools": "This runner calls the Hindsight tools of the Cammut server, or of the built-in store on this computer. Pick the source first. Reading runs at once. Adding or changing memory asks you to confirm. Every other tool counts as a delete and asks you to type the tool name. To save a note in the built-in store, pick it, search, and run retain.",
     "cammut.hint.observer": "The observer only reads. It cannot add, change or delete anything. A connection holds one memory bank, so there is one bank to browse.",
     "cammut.hint.parts": "A part is a piece of Arc Harness that can be replaced while the app runs. Reload loads the file on disk and tests it first. If the test fails, the old version keeps working. This tab itself needs a page reload.",
     "settings.title": "Console settings",
@@ -699,11 +699,16 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const run = st.run || null;
     const parse = () => { try { const v = JSON.parse(args || "{}"); return v && typeof v === "object" && !Array.isArray(v) ? v : null; } catch { return null; } };
     const parsed = parse();
-    const go = (confirm) => onAction && onAction({ kind: "tool-run", tool, arguments: parsed || {}, ...(confirm !== undefined ? { confirm } : {}) });
+    // The source is the Cammut server or the store on this computer. The built-in store lists its few tools without a word,
+    // and its retain tool is the way to save a note there.
+    const [source, setSource] = React.useState("cammut");
+    const go = (confirm) => onAction && onAction({ kind: "tool-run", tool, source, arguments: parsed || {}, ...(confirm !== undefined ? { confirm } : {}) });
     return h("div", { style: { display: "grid", gap: 10 } },
       h("form", { onSubmit: (e) => { e?.preventDefault?.(); }, style: camRow },
+        h("select", { "aria-label": t("cammut.observer.source"), "data-cammut-tool-source": "true", value: source, onChange: (e) => setSource(e.target.value), style: { ...camInput, width: "auto" } },
+          h("option", { value: "cammut" }, t("cammut.observer.cammut")), h("option", { value: "builtin" }, t("cammut.observer.builtin"))),
         h("input", { type: "text", "aria-label": t("cammut.tools.query"), "data-cammut-tool-query": "true", placeholder: t("cammut.tools.query"), value: query, onChange: (e) => setQuery(e.target.value), style: { ...camInput, flex: 1, minWidth: 160 } }),
-        h("button", { type: "submit", "data-cammut-tool-search": "true", disabled: !query.trim(), onClick: () => onAction && onAction({ kind: "tool-search", query: query.trim() }), style: camBtn(true) }, t("cammut.tools.search")),
+        h("button", { type: "submit", "data-cammut-tool-search": "true", disabled: source !== "builtin" && !query.trim(), onClick: () => onAction && onAction({ kind: "tool-search", source, query: query.trim() }), style: camBtn(true) }, t("cammut.tools.search")),
         h(CamHint, { label: "About the tool runner", text: t("cammut.hint.tools") })),
       h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 } },
         (st.list || []).map((x) => h("li", { key: x.tool, "data-cammut-tool": x.tool, style: { ...camRow, paddingTop: 6, borderTop: HAIRLINE } },

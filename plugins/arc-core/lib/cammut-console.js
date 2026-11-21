@@ -11,13 +11,14 @@ import { cammutCall, cammutMcp } from './console.js';
 import { redactSecrets } from './memory-policy.js';
 
 // ---- tool classes: default-deny ----
-// Only list_*, get_* and recall run freely. Everything else, also a name this code has never seen, needs a confirm.
+// Only list_*, get_* and recall run freely. A named additive verb (retain, reflect, create, update, refresh, set, add)
+// needs one confirm. Every other name, also one this code has never seen, counts as a delete and needs the typed tool name.
 export function classifyTool(tool) {
   if (typeof tool !== 'string' || !/^hindsight\/[a-z][a-z0-9_]*$/.test(tool)) return 'blocked';
   const name = tool.slice('hindsight/'.length);
   if (name === 'recall' || /^(list|get)_/.test(name)) return 'read';
-  if (/^(delete|clear|remove|purge|drop|wipe|reset)_/.test(name) || name.startsWith('forget')) return 'destructive';
-  return 'write';
+  if (name === 'retain' || name === 'reflect' || /^(create|update|refresh|set|add)_/.test(name)) return 'write';
+  return 'destructive';
 }
 
 // ---- addresses and key names ----
@@ -55,7 +56,18 @@ function shape(v, depth = 0) {
 const parseText = (text) => {
   try { return shape(JSON.parse(text)); } catch { return { text: redactSecrets(String(text)).clean.slice(0, 4000) }; }
 };
-const sameServer = (a, b) => (normalizeServerUrl(a).url ?? String(a).replace(/\/+$/, '')) === b;
+// The address without user name, password, query and fragment. An older build could save an address with a secret in it:
+// the panel never shows that part, and the server can still be found and removed.
+export function plainServerUrl(raw) {
+  const text = String(raw ?? '').trim();
+  try {
+    const u = new URL(text);
+    return `${u.protocol}//${u.host}${u.pathname}`.replace(/\/+$/, '');
+  } catch {
+    return text.replace(/[?#].*$/, '').replace(/\/\/[^/@]*@/, '//').replace(/\/+$/, '');
+  }
+}
+const sameServer = (a, b) => plainServerUrl(a) === b;
 const line = (s, n = 90) => String(redactSecrets(String(s ?? '')).clean).replace(/\s+/g, ' ').slice(0, n);
 const num = (v, lo, hi, dflt) => (Number.isInteger(v) ? Math.min(hi, Math.max(lo, v)) : dflt);
 
@@ -117,7 +129,7 @@ export function createCammutConsole(opts = {}) {
       const ref = own ? String(cfg.auth[key] || '') : '';
       const err = seen[url] ?? seen[key];
       return {
-        url,
+        url: plainServerUrl(url),
         status: err === undefined ? 'Not tried yet' : err === '' ? 'Reachable' : line(err),
         ownKey: own,
         keyRef: ref ? `cred://${ref}` : '',
@@ -188,7 +200,14 @@ export function createCammutConsole(opts = {}) {
   };
 
   // ---- tools ----
-  async function searchTools({ query } = {}) {
+  async function searchTools({ query, source } = {}) {
+    if (source === 'builtin') {
+      // the store on this computer: its own short tool list, no network call; an empty word lists all of them
+      const word = String(query ?? '').trim().toLowerCase().slice(0, 100);
+      const tools = (embedded ? embedded.tools : []).filter((x) => !word || x.includes(word))
+        .map((tool) => ({ tool, class: classifyTool(tool), description: 'Built-in store on this computer' }));
+      return { ok: true, tools };
+    }
     const q = String(query ?? '').trim().slice(0, 100);
     if (!q) return { ok: false, error: 'Type a word to search the tools.' };
     const r = await cammutMcp(gatewayHost, 'cammut_search', { query: q }, { fetchImpl, timeoutMs: 6000 });
@@ -207,7 +226,7 @@ export function createCammutConsole(opts = {}) {
     return { ok: true, class: classifyTool(tool), data: parseText(r.text) };
   }
 
-  async function runTool({ tool, arguments: args = {}, confirm } = {}) {
+  async function runTool({ tool, arguments: args = {}, confirm, source } = {}) {
     const cls = classifyTool(tool);
     if (cls === 'blocked') return { ok: false, error: 'Only Hindsight tools can run here.' };
     if (!args || typeof args !== 'object' || Array.isArray(args)) return { ok: false, error: 'The arguments must be an object.' };
@@ -216,6 +235,12 @@ export function createCammutConsole(opts = {}) {
     if (redactSecrets(body).redacted) return { ok: false, error: 'The arguments hold what looks like a secret. Nothing was sent.' };
     if (cls === 'write' && confirm !== true) return { ok: false, class: cls, needs: 'confirm', error: 'This changes memory. Confirm to run it.' };
     if (cls === 'destructive' && confirm !== tool) return { ok: false, class: cls, needs: 'confirm-tool', error: 'This deletes data for good. Type the tool name to run it.' };
+    if (source === 'builtin') {
+      // the same confirm gates as above, then the store on this computer; no network call
+      if (!embedded || !embedded.tools.includes(tool)) return { ok: false, class: cls, error: 'The built-in store does not have this tool.' };
+      const b = await embedded.callTool(tool, args);
+      return b.ok ? { ok: true, class: cls, source, data: shape(b.data) } : { ok: false, class: cls, error: line(b.error) };
+    }
     const r = await cammutCall(gatewayHost, tool, args, { fetchImpl, timeoutMs: cls === 'read' ? 8000 : 30000 });
     if (!r.ok || r.toolError || !r.parsed) return { ok: false, class: cls, error: line(r.error || 'The call failed.') };
     return { ok: true, class: cls, data: parseText(r.text) };
