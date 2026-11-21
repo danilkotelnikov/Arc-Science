@@ -1140,9 +1140,20 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
       const run = updater.install({ version });
       if (payload.wait === true) { const r = await run; return { ...r, state: updater.getState() }; }
       run.catch(() => {}); // progress comes through update/state
+      // An install that the updater refuses at once (another process holds the lock) has ended before the next turn of the
+      // event loop. Its refusal is the answer then; a real install is still at its first read and answers "started".
+      const early = await Promise.race([run.catch(() => null), new Promise((resolve) => setImmediate(() => resolve(null)))]);
+      if (early && early.ok === false) return { ok: false, error: String(early.error || 'The update did not start.'), state: updater.getState() };
       return { ok: true, started: true, state: updater.getState() };
     }
-    if (payload.kind === 'rollback') { const r = await updater.rollback(); return { ...r, state: updater.getState() }; }
+    if (payload.kind === 'rollback') {
+      // a caller that names the version it asked the user about rolls back only to that version
+      if ('version' in payload && (typeof payload.version !== 'string' || !payload.version || payload.version !== updater.getState().backupVersion)) {
+        return { ok: false, error: 'The kept version changed. Look at the page again.', state: updater.getState() };
+      }
+      const r = await updater.rollback();
+      return { ...r, state: updater.getState() };
+    }
     return { ok: false, error: `Unknown update action: ${String(payload.kind || '')}` };
   }
   if (clean === 'api/arc-core/console/action') {

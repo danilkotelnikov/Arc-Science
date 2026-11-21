@@ -936,3 +936,44 @@ test('repair 6: while the older journal cannot be deleted, Roll back keeps its o
   allAt(e, '0.7.0');
   assert.equal(v.getState().hasBackup, false, 'the second Roll back only finished the clean-up');
 });
+
+test('console route: an install that the updater refuses at once is answered as a refusal; a real install still answers started', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.7.0'));
+  const store = createResearchSessionStore();
+  const call = (body) => serveConsoleRoute(post('api/arc-core/update/action', body), {}, store, { updater: e.u });
+  await e.u.check();
+  // a lock that another process left a moment ago (an update that was cut short, or the second window of the app)
+  const lockFile = path.join(e.home, 'updates', 'lock');
+  fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: 1, at: Date.now(), token: 'another-process' }));
+  const refused = await call({ kind: 'install' });
+  assert.equal(refused.ok, false, 'the refusal is not answered as a start');
+  assert.match(refused.error, /already running/);
+  assert.equal(refused.started, undefined);
+  assert.equal(refused.state.busy, false);
+  assert.equal(marker(e), "export const marker = 'arc-core-0.6.0';\n");
+  fs.rmSync(lockFile);
+  const started = await call({ kind: 'install' });
+  assert.deepEqual({ ok: started.ok, started: started.started }, { ok: true, started: true }, 'a real install still answers at once');
+  for (let i = 0; i < 400 && e.u.getState().phase !== 'done'; i++) await new Promise((r) => setTimeout(r, 25));
+  assert.equal(e.u.getState().installed, '0.7.0');
+});
+
+test('console route: Roll back with a version acts only when that version is still the kept one', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.7.0'));
+  assert.equal((await e.u.install()).ok, true);
+  assert.equal(e.u.getState().backupVersion, '0.6.0');
+  const store = createResearchSessionStore();
+  const call = (body) => serveConsoleRoute(post('api/arc-core/update/action', body), {}, store, { updater: e.u });
+  const stale = await call({ kind: 'rollback', version: '0.5.0' });
+  assert.equal(stale.ok, false);
+  assert.match(stale.error, /kept version/);
+  assert.equal(e.u.getState().installed, '0.7.0', 'nothing was rolled back');
+  for (const odd of [7, { v: 1 }, '']) assert.equal((await call({ kind: 'rollback', version: odd })).ok, false, 'a version that is no text of a version is refused');
+  assert.equal(e.u.getState().installed, '0.7.0');
+  const good = await call({ kind: 'rollback', version: '0.6.0' });
+  assert.equal(good.ok, true, good.error);
+  assert.equal(e.u.getState().installed, '0.6.0');
+});

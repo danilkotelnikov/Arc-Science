@@ -690,7 +690,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     }
     const u = info, act = (a) => { if (onAction) onAction(a); };
     const ver = (v) => oneLine(v, 20); // a version comes from a release or a local file: it is cut like any outside text
-    const about = (label, text) => h(InfoHint, { label, text, align: "end", glyph: h(Ic, { n: "info" }) });
+    // a hint at the end of a row opens back into the page; one at the start of a line (side "start") opens toward it
+    const about = (label, text, side = "end") => h(InfoHint, { label, text, align: side, glyph: h(Ic, { n: "info" }) });
     const steps = UPDATE_PHASES.length - 1, stepAt = UPDATE_PHASES.indexOf(u.phase); // the last phase, done, is no step
     const running = Boolean(u.busy) && stepAt >= 0 && stepAt < steps;
     const busy = Boolean(u.busy || pending);
@@ -716,6 +717,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       : u.available && u.installable ? need("warn", "upd.s.needs")
       : u.available ? h(KStatus, { text: t("upd.s.nokit") })
       : h(KStatus, { text: t("upd.s.current"), dot: "on" });
+    const cutNotes = (text) => {
+      if (text.length < 1200) return text; // the updater cuts the notes of a release at 1200 characters
+      const head = text.slice(0, 1199);
+      return (/[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head) + "\u2026";
+    };
     const left = (Array.isArray(u.skippedBinaries) ? u.skippedBinaries : []).filter((x) => typeof x === "string").slice(0, 4).map((x) => oneLine(x, 40));
     const skips = u.mode === "auto" && u.available && u.skipped && u.skipped.version === u.latest;
     // after a question closes, the focus goes back to its control. After a confirmed roll back that button is off,
@@ -730,11 +736,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     return frame(
       title(h(KBtn, { look: "outline", icon: "update", label: t("updates.check"), disabled: busy, onClick: () => act({ kind: "check" }) })),
       trouble ? h("p", { role: "alert", className: "ak-alert" }, oneLine(trouble)) : null,
-      trouble.length > 90 ? about(t("upd.detail"), oneLine(trouble, 600)) : null,
+      trouble.length > 90 ? about(t("upd.detail"), oneLine(trouble, 600), "start") : null,
       h("div", { className: "ak-rows" },
         h(KRow, {
           kind: "parts", id: "parts", name: t("upd.parts"), sub: versions,
-          tail: h(React.Fragment, null, about(t("settings.about"), t("updates.hint.scope")), left.length ? about(t("upd.left.label"), t("upd.left", { names: left.join(", ") })) : null),
+          tail: h(React.Fragment, null, about(t("settings.about"), t("updates.hint.scope"), "start"), left.length ? about(t("upd.left.label"), t("upd.left", { names: left.join(", ") }), "start") : null),
           end: h(React.Fragment, null, mark, canInstall ? h(KBtn, { look: "outline", small: true, icon: "download", label: t("updates.install"), onClick: () => act({ kind: "install" }) }) : null),
         }),
         u.hasBackup ? h(KRow, {
@@ -745,9 +751,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         u.notes && u.latest ? h("div", { className: "ak-row", "data-row": "notes" },
           h("div", { className: "text" },
             h("button", { type: "button", className: "ak-btn sm ak-fold", "aria-expanded": open, onClick: () => setOpen(!open) }, h(Ic, { n: open ? "down" : "back" }), t("upd.notes", { v: ver(u.latest) })),
-            open ? h("div", { className: "ak-notes" }, String(u.notes).slice(0, 1200)) : null)) : null,
+            open ? h("div", { className: "ak-notes" }, cutNotes(String(u.notes))) : null)) : null,
         h(KRow, {
-          kind: "mode", id: "mode", name: t("upd.mode"), tail: about(t("settings.about"), t("upd.mode.hint")), sub: skips ? t("upd.skip", { v: ver(u.latest) }) : "",
+          kind: "mode", id: "mode", name: t("upd.mode"), tail: about(t("settings.about"), t("upd.mode.hint"), "start"), sub: skips ? t("upd.skip", { v: ver(u.latest) }) : "",
           end: h(Pick, {
             label: t("upd.mode"), value: u.mode, options: UPDATE_MODES.map((m) => [m, t(`upd.mode.${m}`)]),
             // automatic install changes the app without a further question, so this choice asks once
@@ -756,7 +762,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         })),
       asking === "rollback" && u.hasBackup && !u.busy ? h(Confirm, {
         t, title: kept ? t("upd.back.title", { v: kept }) : t("upd.back.title.any"), text: kept ? t("upd.back.conseq", { v: kept }) : t("upd.back.conseq.any"), action: t("updates.rollback"),
-        onClose: close, onConfirm: () => { act({ kind: "rollback" }); close(true); },
+        onClose: close, onConfirm: () => { act(u.backupVersion ? { kind: "rollback", version: String(u.backupVersion) } : { kind: "rollback" }); close(true); },
       }) : null,
       asking === "auto" ? h(Confirm, {
         t, title: t("upd.auto.title"), text: t("upd.auto.conseq"), action: t("upd.auto.go"),
@@ -856,8 +862,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       setActionError(null); setPending(true);
       let refused = "";
       try { const j = await post("api/arc-core/update/action", payload); if (!j || j.ok === false) refused = (j && j.error) || "The action failed."; } catch { refused = "The action failed."; }
+      const now = await load(); // the buttons stay held until the page has the state that follows the action
       setPending(false);
-      const now = await load();
       if (refused && (!now || stampOf(now) === before)) setActionError({ text: refused, stamp: before });
     };
     const refusal = actionError && actionError.stamp === stampOf(info) ? actionError.text : "";

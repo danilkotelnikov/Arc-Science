@@ -528,7 +528,7 @@ test('Updates: after an update the page asks for a restart and keeps the earlier
   assert.equal(sent.length, 0, 'nothing was rolled back so far');
   ask();
   button(dialogOf(view.render()), 'Roll back').props.onClick();
-  same(sent, [{ kind: 'rollback' }]);
+  same(sent, [{ kind: 'rollback', version: '0.6.0' }], 'the action names the version the question named');
   assert.equal(dialogOf(view.render()), null);
 });
 
@@ -777,7 +777,13 @@ test('Updates: after a question closes, the focus goes to a control that can tak
 test('Updates: release notes are a wrapped text of limited height, so a long line cannot stretch the page', () => {
   assert.match(mod.kit.CSS, /\.ak-notes\{[^}]*max-height:240px;overflow:auto[^}]*white-space:pre-wrap;overflow-wrap:anywhere/);
   const tree = upage({ installed: '0.6.0', latest: '0.6.1', available: true, installable: true, notes: 'x'.repeat(5000), phase: 'idle', mode: 'notify', skippedBinaries: [] }, { open: true });
-  assert.equal(all(tree, (n) => has(n, 'ak-notes'))[0].children[0].length, 1200);
+  const cut = all(tree, (n) => has(n, 'ak-notes'))[0].children[0];
+  assert.equal(cut.length, 1200);
+  assert.ok(cut.endsWith('\u2026'), 'a cut text says so');
+  const pair = upage({ installed: '0.6.0', latest: '0.6.1', notes: 'x'.repeat(1198) + '\u{1F600}' + 'y', phase: 'idle', mode: 'notify' }, { open: true });
+  assert.ok(!/[\uD800-\uDBFF]\u2026$/.test(all(pair, (n) => has(n, 'ak-notes'))[0].children[0]), 'the cut does not split a character');
+  const short = upage({ installed: '0.6.0', latest: '0.6.1', notes: 'Short notes.', phase: 'idle', mode: 'notify' }, { open: true });
+  assert.deepEqual(all(short, (n) => has(n, 'ak-notes'))[0].children, ['Short notes.']);
 });
 
 test('Updates: a Roll back question whose kept version is gone closes by itself', async () => {
@@ -786,4 +792,46 @@ test('Updates: a Roll back question whose kept version is gone closes by itself'
   const view = mount((m) => m.kit.UpdatesPage, { info: ready, t, asking: 'rollback' });
   assert.equal(dialogOf(view.render()), null);
   assert.equal(view.states[0], null, 'the question is closed, so it cannot come back with a later kept version');
+});
+
+test('Updates: a hint at the start of a line opens toward the page, and a hint at the end of a row opens back into it', async () => {
+  const ready = await realState({ releases: [rel('0.6.1')] });
+  const info = derive(ready, { phase: 'failed', failed: true, message: 'm'.repeat(200), restartNeeded: false, hasBackup: true, backupVersion: '0.6.0', skippedBinaries: ['arc-validators.exe'] });
+  const side = (label, pick = 0) => {
+    const view = mount((m) => m.kit.UpdatesPage, { info, t });
+    all(view.render(), (n) => n.type === 'button' && n.props['aria-label'] === label)[pick].props.onClick();
+    const note = all(view.render(), (n) => n.props?.role === 'note')[0];
+    return 'left' in note.props.style ? 'left' : 'right';
+  };
+  assert.equal(side('The whole message'), 'left', 'the hint under the title starts at the page edge, so its note goes right');
+  assert.equal(side('Programs that were not replaced'), 'left');
+  assert.equal(side('About this page', 0), 'left', 'the hint beside the name of the parts');
+  assert.equal(side('About this page', 1), 'right', 'the hint beside Roll back, at the end of its row');
+});
+
+test('Updates: the buttons stay held until the page has the state that follows an action', async () => {
+  const state = { ok: true, ...(await realState({ releases: [rel('0.6.1')] })) };
+  const seen = [];
+  let acted = false, view = null;
+  const fetch = async (url) => {
+    if (String(url).endsWith('/action')) acted = true;
+    else if (acted) seen.push(view.states[3]); // slot 3 of the shared hook is its waiting mark
+    return { ok: true, json: async () => (String(url).endsWith('/state') ? state : { ok: true }) };
+  };
+  const tick = () => new Promise((r) => setImmediate(r));
+  let entry = null;
+  view = mount((m) => {
+    if (!entry) {
+      const sections = [];
+      const slots = { inject: (name, fn) => { fn(); return () => {}; }, register: (opts, comp) => { if (opts.name === 'settings.section') sections.push({ ...opts, comp }); return () => {}; } };
+      m.apply({ effect: () => {}, locale: { register: () => {}, bind: () => t }, slots, inject: () => {} });
+      entry = sections.find((s) => s.id === 'updates');
+    }
+    return entry.comp;
+  }, {}, { globals: { fetch, setInterval: () => 0, clearInterval: () => {} }, seed: { 0: state } });
+  button(view.render(), 'Check now').props.onClick();
+  await tick(); await tick(); await tick();
+  assert.ok(seen.length >= 1, 'the state was read again after the action');
+  assert.equal(seen[0], true, 'the waiting mark is still set while the fresh state is on its way');
+  assert.equal(view.states[3], false, 'and it is cleared afterwards');
 });
