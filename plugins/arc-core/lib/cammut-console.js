@@ -68,7 +68,10 @@ export function plainServerUrl(raw) {
   }
 }
 const sameServer = (a, b) => plainServerUrl(a) === b;
-const line = (s, n = 90) => String(redactSecrets(String(s ?? '')).clean).replace(/\s+/g, ' ').slice(0, n);
+// One line of text for the panel. An address inside it (a gateway error names the server it called) loses its user name
+// and query first, because a key in a query is not a pattern that redactSecrets knows.
+const scrubAddrs = (s) => String(s ?? '').replace(/https?:\/\/[^\s"'<>]+/g, (m) => plainServerUrl(m));
+const line = (s, n = 90) => String(redactSecrets(scrubAddrs(s)).clean).replace(/\s+/g, ' ').slice(0, n);
 const num = (v, lo, hi, dflt) => (Number.isInteger(v) ? Math.min(hi, Math.max(lo, v)) : dflt);
 
 // ---- observer views: each one maps to one read tool ----

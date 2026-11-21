@@ -88,15 +88,19 @@ export function createMemoryPolicyStore(opts = {}) {
       persistBlocked = true;
     }
   }
+  // Returns false when the store has a file and the file was not written: the caller can then say so.
+  // A store without a file lives in memory by design, so there is nothing to miss and the answer is true.
   function save() {
-    if (!persistFile || persistBlocked) return;
+    if (!persistFile) return true;
+    if (persistBlocked) return false;
     try {
       fs.mkdirSync(path.dirname(persistFile), { recursive: true });
       const tmp = `${persistFile}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify({ version: 1, notes, rules: [...rules.values()] }), { mode: 0o600 });
       fs.renameSync(tmp, persistFile);
+      return true;
     } catch {
-      // a failed save must not lose the note in memory
+      return false; // a failed save must not lose the note in memory
     }
   }
   const dedupeThreshold = typeof opts.dedupeThreshold === 'number' ? opts.dedupeThreshold : 0.75;
@@ -156,9 +160,9 @@ export function createMemoryPolicyStore(opts = {}) {
     if (labels.type === 'rule') {
       rules.set(entry.id, { id: entry.id, text: entry.text, enabled: input.enabled !== false });
     }
-    save();
+    const saved = save();
 
-    return { ok: true, id: entry.id, note: structuredClone(entry), supersededId };
+    return { ok: true, id: entry.id, note: structuredClone(entry), supersededId, saved };
   }
 
   function recallNotes({ query = '', includeInactive = false, type = '' } = {}) {
@@ -247,7 +251,10 @@ export function createEmbeddedMemoryServer(store) {
   async function callTool(tool, args = {}) {
     if (tool === 'hindsight/retain') {
       const r = store.retainNote({ text: String(args.content || ''), tags: Array.isArray(args.tags) ? args.tags.map(String).slice(0, 20) : [] });
-      return r.ok ? { ok: true, data: { id: r.id, supersededId: r.supersededId } } : { ok: false, error: r.error };
+      if (!r.ok) return { ok: false, error: r.error };
+      // the note is in memory, but the notes file was not written: say so, never report a plain success
+      if (r.saved === false) return { ok: false, error: 'The notes file could not be written. The note stays only until the app closes.' };
+      return { ok: true, data: { id: r.id, supersededId: r.supersededId } };
     }
     if (tool === 'hindsight/recall') {
       if (typeof args.query !== 'string' || !args.query.trim()) return { ok: false, error: 'A query is required' };

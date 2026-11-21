@@ -463,3 +463,32 @@ test('29. An address saved with a user name or a query is shown without them and
   assert.equal(out.ok, true);
   assert.deepEqual(out.servers.map((x) => x.url), ['http://127.0.0.1:7421']);
 });
+
+test('30. A gateway error that names a server address reaches the panel without the query or the user name', async () => {
+  const addr = 'https://mcp.example/cammut?key=abc';
+  const gw = fakeGateway({ upstreams: [addr] });
+  const fetch = async (url, init) => (new URL(url).pathname === '/health'
+    ? json({ status: 'ok', version: '0.9', cammutUpstreams: { [addr]: `Post "${addr}": dial tcp: connection refused` } })
+    : gw.fetch(url, init));
+  const c = createCammutConsole({ fetch, gatewayHost: '127.0.0.1:7424', readToken: () => TOKEN });
+  const st = await c.state();
+  assert.ok(st.servers[0].status.includes('mcp.example/cammut'), 'the status still names the server');
+  assert.equal(JSON.stringify(st).includes('key=abc'), false, 'the query never reaches the panel');
+});
+
+test('31. The built-in retain says when the notes file was not written', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-mem-'));
+  try {
+    const broken = path.join(dir, 'notes.json');
+    fs.writeFileSync(broken, '{ not json');
+    const srv = createEmbeddedMemoryServer(createMemoryPolicyStore({ persistFile: broken }));
+    const r = await srv.callTool('hindsight/retain', { content: 'A note that cannot reach the file' });
+    assert.equal(r.ok, false, 'a note that did not reach the file is not a plain success');
+    assert.ok(r.error.includes('could not be written'));
+    assert.equal(createMemoryPolicyStore({}).retainNote({ text: 'A store without a file lives in memory by design' }).saved, true);
+    const good = createEmbeddedMemoryServer(createMemoryPolicyStore({ persistFile: path.join(dir, 'ok.json') }));
+    assert.equal((await good.callTool('hindsight/retain', { content: 'A note that reaches the file' })).ok, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

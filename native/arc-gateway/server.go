@@ -212,7 +212,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, cfg Config) {
 	ups := map[string]string{}
-	s.cammutUp.Range(func(k, v any) bool { ups[k.(string)] = v.(string); return true })
+	// this answer needs no token, so an address or an error text never carries a user name or a query
+	s.cammutUp.Range(func(k, v any) bool { ups[plainAddr(k.(string))] = scrubAddrs(v.(string)); return true })
 	routes := []string{}
 	for _, rt := range cfg.Routes {
 		routes = append(routes, rt.Prefix)
@@ -1161,14 +1162,18 @@ func (s *Server) tuneRequest(p map[string]any, cfg Config, rt *Route) bool {
 
 // cammutSummary lists the servers for the settings reader: addresses, key names and whether each key has a value, never the value.
 func cammutSummary(cfg Config, refs map[string]string) map[string]any {
+	// GET /api/config needs no token. An address saved by an older build can hold a user name or a query, so the
+	// answer lists the plain form. The stored value stays as it is until the next save, which stores the plain form.
 	present := map[string]bool{}
 	auth := map[string]string{}
+	ups := make([]string, 0, len(cfg.Cammut.Upstreams))
 	for _, u := range cfg.Cammut.Upstreams {
+		ups = append(ups, plainAddr(u))
 		k := strings.TrimRight(u, "/")
 		if ref, ok := cfg.Cammut.Auth[k]; ok {
-			auth[k] = ref
-			present[k] = ref != "" && refs[ref] != ""
+			auth[plainAddr(k)] = ref
+			present[plainAddr(k)] = ref != "" && refs[ref] != ""
 		}
 	}
-	return map[string]any{"upstreams": cfg.Cammut.Upstreams, "auth": auth, "keyPresent": present, "authFile": cfg.Cammut.AuthFile != ""}
+	return map[string]any{"upstreams": ups, "auth": auth, "keyPresent": present, "authFile": cfg.Cammut.AuthFile != ""}
 }

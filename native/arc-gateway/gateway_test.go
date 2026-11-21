@@ -963,3 +963,48 @@ func TestBadCammutAddressIsNamedWithoutItsSecret(t *testing.T) {
 		t.Errorf("plainAddr changed a plain address: %s", got)
 	}
 }
+
+// A stored address with capital letters in the host is the same server as its normalized form:
+// it stays known, gets no empty key entry and keeps the owner's AuthFile.
+func TestStoredUppercaseHostStaysKnown(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ARC_HOME", home)
+	writeGatewayJSON(t, home, `{"cammut":{"upstreams":["https://VPS.example.org"],"authFile":"~/a.json"}}`)
+	if _, err := SaveSettings(map[string]any{"cammut": map[string]any{"upstreams": []any{"https://VPS.example.org", "https://new.example.org"}}}); err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	b, _ := os.ReadFile(filepath.Join(home, "gateway.json"))
+	_ = json.Unmarshal(b, &raw)
+	auth, _ := raw["cammut"].(map[string]any)["auth"].(map[string]any)
+	if _, has := auth["https://vps.example.org"]; has {
+		t.Fatalf("the stored server got a key entry and lost the AuthFile: %v", auth)
+	}
+	if v, has := auth["https://new.example.org"]; !has || v != "" {
+		t.Fatalf("the new server must start with an empty key entry: %v", auth)
+	}
+}
+
+// The answers that need no token (GET /api/config, /health) and every address error hold no user name, password or query.
+func TestAnswersWithoutTokenHoldNoAddressSecret(t *testing.T) {
+	secret := "https://owner:hunter2" + "@mcp.example/cammut?key=abc123"
+	cfg := defaultConfig()
+	cfg.Cammut.Upstreams = []string{secret}
+	sum, _ := json.Marshal(cammutSummary(cfg, map[string]string{}))
+	_, ftpErr := normUpstream("ftp://owner:hunter2" + "@mcp.example")
+	texts := map[string]string{
+		"config summary": string(sum),
+		"health error":   scrubAddrs(`Post "` + secret + `": dial tcp: connection refused`),
+		"scheme error":   ftpErr.Error(),
+	}
+	for name, text := range texts {
+		for _, s := range []string{"hunter2", "owner", "abc123"} {
+			if strings.Contains(text, s) {
+				t.Errorf("%s holds %q: %s", name, s, text)
+			}
+		}
+		if !strings.Contains(text, "mcp.example") {
+			t.Errorf("%s does not name the server: %s", name, text)
+		}
+	}
+}

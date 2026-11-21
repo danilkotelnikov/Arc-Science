@@ -203,7 +203,7 @@ var keyRefName = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
 func normUpstream(s string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(s))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
-		return "", fmt.Errorf("a Cammut address must be http or https with a host: %q", s)
+		return "", fmt.Errorf("a Cammut address must be http or https with a host: %q", plainAddr(s))
 	}
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Contains(s, "?") || strings.Contains(s, "#") {
 		return "", fmt.Errorf("a Cammut address holds no user name, password, query or fragment: %q. Remove this server and add it again without them", plainAddr(s))
@@ -229,6 +229,22 @@ func plainAddr(s string) string {
 		}
 	}
 	return strings.TrimRight(s, "/")
+}
+
+var addrInText = regexp.MustCompile(`https?://[^\s"'<>]+`)
+
+// scrubAddrs replaces every http address inside a text (an error from a failed call, for example) by its plain form.
+func scrubAddrs(text string) string {
+	return addrInText.ReplaceAllStringFunc(text, plainAddr)
+}
+
+// knownAddr is the form in which a stored address is compared with a normalized one: plain, with a lower-case host.
+// A stored address that normUpstream would refuse (an older build could save one) still gets a stable form.
+func knownAddr(s string) string {
+	if n, err := normUpstream(plainAddr(s)); err == nil {
+		return n
+	}
+	return strings.TrimRight(strings.TrimSpace(s), "/")
 }
 
 func isLoopbackHost(h string) bool {
@@ -270,7 +286,7 @@ func mergeCammutPatch(raw map[string]any, v any) error {
 	if old, ok := cm["upstreams"].([]any); ok {
 		for _, o := range old {
 			if str, _ := o.(string); str != "" {
-				known[strings.TrimRight(str, "/")] = true
+				known[knownAddr(str)] = true // the posted list is normalized, so a stored "https://VPS.example.org" must match it
 			}
 		}
 	}
@@ -278,14 +294,14 @@ func mergeCammutPatch(raw map[string]any, v any) error {
 	// the default server keeps the owner's AuthFile when the console posts it back.
 	if len(known) == 0 {
 		for _, d := range defaultConfig().Cammut.Upstreams {
-			known[strings.TrimRight(d, "/")] = true
+			known[knownAddr(d)] = true
 		}
 	}
 	auth := map[string]any{}
 	src := obj(cm["auth"])
 	oldAuth := map[string]any{}
 	for k, val := range src {
-		oldAuth[k] = val
+		oldAuth[knownAddr(k)] = val
 	}
 	if a, has := p["auth"]; has {
 		src = obj(a)
