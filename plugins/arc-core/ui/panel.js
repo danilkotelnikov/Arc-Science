@@ -174,10 +174,35 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "settings.memory.recall": "Memory recall",
     "settings.memory.labels": "Policy labels",
     "settings.memory.hint": "Arc Harness reaches shared memory through the local gateway on this computer. Recall adds matching notes to a request. The gateway settings file holds this switch.",
-    "settings.connectors.hint": "Servers are the local programs that Arc Harness talks to. Apps are tool packs. An app works only inside the access that you grant, for one action or for 30 days.",
+    "settings.connectors.hint": "Servers are the local programs that Arc Harness talks to. The Access page lists the apps and what each may use.",
     "settings.keys.hint": "Arc Harness shows where each key is kept and never its value. Keys stay in files on this computer and in the system key store. No key is typed on this page.",
     "settings.addons.hint": "Add-ons are the Arc plugins installed on this computer. The list is for reference. The installer and the updater change it.",
     "settings.about": "About this page",
+    "settings.nav.access": "Access",
+    "access.sub": "What each app may use, which keys exist, and what was called.",
+    "access.views": "Parts of the Access page",
+    "access.tab.apps": "Apps",
+    "access.tab.keys": "Keys",
+    "access.tab.activity": "Activity",
+    "access.until": "Until {date}",
+    "access.none": "No access",
+    "access.end": "End access",
+    "access.end.title": "End access for {app}?",
+    "access.end.conseq": "Then {app} can no longer use your tools or memory. It can ask again.",
+    "access.end.label": "End access for {app}",
+    "access.key.ask.label": "Set {key} in a session",
+    "access.cancel": "Cancel",
+    "access.close": "Close",
+    "access.key.used": "Used by {name}",
+    "access.key.set": "Set",
+    "access.key.unset": "Not set",
+    "access.key.ask": "Set in a session",
+    "access.key.hint": "A key never shows here. This page lists only its name and whether it is set.",
+    "access.key.task": "Set the key {key} for {name}. Tell me where the key goes, and never print its value.",
+    "access.empty.apps": "No app has asked for access yet.",
+    "access.empty.keys": "No key is listed yet.",
+    "access.empty.activity": "Nothing was recorded yet.",
+    "access.loading": "Loading…",
   };
 
   const TEXT_FONT = "var(--arc-font-family-text-default, \"Geist\", system-ui, sans-serif)";
@@ -290,7 +315,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
 
   // helper text lives here (R005). Escape, or focus that leaves the hint, closes it. A click inside the note keeps it open.
   // align "row" or "row-end" hangs the note under the nearest positioned row (at its start or end), so it stays inside a narrow pane wherever the button wraps.
-  function InfoHint({ label, text, align = "start" }) {
+  function InfoHint({ label, text, align = "start", glyph = "?" }) {
     const [open, setOpen] = React.useState(false);
     const noteId = `arc-hint-${Array.from(String(text)).reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 1000003, 7)}`;
     return h("span", {
@@ -308,7 +333,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         type: "button", "aria-label": label, "aria-expanded": open, "aria-describedby": open ? noteId : undefined, "data-hint": "true",
         onClick: () => setOpen(!open),
         style: { ...iconBtnStyle(false), minWidth: 24, minHeight: 24, borderRadius: "50%", fontSize: 12, lineHeight: 1 },
-      }, "?"),
+      }, glyph),
       open ? h("span", { role: "note", id: noteId, tabIndex: -1, style: { position: "absolute", top: "calc(100% + 4px)", [align.endsWith("end") ? "right" : "left"]: 0, zIndex: 5, width: "min(260px, 70vw)", padding: "8px 10px", fontSize: 12, lineHeight: 1.45, fontWeight: 400, background: "var(--dsw-alias-bg-layer-1, Canvas)", color: INK, border: HAIRLINE, borderRadius: RADIUS, boxShadow: "0 2px 10px color-mix(in srgb, currentColor 18%, transparent)" } }, text) : null);
   }
 
@@ -355,6 +380,158 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       if (ins) setFb(t("chat.ready")); else if (cp) cp.then((ok) => setFb(ok ? t("chat.copied") : t("chat.failed"))); else setFb(t("chat.failed"));
     }
     return ins;
+  }
+
+  // ---- kit (S053, console rewrite): the parts of the approved prototype, in the sizes of the host app.
+  // Own line icons on a 16 px grid. Colours come from the host theme, so each theme keeps its own look: no fixed colour,
+  // and a state that needs attention shows as a ring, the way StatusDot does.
+  const ICONS = Object.assign({ gear: '<circle cx="8" cy="8" r="2"/><path d="M8 1.6l1.1 1.5 1.8-.4.6 1.8 1.8.6-.4 1.8L14.4 8l-1.5 1.1.4 1.8-1.8.6-.6 1.8-1.8-.4L8 14.4l-1.1-1.5-1.8.4-.6-1.8-1.8-.6.4-1.8L1.6 8l1.5-1.1-.4-1.8 1.8-.6.6-1.8 1.8.4z"/>', data: '<ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>', down: '<path d="M4.5 6.25 8 9.75l3.5-3.5"/>', check: '<path d="M3.5 8.5 6.5 11.5 12.5 4.5"/>', plus: '<path d="M8 3v10M3 8h10"/>', more: '<circle cx="3.5" cy="8" r=".6"/><circle cx="8" cy="8" r=".6"/><circle cx="12.5" cy="8" r=".6"/>', warn: '<path d="M8 2.2 14.3 13H1.7z"/><path d="M8 6.5v3M8 11.3v.2"/>', close: '<path d="M4 4l8 8M12 4l-8 8"/>', ask: '<path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M8 5.5v3M6.5 7h3"/>', back: '<path d="M9.75 4.5 6.25 8l3.5 3.5"/>', info: '<circle cx="8" cy="8" r="6"/><path d="M8 7.2v3.6M8 5.2v.2"/>', out: '<path d="M6 4h6v6M12 4 4.5 11.5"/>', console: '<rect x="2" y="3" width="12" height="10" rx="2"/><path d="M5 7l2 1.5L5 10M8.5 10h2.5"/>', trace: '<circle cx="4" cy="4" r="1.5"/><circle cx="12" cy="8" r="1.5"/><circle cx="4" cy="12" r="1.5"/><path d="M5.5 4H9a1.5 1.5 0 0 1 1.5 1.5v1M5.5 12H9a1.5 1.5 0 0 0 1.5-1.5v-1"/>', figure: '<rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M4.5 10.5 7 7.5l2 2 2.5-3.5"/>' }, { link: '<path d="M6.6 9.4a2.5 2.5 0 0 0 3.5 0l2.3-2.3a2.5 2.5 0 0 0-3.5-3.5l-.7.7"/><path d="M9.4 6.6a2.5 2.5 0 0 0-3.5 0L3.6 8.9a2.5 2.5 0 0 0 3.5 3.5l.7-.7"/>', shield: '<path d="M8 1.8 13 3.6v4.1c0 3-2 5.3-5 6.5-3-1.2-5-3.5-5-6.5V3.6z"/><path d="M5.8 8l1.6 1.6 2.9-3.2"/>', layers: '<path d="M8 2 14 5 8 8 2 5z"/><path d="M2 8l6 3 6-3M2 11l6 3 6-3"/>', blocks: '<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><path d="M11.25 9.2v4.1M9.2 11.25h4.1"/>', update: '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.6 2.2v2.6H11"/>', sliders: '<path d="M2.5 4.5h7M12.5 4.5h1M2.5 11.5h1M6.5 11.5h7"/><circle cx="11" cy="4.5" r="1.5"/><circle cx="5" cy="11.5" r="1.5"/>', flask: '<path d="M6.2 2h3.6M6.8 2v4.2L3.2 12.4A1.2 1.2 0 0 0 4.3 14h7.4a1.2 1.2 0 0 0 1.1-1.6L9.2 6.2V2"/><path d="M5 10.5h6"/>', prose: '<path d="M2.5 4h11M2.5 7.5h7M2.5 11h4"/><path d="M9.5 11.2l1.6 1.6 2.9-3.3"/>', pulse: '<path d="M1.5 8.5h3l1.5-4 3 8 1.8-4h3.7"/>', chip: '<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 1.8V4M9.5 1.8V4M6.5 12v2.2M9.5 12v2.2M1.8 6.5H4M1.8 9.5H4M12 6.5h2.2M12 9.5h2.2"/>', plug: '<path d="M6 1.8v3M10 1.8v3M4 4.8h8v2.7a4 4 0 0 1-8 0z"/><path d="M8 11.5v2.7"/>', remote: '<rect x="2" y="2.8" width="12" height="8.4" rx="1.5"/><path d="M5.5 13.5h5M8 11.2v2.3"/>', play: '<path d="M5 3.2v9.6l8-4.8z"/>', pencil: '<path d="M3 13l.6-2.8L10.9 3l2.1 2.1-7.2 7.3z"/><path d="M9.5 4.4l2.1 2.1"/>', trash: '<path d="M3 4.5h10M6.2 4.5V3h3.6v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M6.8 7v3.8M9.2 7v3.8"/>', lines: '<path d="M3 4h10M3 8h10M3 12h6"/>', pin: '<path d="M9.5 2.2 13.8 6.5l-2 .6-2.2 2.2.3 2.6-1 1-6-6 1-1 2.6.3 2.2-2.2z"/><path d="M5.6 10.4 2.5 13.5"/>', up: '<path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7"/>', arrowdown: '<path d="M8 3.5v9M4.5 9 8 12.5 11.5 9"/>', top: '<path d="M3.5 3h9M8 13V6.2M4.8 9.2 8 6l3.2 3.2"/>', undo: '<path d="M3 6.5h6.5a3.5 3.5 0 0 1 0 7H6"/><path d="M5.8 3.7 3 6.5l2.8 2.8"/>', pause: '<path d="M5.5 3.5v9M10.5 3.5v9"/>', gateway: '<circle cx="3.5" cy="8" r="1.5"/><circle cx="12.5" cy="4" r="1.5"/><circle cx="12.5" cy="12" r="1.5"/><path d="M5 8h2.5l3.6-3.4M7.5 8l3.6 3.4"/>', search: '<circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 13.5 13.5"/>', sort: '<path d="M4.5 3v10M2.5 11l2 2 2-2M9 4h4.5M9 8h3M9 12h1.5"/>', cloud: '<path d="M4.6 12.5a3 3 0 0 1-.4-6 4 4 0 0 1 7.7-.6 3.3 3.3 0 0 1-.4 6.6z"/>', copy: '<rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M3 10.5V4a1.5 1.5 0 0 1 1.5-1.5H11"/>', cube: '<path d="M8 1.8 13.5 5v6L8 14.2 2.5 11V5z"/><path d="M2.5 5 8 8.2 13.5 5M8 8.2v6"/>', app: '<rect x="2.5" y="2.5" width="11" height="11" rx="3"/><circle cx="8" cy="8" r="2"/>', eye: '<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>', clip: '<path d="M12.6 7.4 7.5 12.5a3 3 0 0 1-4.2-4.2l5.4-5.4a2 2 0 0 1 2.8 2.8L6.2 11a1 1 0 0 1-1.4-1.4l4.6-4.6"/>', download: '<path d="M8 2.5v7M5 6.8l3 3 3-3M3 13h10"/>', theme: '<circle cx="8" cy="8" r="6"/><path d="M8 2v12M8 5h4.8M8 8h6M8 11h4.8"/>', flow: '<rect x="2" y="2.5" width="5" height="3.5" rx="1"/><rect x="9" y="10" width="5" height="3.5" rx="1"/><path d="M4.5 6v3.8a2 2 0 0 0 2 2H9"/>', globe: '<circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2.2 2 2.2 10 0 12M8 2c-2.2 2-2.2 10 0 12"/>', sidebar: '<rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6 3v10"/>', forward: '<path d="M3 4.2v7.6L8.2 8zM8.8 4.2v7.6L14 8z"/>', flag: '<path d="M3.5 14V2.5M3.5 3h8l-1.6 2.6L11.5 8.2h-8"/>', stop: '<circle cx="8" cy="8" r="6"/><path d="M3.8 3.8l8.4 8.4"/>' });
+  const KIT_CSS = [
+    "{--ak-label:var(--dsw-alias-label-primary,currentColor);--ak-label-2:color-mix(in srgb,var(--ak-label) 76%,transparent);--ak-label-3:color-mix(in srgb,var(--ak-label) 66%,transparent);--ak-line-2:color-mix(in srgb,var(--ak-label) 10%,transparent);--ak-line-3:color-mix(in srgb,var(--ak-label) 16%,transparent);--ak-hover:color-mix(in srgb,var(--ak-label) 6%,transparent);--ak-pressed:color-mix(in srgb,var(--ak-label) 10%,transparent);--ak-layer:var(--dsw-alias-bg-layer-1,Canvas);--ak-on-primary:var(--dsw-alias-bg-base,Canvas);--ak-brown:var(--dsw-alias-brand-primary-new-colorprimary-new-color,currentColor);max-width:720px;font-family:" + TEXT_FONT + ";font-size:14px;line-height:22px;color:var(--ak-label)}",
+    " .ak-ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round}",
+    " button:focus-visible{outline:2px solid currentColor;outline-offset:2px}",
+    " .mono{font-family:" + MONO_FONT + ";font-size:12px}",
+    " .ak-title{display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:center;margin-bottom:12px}",
+    " .ak-title h1{grid-column:1;grid-row:1;margin:0;font-size:16px;line-height:24px;font-weight:500}",
+    " .ak-title p{grid-column:1/-1;grid-row:2;margin:0;font-size:14px;line-height:22px;color:var(--ak-label-3)}",
+    " .ak-title .acts{grid-column:2;grid-row:1;display:flex;gap:8px;justify-content:flex-end}",
+    " .ak-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:36px;padding:0 14px;border:0;border-radius:10px;background:transparent;font:inherit;font-size:14px;line-height:22px;color:var(--ak-label);white-space:nowrap;flex:none;cursor:pointer}",
+    " .ak-btn:hover{background:var(--ak-hover)}",
+    " .ak-btn:active{background:var(--ak-pressed)}",
+    " .ak-btn.primary{background:var(--ak-label);color:var(--ak-on-primary)}",
+    " .ak-btn.primary:hover{opacity:.86}",
+    " .ak-btn.outline{border:.5px solid var(--ak-line-3)}",
+    " .ak-btn.sm{height:28px;padding:0 10px;border-radius:8px;font-size:12px;line-height:18px}",
+    " .ak-btn.icon{width:28px;height:28px;padding:0;border-radius:8px}",
+    " .ak-btn:disabled{opacity:.4;cursor:not-allowed}",
+    " .ak-seg{display:inline-flex;gap:2px;padding:4px;border-radius:10px;background:var(--ak-hover)}",
+    " .ak-seg button{height:28px;padding:0 16px;border:0;border-radius:8px;background:transparent;font:inherit;font-size:13px;line-height:20px;font-weight:500;color:var(--ak-label-2);white-space:nowrap;cursor:pointer}",
+    " .ak-seg button[aria-selected=true]{background:var(--ak-layer);color:var(--ak-label);box-shadow:0 0 0 .5px var(--ak-line-3),0 4px 16px color-mix(in srgb,black 3%,transparent)}",
+    " .ak-rows{margin-top:8px}",
+    " .ak-row{display:flex;gap:12px 16px;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:.5px solid var(--ak-line-2)}",
+    " .ak-rows>.ak-row:last-child{border-bottom:0}",
+    " .ak-row .text{flex:1;min-width:0}",
+    " .ak-row .name{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:14px;line-height:22px;overflow-wrap:anywhere}",
+    " .ak-row .sub{margin-top:2px;font-size:12px;line-height:18px;color:var(--ak-label-3);overflow-wrap:anywhere}",
+    " .ak-row .end{display:flex;gap:12px;align-items:center;flex:none}",
+    " .ak-chips{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}",
+    " .ak-chip{font-size:12px;line-height:18px;padding:1px 8px;border-radius:6px;background:var(--ak-hover);color:var(--ak-label-2)}",
+    " .ak-status{display:inline-flex;align-items:center;gap:6px;font-size:13px;line-height:20px;color:var(--ak-label-2);white-space:nowrap}",
+    " .ak-dot{width:8px;height:8px;border-radius:50%;background:var(--ak-line-3);flex:none}",
+    " .ak-dot.on{background:var(--ak-brown)}",
+    " .ak-dot.warn{background:transparent;box-shadow:inset 0 0 0 2px var(--ak-label-2)}",
+    " .ak-empty{margin:0;padding:14px 0;font-size:13px;line-height:20px;color:var(--ak-label-3)}",
+    " .ak-alert{margin:0 0 8px;font-size:13px;line-height:20px}",
+    " .ak-mask{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;background:color-mix(in srgb,black 24%,transparent)}",
+    " .ak-modal{width:min(420px,calc(100vw - 32px));border-radius:20px;background:var(--ak-layer);box-shadow:0 0 0 .5px var(--ak-line-3),0 3px 8px color-mix(in srgb,black 4%,transparent),0 0 20px color-mix(in srgb,black 5%,transparent)}",
+    " .ak-modal header{display:flex;justify-content:space-between;align-items:center;padding:22px 14px 12px 24px}",
+    " .ak-modal h2{margin:0;font-size:16px;line-height:24px;font-weight:500}",
+    " .ak-conseq{margin:0;padding:8px 24px 0;font-size:13px;line-height:20px;color:var(--ak-label-2)}",
+    " .ak-modal footer{display:flex;justify-content:flex-end;gap:8px;padding:20px 24px 24px}",
+  ].map((rule) => "[data-arc-kit]" + rule).join("");
+
+  function Ic({ n, size = 16 }) {
+    return h("svg", { className: "ak-ic", width: size, height: size, viewBox: "0 0 16 16", "aria-hidden": true, "data-ic": n, dangerouslySetInnerHTML: { __html: ICONS[n] || "" } });
+  }
+  function KBtn({ look = "", small = false, icon = "", label, aria = "", onClick, disabled = false, autoFocus = false }) {
+    return h("button", { type: "button", className: ["ak-btn", look, small ? "sm" : ""].filter(Boolean).join(" "), "aria-label": aria || undefined, onClick, disabled, autoFocus }, icon ? h(Ic, { n: icon }) : null, label);
+  }
+  // a switch between the views of one page: arrow keys move the focus, a click or Enter selects
+  function Seg({ label, value, options, onChange }) {
+    return h("div", { className: "ak-seg", role: "tablist", "aria-label": label, onKeyDown: onTabKeys },
+      options.map(([id, text]) => h("button", { key: id, type: "button", role: "tab", id: `ak-tab-${id}`, "aria-selected": value === id, tabIndex: value === id ? 0 : -1, "data-seg": id, onClick: () => onChange && onChange(id) }, text)));
+  }
+  function KStatus({ text, dot }) {
+    return h("span", { className: "ak-status" }, dot === undefined ? null : h("span", { className: `ak-dot ${dot}`.trim(), "aria-hidden": true }), text);
+  }
+  function KRow({ kind, id, name, mono = false, tail = null, sub = "", chips = [], end = null }) {
+    return h("div", { className: "ak-row", "data-row": kind, "data-id": id },
+      h("div", { className: "text" },
+        h("div", { className: mono ? "name mono" : "name" }, name, tail),
+        chips.length ? h("div", { className: "ak-chips" }, chips.map((c, i) => h("span", { key: `${i}-${c}`, className: "ak-chip" }, c))) : null,
+        sub ? h("div", { className: "sub" }, sub) : null),
+      h("div", { className: "end" }, end));
+  }
+  // a question before an action that takes something away. Escape closes it and must not close the Settings dialog behind it.
+  function Confirm({ title, text, action, onConfirm, onClose, t }) {
+    const id = "ak-confirm-title";
+    const keys = (e) => {
+      if (e.key === "Escape") { e.stopPropagation?.(); e.nativeEvent?.stopImmediatePropagation?.(); if (onClose) onClose(); return; }
+      if (e.key !== "Tab") return;
+      const f = Array.from(e.currentTarget.querySelectorAll("button:not([disabled])"));
+      const at = f.indexOf(e.currentTarget.ownerDocument.activeElement);
+      if (!f.length) return;
+      if (e.shiftKey && at <= 0) { f[f.length - 1].focus(); e.preventDefault(); } else if (!e.shiftKey && (at < 0 || at === f.length - 1)) { f[0].focus(); e.preventDefault(); }
+    };
+    return h("div", { className: "ak-mask", onMouseDown: (e) => { if (e.target === e.currentTarget && onClose) onClose(); } },
+      h("div", { className: "ak-modal", role: "dialog", "aria-modal": true, "aria-labelledby": id, "aria-describedby": `${id}-text`, tabIndex: -1, onKeyDown: keys },
+        h("header", null, h("h2", { id }, title),
+          h("button", { type: "button", className: "ak-btn icon", "aria-label": t("access.close"), onClick: onClose }, h(Ic, { n: "close" }))),
+        h("p", { className: "ak-conseq", id: `${id}-text` }, text),
+        h("footer", null,
+          h(KBtn, { look: "outline", label: t("access.cancel"), onClick: onClose, autoFocus: true }),
+          h(KBtn, { look: "primary", label: action, onClick: onConfirm }))));
+  }
+
+  const monthDay = (ms) => { const d = new Date(Number(ms)); return Number(ms) > 0 && Number.isFinite(d.getTime()) ? `${d.getDate()} ${new Intl.DateTimeFormat(uiLang(), { month: "short" }).format(d)}` : ""; };
+  const dayTime = (ms) => { const d = new Date(Number(ms)); const day = monthDay(ms); return day ? `${day}, ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : ""; };
+
+  // Settings, Access: what each app may use, which keys exist, and what was called. Pure: every value arrives in props.
+  // `tab` and `ending` set the first view and the open question; a test uses them.
+  function AccessPage({ data, failed = false, actionError = "", tab: firstTab = "apps", ending: firstEnding = null, nowMs = Date.now(), onRefresh, onEnd, onAsk, t }) {
+    const [tab, setTab] = React.useState(firstTab);
+    const [ending, setEnding] = React.useState(firstEnding);
+    const back = React.useRef ? React.useRef(null) : { current: null };
+    // after the question closes, the focus goes back to its button; after End access that button is gone, so it goes to the open tab
+    const close = (done) => {
+      const from = back.current, root = from && from.closest ? from.closest("[data-arc-kit]") : null;
+      setEnding(null);
+      const go = done && root ? root.querySelector("[role=tab][aria-selected=true]") : from;
+      if (go && typeof setTimeout === "function") setTimeout(() => { if (go.isConnected) go.focus(); }, 0);
+    };
+    const frame = (...kids) => h("div", { "data-arc-settings": "access", "data-arc-kit": "true", "data-arc-plugin-pane": "true" }, h("style", null, KIT_CSS), ...kids);
+    const title = (acts = null) => h("div", { className: "ak-title" }, h("h1", null, t("settings.nav.access")), h("p", null, t("access.sub")), h("div", { className: "acts" }, acts));
+    if (!data) {
+      return frame(title(), failed
+        ? h(React.Fragment, null, h("p", { role: "alert", className: "ak-alert" }, t("state.error")), h(KBtn, { look: "outline", small: true, label: t("action.retry"), onClick: onRefresh }))
+        : h("p", { role: "status", className: "ak-empty" }, t("access.loading")));
+    }
+    const detail = data.connectorsDetail || {}, grants = data.consents || [];
+    const apps = (detail.Apps || []).map((a) => ({ ...a, grant: grants.find((g) => g.appId === `${a.id}-connector` && Number(g.expiresAtMs) > nowMs) || null }));
+    const target = apps.find((a) => a.id === ending && a.grant) || null;
+    const empty = (key) => h("p", { className: "ak-empty" }, t(key));
+    let list = null;
+    if (tab === "apps") {
+      list = apps.length === 0 ? empty("access.empty.apps") : apps.map((a) => h(KRow, {
+        key: a.id, kind: "app", id: a.id, name: a.label, chips: a.grant ? a.grant.scopes || [] : [],
+        end: h(React.Fragment, null,
+          h(KStatus, { text: a.grant ? t("access.until", { date: monthDay(a.grant.expiresAtMs) }) : t("access.none") }),
+          a.grant ? h(KBtn, { look: "outline", small: true, label: t("access.end"), aria: t("access.end.label", { app: a.label }), onClick: (e) => { back.current = e && e.currentTarget ? e.currentTarget : null; setEnding(a.id); } }) : null),
+      }));
+    } else if (tab === "keys") {
+      const keys = detail.Keys || [];
+      list = keys.length === 0 ? empty("access.empty.keys") : keys.map((k) => h(KRow, {
+        key: k.id, kind: "key", id: k.id, name: k.ref, mono: true, sub: t("access.key.used", { name: k.label }),
+        end: h(React.Fragment, null,
+          k.state === "ok" ? h(KStatus, { text: t("access.key.set"), dot: "on" }) : h(KStatus, { text: t("access.key.unset"), dot: "warn" }),
+          k.state === "ok" ? null : h(KBtn, { look: "outline", small: true, icon: "ask", label: t("access.key.ask"), aria: t("access.key.ask.label", { key: k.ref }), onClick: () => onAsk && onAsk(t("access.key.task", { key: k.ref, name: k.label })) })),
+      }));
+    } else {
+      const rows = detail.Audit || [];
+      list = rows.length === 0 ? empty("access.empty.activity") : rows.map((r) => h(KRow, {
+        key: r.id, kind: "activity", id: r.id, name: oneLine(r.summary, 120), tail: h("span", { className: "mono" }, r.kind), sub: dayTime(r.atMs),
+      }));
+    }
+    return frame(
+      title(tab === "keys" ? h(InfoHint, { label: t("settings.about"), text: t("access.key.hint"), align: "end", glyph: h(Ic, { n: "info" }) }) : null),
+      actionError ? h("p", { role: "alert", className: "ak-alert" }, oneLine(actionError)) : null,
+      h(Seg, { label: t("access.views"), value: tab, onChange: setTab, options: [["apps", t("access.tab.apps")], ["keys", t("access.tab.keys")], ["activity", t("access.tab.activity")]] }),
+      h("div", { className: "ak-rows", role: "tabpanel", "aria-labelledby": `ak-tab-${tab}` }, list),
+      target ? h(Confirm, {
+        t, title: t("access.end.title", { app: target.label }), text: t("access.end.conseq", { app: target.label }), action: t("access.end"),
+        onClose: () => close(false),
+        onConfirm: () => { if (onEnd) onEnd({ appId: `${target.id}-connector`, mode: "Revoke" }); close(true); },
+      }) : null);
   }
 
   function ConsentDialog({ pendingConsent, onConsent, onClose, t }) {
@@ -587,8 +764,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     if (section === "connectors") {
       return frame(title("settings.connectors.hint"), alert,
         h(ConsentDialog, { pendingConsent, onConsent, onClose: onCloseConsent, t }),
-        h(ConnectorView, { connector: "Servers", detail: data.connectorsDetail, onRefresh, t }),
-        h(ConnectorView, { connector: "Apps", detail: data.connectorsDetail, onOpenConsent, grants: (data.consents || []).length, t }));
+        h(ConnectorView, { connector: "Servers", detail: data.connectorsDetail, onRefresh, t }));
     }
     if (section === "keys") {
       return frame(title("settings.keys.hint"), alert, h(ConnectorView, { connector: "Keys", detail: data.connectorsDetail, heading: false, t }));
@@ -1356,12 +1532,23 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   const SETTINGS_SECTIONS = [
     { id: "memory", order: 11 },
     { id: "connectors", order: 12 },
-    { id: "keys", order: 13 },
+    { id: "access", order: 13 }, // Apps, Keys and Activity in one page (S053)
     { id: "add-ons", order: 14 },
     { id: "updates", order: 15, connector: "Updates" }, // drawn only when the Updates connector view exists
   ];
 
   function makeSettingsSection(section, t) {
+    if (section === "access") {
+      return function ArcAccessSection() {
+        const { data, failed, actionError, dispatch } = useConsole();
+        return h(AccessPage, {
+          data, failed, actionError, t,
+          onRefresh: () => dispatch({ kind: "refresh" }),
+          onEnd: (req) => dispatch({ kind: "consent", ...req }),
+          onAsk: (task) => pushToChatComposer(task, null, t),
+        });
+      };
+    }
     return function ArcSettingsSection() {
       const { data, failed, actionError, pendingConsent, setPendingConsent, dispatch } = useConsole();
       return h(SettingsSectionView, {
@@ -1411,6 +1598,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     name: "arc-core",
     inject: ["slots", "locale"],
     apply,
+    kit: { ICONS, CSS: KIT_CSS, Ic, Btn: KBtn, Seg, Status: KStatus, Row: KRow, Confirm, AccessPage },
     View,
     ConsentDialog,
     ConnectorView,
