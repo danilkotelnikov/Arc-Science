@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { parseVersion } from './updater.js';
 
 export const WORKSPACES = Object.freeze(['Research', 'Memory', 'Molecullage', 'Prose']);
 export const CONNECTORS = Object.freeze(['Servers', 'Keys', 'Apps', 'Audit', 'Cammut', 'Updates']);
@@ -1134,10 +1135,15 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
     if (payload.kind === 'mode') {
       try { return { ok: true, ...updater.setMode(payload.mode) }; } catch (err) { return { ok: false, error: String(err.message || err) }; }
     }
+    if (payload.kind === 'channel') {
+      try { updater.setChannel(payload.channel); } catch (err) { return { ok: false, error: String(err.message || err) }; }
+      return { ok: true, ...(await updater.check()) }; // the answer holds the newest version of the new channel
+    }
     if (payload.kind === 'install') {
-      const version = typeof payload.version === 'string' && /^\d+\.\d+\.\d+$/.test(payload.version) ? payload.version : undefined;
+      // a version name reaches the updater only in the one strict form; Go back names no version at all
+      const version = parseVersion(payload.version) ? payload.version : undefined;
       if (updater.getState().busy) return { ok: false, error: 'An update is already running.' };
-      const run = updater.install({ version });
+      const run = updater.install(payload.back === true ? { back: true } : { version });
       if (payload.wait === true) { const r = await run; return { ...r, state: updater.getState() }; }
       run.catch(() => {}); // progress comes through update/state
       // An install that the updater refuses at once (another process holds the lock) has ended before the next turn of the
