@@ -1,7 +1,7 @@
 /**
  * arc-core 0.1.0 (2026-11-09): Unified C2 console panel (Phase 1b.2-1b.3 & Phase 4.1-4.8).
  * Workspaces: Research, Memory, Molecullage, Prose.
- * Connectors: Servers, Keys, Apps, Audit, Updates; plus Settings.
+ * Connectors: Servers, Keys, Apps, Audit, Cammut, Updates; plus Settings.
  * Research session: 3-pane layout (Map, Claims, Evidence) + Release view,
  * Decision map (Pursue, Park, Drop, Request a test), validation ladder L1-L4
  * (with L5/L6 operator switches off by default), and 30-day consent dialog.
@@ -12,7 +12,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   const NS = "arc-core", TAB = "arc-core-console";
 
   const WORKSPACES = ["Research", "Memory", "Molecullage", "Prose"];
-  const CONNECTORS = ["Servers", "Keys", "Apps", "Audit", "Updates"];
+  const CONNECTORS = ["Servers", "Keys", "Apps", "Audit", "Cammut", "Updates"];
   const SEATS = ["Planner", "Reviewer", "Falsifier", "Vision", "Prose"];
   const RESEARCH_VIEWS = ["Map", "Claims", "Evidence", "Release"];
   const DECISION_ACTIONS = ["Pursue", "Park", "Drop", "Request a test"];
@@ -96,6 +96,47 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "chat.failed": "Could not insert or copy prompt",
     "molecullage.pin": "Pin",
     "molecullage.pinned": "Pinned",
+    "connector.cammut": "Cammut",
+    "cammut.tab.servers": "Servers",
+    "cammut.tab.tools": "Tools",
+    "cammut.tab.observer": "Observer",
+    "cammut.tab.parts": "Parts",
+    "cammut.loading": "Loading Cammut state…",
+    "cammut.gateway.on": "Gateway {host} is running.",
+    "cammut.gateway.off": "Gateway {host} does not answer.",
+    "cammut.servers.address": "Server address",
+    "cammut.servers.keyname": "Key name, optional",
+    "cammut.servers.add": "Add server",
+    "cammut.servers.remove": "Remove",
+    "cammut.servers.last": "The last server stays.",
+    "cammut.servers.builtin": "Built-in store on this computer",
+    "cammut.servers.legacy": "Owner key file",
+    "cammut.servers.keyset": "Key set",
+    "cammut.servers.keymissing": "Key missing",
+    "cammut.servers.nokey": "No key",
+    "cammut.tools.query": "Search tools by word",
+    "cammut.tools.search": "Search",
+    "cammut.tools.details": "Show details",
+    "cammut.tools.args": "Arguments as an object",
+    "cammut.tools.run": "Run",
+    "cammut.tools.confirm": "Confirm",
+    "cammut.tools.typename": "Type the tool name",
+    "cammut.tools.result": "Result",
+    "cammut.observer.source": "Source",
+    "cammut.observer.view": "View",
+    "cammut.observer.query": "Filter or question",
+    "cammut.observer.show": "Show",
+    "cammut.observer.readonly": "Read only",
+    "cammut.observer.cammut": "Cammut server",
+    "cammut.observer.builtin": "Built-in store",
+    "cammut.observer.empty": "Nothing to show.",
+    "cammut.parts.reload": "Reload",
+    "cammut.parts.rollback": "Roll back",
+    "cammut.hint.servers": "Arc Harness asks these Cammut servers in order and tries the next one only when a connection fails. A key is never typed here. Enter the key in the gateway settings page and write only its name below.",
+    "cammut.hint.keyname": "A key name points to a key kept in the gateway credential file. A server without a key name receives no key at all, and never the owner key file.",
+    "cammut.hint.tools": "This runner calls the Hindsight tools of the Cammut server, or of the built-in store on this computer. Pick the source first. Reading runs at once. Adding or changing memory asks you to confirm. Every other tool counts as a delete and asks you to type the tool name. To save a note in the built-in store, pick it, search, and run retain.",
+    "cammut.hint.observer": "The observer only reads. It cannot add, change or delete anything. A connection holds one memory bank, so there is one bank to browse.",
+    "cammut.hint.parts": "A part is a piece of Arc Harness that can be replaced while the app runs. Reload loads the file on disk and tests it first. If the test fails, the old version keeps working. This tab itself needs a page reload.",
     "settings.title": "Console settings",
     "settings.theme": "Active theme",
     "settings.switches": "Operator switches",
@@ -457,6 +498,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
 
   function ConnectorView({ connector, detail, onOpenConsent, onRefresh, grants, heading = true, t }) {
     if (connector === "Updates") return h(UpdatesPanel, { t });
+    if (connector === "Cammut") return h(CammutPane, { t });
     const rows = (detail && detail[connector]) || [];
     const key = String(connector || "servers").toLowerCase();
     const titleKey = `view.${key}`;
@@ -566,6 +608,218 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     // a section that is one connector view of its own, such as Updates
     const own = CONNECTORS.find((c) => c.toLowerCase() === section);
     return frame(own ? h(ConnectorView, { connector: own, detail: data.connectorsDetail, onRefresh, t }) : title(""));
+  }
+
+
+  // ---- Cammut connector (S051): servers, tools, observer, parts. Pure CammutView plus a fetching CammutPane.
+  const CAM_TABS = ["servers", "tools", "observer", "parts"];
+  const CAM_VIEWS = ["memories", "tags", "documents", "recall", "models", "directives", "operations"];
+  // The look of the Cammut sign-in page (Cammut-edge web/src/pages/Login.tsx, 21.XI.2026): turning AS cube, accent
+  // primary button, outlined secondary buttons and inputs. Colours come only from the theme tokens, so all three themes hold.
+  const CAM_CSS = ".arc-cam button:focus-visible,.arc-cam summary:focus-visible,.arc-cam input:focus-visible,.arc-cam select:focus-visible,.arc-cam textarea:focus-visible{outline:2px solid currentColor;outline-offset:2px}" +
+    ".arc-cam button:disabled{opacity:.5;cursor:not-allowed}.arc-cam pre{white-space:pre-wrap;margin:0;font-family:inherit;max-height:260px;overflow:auto}" +
+    ".arc-cam button:not(:disabled):hover{opacity:.88}.arc-cam{animation:arc-cam-rise .5s cubic-bezier(.05,.7,.1,1) both}" +
+    ".arc-cam-cube{position:relative;display:block;flex:none;animation:arc-cam-turn .62s ease-in-out both}" +
+    ".arc-cam-cube svg{position:absolute;inset:0;width:100%;height:100%;fill:currentColor}" +
+    ".arc-cam-cube .fr{animation:arc-cam-hide .62s both}.arc-cam-cube .fl{animation:arc-cam-show .62s both}" +
+    "@keyframes arc-cam-turn{0%{transform:scaleX(1)}45%{transform:scaleX(.03)}80%{transform:translateY(3px) scaleX(1)}100%{transform:none}}" +
+    "@keyframes arc-cam-hide{0%,44.9%{opacity:1}45%,100%{opacity:0}}@keyframes arc-cam-show{0%,44.9%{opacity:0}45%,100%{opacity:1}}" +
+    "@keyframes arc-cam-rise{0%{opacity:0;transform:translateY(12px)}100%{opacity:1;transform:none}}" +
+    "@media (prefers-reduced-motion:reduce){.arc-cam,.arc-cam-cube,.arc-cam-cube .fl,.arc-cam-cube .fr{animation:none}.arc-cam-cube .fr{opacity:0}}";
+  const CAM_LINE = "1px solid var(--dsw-alias-line-divider, color-mix(in srgb, currentColor 22%, transparent))";
+  // The theme accent, pulled 35% toward the text colour, so the page colour on it reads at 4.5:1 or more in every theme and mode.
+  const CAM_FILL = "color-mix(in srgb, var(--dsw-alias-button-info-fill, CanvasText) 65%, var(--dsw-alias-label-primary, CanvasText))";
+  const camBtn = (active) => ({
+    fontFamily: TEXT_FONT,
+    fontSize: 13,
+    lineHeight: 1,
+    minHeight: 32,
+    padding: "0 14px",
+    borderRadius: 8,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    ...(active
+      ? { border: `1px solid ${CAM_FILL}`, background: CAM_FILL, color: "var(--dsw-alias-bg-base, Canvas)", fontWeight: 600 }
+      : { border: CAM_LINE, background: SURFACE, color: INK, fontWeight: 500 }),
+  });
+  const camTab = (active) => ({ ...camBtn(false), ...(active ? { fontWeight: 600, background: "color-mix(in srgb, currentColor 10%, transparent)", border: "1px solid color-mix(in srgb, currentColor 55%, transparent)" } : {}) });
+  const camInput = { ...inputStyle, fontSize: 13, padding: "7px 10px", minHeight: 32, border: CAM_LINE, borderRadius: 8, background: SURFACE };
+  const CAM_TOP = "M128.00 18.80L220.15 72.00L128.00 125.20L35.85 72.00Z";
+  const CAM_LEFT = "M33.43 76.20L125.58 129.40L125.58 235.80L33.43 182.60Z";
+  const CAM_RIGHT = "M130.42 129.40L222.57 76.20L222.57 182.60L130.42 235.80Z";
+  const CAM_L_LETTERS = "M43.61 161.18L54.83 115.85L65.30 121.90L76.51 180.17L67.54 174.99L64.92 161.40L55.20 155.78L52.59 166.36ZM60.06 136.14L63.05 151.68L57.07 148.23ZM82.49 131.83L109.41 147.37L115.39 157.73L115.39 161.18L91.47 147.37L91.47 157.73L115.39 171.54L115.39 202.62L88.47 187.08L82.49 176.72L82.49 173.27L106.42 187.08L106.42 176.72L82.49 162.91Z";
+  const CAM_R_LETTERS = "M140.61 202.62L151.82 144.34L162.29 138.30L173.51 183.63L164.53 188.81L161.92 178.23L152.20 183.84L149.58 197.44ZM157.06 158.59L160.05 170.68L154.07 174.13ZM179.49 128.37L206.40 112.83L212.39 116.29L212.39 119.74L188.46 133.55L188.46 143.91L212.39 130.10L212.39 161.18L185.47 176.72L179.49 173.27L179.49 169.81L203.41 156.00L203.41 145.64L179.49 159.45Z";
+  // The AS cube turns once, from the letters on the right face to the letters on the left face, as on the sign-in page.
+  function CamCube({ size = 40 }) {
+    return h("span", { className: "arc-cam-cube", "data-cammut-cube": "true", role: "img", "aria-label": "Arc Science", style: { width: size, height: size, color: INK } },
+      h("svg", { className: "fl", viewBox: "0 0 256 256", "aria-hidden": "true" }, h("path", { fillRule: "evenodd", d: CAM_TOP + CAM_LEFT + CAM_L_LETTERS + CAM_RIGHT })),
+      h("svg", { className: "fr", viewBox: "0 0 256 256", "aria-hidden": "true" }, h("path", { fillRule: "evenodd", d: CAM_TOP + CAM_LEFT + CAM_RIGHT + CAM_R_LETTERS })));
+  }
+  const camClamp = (s, n = 90) => (String(s ?? "").length > n ? String(s).slice(0, n - 1) + "…" : String(s ?? ""));
+  const camRow = { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" };
+
+  // the console hint (InfoHint): a 24 px target, Escape closes it, the note stays inside a narrow pane
+  const CamHint = (props) => h(InfoHint, { align: "row", ...props });
+
+
+  function CamServers({ info, busy, onAction, t }) {
+    const [url, setUrl] = React.useState("");
+    const [keyName, setKeyName] = React.useState("");
+    const servers = info.servers || [];
+    const can = Boolean(info.canManage) && !busy;
+    const onlyOne = servers.length <= 1;
+    return h("div", { style: { display: "grid", gap: 10 } },
+      h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 } },
+        servers.map((sv) => h("li", { key: sv.url, "data-cammut-server": sv.url, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 4 } },
+          h("div", { style: { ...camRow, justifyContent: "space-between" } },
+            h("code", { style: tagStyle }, sv.url),
+            h("button", { type: "button", "data-cammut-remove": sv.url, disabled: !can || onlyOne, onClick: () => onAction && onAction({ kind: "server-remove", url: sv.url }), style: camBtn(false) }, t("cammut.servers.remove"))),
+          h("div", { style: { ...camRow, fontSize: 12 } },
+            h("span", { style: muted }, camClamp(sv.status)),
+            sv.keyRef ? h("code", { style: tagStyle }, sv.keyRef) : null,
+            h("span", { style: muted }, sv.ownKey ? (sv.keyRef ? (sv.keySet ? t("cammut.servers.keyset") : t("cammut.servers.keymissing")) : t("cammut.servers.nokey")) : (sv.legacyAuth ? t("cammut.servers.legacy") : ""))))),
+        info.builtin && info.builtin.available ? h("li", { key: "builtin", style: { paddingTop: 8, borderTop: HAIRLINE } }, h("span", { style: muted }, t("cammut.servers.builtin"))) : null),
+      servers.length <= 1 && info.canManage ? h("p", { style: { margin: 0, fontSize: 12, ...muted } }, t("cammut.servers.last")) : null,
+      h("form", { onSubmit: (e) => { e?.preventDefault?.(); }, style: camRow },
+        h("input", { type: "text", "aria-label": t("cammut.servers.address"), "data-cammut-url": "true", placeholder: "https://memory.example.org", value: url, onChange: (e) => setUrl(e.target.value), style: { ...camInput, flex: "1 1 100%" } }),
+        h("input", { type: "text", "aria-label": t("cammut.servers.keyname"), "data-cammut-key": "true", placeholder: t("cammut.servers.keyname"), value: keyName, onChange: (e) => setKeyName(e.target.value), style: { ...camInput, flex: 1, minWidth: 120 } }),
+        h("button", { type: "submit", "data-cammut-add": "true", disabled: !can || !url.trim(), onClick: () => onAction && onAction({ kind: "server-add", url: url.trim(), keyRef: keyName.trim() }), style: camBtn(true) }, t("cammut.servers.add")),
+        h(CamHint, { label: "About keys", text: t("cammut.hint.keyname") })));
+  }
+
+  function CamTools({ tools, onAction, t }) {
+    const st = tools || {};
+    const [query, setQuery] = React.useState("");
+    const [args, setArgs] = React.useState("{}");
+    const [typed, setTyped] = React.useState("");
+    const tool = st.tool || "";
+    const run = st.run || null;
+    const parse = () => { try { const v = JSON.parse(args || "{}"); return v && typeof v === "object" && !Array.isArray(v) ? v : null; } catch { return null; } };
+    const parsed = parse();
+    // The source is the Cammut server or the store on this computer. The built-in store lists its few tools without a word,
+    // and its retain tool is the way to save a note there.
+    const [source, setSource] = React.useState("cammut");
+    const go = (confirm) => onAction && onAction({ kind: "tool-run", tool, source, arguments: parsed || {}, ...(confirm !== undefined ? { confirm } : {}) });
+    return h("div", { style: { display: "grid", gap: 10 } },
+      h("form", { onSubmit: (e) => { e?.preventDefault?.(); }, style: camRow },
+        h("select", { "aria-label": t("cammut.observer.source"), "data-cammut-tool-source": "true", value: source, onChange: (e) => setSource(e.target.value), style: { ...camInput, width: "auto" } },
+          h("option", { value: "cammut" }, t("cammut.observer.cammut")), h("option", { value: "builtin" }, t("cammut.observer.builtin"))),
+        h("input", { type: "text", "aria-label": t("cammut.tools.query"), "data-cammut-tool-query": "true", placeholder: t("cammut.tools.query"), value: query, onChange: (e) => setQuery(e.target.value), style: { ...camInput, flex: 1, minWidth: 160 } }),
+        h("button", { type: "submit", "data-cammut-tool-search": "true", disabled: source !== "builtin" && !query.trim(), onClick: () => onAction && onAction({ kind: "tool-search", source, query: query.trim() }), style: camBtn(true) }, t("cammut.tools.search")),
+        h(CamHint, { label: "About the tool runner", text: t("cammut.hint.tools") })),
+      h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 } },
+        (st.list || []).map((x) => h("li", { key: x.tool, "data-cammut-tool": x.tool, style: { ...camRow, paddingTop: 6, borderTop: HAIRLINE } },
+          h("button", { type: "button", "aria-pressed": tool === x.tool, onClick: () => onAction && onAction({ kind: "tool-pick", tool: x.tool }), style: camTab(tool === x.tool) }, x.tool.replace("hindsight/", "")),
+          h("code", { "data-cammut-class": x.class, style: tagStyle }, x.class),
+          h("span", { style: { ...muted, fontSize: 12 } }, camClamp(x.description))))),
+      tool ? h("div", { style: { display: "grid", gap: 6 } },
+        h("div", { style: camRow }, h("code", { style: tagStyle }, tool),
+          h("button", { type: "button", onClick: () => onAction && onAction({ kind: "tool-describe", tool }), style: camBtn(false) }, t("cammut.tools.details"))),
+        h("textarea", { rows: 3, "aria-label": t("cammut.tools.args"), "data-cammut-args": "true", value: args, onChange: (e) => setArgs(e.target.value), style: { ...camInput, fontFamily: MONO_FONT } }),
+        h("div", { style: camRow },
+          h("button", { type: "button", "data-cammut-run": "true", disabled: !parsed, onClick: () => go(), style: camBtn(true) }, t("cammut.tools.run")),
+          run && run.needs === "confirm" ? h("button", { type: "button", "data-cammut-confirm": "true", onClick: () => go(true), style: camBtn(false) }, t("cammut.tools.confirm")) : null,
+          run && run.needs === "confirm-tool" ? h(React.Fragment, null,
+            h("input", { type: "text", "aria-label": t("cammut.tools.typename"), "data-cammut-confirm-tool": "true", placeholder: t("cammut.tools.typename"), value: typed, onChange: (e) => setTyped(e.target.value), style: { ...camInput, flex: "1 1 160px" } }),
+            h("button", { type: "button", "data-cammut-confirm": "true", disabled: typed !== tool, onClick: () => go(tool), style: camBtn(false) }, t("cammut.tools.confirm"))) : null),
+        run && run.error ? h("p", { role: "status", style: { margin: 0, fontSize: 12, opacity: 0.85 } }, camClamp(run.error)) : null,
+        run && run.ok && run.data !== undefined ? h("details", { open: true, "data-cammut-result": "true" }, h("summary", { style: { cursor: "pointer", fontSize: 12, fontWeight: 600 } }, t("cammut.tools.result")), h("pre", { style: { fontSize: 12 } }, JSON.stringify(run.data, null, 2).slice(0, 4000))) : null,
+        st.described ? h("details", { "data-cammut-described": "true" }, h("summary", { style: { cursor: "pointer", fontSize: 12, fontWeight: 600 } }, t("cammut.tools.details")), h("pre", { style: { fontSize: 12 } }, JSON.stringify(st.described, null, 2).slice(0, 4000))) : null) : null);
+  }
+
+  function CamObserver({ observer, onAction, t }) {
+    const [source, setSource] = React.useState("cammut");
+    const [view, setView] = React.useState("memories");
+    const [q, setQ] = React.useState("");
+    const data = observer && observer.ok ? observer.data : null;
+    const list = data ? (Array.isArray(data.items) ? data.items : Array.isArray(data.results) ? data.results : null) : null;
+    return h("div", { style: { display: "grid", gap: 10 } },
+      h("div", { style: camRow },
+        h("code", { "data-cammut-readonly": "true", style: tagStyle }, t("cammut.observer.readonly")),
+        h(CamHint, { label: "About the observer", text: t("cammut.hint.observer") })),
+      h("form", { onSubmit: (e) => { e?.preventDefault?.(); }, style: camRow },
+        h("select", { "aria-label": t("cammut.observer.source"), "data-cammut-source": "true", value: source, onChange: (e) => setSource(e.target.value), style: { ...camInput, width: "auto" } },
+          h("option", { value: "cammut" }, t("cammut.observer.cammut")), h("option", { value: "builtin" }, t("cammut.observer.builtin"))),
+        h("select", { "aria-label": t("cammut.observer.view"), "data-cammut-view": "true", value: view, onChange: (e) => setView(e.target.value), style: { ...camInput, width: "auto" } },
+          CAM_VIEWS.map((v) => h("option", { key: v, value: v }, v))),
+        h("input", { type: "text", "aria-label": t("cammut.observer.query"), "data-cammut-observe-q": "true", placeholder: t("cammut.observer.query"), value: q, onChange: (e) => setQ(e.target.value), style: { ...camInput, flex: 1, minWidth: 140 } }),
+        h("button", { type: "submit", "data-cammut-show": "true", onClick: () => onAction && onAction({ kind: "observe", source, view, q: q.trim() }), style: camBtn(true) }, t("cammut.observer.show"))),
+      observer && observer.ok === false ? h("p", { role: "status", style: { margin: 0, fontSize: 12, opacity: 0.85 } }, camClamp(observer.error)) : null,
+      list ? (list.length === 0 ? h("p", { style: { margin: 0, fontSize: 12, ...muted } }, t("cammut.observer.empty"))
+        : h("ul", { "data-cammut-items": "true", style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 } },
+          list.slice(0, 50).map((it, i) => h("li", { key: it.id || it.tag || i, style: { paddingTop: 6, borderTop: HAIRLINE, display: "grid", gap: 4 } },
+            h("span", { style: { fontSize: 12 } }, camClamp(it.text || it.name || it.tag || it.summary || it.id || JSON.stringify(it))),
+            Array.isArray(it.tags) && it.tags.length ? h("span", { style: camRow }, it.tags.slice(0, 6).map((tg) => h("code", { key: tg, style: tagStyle }, tg))) : null))))
+        : data ? h("pre", { style: { fontSize: 12 } }, JSON.stringify(data, null, 2).slice(0, 4000)) : null);
+  }
+
+  function CamParts({ info, onAction, t }) {
+    return h("div", { style: { display: "grid", gap: 8 } },
+      h("div", { style: camRow }, h(CamHint, { label: "About parts", text: t("cammut.hint.parts") })),
+      h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 } },
+        (info.components || []).map((c) => h("li", { key: c.name, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 4 } },
+          h("div", { style: { ...camRow, justifyContent: "space-between" } },
+            h("span", { style: camRow }, h("code", { style: tagStyle }, c.name), h("span", { style: { ...muted, fontSize: 12 } }, `${c.state}, version ${c.generation}`)),
+            h("span", { style: camRow },
+              h("button", { type: "button", "data-cammut-reload": c.name, onClick: () => onAction && onAction({ kind: "component-reload", name: c.name }), style: camBtn(false) }, t("cammut.parts.reload")),
+              h("button", { type: "button", "data-cammut-rollback": c.name, disabled: !c.canRollback, onClick: () => onAction && onAction({ kind: "component-rollback", name: c.name }), style: camBtn(false) }, t("cammut.parts.rollback")))),
+          c.error ? h("p", { style: { margin: 0, fontSize: 12, ...muted } }, camClamp(c.error)) : null))));
+  }
+
+  function CammutView({ info, error = "", busy = false, tab = "servers", onTab, observer = null, tools = null, onAction, t }) {
+    const status = error || (info ? (info.gateway.reachable ? t("cammut.gateway.on", { host: info.gateway.host }) : t("cammut.gateway.off", { host: info.gateway.host })) : t("cammut.loading"));
+    const why = info && !info.canManage ? info.manageReason : "";
+    return h("section", { className: "arc-cam", "aria-label": t("connector.cammut"), "data-connector-view": "Cammut", style: { display: "grid", gap: 14, fontFamily: TEXT_FONT, fontSize: 13, lineHeight: 1.5, color: INK } },
+      h("style", null, CAM_CSS),
+      h("div", { "data-cammut-head": "true", style: { display: "flex", gap: 12, alignItems: "center" } },
+        h(CamCube, { size: 40 }),
+        h("div", { style: { display: "grid", gap: 2, minWidth: 0, flex: 1 } },
+          h("div", { style: { ...camRow, justifyContent: "space-between" } },
+            h("h3", { style: { fontSize: 19, lineHeight: 1.25, fontWeight: 600, letterSpacing: "-0.02em", margin: 0 } }, t("connector.cammut")),
+            h(CamHint, { label: "About Cammut servers", text: t("cammut.hint.servers") })),
+          h("p", { role: "status", "data-cammut-status": "true", title: status, style: { margin: 0, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, camClamp(status)))),
+      why ? h("p", { "data-cammut-why": "true", style: { margin: 0, fontSize: 12, ...muted } }, camClamp(why)) : null,
+      info ? h("div", { role: "tablist", "aria-label": t("connector.cammut"), style: { ...camRow, paddingBottom: 8, borderBottom: HAIRLINE } },
+        CAM_TABS.map((k) => h("button", { key: k, type: "button", role: "tab", "aria-selected": tab === k, "data-cammut-tab": k, onClick: () => onTab && onTab(k), style: camTab(tab === k) }, t(`cammut.tab.${k}`)))) : null,
+      info && tab === "servers" ? h(CamServers, { info, busy, onAction, t }) : null,
+      info && tab === "tools" ? h(CamTools, { tools, onAction, t }) : null,
+      info && tab === "observer" ? h(CamObserver, { observer, onAction, t }) : null,
+      info && tab === "parts" ? h(CamParts, { info, onAction, t }) : null);
+  }
+
+  function CammutPane({ t }) {
+    const [info, setInfo] = React.useState(null);
+    const [error, setError] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const [tab, setTab] = React.useState("servers");
+    const [observer, setObserver] = React.useState(null);
+    const [tools, setTools] = React.useState({ list: [], tool: "", run: null, described: null });
+    const post = async (route, body) => {
+      const r = await fetch(route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
+      return r.json().catch(() => null);
+    };
+    const load = async () => {
+      try { const j = await post("api/arc-core/cammut/state"); if (j && j.ok) { setInfo(j); setError(""); } else setError((j && j.error) || "Could not read the Cammut state."); } catch { setError("Could not read the Cammut state."); }
+    };
+    const act = async (p) => {
+      if (p.kind === "tool-pick") { setTools((s) => ({ ...s, tool: p.tool, run: null, described: null })); return; }
+      setError(""); setBusy(true);
+      try {
+        const j = await post("api/arc-core/cammut/action", p);
+        if (p.kind === "observe") setObserver(j);
+        else if (p.kind === "tool-search") { if (j && j.ok) setTools((s) => ({ ...s, list: j.tools || [] })); else setError((j && j.error) || "Search failed."); }
+        else if (p.kind === "tool-describe") setTools((s) => ({ ...s, described: j && j.ok ? j.data : null }));
+        else if (p.kind === "tool-run") setTools((s) => ({ ...s, run: j }));
+        else if (!j || j.ok === false) setError((j && j.error) || "The action failed.");
+        if (p.kind.startsWith("server-") || p.kind.startsWith("component-")) await load();
+      } catch { setError("The action failed."); }
+      setBusy(false);
+    };
+    React.useEffect(() => { load(); }, []);
+    return h(CammutView, { info, error, busy, tab, onTab: setTab, observer, tools, onAction: act, t });
   }
 
   function ResearchWorkspace({
@@ -1161,6 +1415,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     ConsentDialog,
     ConnectorView,
     UpdatesView,
+    CammutView,
     UpdatesPanel,
     ResearchWorkspace,
     WORKSPACES,
