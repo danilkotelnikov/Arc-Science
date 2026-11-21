@@ -9,6 +9,13 @@ All notable changes to Arc Harness are listed here. The format follows [Keep a C
 - **Updates for an installed copy (`plugins/arc-core/lib/updater.js`, Updates panel in `plugins/arc-core/ui/panel.js`)**: reads the latest plain `x.y.z` GitHub release and downloads the kit zip and `SHA256SUMS.txt`. It checks the zip, every plugin file and both programs. It then swaps the seven plugins (in `~/.arc/local-plugins` and each profile's `node_modules` copy) and the two programs, with one backup. A failed check after the swap rolls back by itself. Modes are `off`, `notify` (default) and `auto`; a manual check, update and roll back work in every mode.
 - **Per-file digests in `RELEASE-MANIFEST.json` (`tools/release-bundle.mjs`)**: a `files` map with the SHA-256 of every file under `plugins/` and `bin/`. The release bundler now calls the system `tar.exe` on Windows, so a GNU tar earlier in `PATH` cannot break the zip step.
 
+### Fixed
+
+- **A failed update leaves the earlier backup in place (`plugins/arc-core/lib/updater.js`)**: before a swap, the backup of the update before it moves to `updates/backup-prev` and `<program>.arc-backup-prev`. A swap that fails puts it back, so Roll back keeps working; a swap that lands drops it. A step that never ran can no longer pull an older program back in.
+- **A new copy that stays locked no longer blocks the rollback (`updater.js`)**: the old folder or program returns first, and the unfinished `.arc-new` copy is cleared afterwards. A copy that is still held stays until the next update removes it, and the add-on list skips it.
+- **The test switch checks the folders it uses (`updater.js`)**: a folder name of only spaces counts as not given.
+- **A refusal no longer hides the restart prompt (`plugins/arc-core/ui/panel.js`)**: the Updates view shows an action's refusal only while the update state is the one the user acted on, and drops it for good once that state changes.
+
 ## [0.6.0] - 2026-11-19
 
 ### Added
