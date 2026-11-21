@@ -1062,3 +1062,22 @@ func TestReaddedDefaultServerKeepsAuthFile(t *testing.T) {
 		}
 	}
 }
+
+// A "/" inside a password does not keep the secret in the plain form of an address.
+func TestPlainAddrCutsUserInfoWithSlash(t *testing.T) {
+	if got := plainAddr("https://owner:pa/ss@mcp.example/cammut"); got != "https://mcp.example/cammut" {
+		t.Fatalf("plainAddr kept the user info: %s", got)
+	}
+}
+
+// An address kept in its older stored form (with a query) still finds the key entry saved in normalized form.
+func TestStoredFormAddressFindsItsKey(t *testing.T) {
+	c := defaultConfig()
+	c.Cammut.Upstreams = []string{"https://mcp.example/cammut?key=abc"}
+	c.Cammut.Auth = map[string]string{"https://mcp.example/cammut": "VPS_KEY"}
+	c.Cammut.AuthFile = "~/a.json"
+	v, own := cammutAuthFor(c, c.Cammut.Upstreams[0], map[string]string{"VPS_KEY": "k"})
+	if !own || v != "Bearer k" {
+		t.Fatalf("the key entry was not found: %q %v", v, own)
+	}
+}

@@ -1169,10 +1169,9 @@ func cammutSummary(cfg Config, refs map[string]string) map[string]any {
 	ups := make([]string, 0, len(cfg.Cammut.Upstreams))
 	for _, u := range cfg.Cammut.Upstreams {
 		ups = append(ups, plainAddr(u))
-		k := strings.TrimRight(u, "/")
-		if ref, ok := cfg.Cammut.Auth[k]; ok {
-			auth[plainAddr(k)] = ref
-			present[plainAddr(k)] = ref != "" && refs[ref] != ""
+		if ref, ok := cammutRef(cfg, u); ok {
+			auth[plainAddr(u)] = ref
+			present[plainAddr(u)] = ref != "" && refs[ref] != ""
 		}
 	}
 	return map[string]any{"upstreams": ups, "auth": auth, "keyPresent": present, "authFile": cfg.Cammut.AuthFile != ""}

@@ -64,7 +64,7 @@ export function plainServerUrl(raw) {
     const u = new URL(text);
     return `${u.protocol}//${u.host}${u.pathname}`.replace(/\/+$/, '');
   } catch {
-    return text.replace(/[?#].*$/, '').replace(/\/\/[^/@]*@/, '//').replace(/\/+$/, '');
+    return text.replace(/[?#].*$/, '').replace(/\/\/.*@/, '//').replace(/\/+$/, '');
   }
 }
 const sameServer = (a, b) => plainServerUrl(a) === b;
@@ -186,7 +186,8 @@ export function createCammutConsole(opts = {}) {
     if (!k.ok) return Promise.resolve(k);
     return change((cur) => {
       if (cur.upstreams.some((u) => sameServer(u, n.url))) return { ok: false, error: 'That server is already in the list.' };
-      return { ok: true, upstreams: [...cur.upstreams, n.url], auth: { ...cur.auth, [n.url]: k.name } };
+      // an empty key name sends no entry: the gateway then keeps the owner's file for the default server and gives any other new one none
+      return { ok: true, upstreams: [...cur.upstreams, n.url], auth: k.name ? { ...cur.auth, [n.url]: k.name } : { ...cur.auth } };
     });
   };
 

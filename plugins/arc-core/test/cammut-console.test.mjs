@@ -492,3 +492,14 @@ test('31. The built-in retain says when the notes file was not written', async (
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('32. A server re-added with an empty key name sends no key entry; a "/" in a password does not stay in the fallback', async () => {
+  const gw = fakeGateway({ upstreams: ['http://127.0.0.1:7421', 'https://b.example'], auth: {} });
+  const c = mk(gw);
+  assert.equal((await c.removeServer({ url: 'http://127.0.0.1:7421' })).ok, true);
+  assert.equal((await c.addServer({ url: 'http://127.0.0.1:7421' })).ok, true);
+  const posts = gw.state.calls.filter((x) => x.method === 'POST' && x.path === '/api/config');
+  const last = posts[posts.length - 1].body.cammut;
+  assert.equal(Object.prototype.hasOwnProperty.call(last.auth ?? {}, 'http://127.0.0.1:7421'), false, JSON.stringify(last.auth));
+  assert.equal(plainServerUrl('https://owner:pa/ss' + String.fromCharCode(64) + 'mcp.example/cammut'), 'https://mcp.example/cammut');
+});

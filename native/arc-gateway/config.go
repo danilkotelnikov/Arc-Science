@@ -220,11 +220,8 @@ func plainAddr(s string) string {
 	}
 	if i := strings.Index(s, "://"); i >= 0 {
 		rest := s[i+3:]
-		host := rest
-		if j := strings.Index(rest, "/"); j >= 0 {
-			host = rest[:j]
-		}
-		if at := strings.LastIndex(host, "@"); at >= 0 {
+		// the query and fragment are gone, so the last "@" ends the user info, even when the password holds a "/"
+		if at := strings.LastIndex(rest, "@"); at >= 0 {
 			s = s[:i+3] + rest[at+1:]
 		}
 	}
@@ -366,9 +363,24 @@ func mergeCammutPatch(raw map[string]any, v any) error {
 	return nil
 }
 
+// cammutRef finds the key entry of one upstream. Entries are saved in normalized form, so an address kept in its older
+// stored form (with a query, for example) is matched through knownAddr.
+func cammutRef(c Config, base string) (string, bool) {
+	if ref, ok := c.Cammut.Auth[strings.TrimRight(base, "/")]; ok {
+		return ref, true
+	}
+	want := knownAddr(base)
+	for k, ref := range c.Cammut.Auth {
+		if knownAddr(k) == want {
+			return ref, true
+		}
+	}
+	return "", false
+}
+
 // cammutAuthFor picks the Authorization value for one upstream: its own key, nothing, or the AuthFile header.
 func cammutAuthFor(c Config, base string, refs map[string]string) (value string, own bool) {
-	if ref, ok := c.Cammut.Auth[strings.TrimRight(base, "/")]; ok {
+	if ref, ok := cammutRef(c, base); ok {
 		if ref == "" || refs[ref] == "" {
 			return "", true
 		}
