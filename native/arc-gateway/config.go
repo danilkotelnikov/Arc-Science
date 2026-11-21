@@ -215,6 +215,11 @@ func normUpstream(s string) (string, error) {
 // plainAddr is the address without user name, password, query and fragment, so an error text can name it and hold no secret.
 func plainAddr(s string) string {
 	s = strings.TrimSpace(s)
+	// An address that parses with a host and without user info, query or fragment has nothing to cut.
+	// An "@" in it belongs to the path ("https://host/@team/mcp"), and cutting there would name another server.
+	if u, err := url.Parse(s); err == nil && u.Hostname() != "" && u.User == nil && u.RawQuery == "" && u.Fragment == "" && !strings.ContainsAny(s, "?#") {
+		return strings.TrimRight(s, "/")
+	}
 	if i := strings.IndexAny(s, "?#"); i >= 0 {
 		s = s[:i]
 	}

@@ -1081,3 +1081,18 @@ func TestStoredFormAddressFindsItsKey(t *testing.T) {
 		t.Fatalf("the key entry was not found: %q %v", v, own)
 	}
 }
+
+// A valid address can hold an "@" in its path. It has no user info, so its name stays whole in the list and in the
+// known form: the console posts the listed name back, and a changed name would be another server.
+func TestValidAddressWithAtInPathKeepsItsName(t *testing.T) {
+	addr := "https://host.example/@team/mcp"
+	cfg := defaultConfig()
+	cfg.Cammut.Upstreams = []string{addr, "https://owner:pa/ss" + "@mcp.example/cammut"}
+	ups := cammutSummary(cfg, map[string]string{})["upstreams"].([]string)
+	if ups[0] != addr || ups[1] != "https://mcp.example/cammut" {
+		t.Fatalf("listed names: %v", ups)
+	}
+	if got := knownAddr("https://Host.example/@team/mcp"); got != addr {
+		t.Fatalf("known form: %s", got)
+	}
+}
