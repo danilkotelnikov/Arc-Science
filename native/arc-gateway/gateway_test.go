@@ -1008,3 +1008,57 @@ func TestAnswersWithoutTokenHoldNoAddressSecret(t *testing.T) {
 		}
 	}
 }
+
+// An address that an older build saved with a query keeps its stored form when the console posts its plain form back,
+// so adding another server does not drop the key that the address holds.
+func TestOlderAddressWithQueryKeepsItsStoredForm(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ARC_HOME", home)
+	def := defaultConfig().Cammut.Upstreams[0]
+	writeGatewayJSON(t, home, `{"cammut":{"upstreams":["`+def+`","https://MCP.example/cammut?key=abc123"],"authFile":"~/a.json"}}`)
+	save := func(list ...any) map[string]any {
+		t.Helper()
+		if _, err := SaveSettings(map[string]any{"cammut": map[string]any{"upstreams": list}}); err != nil {
+			t.Fatal(err)
+		}
+		var raw map[string]any
+		b, _ := os.ReadFile(filepath.Join(home, "gateway.json"))
+		_ = json.Unmarshal(b, &raw)
+		return raw["cammut"].(map[string]any)
+	}
+	c := save(def, "https://mcp.example/cammut", "https://x.example")
+	ups := fmt.Sprint(c["upstreams"])
+	if !strings.Contains(ups, "https://MCP.example/cammut?key=abc123") || !strings.Contains(ups, "https://x.example") {
+		t.Fatalf("the stored form was not kept: %s", ups)
+	}
+	auth, _ := c["auth"].(map[string]any)
+	if len(auth) != 1 || auth["https://x.example"] != "" {
+		t.Fatalf("only the new server gets an empty key entry: %v", auth)
+	}
+	// leaving it out of the list removes it
+	c = save(def, "https://x.example")
+	if strings.Contains(fmt.Sprint(c["upstreams"]), "mcp.example") {
+		t.Fatalf("a removed server stayed: %v", c["upstreams"])
+	}
+}
+
+// The default server is the owner's own Cammut on this computer: after a remove and a new add it still gets the AuthFile.
+func TestReaddedDefaultServerKeepsAuthFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ARC_HOME", home)
+	def := defaultConfig().Cammut.Upstreams[0]
+	writeGatewayJSON(t, home, `{"cammut":{"upstreams":["`+def+`","https://b.example"],"authFile":"~/a.json"}}`)
+	for _, list := range [][]any{{"https://b.example"}, {"https://b.example", def}} {
+		if _, err := SaveSettings(map[string]any{"cammut": map[string]any{"upstreams": list}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var raw map[string]any
+	b, _ := os.ReadFile(filepath.Join(home, "gateway.json"))
+	_ = json.Unmarshal(b, &raw)
+	if auth, ok := raw["cammut"].(map[string]any)["auth"].(map[string]any); ok {
+		if _, has := auth[strings.TrimRight(def, "/")]; has {
+			t.Fatalf("the default server got a key entry and lost the AuthFile: %v", auth)
+		}
+	}
+}

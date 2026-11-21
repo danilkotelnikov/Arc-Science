@@ -283,19 +283,23 @@ func mergeCammutPatch(raw map[string]any, v any) error {
 	}
 	// a server that is new in this patch starts with an empty key entry, so the owner's AuthFile never reaches it
 	known := map[string]bool{}
+	// An address that an older build saved with a user name or a query cannot be posted back: the settings reader lists
+	// its plain form. storedAs keeps the stored text for such an address, so a save of another server does not drop its key.
+	storedAs := map[string]string{}
 	if old, ok := cm["upstreams"].([]any); ok {
 		for _, o := range old {
 			if str, _ := o.(string); str != "" {
 				known[knownAddr(str)] = true // the posted list is normalized, so a stored "https://VPS.example.org" must match it
+				if _, err := normUpstream(str); err != nil {
+					storedAs[knownAddr(str)] = strings.TrimRight(strings.TrimSpace(str), "/")
+				}
 			}
 		}
 	}
-	// LoadConfig puts the default server in place of a missing or empty list, so the same list counts as known here:
-	// the default server keeps the owner's AuthFile when the console posts it back.
-	if len(known) == 0 {
-		for _, d := range defaultConfig().Cammut.Upstreams {
-			known[knownAddr(d)] = true
-		}
+	// The default server is the owner's own Cammut on this computer. It is always known: LoadConfig puts it in place of a
+	// missing or empty list, and after a remove and a new add it must still get the owner's AuthFile.
+	for _, d := range defaultConfig().Cammut.Upstreams {
+		known[knownAddr(d)] = true
 	}
 	auth := map[string]any{}
 	src := obj(cm["auth"])
@@ -344,7 +348,15 @@ func mergeCammutPatch(raw map[string]any, v any) error {
 			return settingsError("a server with a key must use https unless it is on this computer: " + n)
 		}
 	}
-	cm["upstreams"] = ups
+	out := make([]string, 0, len(ups))
+	for _, n := range ups {
+		if raw, ok := storedAs[n]; ok {
+			out = append(out, raw) // the stored form of an older address stays, with what it held
+		} else {
+			out = append(out, n)
+		}
+	}
+	cm["upstreams"] = out
 	if len(auth) > 0 {
 		cm["auth"] = auth
 	} else {

@@ -1163,7 +1163,7 @@ func (s *Server) tuneRequest(p map[string]any, cfg Config, rt *Route) bool {
 // cammutSummary lists the servers for the settings reader: addresses, key names and whether each key has a value, never the value.
 func cammutSummary(cfg Config, refs map[string]string) map[string]any {
 	// GET /api/config needs no token. An address saved by an older build can hold a user name or a query, so the
-	// answer lists the plain form. The stored value stays as it is until the next save, which stores the plain form.
+	// answer lists the plain form. The stored value stays as it is: a save that posts the plain form back keeps it.
 	present := map[string]bool{}
 	auth := map[string]string{}
 	ups := make([]string, 0, len(cfg.Cammut.Upstreams))
