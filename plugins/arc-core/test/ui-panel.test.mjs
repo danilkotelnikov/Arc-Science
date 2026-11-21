@@ -784,3 +784,64 @@ test('12. The console reloads on window focus, and a slow state answer never ove
   cleanup();
   assert.equal(listeners.focus, undefined, 'the listener is removed with the pane');
 });
+
+// Review finding 7 (21.XI.2026): the Updates panel with working state and a scripted server.
+function liveUpdatesPanel(server) {
+  let loaded, tick = null;
+  vm.runInNewContext(fs.readFileSync(panelPath, 'utf8'), {
+    window: { __ModuleLoader__: { load: (m) => { loaded = m; } } },
+    fetch: async (route, init) => ({ json: async () => server(String(route), JSON.parse(init.body)) }),
+    setInterval: (fn) => { tick = fn; return 1; }, clearInterval: () => {},
+  });
+  const ce = (type, props, ...ch) => ({ type, props: props ?? {}, children: ch.flat(Infinity).filter((c) => c != null && c !== false) });
+  const states = [], deps = [], due = [];
+  let si = 0, ei = 0;
+  const mod = loaded.factory((n) => (n === 'react' ? {
+    createElement: ce, Fragment: 'fragment',
+    useState: (i0) => { const i = si++; if (!(i in states)) states[i] = typeof i0 === 'function' ? i0() : i0; return [states[i], (v) => { states[i] = typeof v === 'function' ? v(states[i]) : v; }]; },
+    useEffect: (fn, d) => { const i = ei++; if (!deps[i] || !d || d.some((x, k) => x !== deps[i][k])) due.push(fn); deps[i] = d || null; },
+  } : {}));
+  const t = makeTranslator(mod.en);
+  const settle = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+  const draw = () => { si = 0; ei = 0; return renderTree({ type: mod.UpdatesPanel, props: { t }, children: [] }); };
+  // draw, run the effects that are due, let their requests finish, draw again with the new state
+  const render = async () => { draw(); for (const fn of due.splice(0)) fn(); await settle(); const tree = draw(); for (const fn of due.splice(0)) fn(); await settle(); return tree; };
+  const status = (tree) => allWords(allNodes(tree).find((n) => n.props && n.props['data-updates-status'] !== undefined)).join(' ');
+  const press = async (tree, key) => { await allNodes(tree).find((n) => n.type === 'button' && n.props[key] === 'true').props.onClick(); await settle(); };
+  return { render, status, press, poll: async () => { await tick(); await settle(); } };
+}
+
+test('13. Updates panel: a refusal goes away when the update moves on, and stays while nothing changes', async () => {
+  const base = { ok: true, installed: '0.6.0', latest: '0.7.0', available: true, installable: true, mode: 'notify', phase: 'idle', busy: false, hasBackup: true, notes: '', restartNeeded: false, message: '' };
+  // 1. another window is already updating; this panel still shows the old state and its Update now is live
+  let state = { ...base }, reply = { ok: false, error: 'An update is already running.' };
+  let p = liveUpdatesPanel((route) => (route.endsWith('update/action') ? reply : state));
+  let tree = await p.render();
+  assert.match(p.status(tree), /0\.7\.0 is ready/);
+  state = { ...base, busy: true, phase: 'installing', message: 'Replacing plugins and programs' };
+  await p.press(tree, 'data-update-install');
+  assert.match(p.status(await p.render()), /Replacing plugins and programs/, 'the running update shows; the refusal belonged to the old picture');
+  const done = { ...base, installed: '0.7.0', available: false, phase: 'done', restartNeeded: true, message: 'Updated to 0.7.0. Restart Arc Harness to use it.' };
+  state = done;
+  await p.poll();
+  assert.match(p.status(await p.render()), /Restart Arc Harness to finish the update/, 'the restart prompt is not hidden by the old refusal');
+
+  // 1b. the other update finishes between the refusal and the next read of the state: the refusal must not stick to "done"
+  state = { ...base };
+  p = liveUpdatesPanel((route) => { if (route.endsWith('update/action')) { state = done; return reply; } return state; });
+  tree = await p.render();
+  await p.press(tree, 'data-update-install');
+  assert.match(p.status(await p.render()), /Restart Arc Harness to finish the update/, 'a refusal that is already out of date never shows');
+
+  // 2. a refusal while nothing else happens stays in view (the defect of the first live test must not come back)
+  state = { ...base }; reply = { ok: false, error: 'There is no backup to roll back to.' };
+  p = liveUpdatesPanel((route) => (route.endsWith('update/action') ? reply : state));
+  tree = await p.render();
+  await p.press(tree, 'data-update-rollback');
+  await p.poll(); await p.poll();
+  assert.match(p.status(await p.render()), /no backup to roll back to/);
+  // and once the picture has changed, the old refusal does not come back when the picture returns
+  state = { ...base, phase: 'checking' }; await p.poll(); await p.render();
+  state = { ...base }; await p.poll();
+  assert.match(p.status(await p.render()), /0\.7\.0 is ready/, 'an old refusal does not reappear');
+});

@@ -191,13 +191,13 @@ export function createUpdater(opts = {}) {
   const env = opts.env ?? process.env, F = opts.fs ?? nodeFs;
   const testSwitch = env.ARC_UPDATE_ALLOW_LOOPBACK === '1';
   const realHome = path.join(os.homedir(), '.arc'), realGw = path.join(env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'ArcGateway');
-  if (testSwitch) {
-    // a test run must name both folders itself (options or ARC_HOME and ARC_UPDATE_GATEWAY_DIR): a forgotten override would swap the user's live files
-    const h = opts.home ?? env.ARC_HOME, g = opts.gatewayDir ?? env.ARC_UPDATE_GATEWAY_DIR;
-    if (!h || !g || eqPath(h, realHome) || eqPath(g, realGw)) throw fail('ERR_UPDATE_TEST_PATHS', 'with the test switch on, give a throwaway home and gatewayDir');
-  }
-  const home = path.resolve(opts.home ?? (env.ARC_HOME?.trim() || realHome));
-  const gatewayDir = path.resolve(opts.gatewayDir ?? (testSwitch ? env.ARC_UPDATE_GATEWAY_DIR : undefined) ?? realGw);
+  const named = (v) => (typeof v === 'string' && v.trim() ? v.trim() : undefined); // a name of only spaces names nothing
+  const homeIn = opts.home ?? named(env.ARC_HOME), gwIn = opts.gatewayDir ?? (testSwitch ? named(env.ARC_UPDATE_GATEWAY_DIR) : undefined);
+  const home = path.resolve(homeIn ?? realHome);
+  const gatewayDir = path.resolve(gwIn ?? realGw);
+  // a test run must name both folders itself (options or ARC_HOME and ARC_UPDATE_GATEWAY_DIR): a forgotten override would swap the user's live files.
+  // The check reads the same resolved folders that the updater then uses.
+  if (testSwitch && (!homeIn || !gwIn || eqPath(home, realHome) || eqPath(gatewayDir, realGw))) throw fail('ERR_UPDATE_TEST_PATHS', 'with the test switch on, give a throwaway home and gatewayDir');
   const validatorsDirs = (opts.validatorsDirs ?? [gatewayDir, path.join(home, 'bin')]).map((d) => path.resolve(d));
   const wantRepo = opts.repo ?? env.ARC_UPDATE_REPO;
   const repo = testSwitch && REPO_RE.test(wantRepo || '') ? wantRepo : DEFAULT_REPO;
@@ -210,6 +210,9 @@ export function createUpdater(opts = {}) {
   const dir = path.join(home, 'updates'), settingsFile = path.join(dir, 'settings.json'), stateFile = path.join(dir, 'state.json');
   const backupRoot = path.join(dir, 'backup'), journalFile = path.join(backupRoot, 'backup.json'), staleRoot = path.join(dir, 'stale');
   const localPlugins = path.join(home, 'local-plugins'), profilesDir = path.join(home, 'profiles'), lockFile = path.join(dir, 'lock');
+  // While a swap runs, the backup of the update before it waits here (folders) and under this ending (programs).
+  // A swap that fails puts it back; a swap that lands drops it.
+  const prevRoot = path.join(dir, 'backup-prev'), PREV = '.arc-backup-prev';
 
   const readJson = (f, dflt) => { try { return JSON.parse(F.readFileSync(f, 'utf8')); } catch { return dflt; } };
   const writeJson = (f, v) => {
@@ -238,7 +241,8 @@ export function createUpdater(opts = {}) {
   }
 
   function getState() {
-    const p = persisted(), c = p.lastCheck || {}, st = settings(), installed = readInstalled(), j = journal();
+    // with no journal in place, a backup that was set aside by an update that never started its swap still counts: Roll back puts it back first
+    const p = persisted(), c = p.lastCheck || {}, st = settings(), installed = readInstalled(), j = journal() ?? readJson(path.join(prevRoot, 'backup.json'), null);
     const available = Boolean(c.latest) && compareVersions(c.latest, installed) > 0;
     return {
       installed, latest: c.latest || null, available, installable: Boolean(c.installable), reason: c.reason || '', releaseUrl: c.releaseUrl || '', notes: c.notes || '', checkedAt: c.checkedAt || null,
@@ -335,6 +339,48 @@ export function createUpdater(opts = {}) {
     return ops;
   }
 
+  const binDirs = () => new Set([gatewayDir, ...validatorsDirs]);
+  const prevFiles = () => {
+    const out = [];
+    for (const d of binDirs()) { try { for (const f of F.readdirSync(d)) if (f.endsWith(PREV)) out.push(path.join(d, f)); } catch { /* no folder */ } }
+    return out;
+  };
+  /**
+   * The earlier backup steps aside before a swap. From then on every backup that restore() finds was made by this swap,
+   * so a step that never ran cannot pull an older program back in. The folder goes first: with its journal gone,
+   * a process that dies here is healed by prevBack() on the next update or Roll back.
+   */
+  async function setPrevAside(ops) {
+    // What still carries the "earlier backup" names here is the leftover of a clean-up that was cut short: the journal in place
+    // owns the current backup. It goes first, so a leftover can never be taken for the backup that is set aside below.
+    for (const f of prevFiles()) await moveAside(f, false);
+    if (F.existsSync(prevRoot)) await moveAside(prevRoot, true);
+    if (F.existsSync(backupRoot)) await mv(backupRoot, prevRoot);
+    for (const op of ops) {
+      if (op.kind !== 'file' || !op.backup || !F.existsSync(op.backup)) continue;
+      const to = `${op.target}${PREV}`;
+      if (F.existsSync(to)) await moveAside(to, false);
+      await mv(op.backup, to);
+    }
+  }
+  /** Put the earlier backup back: the programs' copies first, then the folder whose journal makes them count. */
+  async function prevBack() {
+    if (!readJson(path.join(prevRoot, 'backup.json'), null)) return;
+    for (const f of prevFiles()) {
+      const to = `${f.slice(0, -PREV.length)}.arc-backup`;
+      if (F.existsSync(to)) await moveAside(to, false);
+      await mv(f, to);
+    }
+    // the folder of the update that failed holds nothing of value by now; if it cannot be deleted, it steps out of the way
+    try { F.rmSync(backupRoot, { recursive: true, force: true }); } catch { await moveAside(backupRoot, true); }
+    await mv(prevRoot, backupRoot);
+  }
+  /** After a swap that landed: the folder first, so a half-dropped backup can never come back without its programs. */
+  async function dropPrev() {
+    if (F.existsSync(prevRoot)) await moveAside(prevRoot, true);
+    for (const f of prevFiles()) await moveAside(f, false);
+  }
+
   async function doOp(op) {
     F.rmSync(op.newPath, { recursive: true, force: true });
     if (op.kind === 'dir') {
@@ -342,7 +388,7 @@ export function createUpdater(opts = {}) {
       if (op.backup) { F.mkdirSync(path.dirname(op.backup), { recursive: true }); await mv(op.target, op.backup); }
     } else {
       F.copyFileSync(op.src, op.newPath);
-      if (op.backup) { if (F.existsSync(op.backup)) await moveAside(op.backup, false); await mv(op.target, op.backup); }
+      if (op.backup) await mv(op.target, op.backup);
     }
     await mv(op.newPath, op.target);
     op.done = true;
@@ -353,12 +399,18 @@ export function createUpdater(opts = {}) {
     const errors = [];
     for (const op of [...ops].reverse()) {
       try {
-        if (op.newPath) F.rmSync(op.newPath, { recursive: true, force: true });
         if (op.backup && F.existsSync(op.backup)) {
           if (F.existsSync(op.target)) await moveAside(op.target, op.kind === 'dir');
           await mv(op.backup, op.target);
         } else if (op.done && !op.backup && F.existsSync(op.target)) await moveAside(op.target, op.kind === 'dir');
       } catch (e) { errors.push(`${path.basename(op.target)}: ${clean(e.message, 120)}`); }
+      // The unfinished new copy is only a leftover. A scanner that still holds it must not keep the old files from coming back,
+      // so it is cleared after them and never counts as a failed rollback. The next update removes what stays.
+      if (op.newPath) {
+        try { F.rmSync(op.newPath, { recursive: true, force: true }); } catch {
+          try { if (F.existsSync(op.newPath)) await moveAside(op.newPath, op.kind === 'dir'); } catch { /* still held */ }
+        }
+      }
     }
     return errors;
   }
@@ -406,6 +458,7 @@ export function createUpdater(opts = {}) {
         if (errs.length) { phase('failed', `An earlier update was cut short and could not be undone: ${errs.join('; ')}`); return { ok: false, error: `An earlier update was cut short and could not be undone: ${errs.join('; ')}` }; }
         F.rmSync(journalFile, { force: true });
       }
+      if (!journal()) await prevBack(); // an update that stopped before or during its swap left the earlier backup aside
       const st = await doCheck();
       if (st.phase === 'failed') return { ok: false, error: st.message };
       const pick = pickRelease(mem.releases, version);
@@ -431,7 +484,7 @@ export function createUpdater(opts = {}) {
 
       phase('installing', 'Replacing plugins and programs; the old ones are kept for a rollback');
       ops = planOps(kit, stage);
-      if (F.existsSync(backupRoot)) { F.mkdirSync(staleRoot, { recursive: true }); await mv(backupRoot, path.join(staleRoot, `backup-${tag()}`)); }
+      await setPrevAside(ops);
       F.mkdirSync(backupRoot, { recursive: true });
       const meta = { fromVersion: installed, toVersion, at: new Date(now()).toISOString() };
       const writeJournal = (status) => writeJson(journalFile, { ...meta, status, ops: ops.map(({ kind, target, backup, slot, name, done }) => ({ kind, target, backup, slot, name, done })) });
@@ -449,6 +502,7 @@ export function createUpdater(opts = {}) {
       mem.healthy = true; mem.restartNeeded = true;
       save({ skipped: null });
       F.rmSync(stage, { recursive: true, force: true });
+      try { await dropPrev(); } catch { /* the next update clears what is left */ }
       sweep();
       phase('done', `Updated to ${toVersion}. Restart Arc Harness to use it.`);
       return { ok: true, version: toVersion };
@@ -465,6 +519,8 @@ export function createUpdater(opts = {}) {
         if (errors.length) save({ skipped: { version: toVersion, reason: `failed: ${msg}`, at: new Date(now()).toISOString() } });
         if (errors.length) { phase('failed', `${msg}. The rollback was not complete: ${errors.join('; ')}`); return { ok: false, error: `${msg}. The rollback was not complete: ${errors.join('; ')}` }; }
       }
+      // the files are as they were before this update, so its earlier backup counts again and Roll back keeps working
+      try { if (!journal()) await prevBack(); } catch { /* the next update or Roll back puts it back */ }
       const transient = inUse || err.code === 'ERR_UPDATE_HTTP' || err.code === 'ERR_UPDATE_SIZE' || err.name === 'TimeoutError' || err.name === 'AbortError' || err instanceof TypeError;
       if (toVersion && !transient) save({ skipped: { version: toVersion, reason: `failed: ${msg}`, at: new Date(now()).toISOString() } });
       const text = inUse ? `${msg}.` : rolled ? `${msg}. The old files were put back (rolled back).` : msg;
@@ -480,14 +536,19 @@ export function createUpdater(opts = {}) {
   // ---- rollback
   async function rollback() {
     if (mem.busy || !lock()) return { ok: false, error: 'An update is already running.' };
-    const j = journal();
-    if (!j || !['complete', 'swapping'].includes(j.status)) { unlock(); return { ok: false, error: 'There is no backup to roll back to.' }; }
     mem.busy = true;
     try {
+      try { if (!journal()) await prevBack(); } catch { /* answered below as no backup */ }
+      const j = journal();
+      if (!j || !['complete', 'swapping'].includes(j.status)) return { ok: false, error: 'There is no backup to roll back to.' };
       const errors = await restore(j.ops);
       if (errors.length) { phase('failed', `The rollback was not complete: ${errors.join('; ')}`); return { ok: false, error: `The rollback was not complete: ${errors.join('; ')}` }; }
       F.rmSync(journalFile, { force: true });
       try { F.rmSync(backupRoot, { recursive: true, force: true }); } catch { /* swept later */ }
+      // undoing a swap that was cut short leaves the files as they were before it: its earlier backup counts again
+      if (j.status === 'swapping') { try { await prevBack(); } catch { /* the next update puts it back */ } }
+      // Roll back goes one step. An older backup that a cut-short clean-up left behind must not show up as a second step.
+      else { try { await dropPrev(); } catch { /* the next update clears it */ } }
       save({ skipped: { version: j.toVersion, reason: 'rolled-back', at: new Date(now()).toISOString() } });
       mem.restartNeeded = true; mem.healthy = true;
       sweep();

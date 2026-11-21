@@ -422,28 +422,37 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   function UpdatesPanel({ t }) {
     const [info, setInfo] = React.useState(null);
     const [error, setError] = React.useState("");
-    const [actionError, setActionError] = React.useState(""); // an action's refusal stays until the next action; a state refresh must not wipe it
+    // An action's refusal belongs to the picture the user acted on. It stays in view while that picture holds: a plain refresh
+    // must not wipe it. Once the update has moved on (another step, done, a restart is due), the refusal is dropped for good,
+    // so it can neither hide the new state nor come back later.
+    const [actionError, setActionError] = React.useState(null); // { text, stamp }
     const [pending, setPending] = React.useState(false);
+    const stampOf = (u) => (u ? [u.phase, u.busy, u.restartNeeded, u.installed].join("|") : "");
     const post = async (route, body) => {
       const r = await fetch(route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
       return r.json().catch(() => null);
     };
     const load = async () => {
-      try { const j = await post("api/arc-core/update/state"); if (j && j.ok) { setInfo(j); setError(""); } else setError((j && j.error) || "Could not read the update state."); } catch { setError("Could not read the update state."); }
+      try { const j = await post("api/arc-core/update/state"); if (j && j.ok) { setInfo(j); setError(""); setActionError((e) => (e && e.stamp !== stampOf(j) ? null : e)); return j; } setError((j && j.error) || "Could not read the update state."); } catch { setError("Could not read the update state."); }
+      return null;
     };
     const act = async (payload) => {
-      setActionError(""); setPending(true);
-      try { const j = await post("api/arc-core/update/action", payload); if (!j || j.ok === false) setActionError((j && j.error) || "The action failed."); } catch { setActionError("The action failed."); }
+      const before = stampOf(info); // the picture the user acted on
+      setActionError(null); setPending(true);
+      let refused = "";
+      try { const j = await post("api/arc-core/update/action", payload); if (!j || j.ok === false) refused = (j && j.error) || "The action failed."; } catch { refused = "The action failed."; }
       setPending(false);
-      await load();
+      const now = await load();
+      if (refused && (!now || stampOf(now) === before)) setActionError({ text: refused, stamp: before });
     };
+    const refusal = actionError && actionError.stamp === stampOf(info) ? actionError.text : "";
     const busy = Boolean(info && info.busy);
     React.useEffect(() => {
       load();
       const id = setInterval(load, busy ? 1200 : 15000);
       return () => clearInterval(id);
     }, [busy]);
-    return h(UpdatesView, { info, error: actionError || error, pending, onAction: act, t });
+    return h(UpdatesView, { info, error: refusal || error, pending, onAction: act, t });
   }
 
   function ConnectorView({ connector, detail, onOpenConsent, onRefresh, grants, heading = true, t }) {
@@ -1152,6 +1161,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     ConsentDialog,
     ConnectorView,
     UpdatesView,
+    UpdatesPanel,
     ResearchWorkspace,
     WORKSPACES,
     CONNECTORS,
