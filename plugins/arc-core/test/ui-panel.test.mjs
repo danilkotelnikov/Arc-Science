@@ -707,6 +707,9 @@ test('11. Settings dialog gets Memory, Connectors, Keys, Add-ons and Updates sec
     fs.mkdirSync(path.join(tmpDir, 'local-plugins', 'arc-core'), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, 'local-plugins', 'arc-core', 'package.json'), JSON.stringify({ name: 'arc-core', version: '0.6.0', description: 'Shared console' }));
     fs.mkdirSync(path.join(tmpDir, 'local-plugins', 'arc-theme'), { recursive: true });
+    // the unfinished copy of an update that a scanner held: it is no add-on (review note on pull request 41)
+    fs.mkdirSync(path.join(tmpDir, 'local-plugins', 'arc-hoh.arc-new'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'local-plugins', 'arc-hoh.arc-new', 'package.json'), JSON.stringify({ name: 'arc-hoh', version: '0.7.0' }));
     const store = createResearchSessionStore({ arcHome: tmpDir, live: false });
     const data = store.snapshot();
     assert.deepEqual(data.addons.items.map((a) => [a.id, a.version]), [['arc-core', '0.6.0'], ['arc-theme', '']]);
