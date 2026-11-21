@@ -179,7 +179,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "settings.addons.hint": "Add-ons are the Arc plugins installed on this computer. The list is for reference. The installer and the updater change it.",
     "settings.about": "About this page",
     "settings.nav.access": "Access",
-    "access.sub": "What each app may use, which keys exist, and what was called.",
+    "access.sub": "The grants each app holds, where keys are kept, and what was recorded.",
     "access.views": "Parts of the Access page",
     "access.tab.apps": "Apps",
     "access.tab.keys": "Keys",
@@ -188,17 +188,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "access.none": "No access",
     "access.end": "End access",
     "access.end.title": "End access for {app}?",
-    "access.end.conseq": "Then {app} can no longer use your tools or memory. It can ask again.",
+    "access.end.conseq": "The grant for {app} ends now. The app can ask again.",
     "access.end.label": "End access for {app}",
-    "access.key.ask.label": "Set {key} in a session",
     "access.cancel": "Cancel",
     "access.close": "Close",
-    "access.key.used": "Used by {name}",
-    "access.key.set": "Set",
-    "access.key.unset": "Not set",
-    "access.key.ask": "Set in a session",
-    "access.key.hint": "A key never shows here. This page lists only its name and whether it is set.",
-    "access.key.task": "Set the key {key} for {name}. Tell me where the key goes, and never print its value.",
+    "access.key.hint": "A key never shows here. This page lists where each one is kept.",
     "access.empty.apps": "No app has asked for access yet.",
     "access.empty.keys": "No key is listed yet.",
     "access.empty.activity": "Nothing was recorded yet.",
@@ -400,13 +394,14 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     " .ak-btn:active{background:var(--ak-pressed)}",
     " .ak-btn.primary{background:var(--ak-label);color:var(--ak-on-primary)}",
     " .ak-btn.primary:hover{opacity:.86}",
+    " .ak-btn.primary:focus-visible{outline-color:var(--ak-label)}",
     " .ak-btn.outline{border:.5px solid var(--ak-line-3)}",
     " .ak-btn.sm{height:28px;padding:0 10px;border-radius:8px;font-size:12px;line-height:18px}",
     " .ak-btn.icon{width:28px;height:28px;padding:0;border-radius:8px}",
     " .ak-btn:disabled{opacity:.4;cursor:not-allowed}",
     " .ak-seg{display:inline-flex;gap:2px;padding:4px;border-radius:10px;background:var(--ak-hover)}",
     " .ak-seg button{height:28px;padding:0 16px;border:0;border-radius:8px;background:transparent;font:inherit;font-size:13px;line-height:20px;font-weight:500;color:var(--ak-label-2);white-space:nowrap;cursor:pointer}",
-    " .ak-seg button[aria-selected=true]{background:var(--ak-layer);color:var(--ak-label);box-shadow:0 0 0 .5px var(--ak-line-3),0 4px 16px color-mix(in srgb,black 3%,transparent)}",
+    " .ak-seg button[aria-selected=true]{background:var(--ak-layer);color:var(--ak-label);box-shadow:0 0 0 .5px var(--ak-line-3),0 4px 16px color-mix(in srgb,var(--ak-label) 4%,transparent)}",
     " .ak-rows{margin-top:8px}",
     " .ak-row{display:flex;gap:12px 16px;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:.5px solid var(--ak-line-2)}",
     " .ak-rows>.ak-row:last-child{border-bottom:0}",
@@ -422,8 +417,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     " .ak-dot.warn{background:transparent;box-shadow:inset 0 0 0 2px var(--ak-label-2)}",
     " .ak-empty{margin:0;padding:14px 0;font-size:13px;line-height:20px;color:var(--ak-label-3)}",
     " .ak-alert{margin:0 0 8px;font-size:13px;line-height:20px}",
-    " .ak-mask{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;background:color-mix(in srgb,black 24%,transparent)}",
-    " .ak-modal{width:min(420px,calc(100vw - 32px));border-radius:20px;background:var(--ak-layer);box-shadow:0 0 0 .5px var(--ak-line-3),0 3px 8px color-mix(in srgb,black 4%,transparent),0 0 20px color-mix(in srgb,black 5%,transparent)}",
+    " .ak-mask{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;background:color-mix(in srgb,var(--ak-on-primary) 64%,transparent)}",
+    " .ak-modal{width:min(420px,calc(100vw - 32px));border-radius:20px;background:var(--ak-layer);box-shadow:0 0 0 .5px var(--ak-line-3),0 3px 8px color-mix(in srgb,var(--ak-label) 6%,transparent),0 0 20px color-mix(in srgb,var(--ak-label) 8%,transparent)}",
     " .ak-modal header{display:flex;justify-content:space-between;align-items:center;padding:22px 14px 12px 24px}",
     " .ak-modal h2{margin:0;font-size:16px;line-height:24px;font-weight:500}",
     " .ak-conseq{margin:0;padding:8px 24px 0;font-size:13px;line-height:20px;color:var(--ak-label-2)}",
@@ -476,19 +471,13 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   const monthDay = (ms) => { const d = new Date(Number(ms)); return Number(ms) > 0 && Number.isFinite(d.getTime()) ? `${d.getDate()} ${new Intl.DateTimeFormat(uiLang(), { month: "short" }).format(d)}` : ""; };
   const dayTime = (ms) => { const d = new Date(Number(ms)); const day = monthDay(ms); return day ? `${day}, ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : ""; };
 
-  // Settings, Access: what each app may use, which keys exist, and what was called. Pure: every value arrives in props.
-  // `tab` and `ending` set the first view and the open question; a test uses them.
-  function AccessPage({ data, failed = false, actionError = "", tab: firstTab = "apps", ending: firstEnding = null, nowMs = Date.now(), onRefresh, onEnd, onAsk, t }) {
+  // Settings, Access: the grants each app holds, where keys are kept, and what was recorded. Pure: every value arrives in props.
+  // The page lists and ends grant records. `tab` and `ending` set the first view and the open question; a test uses them.
+  const DAY_MS = 24 * 3600 * 1000;
+  function AccessPage({ data, failed = false, actionError = "", tab: firstTab = "apps", ending: firstEnding = null, nowMs = Date.now(), onRefresh, onEnd, t }) {
     const [tab, setTab] = React.useState(firstTab);
-    const [ending, setEnding] = React.useState(firstEnding);
+    const [ending, setEnding] = React.useState(firstEnding); // the id of the grant in question
     const back = React.useRef ? React.useRef(null) : { current: null };
-    // after the question closes, the focus goes back to its button; after End access that button is gone, so it goes to the open tab
-    const close = (done) => {
-      const from = back.current, root = from && from.closest ? from.closest("[data-arc-kit]") : null;
-      setEnding(null);
-      const go = done && root ? root.querySelector("[role=tab][aria-selected=true]") : from;
-      if (go && typeof setTimeout === "function") setTimeout(() => { if (go.isConnected) go.focus(); }, 0);
-    };
     const frame = (...kids) => h("div", { "data-arc-settings": "access", "data-arc-kit": "true", "data-arc-plugin-pane": "true" }, h("style", null, KIT_CSS), ...kids);
     const title = (acts = null) => h("div", { className: "ak-title" }, h("h1", null, t("settings.nav.access")), h("p", null, t("access.sub")), h("div", { className: "acts" }, acts));
     if (!data) {
@@ -496,41 +485,60 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         ? h(React.Fragment, null, h("p", { role: "alert", className: "ak-alert" }, t("state.error")), h(KBtn, { look: "outline", small: true, label: t("action.retry"), onClick: onRefresh }))
         : h("p", { role: "status", className: "ak-empty" }, t("access.loading")));
     }
-    const detail = data.connectorsDetail || {}, grants = data.consents || [];
-    const apps = (detail.Apps || []).map((a) => ({ ...a, grant: grants.find((g) => g.appId === `${a.id}-connector` && Number(g.expiresAtMs) > nowMs) || null }));
-    const target = apps.find((a) => a.id === ending && a.grant) || null;
+    const detail = data.connectorsDetail || {}, listed = detail.Apps || [];
+    const live = (data.consents || []).filter((g) => g && typeof g.appId === "string" && Number(g.expiresAtMs) > nowMs);
+    // One row for each active grant, so none stays hidden. A grant belongs to an app by the rule of the store: its id starts
+    // with the id of the app. A grant of no listed app shows under its own id. An app without a grant shows "No access".
+    const rows = [], shown = new Set();
+    for (const a of listed) {
+      const mine = live.filter((g) => g.appId.startsWith(a.id) && !shown.has(g.appId));
+      for (const g of mine) { shown.add(g.appId); rows.push({ key: g.appId, name: a.label, mono: false, grant: g }); }
+      if (!live.some((g) => g.appId.startsWith(a.id))) rows.push({ key: `app:${a.id}`, name: a.label, mono: false, grant: null });
+    }
+    for (const g of live) if (!shown.has(g.appId)) { shown.add(g.appId); rows.push({ key: g.appId, name: g.appId, mono: true, grant: g }); }
+    const target = rows.find((r) => r.grant && r.grant.appId === ending) || null;
+    // a grant that left by another way (its time ended, a refresh dropped it) also closes its question
+    React.useEffect(() => { if (ending && !target) setEnding(null); });
+    // after the question closes, the focus goes back to its button; after End access that button is gone, so it goes to the open tab
+    const close = (done) => {
+      const from = back.current, root = from && from.closest ? from.closest("[data-arc-kit]") : null;
+      setEnding(null);
+      const go = done && root ? root.querySelector("[role=tab][aria-selected=true]") : from;
+      if (go && typeof setTimeout === "function") setTimeout(() => { if (go.isConnected) go.focus(); }, 0);
+    };
+    const words = (list) => (Array.isArray(list) ? list : []).filter((x) => typeof x === "string").map((x) => oneLine(x, 40));
+    const until = (g) => t("access.until", { date: Number(g.expiresAtMs) - nowMs < DAY_MS ? dayTime(g.expiresAtMs) : monthDay(g.expiresAtMs) });
     const empty = (key) => h("p", { className: "ak-empty" }, t(key));
     let list = null;
     if (tab === "apps") {
-      list = apps.length === 0 ? empty("access.empty.apps") : apps.map((a) => h(KRow, {
-        key: a.id, kind: "app", id: a.id, name: a.label, chips: a.grant ? a.grant.scopes || [] : [],
+      list = rows.length === 0 ? empty("access.empty.apps") : rows.map((r) => h(KRow, {
+        key: r.key, kind: "app", id: r.key, name: oneLine(r.name, 60), mono: r.mono, chips: r.grant ? words(r.grant.scopes) : [],
         end: h(React.Fragment, null,
-          h(KStatus, { text: a.grant ? t("access.until", { date: monthDay(a.grant.expiresAtMs) }) : t("access.none") }),
-          a.grant ? h(KBtn, { look: "outline", small: true, label: t("access.end"), aria: t("access.end.label", { app: a.label }), onClick: (e) => { back.current = e && e.currentTarget ? e.currentTarget : null; setEnding(a.id); } }) : null),
+          h(KStatus, { text: r.grant ? until(r.grant) : t("access.none") }),
+          r.grant ? h(KBtn, { look: "outline", small: true, label: t("access.end"), aria: t("access.end.label", { app: oneLine(r.name, 60) }), onClick: (e) => { back.current = e && e.currentTarget ? e.currentTarget : null; setEnding(r.grant.appId); } }) : null),
       }));
     } else if (tab === "keys") {
       const keys = detail.Keys || [];
       list = keys.length === 0 ? empty("access.empty.keys") : keys.map((k) => h(KRow, {
-        key: k.id, kind: "key", id: k.id, name: k.ref, mono: true, sub: t("access.key.used", { name: k.label }),
-        end: h(React.Fragment, null,
-          k.state === "ok" ? h(KStatus, { text: t("access.key.set"), dot: "on" }) : h(KStatus, { text: t("access.key.unset"), dot: "warn" }),
-          k.state === "ok" ? null : h(KBtn, { look: "outline", small: true, icon: "ask", label: t("access.key.ask"), aria: t("access.key.ask.label", { key: k.ref }), onClick: () => onAsk && onAsk(t("access.key.task", { key: k.ref, name: k.label })) })),
+        key: k.id, kind: "key", id: k.id, name: oneLine(k.label, 60), sub: oneLine(k.status, 90),
+        end: h("span", { className: "ak-status" }, h("span", { className: k.state === "ok" ? "ak-dot on" : "ak-dot", "aria-hidden": true }), h("span", { className: "mono" }, oneLine(k.ref, 48))),
       }));
     } else {
-      const rows = detail.Audit || [];
-      list = rows.length === 0 ? empty("access.empty.activity") : rows.map((r) => h(KRow, {
+      const events = detail.Audit || [];
+      list = events.length === 0 ? empty("access.empty.activity") : events.map((r) => h(KRow, {
         key: r.id, kind: "activity", id: r.id, name: oneLine(r.summary, 120), tail: h("span", { className: "mono" }, r.kind), sub: dayTime(r.atMs),
       }));
     }
+    const app = target ? oneLine(target.name, 43) : ""; // the consequence line stays inside 90 characters
     return frame(
       title(tab === "keys" ? h(InfoHint, { label: t("settings.about"), text: t("access.key.hint"), align: "end", glyph: h(Ic, { n: "info" }) }) : null),
       actionError ? h("p", { role: "alert", className: "ak-alert" }, oneLine(actionError)) : null,
       h(Seg, { label: t("access.views"), value: tab, onChange: setTab, options: [["apps", t("access.tab.apps")], ["keys", t("access.tab.keys")], ["activity", t("access.tab.activity")]] }),
       h("div", { className: "ak-rows", role: "tabpanel", "aria-labelledby": `ak-tab-${tab}` }, list),
       target ? h(Confirm, {
-        t, title: t("access.end.title", { app: target.label }), text: t("access.end.conseq", { app: target.label }), action: t("access.end"),
+        t, title: t("access.end.title", { app }), text: t("access.end.conseq", { app }), action: t("access.end"),
         onClose: () => close(false),
-        onConfirm: () => { if (onEnd) onEnd({ appId: `${target.id}-connector`, mode: "Revoke" }); close(true); },
+        onConfirm: () => { if (onEnd) onEnd({ appId: target.grant.appId, mode: "Revoke" }); close(true); },
       }) : null);
   }
 
@@ -1545,7 +1553,6 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           data, failed, actionError, t,
           onRefresh: () => dispatch({ kind: "refresh" }),
           onEnd: (req) => dispatch({ kind: "consent", ...req }),
-          onAsk: (task) => pushToChatComposer(task, null, t),
         });
       };
     }
