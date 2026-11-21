@@ -910,3 +910,25 @@ test('repair 5: a leftover folder never keeps its journal once its programs are 
   allAt(e, '0.7.0');
   assert.equal(v.getState().hasBackup, false);
 });
+
+test('repair 6: while the older journal cannot be deleted, Roll back keeps its own journal, so the older backup cannot count', async (t) => {
+  const e = await threeVersions(t);
+  const prevRoot = path.join(e.home, 'updates', 'backup-prev'), prevJournal = path.join(prevRoot, 'backup.json');
+  // a scanner holds the set-aside journal and its folder: through the clean-up of the 0.8.0 update and through the Roll back
+  const held = { ...fs,
+    rmSync: (p, o) => { if (String(p) === prevJournal && fs.existsSync(prevJournal)) { const err = new Error('EBUSY: resource busy or locked'); err.code = 'EBUSY'; throw err; } return fs.rmSync(p, o); },
+    renameSync: (a, b) => { if (String(a) === prevRoot) { const err = new Error('EPERM: operation not permitted'); err.code = 'EPERM'; throw err; } return fs.renameSync(a, b); },
+  };
+  assert.equal((await e.make({ fs: held }).install()).ok, true);
+  allAt(e, '0.8.0');
+  assert.equal(fs.existsSync(prevJournal), true, 'the 0.6.0 backup is still set aside, journal included');
+  const rb = await e.make({ fs: held }).rollback();
+  assert.equal(rb.ok, true, rb.error);
+  allAt(e, '0.7.0');
+  // the scanner lets go; a second Roll back must not go one more version back
+  const v = e.make();
+  assert.notEqual(v.getState().backupVersion, '0.6.0', 'the older backup must not count');
+  await v.rollback();
+  allAt(e, '0.7.0');
+  assert.equal(v.getState().hasBackup, false, 'the second Roll back only finished the clean-up');
+});

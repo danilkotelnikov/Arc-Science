@@ -548,9 +548,14 @@ export function createUpdater(opts = {}) {
       if (errors.length) { phase('failed', `The rollback was not complete: ${errors.join('; ')}`); return { ok: false, error: `The rollback was not complete: ${errors.join('; ')}` }; }
       // Roll back goes one step. An older backup that a cut-short clean-up left behind stops counting before this journal goes,
       // so a process that dies in the lines below cannot leave it as a second step.
-      if (j.status === 'complete') { try { F.rmSync(path.join(prevRoot, 'backup.json'), { force: true }); } catch { /* dropped below */ } }
-      F.rmSync(journalFile, { force: true });
-      try { F.rmSync(backupRoot, { recursive: true, force: true }); } catch { /* swept later */ }
+      // If that older journal cannot be deleted now (something holds it), this journal stays: while it is in place the older
+      // backup cannot count, and the next Roll back finds nothing to move and only finishes the clean-up.
+      let olderGone = true;
+      if (j.status === 'complete') { try { F.rmSync(path.join(prevRoot, 'backup.json'), { force: true }); } catch { olderGone = false; } }
+      if (olderGone) {
+        F.rmSync(journalFile, { force: true });
+        try { F.rmSync(backupRoot, { recursive: true, force: true }); } catch { /* swept later */ }
+      }
       // undoing a swap that was cut short leaves the files as they were before it: its earlier backup counts again
       if (j.status === 'swapping') { try { await prevBack(); } catch { /* the next update puts it back */ } }
       // Roll back goes one step. An older backup that a cut-short clean-up left behind must not show up as a second step.
