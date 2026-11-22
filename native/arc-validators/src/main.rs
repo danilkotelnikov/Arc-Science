@@ -2,7 +2,7 @@
 use std::env;
 use std::io::{self, Read};
 
-use arc_validators::{arc_hook, arc_rules, arc_scan, grants_net, seal_guard, sha256, vector_assets};
+use arc_validators::{arc_hook, arc_rules, arc_scan, grants_net, prose_gate, seal_guard, sha256, vector_assets};
 
 fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 4);
@@ -74,6 +74,22 @@ fn main() {
                 .collect::<Vec<_>>()
                 .join(",");
             println!("{{\"ok\":{},\"findings\":[{}]}}", hits.is_empty(), items);
+        }
+        "prose-gate" => {
+            // One case per stdin line, "zone|text"; prints the verdict of each line as a JSON array.
+            let text = read_stdin();
+            let items = text
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| {
+                    // a case may hold several lines, written as the two characters backslash and n
+                    let (zone, body) = l.split_once('|').unwrap_or(("public", l));
+                    let body = body.replace("\\n", "\n");
+                    format!("\"{}\"", prose_gate::verdict(&body, prose_gate::zone_of(zone)))
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            println!("[{}]", items);
         }
         "arc-scan" => {
             let check_brand = args.get(1).map(|s| s == "--brand").unwrap_or(false);

@@ -2,6 +2,7 @@ pub mod arc_hook;
 pub mod arc_rules;
 pub mod arc_scan;
 pub mod grants_net;
+pub mod prose_gate;
 pub mod seal_guard;
 pub mod sha256;
 pub mod vector_assets;
@@ -140,5 +141,51 @@ mod tests {
         assert!(res.errors.contains(&"MISSING_STROKE_WIDTH_1_5"));
         assert!(res.errors.contains(&"FORBIDDEN_SCRIPT"));
         assert!(res.errors.contains(&"FORBIDDEN_BLUE_COLOR"));
+    }
+
+    // The case files of the engine are the contract. Every fitted case holds here as it holds in the JS gate;
+    // test/native-transition.test.mjs compares the two on every case, the held-out and blind files included.
+    #[test]
+    fn prose_gate_holds_every_fitted_case_with_the_engine_lexicon() {
+        assert!(prose_gate::spec_text().contains("work_part"), "the lexicon is read from prose-gate.js");
+        let files = [
+            include_str!("../../../plugins/arc-core/test/prose-gate.cases.txt"),
+            include_str!("../../../plugins/arc-core/test/prose-gate.ru.cases.txt"),
+        ];
+        let mut wrong = Vec::new();
+        let mut n = 0;
+        for file in files {
+            for line in file.lines().filter(|l| !l.is_empty() && !l.starts_with('#')) {
+                let mut parts = line.splitn(4, '|');
+                let (_split, zone, expect, text) = (parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap());
+                let got = prose_gate::verdict(text, prose_gate::zone_of(zone));
+                // two bands (S049): an undercut blocks or is marked for a reader; it is never left clean
+                let ok = match expect {
+                    "undercut" => got != "clean",
+                    "clean" => got != "undercut",
+                    _ => got == "review",
+                };
+                n += 1;
+                if !ok {
+                    wrong.push(format!("{} -> {}: {}", expect, got, text));
+                }
+            }
+        }
+        assert!(n >= 260, "the case files lost cases: {}", n);
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+        let hits = arc_rules::lint_prose("Four research programmes.\nEach page states the method and what has not been done.", false);
+        assert_eq!(hits.iter().filter(|h| h.rule == "SELF_UNDERCUT").map(|h| h.line).collect::<Vec<_>>(), vec![2]);
+    }
+
+    // Review of PR 36: one long clause of marked hits walked back to the clause start for every hit, about 9 s for 36,000 words.
+    // The clause index keeps it linear; the bound is loose so a slow runner passes and a quadratic scan does not.
+    #[test]
+    fn prose_gate_stays_linear_on_one_long_clause() {
+        let started = std::time::Instant::now();
+        let en = format!("The model {}today.", "we have not run it if needed ".repeat(6000));
+        let ru = format!("Кот {}сегодня.", "пока не запущен ".repeat(6000));
+        assert_eq!(prose_gate::verdict(&en, prose_gate::zone_of("public")), "review");
+        assert_eq!(prose_gate::verdict(&ru, prose_gate::zone_of("public")), "review");
+        assert!(started.elapsed().as_secs() < 5, "two long clauses took {:?}", started.elapsed());
     }
 }
