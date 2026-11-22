@@ -1,6 +1,6 @@
 {
   "name": "arc-mermaid",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Draws Mermaid diagrams (flowchart, state, sequence) in the chat with a layout that the Molecullage gate checks, in the Arc Harness theme.",
   "icon": "icon.svg",
   "type": "module",

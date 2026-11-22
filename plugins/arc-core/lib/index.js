@@ -4,11 +4,12 @@
  * deterministic gate checks, scope-gated toolpack loading and memory.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { check as proseGateCheck, repair as proseGateRepair, verifyRewrite as proseGateVerify } from './prose-gate.js';
 
 export const name = 'arc-core';
-export const version = '0.6.0';
+export const version = '0.6.1';
 export const inject = ['tools'];
 
 export const DEFAULT_SHELF = Object.freeze([
@@ -353,8 +354,8 @@ export function createArcCoreServer(opts = {}) {
     if (Array.isArray(texts)) {
       texts.forEach((entry, idx) => {
         const id = (entry && typeof entry === 'object' && typeof entry.id === 'string' && entry.id.trim()) || `text-${idx + 1}`;
-        // The gate reads every text as public. A limits zone comes from a heading or a label inside the text, never from
-        // the caller, so a builder cannot lower its own failure (R006; F092).
+        // The gate reads every text as public. The caller cannot pick a zone (R006; F092). A limits heading or label written
+        // inside the text is trusted: the gate reads it as the zone it names.
         const r = proseCheck(entry && typeof entry === 'object' ? { text: entry.text, facts: entry.facts, zone: 'public' } : {});
         if (r.error) { failedChecks.push(`prose:${id}`); return; }
         prose.points += r.points;
@@ -536,6 +537,8 @@ export const memoryRecall = defaultServer.memory.recall;
 
 import { createResearchSessionStore, registerConsoleRoutes } from './console.js';
 import { createUpdater } from './updater.js';
+import { createComponentHost, serveCammutRoute } from './components.js';
+import { createMemoryPolicyStore, createEmbeddedMemoryServer } from './memory-policy.js';
 
 function jsonRender(_args, value) {
   return [{ type: 'text', text: JSON.stringify(value === undefined ? null : value, null, 2) }];
@@ -631,6 +634,21 @@ export function apply(ctx, opts = {}) {
   server.updater = updater;
   // the timer never runs under the test runner or with ARC_UPDATE_DISABLE=1, so a test cannot reach GitHub or the real ~/.arc
   if (updater && typeof updater.start === 'function' && !process.env.NODE_TEST_CONTEXT && process.env.ARC_UPDATE_DISABLE !== '1') updater.start();
+  // The Cammut console is a part that loads on first use and can be swapped while the app runs (components.js).
+  // Under the test runner it never reads the real data home: notes stay in memory and only a fake fetch reaches the gateway.
+  const components = createComponentHost();
+  const cc = { ...(opts.console || {}), ...(opts.cammut || {}) };
+  const arcHome = cc.arcHome || process.env.ARC_HOME || path.join(os.homedir(), '.arc');
+  const persist = cc.live !== false && !process.env.NODE_TEST_CONTEXT;
+  let embedded = null;
+  components.register('cammut-console', {
+    load: async (gen) => {
+      const mod = await import(`./cammut-console.js?g=${gen}`);
+      embedded = embedded || createEmbeddedMemoryServer(createMemoryPolicyStore(persist ? { persistFile: path.join(arcHome, 'memory', 'notes.json') } : {}));
+      return mod.createCammutConsole({ fetch: cc.fetch, gatewayHost: cc.gatewayHost, arcHome, embedded });
+    },
+  });
+  server.components = components;
   if (ctx && ctx.tools && typeof ctx.tools.register === 'function') {
     const providerSafeNames = opts.providerSafeNames !== undefined
       ? Boolean(opts.providerSafeNames)
@@ -640,7 +658,7 @@ export function apply(ctx, opts = {}) {
     }
   }
   if (ctx && typeof ctx.inject === 'function') {
-    registerConsoleRoutes(ctx, consoleStore, { updater });
+    registerConsoleRoutes(ctx, consoleStore, { updater, cammut: (req) => serveCammutRoute(req, components) });
   }
   return server;
 }
@@ -651,5 +669,6 @@ export * from './shelf.js';
 export * from './workshop.js';
 export * from './console.js';
 export * from './updater.js';
+export * from './components.js';
 
 

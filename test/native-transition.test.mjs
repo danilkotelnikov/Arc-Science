@@ -108,9 +108,9 @@ test('N2 & N4: vendored plugin bundler audits licenses, rejects UNLICENSED plugi
   );
   assert.match(bundle.noticesText, /Based on DeepSeek Harness \(dsh-v0\.2\.1-rc\.5\), MIT/);
   assert.match(bundle.noticesText, /SIL Open Font License 1\.1/);
-  assert.match(bundle.noticesText, /arc-core@0\.6\.0/);
-  assert.match(bundle.noticesText, /arc-mermaid@0\.6\.0/);
-  assert.match(bundle.noticesText, /arc-web-crawler@0\.6\.0/);
+  // the notices name every built-in plugin at the version of the VERSION file, so a version bump needs no edit here
+  const arcVersion = fs.readFileSync(new URL('../VERSION', import.meta.url), 'utf8').trim();
+  for (const name of ['arc-core', 'arc-mermaid', 'arc-web-crawler']) assert.ok(bundle.noticesText.includes(`\`${name}@${arcVersion}\``), `${name}@${arcVersion} is in the notices`);
 
   // Negative test: reject a plugin with UNLICENSED or missing license
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-vendor-bad-'));
@@ -412,6 +412,16 @@ test('N8b: the Rust prose gate reads the engine lexicon and gives the JS verdict
     'Other groups have not reported it so far, but we did.',
     'Not trained, and no adverse events were reported.',
   ].map((text) => ({ zone: 'public', text }));
+  // The screen's fix 50d7083: exceptions stay inside the clause of the hit, and the words in code are read.
+  const pinned = {
+    'Our tests found two bugs, and we have not run the benchmark.': 'undercut',
+    'We have not run the benchmark, if the review allows.': 'undercut',
+    'We have not run the benchmark if the review allows.': 'review',
+    'The model is `not trained`.': 'undercut',
+    'The flag `--dry-run` prints the plan.': 'clean',
+    '```\nNot trained.\n```\nThe model is built.': 'undercut',
+  };
+  for (const text of Object.keys(pinned)) if (!zoneCases.some((c) => c.text === text)) zoneCases.push({ zone: 'public', text });
   const cases = [...loadCases(), ...loadCases(RU_CASES), ...loadCases(HELDOUT), ...loadCases(BLIND3), ...loadCases(RU_BLIND), ...loadCases(F102_BLIND), ...loadCases(BLIND4), ...loadCases(F102_BLIND2), ...loadCases(RU_BLIND2), ...zoneCases];
   assert.ok(cases.length >= 1070, `${cases.length} cases`);
   const js = cases.map((c) => {
@@ -421,6 +431,7 @@ test('N8b: the Rust prose gate reads the engine lexicon and gives the JS verdict
   const rust = runNativeValidatorCli('prose-gate', [], cases.map((c) => `${c.zone}|${c.text.replace(/\n/g, '\\n')}`).join('\n'));
   const differ = cases.map((c, i) => (rust[i] === js[i] ? null : `rust ${rust[i]}, js ${js[i]}: ${JSON.stringify(c.text)}`)).filter(Boolean);
   assert.deepEqual(differ, []);
+  for (const [text, want] of Object.entries(pinned)) assert.equal(js[cases.findIndex((c) => c.text === text)], want, text);
   // Line by line too: the lint of every case, joined into one text, gives the same findings in Rust and JS.
   const joined = [...cases.filter((c) => c.zone === 'public').map((c) => c.text.replace(/[\r\n\u2028\u2029\u0085]/g, ' ')), ...zoneCases.map((c) => c.text)].join('\n');
   assert.deepEqual(runNativeValidatorCli('arc-rules', [], joined).findings, lintProse(joined).findings);

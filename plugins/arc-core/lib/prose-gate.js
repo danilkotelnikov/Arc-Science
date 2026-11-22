@@ -110,6 +110,19 @@ function opensOf(lower, words, at) {
   return opens;
 }
 
+// The clause start of every token and running counts of word kinds, built in one pass. clauseStart(a) and count(kind, s, a)
+// then cost O(1), so a sentence stays linear however long its clause is (review of PR 36: a 30,000-word clause took seconds).
+// opensAt(k) says that a clause opens at token k, after punctuation or after a conjunction.
+function clauseIndex(t, opensAt, kinds) {
+  const start = new Int32Array(t.length + 1);
+  const run = Object.fromEntries(Object.keys(kinds).map((name) => [name, new Int32Array(t.length + 1)]));
+  for (let k = 0; k <= t.length; k += 1) {
+    start[k] = k === 0 || opensAt(k) ? k : start[k - 1];
+    if (k < t.length) for (const [name, test] of Object.entries(kinds)) run[name][k + 1] = run[name][k] + (test(t[k]) ? 1 : 0);
+  }
+  return { clauseStart: (a) => (a > 0 && a <= t.length ? start[a] : a), count: (name, s, a) => run[name][a] - run[name][s] };
+}
+
 function tokensOf(sentence) {
   const lower = foldMixed(sentence.toLowerCase().replace(/’/g, "'")).replace(/\bcannot\b/g, 'can not').replace(/n't\b/g, ' not');
   const words = [];
@@ -150,11 +163,11 @@ function undercuts(t, opens = new Set()) {
   const has = (set, i) => i >= 0 && i < t.length && set.has(t[i]);
   const skip = (i, max) => { let k = i; let n = 0; while (n < max && has(L.filler, k)) { k += 1; n += 1; } return k; };
   // "No model is trained before the split is frozen" states a procedure. It is no status.
-  const condAfter = (end) => { for (let k = end + 1; k <= end + 4 && k < t.length; k += 1) if (L.rule_cond.has(t[k])) return true; return false; };
+  const condAfter = (end) => { for (let k = end + 1; k <= end + 4 && k < t.length && !opens.has(k); k += 1) if (L.rule_cond.has(t[k])) return true; return false; };
   // "A claim that is not tested stays on the lowest rung" restricts a noun. It is no status.
   const relBefore = (start) => { for (let k = start - 1; k >= start - 3 && k >= 0; k -= 1) if (L.rel_front.has(t[k])) return true; return false; };
   // "No errors have been reported", "the service has never crashed": a missing harm is a result, not missing work (F094)
-  const adverseNear = (a, b) => { for (let k = Math.max(0, a - 5); k <= b; k += 1) if (L.adverse_noun.has(t[k])) return true; return false; };
+  const adverseNear = (a, b) => { for (let k = Math.max(clauseStart(a), a - 5); k <= b; k += 1) if (L.adverse_noun.has(t[k])) return true; return false; };
   // A null result (F102): the head of the subject names an observation and the verb reports one. "No adverse events were
   // reported" and "no change in binding was measured" are results; "no toxicity assay has been run" (head: assay) and
   // "no changes have been tested" (verb: tested) announce missing work. The head is the last word before any preposition.
@@ -191,13 +204,17 @@ function undercuts(t, opens = new Set()) {
   // The clear core (the owner's decision, 18.XI.2026). The clause of the hit has no subject ("Not trained.", "Has not been run.",
   // ", not yet benchmarked."), or its subject is the author or the project: a first-person word, an artifact or work noun,
   // "project", or a free relative "what" ("... and what has not been done"). A subject marked as another group is no core.
-  const clauseStart = (a) => { let s = a; while (s > 0 && !opens.has(s) && !CONJ.has(t[s - 1])) s -= 1; return s; };
   const bare = (w) => L.aux.has(w) || L.filler.has(w) || L.status_now.has(w);
+  const { clauseStart, count } = clauseIndex(t, (k) => opens.has(k) || CONJ.has(t[k - 1]), {
+    full: (w) => !bare(w),
+    other: (w) => L.other_mark.has(w) || w === 'others',
+    own: (w) => L.first_person.has(w) || L.artifact.has(w) || L.work_noun.has(w) || L.own_word.has(w),
+  });
   const core = (a, b) => {
-    const lead = t.slice(clauseStart(a), a);
-    if (lead.every(bare)) return true;
-    if (lead.some((w) => L.other_mark.has(w) || w === 'others')) return false;
-    if (lead.some((w) => L.first_person.has(w) || L.artifact.has(w) || L.work_noun.has(w) || L.own_word.has(w))) return true;
+    const s = clauseStart(a);
+    if (!count('full', s, a)) return true;
+    if (count('other', s, a)) return false;
+    if (count('own', s, a)) return true;
     return byUs(b) || (L.un_part.has(t[a]) && [1, 2].some((n) => has(L.artifact, b + n)));   // "an untrained model"
   };
   const { out, push: add, full } = collector(core);
@@ -311,14 +328,17 @@ function undercutsRu(t, opens = new Set()) {
   const has = (set, i) => i >= 0 && i < t.length && set.has(t[i]);
   // The clear core, as in English: no subject before the hit, or a first-person word, an artifact or a work noun of the
   // project, or the free relative "то, что ..." ("... и то, что ещё не сделано"). A subject marked as other is no core.
-  const clauseStart = (a) => { let s = a; while (s > 0 && !opens.has(s) && !CONJ_RU.has(t[s - 1])) s -= 1; return s; };
+  const { clauseStart, count } = clauseIndex(t, (k) => opens.has(k) || CONJ_RU.has(t[k - 1]), {
+    full: (w) => !(L.ru_now.has(w) || L.ru_fill.has(w) || w === 'не' || w === 'нет'),
+    other: (w) => startsWithAny(w, L.ru_other),
+    own: (w) => L.ru_first.has(w) || startsWithAny(w, L.ru_artifact) || startsWithAny(w, L.ru_result),
+  });
   const core = (a) => {
     const s = clauseStart(a);
-    const lead = t.slice(s, a);
-    if (lead.every((w) => L.ru_now.has(w) || L.ru_fill.has(w) || w === 'не' || w === 'нет')) return true;
-    if (lead.some((w) => startsWithAny(w, L.ru_other))) return false;
+    if (!count('full', s, a)) return true;
+    if (count('other', s, a)) return false;
     if (t[s] === 'что' && t[s - 1] === 'то') return true;
-    return lead.some((w) => L.ru_first.has(w) || startsWithAny(w, L.ru_artifact) || startsWithAny(w, L.ru_result));
+    return count('own', s, a) > 0;
   };
   const { out, push: add, full } = collector(core);
   // "пока не" and "до сих пор", "до конца" mark a status; "пока модель не ...", "до заморозки" mark a condition
@@ -483,7 +503,9 @@ export function repair(text, { drop = true } = {}) {
   let changed = 0;
   const removed = [];
   const cut = [];
+  const limits = new Set(zoneLines(text, 'public').filter((z) => z.zone === 'limits').map((z) => z.no));   // check() exempts these lines, so repair keeps them
   const lines = String(text ?? '').split('\n').map((line, idx) => {
+    if (limits.has(idx + 1)) return line;
     const parts = line.split(SENTENCE_END);
     const kept = [];
     for (const s of parts) {
@@ -522,14 +544,12 @@ function zoneLines(text, zone) {
   // Plain text: a label line with a limits word, over a list, opens a limits zone for that list. It ends at a blank line.
   // A label with no list under it is an ordinary line and is checked.
   const out = [];
-  let fence = false;
   let limitsLevel = 0;
   let plain = 0;                                        // 1: a label waits for its list; 2: inside the list
   const rows = String(text ?? '').replace(/^﻿/, '').split(/\r?\n/);
   const listFollows = (idx) => { for (let k = idx + 1; k < rows.length; k += 1) if (rows[k].trim()) return LIST_ITEM.test(rows[k]); return false; };
   for (const [idx, raw] of rows.entries()) {
-    if (/^\s*```/.test(raw)) { fence = !fence; continue; }
-    if (fence) continue;
+    if (/^\s*```/.test(raw)) continue;   // a fence line is no prose; the words inside a fence are read like any line
     const head = /^(#{1,6})\s+(.*)$/.exec(raw);
     if (head) {
       const level = head[1].length;
@@ -541,7 +561,7 @@ function zoneLines(text, zone) {
     if (!raw.trim()) { if (plain === 2) plain = 0; continue; }
     if (isLimitsLabel(raw) && listFollows(idx)) { plain = 1; continue; }
     if (plain && (LIST_ITEM.test(raw) || (plain === 2 && /^\s{2,}\S/.test(raw)))) plain = 2; else plain = 0;
-    const line = raw.replace(/`[^`\n]+`/g, ' ').replace(/https?:\/\/\S+/g, ' ');
+    const line = raw.replace(/`([^`\n]+)`/g, ' $1 ').replace(/https?:\/\/\S+/g, ' ');
     if (line.trim()) out.push({ no: idx + 1, line, zone: limitsLevel || plain === 2 ? 'limits' : zone });
   }
   return out;

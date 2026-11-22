@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -80,7 +82,10 @@ type Governor struct {
 type Cammut struct {
 	Upstreams []string `json:"upstreams"` // tried in order; the next one only when the connection fails
 	AuthFile  string   `json:"authFile"`  // JSON file with mcpServers.cammut.headers.Authorization
-	Governor  Governor `json:"governor"`
+	// Auth names the key of one upstream (a name in .credentials.yaml refs). An upstream with an entry never
+	// gets the AuthFile header; "" means no Authorization header at all. Upstreams without an entry keep AuthFile.
+	Auth     map[string]string `json:"auth,omitempty"`
+	Governor Governor          `json:"governor"`
 }
 
 type Caching struct {
@@ -169,6 +174,11 @@ func SaveSettings(patch map[string]any) (Config, error) {
 			raw[k] = v
 		}
 	}
+	if v, ok := patch["cammut"]; ok {
+		if err := mergeCammutPatch(raw, v); err != nil {
+			return Config{}, err
+		}
+	}
 	b, _ := json.MarshalIndent(raw, "", "  ")
 	if err := os.MkdirAll(Home(), 0o700); err != nil {
 		return Config{}, err
@@ -177,6 +187,211 @@ func SaveSettings(patch map[string]any) (Config, error) {
 		return Config{}, err
 	}
 	return LoadConfig(), nil
+}
+
+// settingsError is a refused settings patch (the caller sent something wrong), as opposed to a failed write.
+type settingsError string
+
+func (e settingsError) Error() string { return string(e) }
+
+const maxCammutUpstreams = 8
+
+var keyRefName = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
+
+// normUpstream returns the address without a trailing slash, or an error text. Only http and https, a host,
+// no user name or password, no query and no fragment: a secret must never sit in the address.
+func normUpstream(s string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(s))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return "", fmt.Errorf("a Cammut address must be http or https with a host: %q", plainAddr(s))
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Contains(s, "?") || strings.Contains(s, "#") {
+		return "", fmt.Errorf("a Cammut address holds no user name, password, query or fragment: %q. Remove this server and add it again without them", plainAddr(s))
+	}
+	u.Host = strings.ToLower(u.Host)
+	return strings.TrimRight(u.String(), "/"), nil
+}
+
+// plainAddr is the address without user name, password, query and fragment, so an error text can name it and hold no secret.
+func plainAddr(s string) string {
+	s = strings.TrimSpace(s)
+	// An address that parses with a host and without user info, query or fragment has nothing to cut.
+	// An "@" in it belongs to the path ("https://host/@team/mcp"), and cutting there would name another server.
+	if u, err := url.Parse(s); err == nil && u.Hostname() != "" && u.User == nil && u.RawQuery == "" && u.Fragment == "" && !strings.ContainsAny(s, "?#") {
+		return strings.TrimRight(s, "/")
+	}
+	if i := strings.IndexAny(s, "?#"); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.Index(s, "://"); i >= 0 {
+		rest := s[i+3:]
+		// the query and fragment are gone, so the last "@" ends the user info, even when the password holds a "/"
+		if at := strings.LastIndex(rest, "@"); at >= 0 {
+			s = s[:i+3] + rest[at+1:]
+		}
+	}
+	return strings.TrimRight(s, "/")
+}
+
+var addrInText = regexp.MustCompile(`https?://[^\s"'<>]+`)
+
+// scrubAddrs replaces every http address inside a text (an error from a failed call, for example) by its plain form.
+func scrubAddrs(text string) string {
+	return addrInText.ReplaceAllStringFunc(text, plainAddr)
+}
+
+// knownAddr is the form in which a stored address is compared with a normalized one: plain, with a lower-case host.
+// A stored address that normUpstream would refuse (an older build could save one) still gets a stable form.
+func knownAddr(s string) string {
+	if n, err := normUpstream(plainAddr(s)); err == nil {
+		return n
+	}
+	return strings.TrimRight(strings.TrimSpace(s), "/")
+}
+
+func isLoopbackHost(h string) bool {
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
+// mergeCammutPatch sets cammut.upstreams (and cammut.auth) inside raw and keeps authFile, governor and every other field.
+// An empty list is refused: LoadConfig would quietly put the default server back.
+func mergeCammutPatch(raw map[string]any, v any) error {
+	p := obj(v)
+	list, ok := p["upstreams"].([]any)
+	if p == nil || !ok || len(list) == 0 || len(list) > maxCammutUpstreams {
+		return settingsError(fmt.Sprintf("cammut.upstreams must list 1 to %d addresses", maxCammutUpstreams))
+	}
+	ups := make([]string, 0, len(list))
+	seen := map[string]bool{}
+	for _, it := range list {
+		s, _ := it.(string)
+		n, err := normUpstream(s)
+		if err != nil {
+			return settingsError(err.Error())
+		}
+		if seen[n] {
+			return settingsError("a Cammut address is listed twice: " + n)
+		}
+		seen[n] = true
+		ups = append(ups, n)
+	}
+	cm := obj(raw["cammut"])
+	if cm == nil {
+		cm = map[string]any{}
+	}
+	// a server that is new in this patch starts with an empty key entry, so the owner's AuthFile never reaches it
+	known := map[string]bool{}
+	// An address that an older build saved with a user name or a query cannot be posted back: the settings reader lists
+	// its plain form. storedAs keeps the stored text for such an address, so a save of another server does not drop its key.
+	storedAs := map[string]string{}
+	if old, ok := cm["upstreams"].([]any); ok {
+		for _, o := range old {
+			if str, _ := o.(string); str != "" {
+				known[knownAddr(str)] = true // the posted list is normalized, so a stored "https://VPS.example.org" must match it
+				if _, err := normUpstream(str); err != nil {
+					storedAs[knownAddr(str)] = strings.TrimRight(strings.TrimSpace(str), "/")
+				}
+			}
+		}
+	}
+	// The default server is the owner's own Cammut on this computer. It is always known: LoadConfig puts it in place of a
+	// missing or empty list, and after a remove and a new add it must still get the owner's AuthFile.
+	for _, d := range defaultConfig().Cammut.Upstreams {
+		known[knownAddr(d)] = true
+	}
+	auth := map[string]any{}
+	src := obj(cm["auth"])
+	oldAuth := map[string]any{}
+	for k, val := range src {
+		oldAuth[knownAddr(k)] = val
+	}
+	if a, has := p["auth"]; has {
+		src = obj(a)
+		if src == nil {
+			return settingsError("cammut.auth must be an object")
+		}
+	}
+	for k, val := range src {
+		n, err := normUpstream(k)
+		name, isStr := val.(string)
+		if _, has := p["auth"]; has && !isStr {
+			return settingsError("a key name must be text")
+		}
+		if err != nil || !seen[n] {
+			if _, has := p["auth"]; has {
+				return settingsError("cammut.auth names a server that is not in the list: " + k)
+			}
+			continue // a removed server drops its key entry
+		}
+		if name != "" && !keyRefName.MatchString(name) {
+			return settingsError("a key name holds only letters, digits and underscores")
+		}
+		auth[n] = name
+	}
+	for _, n := range ups {
+		if _, has := auth[n]; has {
+			continue
+		}
+		if old, had := oldAuth[n]; had {
+			auth[n] = old // a patch that leaves a server out of auth keeps its entry, so the AuthFile never reaches it
+		} else if !known[n] {
+			auth[n] = ""
+		}
+	}
+	for n, name := range auth {
+		if name == "" {
+			continue
+		}
+		if u, err := url.Parse(n); err == nil && u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
+			return settingsError("a server with a key must use https unless it is on this computer: " + n)
+		}
+	}
+	out := make([]string, 0, len(ups))
+	for _, n := range ups {
+		if raw, ok := storedAs[n]; ok {
+			out = append(out, raw) // the stored form of an older address stays, with what it held
+		} else {
+			out = append(out, n)
+		}
+	}
+	cm["upstreams"] = out
+	if len(auth) > 0 {
+		cm["auth"] = auth
+	} else {
+		delete(cm, "auth")
+	}
+	raw["cammut"] = cm
+	return nil
+}
+
+// cammutRef finds the key entry of one upstream. Entries are saved in normalized form, so an address kept in its older
+// stored form (with a query, for example) is matched through knownAddr.
+func cammutRef(c Config, base string) (string, bool) {
+	if ref, ok := c.Cammut.Auth[strings.TrimRight(base, "/")]; ok {
+		return ref, true
+	}
+	want := knownAddr(base)
+	for k, ref := range c.Cammut.Auth {
+		if knownAddr(k) == want {
+			return ref, true
+		}
+	}
+	return "", false
+}
+
+// cammutAuthFor picks the Authorization value for one upstream: its own key, nothing, or the AuthFile header.
+func cammutAuthFor(c Config, base string, refs map[string]string) (value string, own bool) {
+	if ref, ok := cammutRef(c, base); ok {
+		if ref == "" || refs[ref] == "" {
+			return "", true
+		}
+		return "Bearer " + refs[ref], true
+	}
+	return CammutAuth(c), false
 }
 
 // writeAtomic writes beside the target and renames, so a crash never leaves half a file.
