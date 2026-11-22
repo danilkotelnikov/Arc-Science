@@ -196,14 +196,16 @@ function undercuts(t, opens = new Set()) {
   const core = (a, b) => {
     const lead = t.slice(clauseStart(a), a);
     if (lead.every(bare)) return true;
-    if (lead.some((w) => L.other_mark.has(w) || w === 'others')) return false;
+    // "Our previous model", "Earlier we have not ...": the marker belongs to the authors, so it does not leave the core
+    if (lead.some((w, m) => (L.other_mark.has(w) || w === 'others') && !L.first_person.has(lead[m - 1]) && !L.first_person.has(lead[m + 1]))) return false;
     if (lead.some((w) => L.first_person.has(w) || L.artifact.has(w) || L.work_noun.has(w) || L.own_word.has(w))) return true;
     return byUs(b) || (L.un_part.has(t[a]) && [1, 2].some((n) => has(L.artifact, b + n)));   // "an untrained model"
   };
   const { out, push: add, full } = collector(core);
   // A procedure ("No model is trained before the split is frozen") and a restricted noun ("A claim that is not tested
   // stays on the lowest rung") state a property of the design: a mark.
-  const push = (form, a, b, exc = null, soft = null) => add(form, a, b, exc || (condAfter(b) ? 'procedure' : relBefore(a) ? 'restriction' : null), soft, clauseStart(a));
+  const ownClause = (a) => t.slice(clauseStart(a), a).some((w) => L.first_person.has(w));   // "We have not run it yet while ..." stays a block
+  const push = (form, a, b, exc = null, soft = null) => add(form, a, b, exc || (condAfter(b) && !ownClause(a) ? 'procedure' : relBefore(a) ? 'restriction' : null), soft, clauseStart(a));
   for (let i = 0; i < t.length && !full(); i += 1) {
     const w = t[i];
     if (L.neg_adv.has(w)) {                                   // not (yet) trained, never been run
@@ -526,11 +528,12 @@ function zoneLines(text, zone) {
   const out = [];
   let limitsLevel = 0;
   let plain = 0;                                        // 1: a label waits for its list; 2: inside the list
+  let fenced = false;
   const rows = String(text ?? '').replace(/^﻿/, '').split(/\r?\n/);
   const listFollows = (idx) => { for (let k = idx + 1; k < rows.length; k += 1) if (rows[k].trim()) return LIST_ITEM.test(rows[k]); return false; };
   for (const [idx, raw] of rows.entries()) {
-    if (/^\s*```/.test(raw)) continue;   // a fence line is no prose; the words inside a fence are read like any line
-    const head = /^(#{1,6})\s+(.*)$/.exec(raw);
+    if (/^\s*```/.test(raw)) { fenced = !fenced; continue; }   // a fence line is no prose; the words inside a fence are read like any line
+    const head = fenced ? null : /^(#{1,6})\s+(.*)$/.exec(raw);   // a heading or label inside a fence opens no zone
     if (head) {
       const level = head[1].length;
       const isLimits = namesLimits(head[2]);
@@ -539,7 +542,7 @@ function zoneLines(text, zone) {
       continue;
     }
     if (!raw.trim()) { if (plain === 2) plain = 0; continue; }
-    if (isLimitsLabel(raw) && listFollows(idx)) { plain = 1; continue; }
+    if (!fenced && isLimitsLabel(raw) && listFollows(idx)) { plain = 1; continue; }
     if (plain && (LIST_ITEM.test(raw) || (plain === 2 && /^\s{2,}\S/.test(raw)))) plain = 2; else plain = 0;
     const line = raw.replace(/`([^`\n]+)`/g, ' $1 ').replace(/https?:\/\/\S+/g, ' ');
     if (line.trim()) out.push({ no: idx + 1, line, zone: limitsLevel || plain === 2 ? 'limits' : zone });
