@@ -1,7 +1,7 @@
 /**
  * arc-core 0.1.0 (2026-11-09): Unified C2 console panel (Phase 1b.2-1b.3 & Phase 4.1-4.8).
  * Workspaces: Research, Memory, Molecullage, Prose.
- * Connectors: Servers, Keys, Apps, Audit, Updates; plus Settings.
+ * Connectors: Servers, Keys, Apps, Audit, Cammut, Updates; plus Settings.
  * Research session: 3-pane layout (Map, Claims, Evidence) + Release view,
  * Decision map (Pursue, Park, Drop, Request a test), validation ladder L1-L4
  * (with L5/L6 operator switches off by default), and 30-day consent dialog.
@@ -12,7 +12,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   const NS = "arc-core", TAB = "arc-core-console";
 
   const WORKSPACES = ["Research", "Memory", "Molecullage", "Prose"];
-  const CONNECTORS = ["Servers", "Keys", "Apps", "Audit", "Updates"];
+  const CONNECTORS = ["Servers", "Keys", "Apps", "Audit", "Cammut", "Updates"];
   const SEATS = ["Planner", "Reviewer", "Falsifier", "Vision", "Prose"];
   const RESEARCH_VIEWS = ["Map", "Claims", "Evidence", "Release"];
   const DECISION_ACTIONS = ["Pursue", "Park", "Drop", "Request a test"];
@@ -22,6 +22,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     { id: "v0", label: "Black and white" },
     { id: "radium", label: "Radium" },
   ];
+  // Top controls (road map 1b.4, 2026-11-20): one tab list of five (the workspaces and one entry for all connectors) and the
+  // console settings button, so at most six. Connectors open a second row built from CONNECTORS.
+  const TOP_TABS = [...WORKSPACES, "Connectors"];
 
   const en = {
     "tab.title": "Arc console",
@@ -93,9 +96,88 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "chat.failed": "Could not insert or copy prompt",
     "molecullage.pin": "Pin",
     "molecullage.pinned": "Pinned",
+    "connector.cammut": "Cammut",
+    "cammut.tab.servers": "Servers",
+    "cammut.tab.tools": "Tools",
+    "cammut.tab.observer": "Observer",
+    "cammut.tab.parts": "Parts",
+    "cammut.loading": "Loading Cammut state…",
+    "cammut.gateway.on": "Gateway {host} is running.",
+    "cammut.gateway.off": "Gateway {host} does not answer.",
+    "cammut.servers.address": "Server address",
+    "cammut.servers.keyname": "Key name, optional",
+    "cammut.servers.add": "Add server",
+    "cammut.servers.remove": "Remove",
+    "cammut.servers.last": "The last server stays.",
+    "cammut.servers.builtin": "Built-in store on this computer",
+    "cammut.servers.legacy": "Owner key file",
+    "cammut.servers.keyset": "Key set",
+    "cammut.servers.keymissing": "Key missing",
+    "cammut.servers.nokey": "No key",
+    "cammut.tools.query": "Search tools by word",
+    "cammut.tools.search": "Search",
+    "cammut.tools.details": "Show details",
+    "cammut.tools.args": "Arguments as an object",
+    "cammut.tools.run": "Run",
+    "cammut.tools.confirm": "Confirm",
+    "cammut.tools.typename": "Type the tool name",
+    "cammut.tools.result": "Result",
+    "cammut.observer.source": "Source",
+    "cammut.observer.view": "View",
+    "cammut.observer.query": "Filter or question",
+    "cammut.observer.show": "Show",
+    "cammut.observer.readonly": "Read only",
+    "cammut.observer.cammut": "Cammut server",
+    "cammut.observer.builtin": "Built-in store",
+    "cammut.observer.empty": "Nothing to show.",
+    "cammut.parts.reload": "Reload",
+    "cammut.parts.rollback": "Roll back",
+    "cammut.hint.servers": "Arc Harness asks these Cammut servers in order and tries the next one only when a connection fails. A key is never typed here. Enter the key in the gateway settings page and write only its name below.",
+    "cammut.hint.keyname": "A key name points to a key kept in the gateway credential file. A server without a key name receives no key at all, and never the owner key file.",
+    "cammut.hint.tools": "This runner calls the Hindsight tools of the Cammut server, or of the built-in store on this computer. Pick the source first. Reading runs at once. Adding or changing memory asks you to confirm. Every other tool counts as a delete and asks you to type the tool name. To save a note in the built-in store, pick it, search, and run retain.",
+    "cammut.hint.observer": "The observer only reads. It cannot add, change or delete anything. A connection holds one memory bank, so there is one bank to browse.",
+    "cammut.hint.parts": "A part is a piece of Arc Harness that can be replaced while the app runs. Reload loads the file on disk and tests it first. If the test fails, the old version keeps working. This tab itself needs a page reload.",
     "settings.title": "Console settings",
     "settings.theme": "Active theme",
     "settings.switches": "Operator switches",
+    "view.servers": "Servers",
+    "view.keys": "Keys",
+    "view.apps": "Apps",
+    "view.audit": "Audit",
+    "view.cammut": "Cammut",
+    "nav.console": "Console sections",
+    "nav.connectors.update": "Connectors, version {v} is available",
+    "nav.console.settings": "Console settings",
+    "action.again": "Check again",
+    "action.retry": "Try again",
+    "consent.review": "Review access",
+    "hint.detail": "Technical detail",
+    "hint.code": "The reported cause is {code}. Use this word when you look for the fault.",
+    "status.grants": "Active 30-day grants: {n}",
+    "state.on": "On",
+    "state.off": "Off",
+    "state.unset": "Not set up yet",
+    "empty.servers": "No servers yet.",
+    "empty.keys": "No keys yet.",
+    "empty.apps": "No apps yet.",
+    "empty.audit": "No events yet.",
+    "empty.cammut": "Cammut is not set up yet.",
+    "empty.audit.hint": "Decisions, notes and access changes that you make in the console appear here.",
+    "empty.addons": "No add-ons installed.",
+    "empty.addons.hint": "An add-on appears here after the installer copies it into the local plugins folder.",
+    "settings.nav.memory": "Memory",
+    "settings.nav.connectors": "Connectors",
+    "settings.nav.keys": "Keys",
+    "settings.nav.addons": "Add-ons",
+    "settings.nav.updates": "Updates",
+    "settings.memory.gateway": "Gateway address",
+    "settings.memory.recall": "Memory recall",
+    "settings.memory.labels": "Policy labels",
+    "settings.memory.hint": "Arc Harness reaches shared memory through the local gateway on this computer. Recall adds matching notes to a request. The gateway settings file holds this switch.",
+    "settings.connectors.hint": "Servers are the local programs that Arc Harness talks to. Apps are tool packs. An app works only inside the access that you grant, for one action or for 30 days.",
+    "settings.keys.hint": "Arc Harness shows where each key is kept and never its value. Keys stay in files on this computer and in the system key store. No key is typed on this page.",
+    "settings.addons.hint": "Add-ons are the Arc plugins installed on this computer. The list is for reference. The installer and the updater change it.",
+    "settings.about": "About this page",
   };
 
   const TEXT_FONT = "var(--arc-font-family-text-default, \"Geist\", system-ui, sans-serif)";
@@ -115,12 +197,52 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     borderRadius: RADIUS,
     border: "none",
     cursor: "pointer",
-    color: active ? "var(--dsw-alias-bg-base, currentColor)" : INK,
+    color: active ? "var(--dsw-alias-bg-base, Canvas)" : INK,
     background: active
-      ? "var(--dsw-alias-button-info-fill, color-mix(in srgb, currentColor 88%, transparent))"
+      ? "var(--dsw-alias-brand-primary-new-colorprimary-new-color, currentColor)"
       : "color-mix(in srgb, currentColor 8%, transparent)",
     fontWeight: active ? 600 : 400,
   });
+
+  // a top-level tab: plain text, the selected one carries a rule under it
+  const tabStyle = (active) => ({
+    fontFamily: TEXT_FONT,
+    fontSize: 13,
+    lineHeight: 1.35,
+    minHeight: 28,
+    padding: "4px 2px",
+    border: "none",
+    borderBottom: active ? "2px solid currentColor" : "2px solid transparent",
+    borderRadius: 0,
+    background: "transparent",
+    cursor: "pointer",
+    color: INK,
+    fontWeight: active ? 600 : 400,
+    opacity: active ? 1 : 0.72,
+  });
+  const iconBtnStyle = (active) => ({ ...btnStyle(active), display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 28, minHeight: 28, padding: 0 });
+  const rowWrapStyle = { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" };
+  const titleRowStyle = { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" };
+  const h3Style = { fontSize: 13, fontWeight: 600, margin: 0 };
+  // one visible focus ring for every control of the console and of its Settings pages; hover lifts a resting tab
+  const CONSOLE_CSS = ":is([data-arc-console],[data-arc-settings]) :is(button,input,select,textarea,summary):focus-visible{outline:2px solid currentColor !important;outline-offset:2px}" +
+    ":is([data-arc-console],[data-arc-settings]) button:disabled{opacity:.5;cursor:not-allowed}" +
+    "[data-arc-console] [role=tab]:hover{opacity:1 !important}";
+  const oneLine = (s, n = 90) => (String(s ?? "").length > n ? String(s).slice(0, n - 1) + "\u2026" : String(s ?? ""));
+  // dates follow the language of the app page, never the language of the system
+  const uiLang = () => (typeof document !== "undefined" && document.documentElement && document.documentElement.lang) || "en";
+  const fmtWhen = (ms) => { const d = new Date(Number(ms)); return Number(ms) > 0 && Number.isFinite(d.getTime()) ? d.toLocaleString(uiLang(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) : ""; };
+  // arrow keys move focus along a tab list and wrap; Enter or Space selects, because a selection calls the server
+  const onTabKeys = (e) => {
+    const step = { ArrowRight: 1, ArrowLeft: -1, Home: "first", End: "last" }[e.key];
+    if (!step) return;
+    const tabs = Array.from(e.currentTarget.querySelectorAll("[role=tab]"));
+    if (!tabs.length) return;
+    const at = tabs.indexOf(e.target);
+    const next = step === "first" ? 0 : step === "last" ? tabs.length - 1 : (Math.max(at, 0) + step + tabs.length) % tabs.length;
+    tabs[next].focus();
+    e.preventDefault();
+  };
 
   const tagStyle = {
     fontFamily: MONO_FONT,
@@ -150,6 +272,50 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     return h("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true },
       h("circle", { cx: 12, cy: 12, r: 8.5 }),
       h("path", { d: "M12 3.5v17M3.5 12h17" }));
+  }
+
+  function SettingsIcon({ size = 16 }) {
+    return h("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", "aria-hidden": true },
+      h("path", { d: "M4 6h9M19 6h1M4 12h1M11 12h9M4 18h7M17 18h3" }),
+      h("circle", { cx: 16, cy: 6, r: 2 }), h("circle", { cx: 8, cy: 12, r: 2 }), h("circle", { cx: 14, cy: 18, r: 2 }));
+  }
+
+  // the state of a row as a mark in the text colour: filled is fine, a ring needs attention, a small mark is not checked
+  function StatusDot({ state }) {
+    const look = state === "ok" ? { background: "currentColor" }
+      : state === "attention" ? { boxShadow: "inset 0 0 0 2px currentColor" }
+      : { background: "currentColor", transform: "scale(0.5)" };
+    return h("span", { "data-state": state || "idle", "aria-hidden": true, style: { display: "inline-block", width: 8, height: 8, borderRadius: "50%", flex: "none", ...look } });
+  }
+
+  // helper text lives here (R005). Escape, or focus that leaves the hint, closes it. A click inside the note keeps it open.
+  // align "row" or "row-end" hangs the note under the nearest positioned row (at its start or end), so it stays inside a narrow pane wherever the button wraps.
+  function InfoHint({ label, text, align = "start" }) {
+    const [open, setOpen] = React.useState(false);
+    const noteId = `arc-hint-${Array.from(String(text)).reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 1000003, 7)}`;
+    return h("span", {
+      style: { position: align.startsWith("row") ? "static" : "relative", display: "inline-flex" },
+      onBlur: (e) => { if (!e.currentTarget?.contains?.(e.relatedTarget)) setOpen(false); },
+      // Escape closes an open hint only; it must not also close the dialog that holds the page
+      onKeyDown: (e) => {
+        if (e.key !== "Escape" || !open) return;
+        e.stopPropagation?.(); e.nativeEvent?.stopImmediatePropagation?.();
+        setOpen(false);
+        e.currentTarget?.querySelector?.("button")?.focus?.();
+      },
+    },
+      h("button", {
+        type: "button", "aria-label": label, "aria-expanded": open, "aria-describedby": open ? noteId : undefined, "data-hint": "true",
+        onClick: () => setOpen(!open),
+        style: { ...iconBtnStyle(false), minWidth: 24, minHeight: 24, borderRadius: "50%", fontSize: 12, lineHeight: 1 },
+      }, "?"),
+      open ? h("span", { role: "note", id: noteId, tabIndex: -1, style: { position: "absolute", top: "calc(100% + 4px)", [align.endsWith("end") ? "right" : "left"]: 0, zIndex: 5, width: "min(260px, 70vw)", padding: "8px 10px", fontSize: 12, lineHeight: 1.45, fontWeight: 400, background: "var(--dsw-alias-bg-layer-1, Canvas)", color: INK, border: HAIRLINE, borderRadius: RADIUS, boxShadow: "0 2px 10px color-mix(in srgb, currentColor 18%, transparent)" } }, text) : null);
+  }
+
+  function EmptyState({ id, text, hint, t }) {
+    return h("div", { "data-empty-state": id, style: { ...rowWrapStyle, paddingTop: 8, borderTop: HAIRLINE } },
+      h("span", { style: { ...muted, fontSize: 12 } }, text),
+      hint ? h(InfoHint, { label: t("settings.about"), text: hint }) : null);
   }
 
   function pushToChatComposer(pt, setFb, t) {
@@ -239,16 +405,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   });
   const clampLine = (s, n = 90) => (String(s).length > n ? String(s).slice(0, n - 1) + "…" : String(s));
 
-  function Hint({ label, text }) {
-    const [open, setOpen] = React.useState(false);
-    return h("span", { style: { position: "relative", display: "inline-block" } },
-      h("button", {
-        type: "button", "aria-label": label, "aria-expanded": open, "data-hint": "true",
-        onClick: () => setOpen(!open),
-        style: { ...btnStyle(false), padding: "0 6px", borderRadius: "50%", fontSize: 11, lineHeight: "16px" },
-      }, "?"),
-      open ? h("span", { role: "note", style: { position: "absolute", left: 0, top: "calc(100% + 4px)", zIndex: 5, width: 260, padding: "8px 10px", fontSize: 12, lineHeight: 1.45, background: SURFACE, color: INK, border: HAIRLINE, borderRadius: RADIUS, boxShadow: "0 2px 10px color-mix(in srgb, currentColor 18%, transparent)" } }, text) : null);
-  }
+  // the Updates view uses the console's hint: a 24 px target, Escape closes it, the note stays inside a narrow pane
+  const Hint = (props) => h(InfoHint, { align: "row", ...props });
 
   function updateStatus(u, error, t) {
     if (error) return error;
@@ -270,12 +428,12 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const idx = UPDATE_PHASES.indexOf(u.phase);
     const showSteps = idx >= 0 || u.busy;
     const why = busy ? t("updates.why.busy") : !canInstall && !u.available ? t("updates.why.install") : "";
-    const row = { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" };
+    const row = { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", position: "relative" };
     return h("section", { className: "arc-upd", "aria-label": t("connector.updates"), "data-connector-view": "Updates", style: { display: "grid", gap: 12, fontFamily: TEXT_FONT, fontSize: 13, color: INK } },
       h("style", null, UPDATE_CSS),
       h("div", { style: { ...row, justifyContent: "space-between" } },
         h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("connector.updates")),
-        h("span", { style: row }, h(Hint, { label: "About what an update replaces", text: t("updates.hint.scope") }), h(Hint, { label: "About the checksum", text: t("updates.hint.checksum") }))),
+        h("span", { style: { ...row, position: "static" } }, h(Hint, { label: "About what an update replaces", align: "row-end", text: t("updates.hint.scope") }), h(Hint, { label: "About the checksum", align: "row-end", text: t("updates.hint.checksum") }))),
       h("div", { style: row, "data-updates-versions": "true" },
         h("span", { style: muted }, `${t("updates.installed")}:`), h("code", { style: tagStyle }, u.installed || "unknown"),
         h("span", { style: muted }, `${t("updates.latest")}:`), h("code", { style: tagStyle }, u.latest || "not checked")),
@@ -299,86 +457,369 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
             h("ol", { style: { display: "flex", gap: 10, flexWrap: "wrap", margin: 0, padding: 0, listStyle: "none", fontSize: 12 } },
               UPDATE_PHASES.map((ph, i) => h("li", { key: ph, "aria-current": i === idx ? "step" : undefined, style: { fontWeight: i === idx ? 600 : 400, opacity: i <= idx ? 1 : 0.68 } }, UPDATE_PHASE_LABEL[ph]))))
         : null,
-      u.notes ? h("details", { "data-updates-notes": "true", style: { borderTop: HAIRLINE, paddingTop: 8 } }, h("summary", { style: { cursor: "pointer", fontWeight: 600, fontSize: 12 } }, t("updates.notes")), h("pre", { style: { marginTop: 6, fontSize: 12, opacity: 0.85 } }, u.notes)) : null);
+      u.notes ? h("details", { "data-updates-notes": "true", style: { borderTop: HAIRLINE, paddingTop: 8 } }, h("summary", { style: { cursor: "pointer", fontWeight: 600, fontSize: 12, padding: "4px 0" } }, t("updates.notes")), h("pre", { style: { marginTop: 6, fontSize: 12, opacity: 0.85 } }, u.notes)) : null);
   }
 
   function UpdatesPanel({ t }) {
     const [info, setInfo] = React.useState(null);
     const [error, setError] = React.useState("");
-    const [actionError, setActionError] = React.useState(""); // an action's refusal stays until the next action; a state refresh must not wipe it
+    // An action's refusal belongs to the picture the user acted on. It stays in view while that picture holds: a plain refresh
+    // must not wipe it. Once the update has moved on (another step, done, a restart is due), the refusal is dropped for good,
+    // so it can neither hide the new state nor come back later.
+    const [actionError, setActionError] = React.useState(null); // { text, stamp }
     const [pending, setPending] = React.useState(false);
+    const stampOf = (u) => (u ? [u.phase, u.busy, u.restartNeeded, u.installed].join("|") : "");
     const post = async (route, body) => {
       const r = await fetch(route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
       return r.json().catch(() => null);
     };
     const load = async () => {
-      try { const j = await post("api/arc-core/update/state"); if (j && j.ok) { setInfo(j); setError(""); } else setError((j && j.error) || "Could not read the update state."); } catch { setError("Could not read the update state."); }
+      try { const j = await post("api/arc-core/update/state"); if (j && j.ok) { setInfo(j); setError(""); setActionError((e) => (e && e.stamp !== stampOf(j) ? null : e)); return j; } setError((j && j.error) || "Could not read the update state."); } catch { setError("Could not read the update state."); }
+      return null;
     };
     const act = async (payload) => {
-      setActionError(""); setPending(true);
-      try { const j = await post("api/arc-core/update/action", payload); if (!j || j.ok === false) setActionError((j && j.error) || "The action failed."); } catch { setActionError("The action failed."); }
+      const before = stampOf(info); // the picture the user acted on
+      setActionError(null); setPending(true);
+      let refused = "";
+      try { const j = await post("api/arc-core/update/action", payload); if (!j || j.ok === false) refused = (j && j.error) || "The action failed."; } catch { refused = "The action failed."; }
       setPending(false);
-      await load();
+      const now = await load();
+      if (refused && (!now || stampOf(now) === before)) setActionError({ text: refused, stamp: before });
     };
+    const refusal = actionError && actionError.stamp === stampOf(info) ? actionError.text : "";
     const busy = Boolean(info && info.busy);
     React.useEffect(() => {
       load();
       const id = setInterval(load, busy ? 1200 : 15000);
       return () => clearInterval(id);
     }, [busy]);
-    return h(UpdatesView, { info, error: actionError || error, pending, onAction: act, t });
+    return h(UpdatesView, { info, error: refusal || error, pending, onAction: act, t });
   }
 
-  function ConnectorView({ connector, detail, onOpenConsent, t }) {
+  function ConnectorView({ connector, detail, onOpenConsent, onRefresh, grants, heading = true, t }) {
     if (connector === "Updates") return h(UpdatesPanel, { t });
+    if (connector === "Cammut") return h(CammutPane, { t });
     const rows = (detail && detail[connector]) || [];
-    const titleKey = `connector.${String(connector || "servers").toLowerCase()}`;
+    const key = String(connector || "servers").toLowerCase();
+    const titleKey = `view.${key}`;
+    const nameRow = (item, name, tag) => h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+      h("span", { style: { ...rowWrapStyle, fontWeight: 600 } }, item.state ? h(StatusDot, { state: item.state }) : null, h("span", { title: String(name) }, oneLine(name, 64))),
+      tag ? h("code", { style: tagStyle }, tag) : null);
     return h("section", {
       "aria-label": t(titleKey),
       "data-connector-view": connector,
       style: { display: "grid", gap: 10 },
     },
-      h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t(titleKey)),
+      !heading ? null : h("div", { style: titleRowStyle },
+        h("h3", { style: h3Style }, t(titleKey)),
+        h("span", { style: rowWrapStyle },
+          connector === "Apps" && typeof grants === "number" ? h("span", { style: { ...muted, ...num, fontSize: 12 } }, t("status.grants", { n: grants })) : null,
+          onRefresh ? h("button", { type: "button", "data-refresh-console": "true", onClick: () => onRefresh(), style: btnStyle(false) }, t("action.refresh")) : null)),
+      rows.length === 0
+        ? h(EmptyState, { id: connector, text: t(`empty.${key}`), hint: connector === "Audit" ? t("empty.audit.hint") : "", t })
+        : h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 } },
+            rows.map((item) =>
+              h("li", { key: item.id, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 4 } },
+                connector === "Servers" || connector === "Keys"
+                  ? h(React.Fragment, null,
+                      nameRow(item, item.label, connector === "Servers" ? item.endpoint : item.ref),
+                      h("div", { style: rowWrapStyle },
+                        h("span", { role: "status", title: String(item.status || ""), style: { ...muted, fontSize: 12 } }, oneLine(item.status)),
+                        item.action === "refresh" && onRefresh
+                          ? h("button", { type: "button", "data-row-action": item.id, onClick: () => onRefresh(), style: btnStyle(false) }, t("action.again"))
+                          : null,
+                        item.code ? h(InfoHint, { label: t("hint.detail"), text: t("hint.code", { code: item.code }), align: "end" }) : null))
+                  : null,
+                connector === "Apps"
+                  ? h(React.Fragment, null,
+                      nameRow(item, item.label, `Active grants: ${item.grants}`),
+                      h("div", { style: { ...rowWrapStyle, justifyContent: "space-between" } },
+                        h("span", { title: (item.scopes || []).join(", "), style: { ...muted, fontSize: 12 } }, oneLine(`Scopes: ${(item.scopes || []).join(", ")}`, 60)),
+                        onOpenConsent
+                          ? h("button", {
+                              type: "button",
+                              "data-connector-consent": item.id,
+                              onClick: () => onOpenConsent({ appId: `${item.id}-connector`, scopes: item.scopes || ["read"] }),
+                              style: btnStyle(false),
+                            }, t("consent.review"))
+                          : null))
+                  : null,
+                connector === "Audit"
+                  ? h(React.Fragment, null,
+                      nameRow(item, item.summary, item.kind),
+                      h("span", { style: { ...muted, ...num, fontSize: 12 } }, `Recorded ${fmtWhen(item.atMs)}`))
+                  : null))));
+  }
+
+  // one section of the Settings dialog. Pure: every value arrives in props. It reuses the console views.
+  function SettingsSectionView({ section, data, failed, actionError = "", pendingConsent = null, onRefresh, onOpenConsent, onConsent, onCloseConsent, t }) {
+    const navKey = `settings.nav.${String(section || "").replace("-", "")}`;
+    const frame = (...children) => h("div", {
+      "data-arc-settings": section,
+      "data-arc-plugin-pane": "true",
+      style: { display: "grid", gap: 16, maxWidth: 720, fontFamily: TEXT_FONT, fontSize: 13, lineHeight: 1.45, color: INK },
+    }, h("style", null, CONSOLE_CSS), ...children);
+    const title = (hintKey) => h("div", { style: rowWrapStyle },
+      h("h3", { style: { ...h3Style, fontSize: 14 } }, t(navKey)), hintKey ? h(InfoHint, { label: t("settings.about"), text: t(hintKey) }) : null);
+    if (!data) {
+      return frame(title(""),
+        failed
+          ? h("div", { style: rowWrapStyle }, h("span", { role: "alert" }, t("state.error")),
+              onRefresh ? h("button", { type: "button", "data-console-retry": "true", onClick: () => onRefresh(), style: btnStyle(false) }, t("action.retry")) : null)
+          : h("p", { style: { ...muted, margin: 0 } }, t("state.loading")));
+    }
+    const alert = actionError ? h("p", { role: "alert", style: { margin: 0, fontSize: 12 } }, oneLine(actionError)) : null;
+    const line = (label, value) => h("div", { style: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", paddingTop: 8, borderTop: HAIRLINE } },
+      h("span", null, label), value);
+    if (section === "memory") {
+      const m = data.memory || {};
+      return frame(title("settings.memory.hint"), alert,
+        h("div", { style: rowWrapStyle },
+          h(StatusDot, { state: m.state }),
+          h("span", { role: "status", title: String(m.status || "") }, oneLine(m.status)),
+          onRefresh ? h("button", { type: "button", "data-refresh-console": "true", "data-row-action": "memory", onClick: () => onRefresh(), style: btnStyle(false) }, m.action === "refresh" ? t("action.again") : t("action.refresh")) : null,
+          m.code ? h(InfoHint, { label: t("hint.detail"), text: t("hint.code", { code: m.code }) }) : null),
+        line(t("settings.memory.gateway"), h("code", { style: tagStyle }, m.gateway)),
+        line(t("settings.memory.recall"), h("span", { style: { fontWeight: 600 } }, m.configured === false ? t("state.unset") : m.recall ? t("state.on") : t("state.off"))),
+        line(t("settings.memory.labels"), h("span", { style: rowWrapStyle }, (m.labels || []).map((l) => h("code", { key: l, style: tagStyle }, l)))),
+        CONNECTORS.includes("Cammut") ? h(ConnectorView, { connector: "Cammut", t }) : null);
+    }
+    if (section === "connectors") {
+      return frame(title("settings.connectors.hint"), alert,
+        h(ConsentDialog, { pendingConsent, onConsent, onClose: onCloseConsent, t }),
+        h(ConnectorView, { connector: "Servers", detail: data.connectorsDetail, onRefresh, t }),
+        h(ConnectorView, { connector: "Apps", detail: data.connectorsDetail, onOpenConsent, grants: (data.consents || []).length, t }));
+    }
+    if (section === "keys") {
+      return frame(title("settings.keys.hint"), alert, h(ConnectorView, { connector: "Keys", detail: data.connectorsDetail, heading: false, t }));
+    }
+    if (section === "add-ons") {
+      const items = (data.addons && data.addons.items) || [];
+      return frame(title("settings.addons.hint"),
+        items.length === 0
+          ? h(EmptyState, { id: "add-ons", text: t("empty.addons"), hint: t("empty.addons.hint"), t })
+          : h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 } },
+              items.map((a) => h("li", { key: a.id, "data-addon": a.id, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 2 } },
+                h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+                  h("span", { style: { fontWeight: 600 } }, a.id),
+                  a.version ? h("code", { style: tagStyle }, a.version) : null),
+                a.description ? h("span", { title: a.description, style: { ...muted, fontSize: 12 } }, oneLine(a.description)) : null))));
+    }
+    // a section that is one connector view of its own, such as Updates
+    const own = CONNECTORS.find((c) => c.toLowerCase() === section);
+    return frame(own ? h(ConnectorView, { connector: own, detail: data.connectorsDetail, onRefresh, t }) : title(""));
+  }
+
+
+  // ---- Cammut connector (S051): servers, tools, observer, parts. Pure CammutView plus a fetching CammutPane.
+  const CAM_TABS = ["servers", "tools", "observer", "parts"];
+  const CAM_VIEWS = ["memories", "tags", "documents", "recall", "models", "directives", "operations"];
+  // The look of the Cammut sign-in page (Cammut-edge web/src/pages/Login.tsx, 21.XI.2026): turning AS cube, accent
+  // primary button, outlined secondary buttons and inputs. Colours come only from the theme tokens, so all three themes hold.
+  const CAM_CSS = ".arc-cam button:focus-visible,.arc-cam summary:focus-visible,.arc-cam input:focus-visible,.arc-cam select:focus-visible,.arc-cam textarea:focus-visible{outline:2px solid currentColor;outline-offset:2px}" +
+    ".arc-cam button:disabled{opacity:.5;cursor:not-allowed}.arc-cam pre{white-space:pre-wrap;margin:0;font-family:inherit;max-height:260px;overflow:auto}" +
+    ".arc-cam button:not(:disabled):hover{opacity:.88}.arc-cam{animation:arc-cam-rise .5s cubic-bezier(.05,.7,.1,1) both}" +
+    ".arc-cam-cube{position:relative;display:block;flex:none;animation:arc-cam-turn .62s ease-in-out both}" +
+    ".arc-cam-cube svg{position:absolute;inset:0;width:100%;height:100%;fill:currentColor}" +
+    ".arc-cam-cube .fr{animation:arc-cam-hide .62s both}.arc-cam-cube .fl{animation:arc-cam-show .62s both}" +
+    "@keyframes arc-cam-turn{0%{transform:scaleX(1)}45%{transform:scaleX(.03)}80%{transform:translateY(3px) scaleX(1)}100%{transform:none}}" +
+    "@keyframes arc-cam-hide{0%,44.9%{opacity:1}45%,100%{opacity:0}}@keyframes arc-cam-show{0%,44.9%{opacity:0}45%,100%{opacity:1}}" +
+    "@keyframes arc-cam-rise{0%{opacity:0;transform:translateY(12px)}100%{opacity:1;transform:none}}" +
+    "@media (prefers-reduced-motion:reduce){.arc-cam,.arc-cam-cube,.arc-cam-cube .fl,.arc-cam-cube .fr{animation:none}.arc-cam-cube .fr{opacity:0}}";
+  const CAM_LINE = "1px solid var(--dsw-alias-line-divider, color-mix(in srgb, currentColor 22%, transparent))";
+  // The theme accent, pulled 35% toward the text colour, so the page colour on it reads at 4.5:1 or more in every theme and mode.
+  const CAM_FILL = "color-mix(in srgb, var(--dsw-alias-button-info-fill, CanvasText) 65%, var(--dsw-alias-label-primary, CanvasText))";
+  const camBtn = (active) => ({
+    fontFamily: TEXT_FONT,
+    fontSize: 13,
+    lineHeight: 1,
+    minHeight: 32,
+    padding: "0 14px",
+    borderRadius: 8,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    ...(active
+      ? { border: `1px solid ${CAM_FILL}`, background: CAM_FILL, color: "var(--dsw-alias-bg-base, Canvas)", fontWeight: 600 }
+      : { border: CAM_LINE, background: SURFACE, color: INK, fontWeight: 500 }),
+  });
+  const camTab = (active) => ({ ...camBtn(false), ...(active ? { fontWeight: 600, background: "color-mix(in srgb, currentColor 10%, transparent)", border: "1px solid color-mix(in srgb, currentColor 55%, transparent)" } : {}) });
+  const camInput = { ...inputStyle, fontSize: 13, padding: "7px 10px", minHeight: 32, border: CAM_LINE, borderRadius: 8, background: SURFACE };
+  const CAM_TOP = "M128.00 18.80L220.15 72.00L128.00 125.20L35.85 72.00Z";
+  const CAM_LEFT = "M33.43 76.20L125.58 129.40L125.58 235.80L33.43 182.60Z";
+  const CAM_RIGHT = "M130.42 129.40L222.57 76.20L222.57 182.60L130.42 235.80Z";
+  const CAM_L_LETTERS = "M43.61 161.18L54.83 115.85L65.30 121.90L76.51 180.17L67.54 174.99L64.92 161.40L55.20 155.78L52.59 166.36ZM60.06 136.14L63.05 151.68L57.07 148.23ZM82.49 131.83L109.41 147.37L115.39 157.73L115.39 161.18L91.47 147.37L91.47 157.73L115.39 171.54L115.39 202.62L88.47 187.08L82.49 176.72L82.49 173.27L106.42 187.08L106.42 176.72L82.49 162.91Z";
+  const CAM_R_LETTERS = "M140.61 202.62L151.82 144.34L162.29 138.30L173.51 183.63L164.53 188.81L161.92 178.23L152.20 183.84L149.58 197.44ZM157.06 158.59L160.05 170.68L154.07 174.13ZM179.49 128.37L206.40 112.83L212.39 116.29L212.39 119.74L188.46 133.55L188.46 143.91L212.39 130.10L212.39 161.18L185.47 176.72L179.49 173.27L179.49 169.81L203.41 156.00L203.41 145.64L179.49 159.45Z";
+  // The AS cube turns once, from the letters on the right face to the letters on the left face, as on the sign-in page.
+  function CamCube({ size = 40 }) {
+    return h("span", { className: "arc-cam-cube", "data-cammut-cube": "true", role: "img", "aria-label": "Arc Science", style: { width: size, height: size, color: INK } },
+      h("svg", { className: "fl", viewBox: "0 0 256 256", "aria-hidden": "true" }, h("path", { fillRule: "evenodd", d: CAM_TOP + CAM_LEFT + CAM_L_LETTERS + CAM_RIGHT })),
+      h("svg", { className: "fr", viewBox: "0 0 256 256", "aria-hidden": "true" }, h("path", { fillRule: "evenodd", d: CAM_TOP + CAM_LEFT + CAM_RIGHT + CAM_R_LETTERS })));
+  }
+  const camClamp = (s, n = 90) => (String(s ?? "").length > n ? String(s).slice(0, n - 1) + "…" : String(s ?? ""));
+  const camRow = { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" };
+
+  // the console hint (InfoHint): a 24 px target, Escape closes it, the note stays inside a narrow pane
+  const CamHint = (props) => h(InfoHint, { align: "row", ...props });
+
+
+  function CamServers({ info, busy, onAction, t }) {
+    const [url, setUrl] = React.useState("");
+    const [keyName, setKeyName] = React.useState("");
+    const servers = info.servers || [];
+    const can = Boolean(info.canManage) && !busy;
+    const onlyOne = servers.length <= 1;
+    return h("div", { style: { display: "grid", gap: 10 } },
       h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 } },
-        rows.map((item) =>
-          h("li", { key: item.id, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 4 } },
-            connector === "Servers"
-              ? h(React.Fragment, null,
-                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
-                    h("span", { style: { fontWeight: 600 } }, item.label),
-                    h("code", { style: tagStyle }, item.endpoint)),
-                  h("span", { style: { ...muted, fontSize: 12 } }, item.status))
-              : null,
-            connector === "Keys"
-              ? h(React.Fragment, null,
-                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
-                    h("span", { style: { fontWeight: 600 } }, item.label),
-                    h("code", { style: tagStyle }, item.ref)),
-                  h("span", { style: { ...muted, fontSize: 12 } }, item.status))
-              : null,
-            connector === "Apps"
-              ? h(React.Fragment, null,
-                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
-                    h("span", { style: { fontWeight: 600 } }, item.label),
-                    h("code", { style: tagStyle }, `Active grants: ${item.grants}`)),
-                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline", flexWrap: "wrap" } },
-                    h("span", { style: { ...muted, fontSize: 12 } }, `Scopes: ${(item.scopes || []).join(", ")}`),
-                    onOpenConsent
-                      ? h("button", {
-                          type: "button",
-                          "data-connector-consent": item.id,
-                          onClick: () => onOpenConsent({ appId: `${item.id}-connector`, scopes: item.scopes || ["read"] }),
-                          style: btnStyle(false),
-                        }, "Review access")
-                      : null))
-              : null,
-            connector === "Audit"
-              ? h(React.Fragment, null,
-                  h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
-                    h("span", { style: { fontWeight: 600 } }, item.summary),
-                    h("code", { style: tagStyle }, item.kind)),
-                  h("span", { style: { ...muted, ...num, fontSize: 12 } }, `Recorded at ${item.atMs}`))
-              : null))));
+        servers.map((sv) => h("li", { key: sv.url, "data-cammut-server": sv.url, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 4 } },
+          h("div", { style: { ...camRow, justifyContent: "space-between" } },
+            h("code", { style: tagStyle }, sv.url),
+            h("button", { type: "button", "data-cammut-remove": sv.url, disabled: !can || onlyOne, onClick: () => onAction && onAction({ kind: "server-remove", url: sv.url }), style: camBtn(false) }, t("cammut.servers.remove"))),
+          h("div", { style: { ...camRow, fontSize: 12 } },
+            h("span", { style: muted }, camClamp(sv.status)),
+            sv.keyRef ? h("code", { style: tagStyle }, sv.keyRef) : null,
+            h("span", { style: muted }, sv.ownKey ? (sv.keyRef ? (sv.keySet ? t("cammut.servers.keyset") : t("cammut.servers.keymissing")) : t("cammut.servers.nokey")) : (sv.legacyAuth ? t("cammut.servers.legacy") : ""))))),
+        info.builtin && info.builtin.available ? h("li", { key: "builtin", style: { paddingTop: 8, borderTop: HAIRLINE } }, h("span", { style: muted }, t("cammut.servers.builtin"))) : null),
+      servers.length <= 1 && info.canManage ? h("p", { style: { margin: 0, fontSize: 12, ...muted } }, t("cammut.servers.last")) : null,
+      h("form", { onSubmit: (e) => { e?.preventDefault?.(); }, style: camRow },
+        h("input", { type: "text", "aria-label": t("cammut.servers.address"), "data-cammut-url": "true", placeholder: "https://memory.example.org", value: url, onChange: (e) => setUrl(e.target.value), style: { ...camInput, flex: "1 1 100%" } }),
+        h("input", { type: "text", "aria-label": t("cammut.servers.keyname"), "data-cammut-key": "true", placeholder: t("cammut.servers.keyname"), value: keyName, onChange: (e) => setKeyName(e.target.value), style: { ...camInput, flex: 1, minWidth: 120 } }),
+        h("button", { type: "submit", "data-cammut-add": "true", disabled: !can || !url.trim(), onClick: () => onAction && onAction({ kind: "server-add", url: url.trim(), keyRef: keyName.trim() }), style: camBtn(true) }, t("cammut.servers.add")),
+        h(CamHint, { label: "About keys", text: t("cammut.hint.keyname") })));
+  }
+
+  function CamTools({ tools, onAction, t }) {
+    const st = tools || {};
+    const [query, setQuery] = React.useState("");
+    const [args, setArgs] = React.useState("{}");
+    const [typed, setTyped] = React.useState("");
+    const tool = st.tool || "";
+    const run = st.run || null;
+    const parse = () => { try { const v = JSON.parse(args || "{}"); return v && typeof v === "object" && !Array.isArray(v) ? v : null; } catch { return null; } };
+    const parsed = parse();
+    // The source is the Cammut server or the store on this computer. The built-in store lists its few tools without a word,
+    // and its retain tool is the way to save a note there.
+    const [source, setSource] = React.useState("cammut");
+    const go = (confirm) => onAction && onAction({ kind: "tool-run", tool, source, arguments: parsed || {}, ...(confirm !== undefined ? { confirm } : {}) });
+    return h("div", { style: { display: "grid", gap: 10 } },
+      h("form", { onSubmit: (e) => { e?.preventDefault?.(); }, style: camRow },
+        h("select", { "aria-label": t("cammut.observer.source"), "data-cammut-tool-source": "true", value: source, onChange: (e) => setSource(e.target.value), style: { ...camInput, width: "auto" } },
+          h("option", { value: "cammut" }, t("cammut.observer.cammut")), h("option", { value: "builtin" }, t("cammut.observer.builtin"))),
+        h("input", { type: "text", "aria-label": t("cammut.tools.query"), "data-cammut-tool-query": "true", placeholder: t("cammut.tools.query"), value: query, onChange: (e) => setQuery(e.target.value), style: { ...camInput, flex: 1, minWidth: 160 } }),
+        h("button", { type: "submit", "data-cammut-tool-search": "true", disabled: source !== "builtin" && !query.trim(), onClick: () => onAction && onAction({ kind: "tool-search", source, query: query.trim() }), style: camBtn(true) }, t("cammut.tools.search")),
+        h(CamHint, { label: "About the tool runner", text: t("cammut.hint.tools") })),
+      h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 } },
+        (st.list || []).map((x) => h("li", { key: x.tool, "data-cammut-tool": x.tool, style: { ...camRow, paddingTop: 6, borderTop: HAIRLINE } },
+          h("button", { type: "button", "aria-pressed": tool === x.tool, onClick: () => onAction && onAction({ kind: "tool-pick", tool: x.tool }), style: camTab(tool === x.tool) }, x.tool.replace("hindsight/", "")),
+          h("code", { "data-cammut-class": x.class, style: tagStyle }, x.class),
+          h("span", { style: { ...muted, fontSize: 12 } }, camClamp(x.description))))),
+      tool ? h("div", { style: { display: "grid", gap: 6 } },
+        h("div", { style: camRow }, h("code", { style: tagStyle }, tool),
+          h("button", { type: "button", onClick: () => onAction && onAction({ kind: "tool-describe", tool }), style: camBtn(false) }, t("cammut.tools.details"))),
+        h("textarea", { rows: 3, "aria-label": t("cammut.tools.args"), "data-cammut-args": "true", value: args, onChange: (e) => setArgs(e.target.value), style: { ...camInput, fontFamily: MONO_FONT } }),
+        h("div", { style: camRow },
+          h("button", { type: "button", "data-cammut-run": "true", disabled: !parsed, onClick: () => go(), style: camBtn(true) }, t("cammut.tools.run")),
+          run && run.needs === "confirm" ? h("button", { type: "button", "data-cammut-confirm": "true", onClick: () => go(true), style: camBtn(false) }, t("cammut.tools.confirm")) : null,
+          run && run.needs === "confirm-tool" ? h(React.Fragment, null,
+            h("input", { type: "text", "aria-label": t("cammut.tools.typename"), "data-cammut-confirm-tool": "true", placeholder: t("cammut.tools.typename"), value: typed, onChange: (e) => setTyped(e.target.value), style: { ...camInput, flex: "1 1 160px" } }),
+            h("button", { type: "button", "data-cammut-confirm": "true", disabled: typed !== tool, onClick: () => go(tool), style: camBtn(false) }, t("cammut.tools.confirm"))) : null),
+        run && run.error ? h("p", { role: "status", style: { margin: 0, fontSize: 12, opacity: 0.85 } }, camClamp(run.error)) : null,
+        run && run.ok && run.data !== undefined ? h("details", { open: true, "data-cammut-result": "true" }, h("summary", { style: { cursor: "pointer", fontSize: 12, fontWeight: 600 } }, t("cammut.tools.result")), h("pre", { style: { fontSize: 12 } }, JSON.stringify(run.data, null, 2).slice(0, 4000))) : null,
+        st.described ? h("details", { "data-cammut-described": "true" }, h("summary", { style: { cursor: "pointer", fontSize: 12, fontWeight: 600 } }, t("cammut.tools.details")), h("pre", { style: { fontSize: 12 } }, JSON.stringify(st.described, null, 2).slice(0, 4000))) : null) : null);
+  }
+
+  function CamObserver({ observer, onAction, t }) {
+    const [source, setSource] = React.useState("cammut");
+    const [view, setView] = React.useState("memories");
+    const [q, setQ] = React.useState("");
+    const data = observer && observer.ok ? observer.data : null;
+    const list = data ? (Array.isArray(data.items) ? data.items : Array.isArray(data.results) ? data.results : null) : null;
+    return h("div", { style: { display: "grid", gap: 10 } },
+      h("div", { style: camRow },
+        h("code", { "data-cammut-readonly": "true", style: tagStyle }, t("cammut.observer.readonly")),
+        h(CamHint, { label: "About the observer", text: t("cammut.hint.observer") })),
+      h("form", { onSubmit: (e) => { e?.preventDefault?.(); }, style: camRow },
+        h("select", { "aria-label": t("cammut.observer.source"), "data-cammut-source": "true", value: source, onChange: (e) => setSource(e.target.value), style: { ...camInput, width: "auto" } },
+          h("option", { value: "cammut" }, t("cammut.observer.cammut")), h("option", { value: "builtin" }, t("cammut.observer.builtin"))),
+        h("select", { "aria-label": t("cammut.observer.view"), "data-cammut-view": "true", value: view, onChange: (e) => setView(e.target.value), style: { ...camInput, width: "auto" } },
+          CAM_VIEWS.map((v) => h("option", { key: v, value: v }, v))),
+        h("input", { type: "text", "aria-label": t("cammut.observer.query"), "data-cammut-observe-q": "true", placeholder: t("cammut.observer.query"), value: q, onChange: (e) => setQ(e.target.value), style: { ...camInput, flex: 1, minWidth: 140 } }),
+        h("button", { type: "submit", "data-cammut-show": "true", onClick: () => onAction && onAction({ kind: "observe", source, view, q: q.trim() }), style: camBtn(true) }, t("cammut.observer.show"))),
+      observer && observer.ok === false ? h("p", { role: "status", style: { margin: 0, fontSize: 12, opacity: 0.85 } }, camClamp(observer.error)) : null,
+      list ? (list.length === 0 ? h("p", { style: { margin: 0, fontSize: 12, ...muted } }, t("cammut.observer.empty"))
+        : h("ul", { "data-cammut-items": "true", style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 } },
+          list.slice(0, 50).map((it, i) => h("li", { key: it.id || it.tag || i, style: { paddingTop: 6, borderTop: HAIRLINE, display: "grid", gap: 4 } },
+            h("span", { style: { fontSize: 12 } }, camClamp(it.text || it.name || it.tag || it.summary || it.id || JSON.stringify(it))),
+            Array.isArray(it.tags) && it.tags.length ? h("span", { style: camRow }, it.tags.slice(0, 6).map((tg) => h("code", { key: tg, style: tagStyle }, tg))) : null))))
+        : data ? h("pre", { style: { fontSize: 12 } }, JSON.stringify(data, null, 2).slice(0, 4000)) : null);
+  }
+
+  function CamParts({ info, onAction, t }) {
+    return h("div", { style: { display: "grid", gap: 8 } },
+      h("div", { style: camRow }, h(CamHint, { label: "About parts", text: t("cammut.hint.parts") })),
+      h("ul", { style: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 } },
+        (info.components || []).map((c) => h("li", { key: c.name, style: { paddingTop: 8, borderTop: HAIRLINE, display: "grid", gap: 4 } },
+          h("div", { style: { ...camRow, justifyContent: "space-between" } },
+            h("span", { style: camRow }, h("code", { style: tagStyle }, c.name), h("span", { style: { ...muted, fontSize: 12 } }, `${c.state}, version ${c.generation}`)),
+            h("span", { style: camRow },
+              h("button", { type: "button", "data-cammut-reload": c.name, onClick: () => onAction && onAction({ kind: "component-reload", name: c.name }), style: camBtn(false) }, t("cammut.parts.reload")),
+              h("button", { type: "button", "data-cammut-rollback": c.name, disabled: !c.canRollback, onClick: () => onAction && onAction({ kind: "component-rollback", name: c.name }), style: camBtn(false) }, t("cammut.parts.rollback")))),
+          c.error ? h("p", { style: { margin: 0, fontSize: 12, ...muted } }, camClamp(c.error)) : null))));
+  }
+
+  function CammutView({ info, error = "", busy = false, tab = "servers", onTab, observer = null, tools = null, onAction, t }) {
+    const status = error || (info ? (info.gateway.reachable ? t("cammut.gateway.on", { host: info.gateway.host }) : t("cammut.gateway.off", { host: info.gateway.host })) : t("cammut.loading"));
+    const why = info && !info.canManage ? info.manageReason : "";
+    return h("section", { className: "arc-cam", "aria-label": t("connector.cammut"), "data-connector-view": "Cammut", style: { display: "grid", gap: 14, fontFamily: TEXT_FONT, fontSize: 13, lineHeight: 1.5, color: INK } },
+      h("style", null, CAM_CSS),
+      h("div", { "data-cammut-head": "true", style: { display: "flex", gap: 12, alignItems: "center" } },
+        h(CamCube, { size: 40 }),
+        h("div", { style: { display: "grid", gap: 2, minWidth: 0, flex: 1 } },
+          h("div", { style: { ...camRow, justifyContent: "space-between" } },
+            h("h3", { style: { fontSize: 19, lineHeight: 1.25, fontWeight: 600, letterSpacing: "-0.02em", margin: 0 } }, t("connector.cammut")),
+            h(CamHint, { label: "About Cammut servers", text: t("cammut.hint.servers") })),
+          h("p", { role: "status", "data-cammut-status": "true", title: status, style: { margin: 0, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, camClamp(status)))),
+      why ? h("p", { "data-cammut-why": "true", style: { margin: 0, fontSize: 12, ...muted } }, camClamp(why)) : null,
+      info ? h("div", { role: "tablist", "aria-label": t("connector.cammut"), style: { ...camRow, paddingBottom: 8, borderBottom: HAIRLINE } },
+        CAM_TABS.map((k) => h("button", { key: k, type: "button", role: "tab", "aria-selected": tab === k, "data-cammut-tab": k, onClick: () => onTab && onTab(k), style: camTab(tab === k) }, t(`cammut.tab.${k}`)))) : null,
+      info && tab === "servers" ? h(CamServers, { info, busy, onAction, t }) : null,
+      info && tab === "tools" ? h(CamTools, { tools, onAction, t }) : null,
+      info && tab === "observer" ? h(CamObserver, { observer, onAction, t }) : null,
+      info && tab === "parts" ? h(CamParts, { info, onAction, t }) : null);
+  }
+
+  function CammutPane({ t }) {
+    const [info, setInfo] = React.useState(null);
+    const [error, setError] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const [tab, setTab] = React.useState("servers");
+    const [observer, setObserver] = React.useState(null);
+    const [tools, setTools] = React.useState({ list: [], tool: "", run: null, described: null });
+    const post = async (route, body) => {
+      const r = await fetch(route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
+      return r.json().catch(() => null);
+    };
+    const load = async () => {
+      try { const j = await post("api/arc-core/cammut/state"); if (j && j.ok) { setInfo(j); setError(""); } else setError((j && j.error) || "Could not read the Cammut state."); } catch { setError("Could not read the Cammut state."); }
+    };
+    const act = async (p) => {
+      if (p.kind === "tool-pick") { setTools((s) => ({ ...s, tool: p.tool, run: null, described: null })); return; }
+      setError(""); setBusy(true);
+      try {
+        const j = await post("api/arc-core/cammut/action", p);
+        if (p.kind === "observe") setObserver(j);
+        else if (p.kind === "tool-search") { if (j && j.ok) setTools((s) => ({ ...s, list: j.tools || [] })); else setError((j && j.error) || "Search failed."); }
+        else if (p.kind === "tool-describe") setTools((s) => ({ ...s, described: j && j.ok ? j.data : null }));
+        else if (p.kind === "tool-run") setTools((s) => ({ ...s, run: j }));
+        else if (!j || j.ok === false) setError((j && j.error) || "The action failed.");
+        if (p.kind.startsWith("server-") || p.kind.startsWith("component-")) await load();
+      } catch { setError("The action failed."); }
+      setBusy(false);
+    };
+    React.useEffect(() => { load(); }, []);
+    return h(CammutView, { info, error, busy, tab, onTab: setTab, observer, tools, onAction: act, t });
   }
 
   function ResearchWorkspace({
@@ -546,6 +987,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const inConnectorMode = !settingsOpen && activePaneMode === "connector";
     const inWorkspaceMode = !settingsOpen && !inConnectorMode;
     const themeEntry = THEMES.find((x) => x.id === skin) || THEMES[0];
+    const activeTop = settingsOpen ? "" : inConnectorMode ? "Connectors" : activeWorkspace;
+    const updateReady = Boolean(data && data.update && data.update.available && data.update.latest);
+    const connectorLabel = (conn) => (conn === "Updates" && data && data.update && data.update.available && data.update.latest ? `Updates (${data.update.latest})` : conn);
 
     return h("div", {
       "data-arc-console": "c2",
@@ -565,49 +1009,46 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         alignContent: "start",
       },
     },
+      h("style", null, CONSOLE_CSS),
       !data && !failed ? h("p", { style: { ...muted, margin: 0 } }, t("state.loading")) : null,
-      failed && !data ? h("p", { role: "alert", style: { ...muted, margin: 0 } }, t("state.error")) : null,
+      failed && !data ? h("div", { style: rowWrapStyle },
+        h("span", { role: "alert" }, t("state.error")),
+        onRefresh ? h("button", { type: "button", "data-console-retry": "true", onClick: () => onRefresh(), style: btnStyle(false) }, t("action.retry")) : null) : null,
 
-      data ? h("header", { style: { display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", paddingBottom: 10, borderBottom: HAIRLINE } },
-        h("nav", { "aria-label": t("nav.workspaces"), style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          WORKSPACES.map((ws) => {
-            const isActive = inWorkspaceMode && activeWorkspace === ws;
+      data ? h("header", { style: { display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-end", borderBottom: HAIRLINE } },
+        h("div", { role: "tablist", "aria-label": t("nav.console"), "data-console-tabs": "primary", onKeyDown: onTabKeys, style: { display: "flex", columnGap: 14, rowGap: 2, flexWrap: "wrap" } },
+          TOP_TABS.map((name, i) => {
+            const isWorkspace = WORKSPACES.includes(name);
+            const isActive = name === activeTop;
             return h("button", {
-              key: ws,
+              key: name,
               type: "button",
-              "data-workspace": ws,
-              "aria-pressed": isActive,
-              onClick: () => onSelectWorkspace && onSelectWorkspace(ws),
-              style: btnStyle(isActive),
-            }, ws);
+              role: "tab",
+              id: `arc-tab-${name}`,
+              "aria-selected": isActive,
+              "aria-controls": "arc-console-panel",
+              tabIndex: isActive || (!activeTop && i === 0) ? 0 : -1,
+              "data-top-control": name,
+              ...(isWorkspace ? { "data-workspace": name } : { "data-connector-group": "true" }),
+              onClick: () => (isWorkspace ? onSelectWorkspace && onSelectWorkspace(name) : onSelectConnector && onSelectConnector(activeConnector)),
+              style: tabStyle(isActive),
+              // an update that is ready shows here in every workspace; the second row carries the version
+              ...(!isWorkspace && updateReady ? { "aria-label": t("nav.connectors.update", { v: data.update.latest }), title: t("nav.connectors.update", { v: data.update.latest }), "data-update-ready": "true" } : {}),
+            }, isWorkspace ? name : h("span", { style: { display: "inline-flex", gap: 6, alignItems: "center" } }, t("nav.connectors"), updateReady ? h(StatusDot, { state: "attention" }) : null));
           })),
-        h("div", { "aria-label": t("nav.connectors"), style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          CONNECTORS.map((conn) => {
-            const isActive = inConnectorMode && activeConnector === conn;
-            return h("button", {
-              key: conn,
-              type: "button",
-              "data-connector": conn,
-              "aria-pressed": isActive,
-              onClick: () => onSelectConnector && onSelectConnector(conn),
-              style: btnStyle(isActive),
-            }, conn === "Updates" && data.update && data.update.available && data.update.latest ? `Updates (${data.update.latest})` : conn);
-          }),
-          h("button", {
-            type: "button",
-            "data-settings-toggle": "true",
-            "aria-pressed": settingsOpen,
-            onClick: () => onToggleSettings && onToggleSettings(!settingsOpen),
-            style: btnStyle(settingsOpen),
-          }, t("nav.settings")),
-          onRefresh
-            ? h("button", {
-                type: "button",
-                "data-refresh-console": "true",
-                onClick: () => onRefresh(),
-                style: btnStyle(false),
-              }, t("action.refresh"))
-            : null)) : null,
+        h("button", {
+          type: "button",
+          id: "arc-tab-Settings",
+          "data-top-control": "Settings",
+          "data-settings-toggle": "true",
+          "aria-label": t("nav.console.settings"),
+          title: t("nav.console.settings"),
+          "aria-pressed": settingsOpen,
+          onClick: () => onToggleSettings && onToggleSettings(!settingsOpen),
+          style: { ...iconBtnStyle(settingsOpen), marginBottom: 4 },
+        }, h(SettingsIcon, null))) : null,
+
+      h("div", { role: data ? (activeTop ? "tabpanel" : "region") : undefined, id: "arc-console-panel", "aria-labelledby": data ? `arc-tab-${activeTop || "Settings"}` : undefined, style: { display: "grid", gap: 14, alignContent: "start" } },
 
       h(ConsentDialog, { pendingConsent, onConsent, onClose: onCloseConsent, t }),
 
@@ -627,20 +1068,42 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
                   h("span", null, `${r.id} ${r.label}`),
                   h("button", {
                     type: "button",
+                    role: "switch",
                     "data-operator-switch": r.id,
-                    "aria-pressed": r.active,
+                    "aria-checked": Boolean(r.active),
+                    "aria-label": `${r.id} ${r.label}`,
                     onClick: () => onToggleSwitch && onToggleSwitch(r.id, !r.active),
                     style: btnStyle(r.active),
-                  }, r.active ? "On" : "Off")))))
+                  }, r.active ? t("state.on") : t("state.off"))))))
         : null,
 
       data && inConnectorMode
-        ? h(ConnectorView, {
-            connector: activeConnector,
-            detail: data.connectorsDetail,
-            onOpenConsent,
-            t,
-          })
+        ? h(React.Fragment, null,
+            h("div", { role: "tablist", "aria-label": t("nav.connectors"), "data-console-tabs": "connectors", onKeyDown: onTabKeys, style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+              CONNECTORS.map((conn, i) => {
+                const isActive = activeConnector === conn;
+                return h("button", {
+                  key: conn,
+                  type: "button",
+                  role: "tab",
+                  id: `arc-subtab-${conn}`,
+                  "aria-selected": isActive,
+                  "aria-controls": "arc-console-subpanel",
+                  tabIndex: isActive || (!CONNECTORS.includes(activeConnector) && i === 0) ? 0 : -1,
+                  "data-connector": conn,
+                  onClick: () => onSelectConnector && onSelectConnector(conn),
+                  style: btnStyle(isActive),
+                }, connectorLabel(conn));
+              })),
+            h("div", { role: "tabpanel", id: "arc-console-subpanel", "aria-labelledby": `arc-subtab-${activeConnector}` },
+              h(ConnectorView, {
+                connector: activeConnector,
+                detail: data.connectorsDetail,
+                onOpenConsent,
+                onRefresh,
+                grants: (data.consents || []).length,
+                t,
+              })))
         : null,
 
       data && inWorkspaceMode && activeWorkspace === "Research"
@@ -659,7 +1122,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       data && inWorkspaceMode && activeWorkspace === "Memory"
         ? h("section", { "aria-label": t("memory.title"), style: { display: "grid", gap: 8 } },
             h("h3", { style: { fontSize: 13, fontWeight: 600, margin: 0 } }, t("memory.title")),
-            h("div", { style: num }, `Loopback gateway: ${data.memory.gateway}, status: ${data.memory.reachable ? "online" : "offline"}`),
+            h("div", { "data-memory-status": "true", style: rowWrapStyle },
+              h(StatusDot, { state: data.memory.state }),
+              h("span", { role: "status", title: String(data.memory.status || "") }, oneLine(data.memory.status || (data.memory.reachable ? "Running." : "No answer."))),
+              h("code", { style: tagStyle }, data.memory.gateway),
+              data.memory.action === "refresh" && onRefresh ? h("button", { type: "button", "data-row-action": "memory", onClick: () => onRefresh(), style: btnStyle(false) }, t("action.again")) : null),
             (data.memory.routes || []).length > 0
               ? h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
                   data.memory.routes.map((r) => h("code", { key: r, style: tagStyle }, r)))
@@ -791,29 +1258,20 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
               }, t("chat.use"))))
         : null,
 
-      data && !settingsOpen
-        ? h("footer", { style: { paddingTop: 10, borderTop: HAIRLINE, display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline", flexWrap: "wrap" } },
-            h("span", { style: { ...muted, ...num, fontSize: 12 } },
-              `Connector view: ${activeConnector}, active 30-day grants: ${(data.consents || []).length}`),
-            onOpenConsent
-              ? h("button", {
-                  type: "button",
-                  "data-open-consent": "true",
-                  onClick: () => onOpenConsent({ appId: `${activeConnector.toLowerCase()}-connector`, scopes: ["read", "verify"] }),
-                  style: btnStyle(false),
-                }, "Review access")
-              : null)
-        : null);
+      ));
   }
 
-  function makePane(t) {
-    return function ArcConsolePane() {
+  const consoleViews = new Set(); // the refresh function of every mounted pane or Settings page
+  function useConsole() {
       const [data, setData] = React.useState(null);
       const [failed, setFailed] = React.useState(false);
       const [actionError, setActionError] = React.useState("");
       const [pendingConsent, setPendingConsent] = React.useState(null);
+      const [latest] = React.useState({ n: 0 }); // the number of the newest state request of this pane
 
+      // only the newest request may change the view: a slow answer of an older one is dropped
       const refresh = async () => {
+        const mine = ++latest.n;
         try {
           const r = await fetch("api/arc-core/console/state", {
             method: "POST",
@@ -821,6 +1279,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
             body: "{}",
           });
           const j = r.ok ? await r.json() : null;
+          if (mine !== latest.n) return;
           if (j && j.ok) {
             setData(j);
             setFailed(false);
@@ -828,7 +1287,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
             setFailed(true);
           }
         } catch {
-          setFailed(true);
+          if (mine === latest.n) setFailed(true);
         }
       };
 
@@ -836,14 +1295,28 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         try {
           const r = await fetch("api/arc-core/console/action", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }), j = await r.json().catch(() => null);
           if (!r.ok || !j || j.ok === false) { const err = (j && j.error) || "Action failed"; setActionError(err); setFailed(true); return j || { ok: false, error: err }; }
-          setActionError(""); setFailed(false); await refresh(); return j;
+          setActionError(""); setFailed(false); await refresh();
+          for (const other of consoleViews) if (other !== refresh) other();
+          return j;
         } catch { setActionError("Action failed"); setFailed(true); return { ok: false, error: "Action failed" }; }
       };
 
       React.useEffect(() => {
         refresh();
+        consoleViews.add(refresh);
+        // another window may have changed the state: reload when this window gets the focus back
+        const onFocus = () => { refresh(); };
+        const w = typeof window !== "undefined" && window.addEventListener ? window : null;
+        if (w) w.addEventListener("focus", onFocus);
+        return () => { consoleViews.delete(refresh); if (w) w.removeEventListener("focus", onFocus); };
       }, []);
 
+      return { data, failed, actionError, pendingConsent, setPendingConsent, dispatch };
+  }
+
+  function makePane(t) {
+    return function ArcConsolePane() {
+      const { data, failed, actionError, pendingConsent, setPendingConsent, dispatch } = useConsole();
       const skin =
         typeof document !== "undefined" && document.documentElement && typeof document.documentElement.getAttribute === "function"
           ? document.documentElement.getAttribute("data-arc-skin") || "arc"
@@ -880,9 +1353,36 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     };
   }
 
+  const SETTINGS_SECTIONS = [
+    { id: "memory", order: 11 },
+    { id: "connectors", order: 12 },
+    { id: "keys", order: 13 },
+    { id: "add-ons", order: 14 },
+    { id: "updates", order: 15, connector: "Updates" }, // drawn only when the Updates connector view exists
+  ];
+
+  function makeSettingsSection(section, t) {
+    return function ArcSettingsSection() {
+      const { data, failed, actionError, pendingConsent, setPendingConsent, dispatch } = useConsole();
+      return h(SettingsSectionView, {
+        section, data, failed, actionError, pendingConsent, t,
+        onRefresh: () => dispatch({ kind: "refresh" }),
+        onOpenConsent: (req) => setPendingConsent(req),
+        onCloseConsent: () => setPendingConsent(null),
+        onConsent: async (req) => { await dispatch({ kind: "consent", ...req }); setPendingConsent(null); },
+      });
+    };
+  }
+
   function apply(ctx) {
     ctx.effect(() => ctx.locale.register(NS, { en, zh: en }), "arc-core: dictionaries");
     const t = ctx.locale.bind(NS);
+    if (ctx.slots && typeof ctx.slots.inject === "function") {
+      for (const sec of SETTINGS_SECTIONS.filter((x) => !x.connector || CONNECTORS.includes(x.connector))) {
+        const Section = makeSettingsSection(sec.id, t);
+        ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", id: sec.id, order: sec.order, label: () => t(`settings.nav.${sec.id.replace("-", "")}`), locale: NS }, Section));
+      }
+    }
     const Pane = makePane(t);
     const Title = () => h(React.Fragment, null, h(Icon, { size: 16 }), h("span", null, t("tab.title")));
     ctx.inject(["sidebarRightTabs"], (c) => {
@@ -915,6 +1415,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     ConsentDialog,
     ConnectorView,
     UpdatesView,
+    CammutView,
+    UpdatesPanel,
     ResearchWorkspace,
     WORKSPACES,
     CONNECTORS,
@@ -925,5 +1427,10 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     THEMES,
     en,
     pushToChatComposer,
+    SettingsSectionView,
+    SETTINGS_SECTIONS,
+    InfoHint,
+    StatusDot,
+    useConsole,
   };
 } });

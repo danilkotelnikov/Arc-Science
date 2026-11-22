@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import { createWebError, ENGINE_SCRIPT, resolvePythonExecutable, runCrawlerCommand } from './runner.js';
 
 export const name = 'arc-web-crawler';
-export const version = '0.6.0';
+export const version = '0.6.1';
 export const inject = ['web'];
 
 export const PROVIDER_ID = 'arc-crawler';

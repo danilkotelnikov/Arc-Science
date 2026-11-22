@@ -673,3 +673,262 @@ test('a swap cut short by a crash is undone by the next update or by Roll back',
 `);
   assert.equal(fs.readFileSync(path.join(e.gatewayDir, 'arc-gateway.exe'), 'utf8'), 'GW-0.6.0');
 });
+
+// =====================================================================================================
+// Review findings of 21.XI.2026 (Gemini 4 Carbon). Each test failed on the code of main f68496a before its fix.
+
+// Two updates in a row: 0.6.0 -> 0.7.0 lands and keeps a backup; 0.8.0 then fails where breakAt says.
+async function secondUpdateFails(t, breakAt) {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.7.0'));
+  assert.equal((await e.u.install()).ok, true);
+  assert.equal(e.u.getState().backupVersion, '0.6.0');
+  e.srv.state.publish(buildKit('0.8.0'));
+  const real = fs.renameSync;
+  const u = e.make({ fs: { ...fs, renameSync: (a, b) => {
+    if (breakAt(String(a), String(b))) { const err = new Error(`EPERM: operation not permitted, rename '${a}' -> '${b}'`); err.code = 'EPERM'; err.path = String(a); err.dest = String(b); throw err; }
+    return real(a, b);
+  } } });
+  const r = await u.install();
+  assert.equal(r.ok, false);
+  return { e, u, r };
+}
+const atFirstStep = (a, b) => a.endsWith(path.join('local-plugins', UPDATE_PLUGINS[0])) && b.includes(path.join('updates', 'backup'));
+const atLastStep = (a) => a.endsWith('arc-validators.exe.arc-new');
+const allAt = (e, v) => {
+  for (const n of UPDATE_PLUGINS) {
+    assert.equal(marker(e, n), `export const marker = '${n}-${v}';\n`, n);
+    assert.equal(fs.readFileSync(path.join(e.home, 'profiles', 'desktop', 'node_modules', n, 'lib', 'index.js'), 'utf8'), `export const marker = '${n}-${v}';\n`, `profile copy of ${n}`);
+  }
+  assert.equal(fs.readFileSync(path.join(e.gatewayDir, 'arc-gateway.exe'), 'utf8'), `GW-${v}`, 'gateway');
+  assert.equal(fs.readFileSync(path.join(e.binDir, 'arc-validators.exe'), 'utf8'), `VAL-${v}`, 'validators');
+};
+
+test('finding 1: when the first step of a second update fails, the programs are not swapped for an older backup', async (t) => {
+  const { e, r } = await secondUpdateFails(t, atFirstStep);
+  assert.match(r.error, /in use, so nothing was changed/);
+  allAt(e, '0.7.0');
+});
+
+test('finding 2: a failed update keeps the earlier backup, so Roll back still works (first step fails)', async (t) => {
+  const { e, u } = await secondUpdateFails(t, atFirstStep);
+  assert.deepEqual({ has: u.getState().hasBackup, v: u.getState().backupVersion }, { has: true, v: '0.6.0' });
+  const rb = await u.rollback();
+  assert.equal(rb.ok, true, rb.error);
+  allAt(e, '0.6.0');
+});
+
+test('finding 2: a failed update keeps the earlier backup, programs included (last step fails)', async (t) => {
+  const { e, u } = await secondUpdateFails(t, atLastStep);
+  allAt(e, '0.7.0');
+  assert.deepEqual({ has: u.getState().hasBackup, v: u.getState().backupVersion }, { has: true, v: '0.6.0' });
+  const rb = await u.rollback();
+  assert.equal(rb.ok, true, rb.error);
+  allAt(e, '0.6.0');
+  // and a later update still lands and keeps its own backup
+  const again = await e.make().install({ version: '0.8.0' });
+  assert.equal(again.ok, true, again.error);
+  allAt(e, '0.8.0');
+  assert.equal(e.make().getState().backupVersion, '0.6.0');
+});
+
+test('finding 2: a process that dies right after the earlier backup was set aside does not lose it', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.7.0'));
+  assert.equal((await e.u.install()).ok, true);
+  e.srv.state.publish(buildKit('0.8.0'));
+  // the process "dies" on the first journal write of the second update; from then on it can change nothing
+  let dead = false;
+  const gone = () => { throw new Error('the process died here'); };
+  const dying = { ...fs,
+    writeFileSync: (f, ...rest) => { if (dead || /backup[\\/]backup\.json\./.test(String(f))) { dead = true; gone(); } return fs.writeFileSync(f, ...rest); },
+    renameSync: (...a) => (dead ? gone() : fs.renameSync(...a)), rmSync: (...a) => (dead ? gone() : fs.rmSync(...a)), mkdirSync: (...a) => (dead ? gone() : fs.mkdirSync(...a)),
+  };
+  await e.make({ fs: dying }).install().catch(() => {}); // a dead process reports nothing
+  assert.equal(dead, true);
+  fs.rmSync(path.join(e.home, 'updates', 'lock'), { force: true }); // the lock of a dead process expires after 20 minutes; the test does not wait
+  allAt(e, '0.7.0');
+  const u = e.make();
+  assert.deepEqual({ has: u.getState().hasBackup, v: u.getState().backupVersion }, { has: true, v: '0.6.0' });
+  const rb = await u.rollback();
+  assert.equal(rb.ok, true, rb.error);
+  allAt(e, '0.6.0');
+});
+
+test('finding 3: a new copy that stays locked does not stop the old folder from coming back', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.7.0'));
+  const target = path.join(e.home, 'local-plugins', 'arc-hoh'), fresh = `${target}.arc-new`;
+  const realMv = fs.renameSync, realRm = fs.rmSync;
+  let held = false;
+  const ebusy = (p) => { const err = new Error(`EBUSY: resource busy or locked, rename '${p}'`); err.code = 'EBUSY'; err.path = String(p); return err; };
+  // a scanner takes hold of the new copy after it is written: it can be neither renamed nor deleted
+  const u = e.make({ fs: { ...fs,
+    renameSync: (a, b) => { if (String(a) === fresh) { held = true; throw ebusy(a); } return realMv(a, b); },
+    rmSync: (p, o) => { if (held && String(p) === fresh) throw ebusy(p); return realRm(p, o); },
+  } });
+  const r = await u.install();
+  assert.equal(r.ok, false);
+  assert.equal(fs.existsSync(path.join(target, 'package.json')), true, 'the old plugin folder is back in its place');
+  allAt(e, '0.6.0');
+  assert.match(r.error, /^Files of arc-hoh are in use, so nothing was changed\./);
+  assert.equal(u.getState().healthy, true);
+  // once the scanner lets go, the same update lands
+  held = false;
+  const ok = await e.make().install();
+  assert.equal(ok.ok, true, ok.error);
+  allAt(e, '0.7.0');
+});
+
+test('finding 5: a folder name of only spaces does not get past the test switch', () => {
+  const gw = tmp('gw'), h = tmp('h');
+  try {
+    // no method is called on the result: before the fix it pointed at the real data folder
+    assert.throws(() => createUpdater({ env: { ...ENV, ARC_HOME: '   ', ARC_UPDATE_GATEWAY_DIR: gw } }), /ERR_UPDATE_TEST_PATHS/, 'ARC_HOME of spaces');
+    assert.throws(() => createUpdater({ env: { ...ENV, ARC_HOME: h, ARC_UPDATE_GATEWAY_DIR: '  ' } }), /ERR_UPDATE_TEST_PATHS/, 'gateway folder of spaces');
+    assert.throws(() => createUpdater({ env: { ...ENV, ARC_HOME: ` ${path.join(os.homedir(), '.arc')} `, ARC_UPDATE_GATEWAY_DIR: gw } }), /ERR_UPDATE_TEST_PATHS/, 'the real folder with spaces around it');
+    assert.equal(typeof createUpdater({ env: { ...ENV, ARC_HOME: ` ${h} `, ARC_UPDATE_GATEWAY_DIR: gw } }).getState, 'function', 'a throwaway folder still works');
+  } finally { rm(gw); rm(h); }
+});
+
+// ---- Faults that the independent reader (Gemini 4 Argon) found in the first round of these fixes. Each failed before its fix.
+const PREV = '.arc-backup-prev';
+const threeVersions = async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.7.0'));
+  assert.equal((await e.u.install()).ok, true);
+  e.srv.state.publish(buildKit('0.8.0'));
+  return e;
+};
+
+test('repair 1: a program backup left by an earlier cut-short clean-up never comes back as the current backup', async (t) => {
+  const e = await threeVersions(t);
+  assert.equal((await e.make().install()).ok, true); // now at 0.8.0, backup holds 0.7.0
+  // what a process that died in the clean-up after an older update would leave behind: a 0.6.0 program under the "earlier backup" name
+  fs.writeFileSync(path.join(e.binDir, `arc-validators.exe${PREV}`), 'VAL-0.6.0');
+  e.srv.state.publish(buildKit('0.9.0'));
+  // the next update dies while it sets the 0.7.0 backup aside: the gateway's copy has moved, the validators' copy has not,
+  // and the old 0.6.0 leftover is still under the "earlier backup" name
+  let dead = false;
+  const gone = () => { throw new Error('the process died here'); };
+  const dying = { ...fs,
+    renameSync: (a, b) => { if (dead) gone(); if (String(a).endsWith(`arc-validators.exe${PREV}`)) { dead = true; gone(); } return fs.renameSync(a, b); },
+    writeFileSync: (...a) => (dead ? gone() : fs.writeFileSync(...a)), rmSync: (...a) => (dead ? gone() : fs.rmSync(...a)), mkdirSync: (...a) => (dead ? gone() : fs.mkdirSync(...a)),
+  };
+  await e.make({ fs: dying }).install().catch(() => {});
+  assert.equal(dead, true);
+  fs.rmSync(path.join(e.home, 'updates', 'lock'), { force: true });
+  allAt(e, '0.8.0');
+  const u = e.make();
+  assert.equal(u.getState().backupVersion, '0.7.0');
+  const rb = await u.rollback();
+  assert.equal(rb.ok, true, rb.error);
+  allAt(e, '0.7.0');
+});
+
+test('repair 2: after Roll back, a backup that a cut-short clean-up left behind does not show as a second Roll back', async (t) => {
+  const e = await threeVersions(t);
+  // 0.8.0 lands, but the clean-up of the 0.6.0 backup cannot run (as if the process died right after the update was written down)
+  const prevRoot = path.join(e.home, 'updates', 'backup-prev');
+  const u = e.make({ fs: { ...fs, renameSync: (a, b) => { if (String(a) === prevRoot && String(b).includes(`${path.sep}stale${path.sep}`)) throw new Error('the process died here'); return fs.renameSync(a, b); } } });
+  assert.equal((await u.install()).ok, true);
+  allAt(e, '0.8.0');
+  assert.equal(fs.existsSync(prevRoot), true, 'the leftover is there');
+  const v = e.make();
+  assert.equal(v.getState().backupVersion, '0.7.0');
+  assert.equal((await v.rollback()).ok, true);
+  allAt(e, '0.7.0');
+  assert.deepEqual({ has: v.getState().hasBackup, v: v.getState().backupVersion }, { has: false, v: null }, 'one Roll back, one step back');
+  assert.equal((await v.rollback()).ok, false);
+  allAt(e, '0.7.0');
+});
+
+test('repair 3: the earlier backup comes back even when the empty backup folder of the failed update cannot be deleted', async (t) => {
+  const e = await threeVersions(t);
+  const backupRoot = path.join(e.home, 'updates', 'backup');
+  const real = fs.renameSync;
+  const u = e.make({ fs: { ...fs,
+    renameSync: (a, b) => { if (atFirstStep(String(a), String(b))) { const err = new Error(`EPERM: operation not permitted, rename '${a}' -> '${b}'`); err.code = 'EPERM'; err.path = String(a); throw err; } return real(a, b); },
+    rmSync: (p, o) => { if (String(p) === backupRoot) { const err = new Error('EBUSY: resource busy or locked'); err.code = 'EBUSY'; throw err; } return fs.rmSync(p, o); },
+  } });
+  assert.equal((await u.install()).ok, false);
+  allAt(e, '0.7.0');
+  // the same process, while that folder is still held: Roll back must not answer "no backup"
+  assert.deepEqual({ has: u.getState().hasBackup, v: u.getState().backupVersion }, { has: true, v: '0.6.0' });
+  const rb = await u.rollback();
+  assert.equal(rb.ok, true, rb.error);
+  allAt(e, '0.6.0');
+});
+
+// ---- Faults that the independent reader found in the repairs above (second read, 21.XI.2026). Each failed before its fix.
+// A leftover of the 0.6.0 backup: 0.8.0 landed, but its clean-up could not move the set-aside folder away.
+async function leftoverAfterUpdate(t) {
+  const e = await threeVersions(t);
+  const prevRoot = path.join(e.home, 'updates', 'backup-prev');
+  const u = e.make({ fs: { ...fs, renameSync: (a, b) => { if (String(a) === prevRoot && String(b).includes(`${path.sep}stale${path.sep}`)) throw new Error('the process died here'); return fs.renameSync(a, b); } } });
+  assert.equal((await u.install()).ok, true);
+  allAt(e, '0.8.0');
+  return { e, prevRoot, prevJournal: path.join(prevRoot, 'backup.json') };
+}
+const diesAt = (when) => {
+  let dead = false;
+  const gone = () => { throw new Error('the process died here'); };
+  return { isDead: () => dead, fs: { ...fs,
+    renameSync: (a, b) => { if (dead) gone(); if (when(String(a), String(b))) { dead = true; gone(); } return fs.renameSync(a, b); },
+    writeFileSync: (...a) => (dead ? gone() : fs.writeFileSync(...a)), rmSync: (...a) => (dead ? gone() : fs.rmSync(...a)), mkdirSync: (...a) => (dead ? gone() : fs.mkdirSync(...a)),
+  } };
+};
+
+test('repair 4: a Roll back that dies in its clean-up does not leave an older backup that counts', async (t) => {
+  const { e, prevRoot } = await leftoverAfterUpdate(t);
+  const d = diesAt((a) => a === prevRoot);
+  await e.make({ fs: d.fs }).rollback().catch(() => {});
+  assert.equal(d.isDead(), true, 'the process died while it moved the leftover away');
+  fs.rmSync(path.join(e.home, 'updates', 'lock'), { force: true });
+  allAt(e, '0.7.0');
+  const v = e.make();
+  assert.notEqual(v.getState().backupVersion, '0.6.0', 'the older backup must not come back as a second Roll back');
+  await v.rollback();
+  allAt(e, '0.7.0');
+  assert.equal(v.getState().hasBackup, false);
+});
+
+test('repair 5: a leftover folder never keeps its journal once its programs are cleared', async (t) => {
+  const { e, prevRoot, prevJournal } = await leftoverAfterUpdate(t);
+  e.srv.state.publish(buildKit('0.9.0'));
+  // the next update dies while it clears the leftover, at the move of the leftover folder
+  const d = diesAt((a) => a === prevRoot);
+  await e.make({ fs: d.fs }).install().catch(() => {});
+  assert.equal(d.isDead(), true);
+  const programsLeft = fs.readdirSync(e.gatewayDir).concat(fs.readdirSync(e.binDir)).some((f) => f.endsWith(PREV));
+  assert.equal(fs.existsSync(prevJournal) && !programsLeft, false, 'a journal without its programs would bring back half a backup');
+  fs.rmSync(path.join(e.home, 'updates', 'lock'), { force: true });
+  allAt(e, '0.8.0');
+  const v = e.make();
+  assert.equal(v.getState().backupVersion, '0.7.0');
+  assert.equal((await v.rollback()).ok, true);
+  allAt(e, '0.7.0');
+  assert.equal(v.getState().hasBackup, false);
+});
+
+test('repair 6: while the older journal cannot be deleted, Roll back keeps its own journal, so the older backup cannot count', async (t) => {
+  const e = await threeVersions(t);
+  const prevRoot = path.join(e.home, 'updates', 'backup-prev'), prevJournal = path.join(prevRoot, 'backup.json');
+  // a scanner holds the set-aside journal and its folder: through the clean-up of the 0.8.0 update and through the Roll back
+  const held = { ...fs,
+    rmSync: (p, o) => { if (String(p) === prevJournal && fs.existsSync(prevJournal)) { const err = new Error('EBUSY: resource busy or locked'); err.code = 'EBUSY'; throw err; } return fs.rmSync(p, o); },
+    renameSync: (a, b) => { if (String(a) === prevRoot) { const err = new Error('EPERM: operation not permitted'); err.code = 'EPERM'; throw err; } return fs.renameSync(a, b); },
+  };
+  assert.equal((await e.make({ fs: held }).install()).ok, true);
+  allAt(e, '0.8.0');
+  assert.equal(fs.existsSync(prevJournal), true, 'the 0.6.0 backup is still set aside, journal included');
+  const rb = await e.make({ fs: held }).rollback();
+  assert.equal(rb.ok, true, rb.error);
+  allAt(e, '0.7.0');
+  // the scanner lets go; a second Roll back must not go one more version back
+  const v = e.make();
+  assert.notEqual(v.getState().backupVersion, '0.6.0', 'the older backup must not count');
+  await v.rollback();
+  allAt(e, '0.7.0');
+  assert.equal(v.getState().hasBackup, false, 'the second Roll back only finished the clean-up');
+});
