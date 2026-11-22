@@ -89,7 +89,7 @@ const WEIGHTS = Object.fromEntries([...L.weights].map((kv) => { const [k, v] = k
 export const ALLOWED_HINT = 'State what exists and what comes next. Put a limit beside the claim that it limits, with its reason, or in the limits section.';
 export const MARK_HINT = 'A reader decides. Keep it when it states a result, a property or the work of others; rewrite it when it announces work of the author that is not done.';
 
-const WORD = /[a-z]+(?:[-'][a-z]+)*|\d+(?:[.,]\d+)*%?/g;
+const WORD = /[a-zà-ɏ]+(?:[-'][a-zà-ɏ]+)*|\d+(?:[.,]\d+)*%?/g;
 const SENTENCE_END = /(?<=[.!?;:])\s+/;
 const MAX_HITS = 12;   // findings per sentence; more says nothing new and costs time on hostile text
 const isPart = (w) => Boolean(w) && (L.work_part.has(w) || (/(?:ed|en)$/.test(w) && w.length > 4 && !L.not_part.has(w)));
@@ -111,7 +111,9 @@ function opensOf(lower, words, at) {
 }
 
 function tokensOf(sentence) {
-  const lower = foldMixed(sentence.toLowerCase().replace(/’/g, "'")).replace(/\bcannot\b/g, 'can not').replace(/n't\b/g, ' not');
+  // a precomposed accented Latin letter reads as its base letter ("nôt" is "not"); the length stays, so places stay right
+  const unaccent = (c) => { const b = c.normalize('NFD')[0]; return b >= 'a' && b <= 'z' ? b : c; };
+  const lower = foldMixed(sentence.toLowerCase().replace(/’/g, "'").replace(/[à-ɏ]/g, unaccent)).replace(/\bcannot\b/g, 'can not').replace(/n't\b/g, ' not');
   const words = [];
   const at = [];
   for (const m of lower.matchAll(WORD)) { words.push(m[0]); at.push(m.index); }
@@ -197,7 +199,8 @@ function undercuts(t, opens = new Set()) {
     const lead = t.slice(clauseStart(a), a);
     if (lead.every(bare)) return true;
     // "Our previous model", "Earlier we have not ...": the marker belongs to the authors, so it does not leave the core
-    if (lead.some((w, m) => (L.other_mark.has(w) || w === 'others') && !L.first_person.has(lead[m - 1]) && !L.first_person.has(lead[m + 1]))) return false;
+    // a first-person word anywhere before the marker ("Our own previous model") or right after it ("Earlier we ...") keeps it
+    if (lead.some((w, m) => (L.other_mark.has(w) || w === 'others') && !lead.slice(0, m).some((x) => L.first_person.has(x)) && !L.first_person.has(lead[m + 1]))) return false;
     if (lead.some((w) => L.first_person.has(w) || L.artifact.has(w) || L.work_noun.has(w) || L.own_word.has(w))) return true;
     return byUs(b) || (L.un_part.has(t[a]) && [1, 2].some((n) => has(L.artifact, b + n)));   // "an untrained model"
   };
@@ -396,7 +399,6 @@ function deniedBy(factsText) {
   for (const sentence of String(factsText || '').split(/\n+/).flatMap((l) => l.split(SENTENCE_END))) {
     const before = [];   // head nouns of the clauses before this one, built once
     for (const clause of sentence.split(CLAUSE)) {
-      if (n >= MAX_DENIALS) return byPart;
       const tok = tokensOf(clause);
       const t = tok.words;
       for (const h of undercuts(t, tok.opens)) {
@@ -408,6 +410,7 @@ function deniedBy(factsText) {
         if (h.form === 'un-done') nouns.push(...t.slice(h.b + 1, h.b + 3).filter((w) => L.artifact.has(w)));   // an untrained model
         // "The session, the seats and the engine are planned, not built": the subject stands in the clauses before
         if (!nouns.length) nouns = before;
+        if (n >= MAX_DENIALS) { byPart.truncated = true; return byPart; }   // check() reports it: a denial past the cap goes unread
         if (!byPart.has(part)) byPart.set(part, []);
         byPart.get(part).push(new Set(nouns));
         n += 1;
@@ -539,6 +542,8 @@ function zoneLines(text, zone) {
       const isLimits = namesLimits(head[2]);
       if (isLimits) limitsLevel = level; else if (limitsLevel && level <= limitsLevel) limitsLevel = 0;
       plain = 0;
+      const title = head[2].replace(/\s+#+\s*$/, '');   // a heading is public text: its words are read, in the zone it sits in
+      if (title.trim()) out.push({ no: idx + 1, line: title, zone: limitsLevel ? 'limits' : zone });
       continue;
     }
     if (!raw.trim()) { if (plain === 2) plain = 0; continue; }
@@ -578,6 +583,7 @@ export function sentences(text, { zone = 'public' } = {}) {
 export function check(text, { zone = 'public', facts = '', overclaim = 'review' } = {}) {
   const findings = [];
   const denied = deniedBy(facts);
+  if (denied.truncated) findings.push({ line: 0, rule: 'FACTS_TRUNCATED', form: 'denials', severity: overclaim, sentence: '', span: `more than ${MAX_DENIALS} denials`, allowed: 'Shorten the facts: denials past the first 300 are not read, so OVERCLAIM cannot see them.' });
   let words = 0;
   let before = false;                                // a sentence with words came earlier in the text
   for (const { no, line, zone: z } of zoneLines(text, zone)) {
