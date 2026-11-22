@@ -10,7 +10,7 @@ import path from 'node:path';
 import { check as proseGateCheck } from './prose-gate.js';
 
 export const WORKSPACES = Object.freeze(['Research', 'Memory', 'Molecullage', 'Prose']);
-export const CONNECTORS = Object.freeze(['Servers', 'Keys', 'Apps', 'Audit', 'Updates']);
+export const CONNECTORS = Object.freeze(['Servers', 'Keys', 'Apps', 'Audit', 'Cammut', 'Updates']);
 export const SEATS = Object.freeze(['Planner', 'Reviewer', 'Falsifier', 'Vision', 'Prose']);
 export const RESEARCH_PANES = Object.freeze(['Map', 'Claims', 'Evidence']);
 export const RESEARCH_VIEWS = Object.freeze(['Map', 'Claims', 'Evidence', 'Release']);
@@ -341,13 +341,18 @@ function readGatewayConfigSafe(arcHome) {
 
 function readLocalPluginsSafe(arcHome) {
   const plugins = [];
+  const addons = [];
   const preflights = [];
   try {
     const dir = path.join(arcHome, 'local-plugins');
     if (fs.existsSync(dir)) {
       for (const name of fs.readdirSync(dir)) {
         const full = path.join(dir, name);
-        if (fs.statSync(full).isDirectory()) plugins.push(name);
+        if (!fs.statSync(full).isDirectory()) continue;
+        if (name.endsWith('.arc-new')) continue; // the unfinished copy of an update that was held; the next update removes it
+        plugins.push(name);
+        const pkg = readJsonSafe(path.join(full, 'package.json'));
+        addons.push({ id: name, version: String(pkg?.version || ''), description: String(pkg?.description || '').slice(0, 300) });
       }
     }
   } catch {
@@ -365,10 +370,10 @@ function readLocalPluginsSafe(arcHome) {
   } catch {
     // ignore
   }
-  return { plugins, preflights };
+  return { plugins, addons, preflights };
 }
 
-function parseMcpTextBody(rawText) {
+export function parseMcpTextBody(rawText) {
   const trimmed = String(rawText || '').trim();
   if (!trimmed) return null;
   if (trimmed.startsWith('{')) {
@@ -392,6 +397,20 @@ function parseMcpTextBody(rawText) {
   return null;
 }
 
+/** The gateway state in plain words. The raw code stays in `code`, for a hint; `action` names the next step. */
+export function gatewayStatus(gw = {}) {
+  if (gw.reachable) {
+    const n = Array.isArray(gw.routes) ? gw.routes.length : 0;
+    return { state: 'ok', status: `Running, ${n} ${n === 1 ? 'route' : 'routes'}, memory ${gw.cammut ? 'on' : 'off'}.`, code: '', action: '' };
+  }
+  const code = String(gw.status || 'offline');
+  if (code === 'not-checked') return { state: 'idle', status: 'Not checked yet.', code: '', action: 'refresh' };
+  if (code === 'no-fetch') return { state: 'idle', status: 'Cannot be checked from here.', code: '', action: '' };
+  if (/^http-\d+$/.test(code)) return { state: 'attention', status: 'The gateway answered with an error. Check again in a moment.', code, action: 'refresh' };
+  if (code === 'TimeoutError' || code === 'AbortError') return { state: 'attention', status: 'No answer in time. Start the local gateway, then check again.', code, action: 'refresh' };
+  return { state: 'attention', status: 'No answer. Start the local gateway, then check again.', code, action: 'refresh' };
+}
+
 async function probeGatewayHealth(gatewayHost, fetchImpl, timeoutMs = 1200) {
   if (!fetchImpl) return { reachable: false, status: 'no-fetch', routes: [], cammut: false, upstreamCount: 0 };
   try {
@@ -412,72 +431,74 @@ async function probeGatewayHealth(gatewayHost, fetchImpl, timeoutMs = 1200) {
   }
 }
 
-async function recallCammutMemory(gatewayHost, query, opts = {}, fetchImpl) {
-  if (!fetchImpl) return { ok: false, error: 'Fetch unavailable', items: [] };
+// One MCP tool call through the gateway (/cammut/mcp). name is a gateway tool: cammut_call, cammut_search, cammut_describe or cammut_servers.
+// Returns { ok, status, text, parsed, rpcError, toolError, error }. ok means the HTTP call worked and the reply holds no JSON-RPC error.
+export async function cammutMcp(gatewayHost, name, args = {}, opts = {}) {
+  const fetchImpl = opts.fetchImpl || (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null);
+  if (!fetchImpl) return { ok: false, status: 0, text: '', parsed: null, rpcError: null, toolError: false, error: 'Fetch unavailable' };
   try {
-    const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(2500) : undefined;
-    const defaultTag = process.env.ARC_PROJECT_TAG || 'project:arc-harness';
-    const tags = Array.isArray(opts.tags) && opts.tags.length > 0 ? opts.tags : [defaultTag];
-    const budget = typeof opts.budget === 'string' && opts.budget ? opts.budget : 'low';
+    const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(opts.timeoutMs || 2500) : undefined;
     const res = await fetchImpl(`http://${gatewayHost}/cammut/mcp`, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json, text/event-stream',
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: Date.now(),
-        method: 'tools/call',
-        params: {
-          name: 'cammut_call',
-          arguments: {
-            tool: 'hindsight/recall',
-            arguments: { query, tags, budget },
-          },
-        },
-      }),
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name, arguments: args } }),
       signal,
     });
     const rawText = await res.text();
     const parsed = parseMcpTextBody(rawText);
-    const contentText = parsed?.result?.content?.[0]?.text || rawText;
-    let payloadJson = null;
-    try {
-      payloadJson = JSON.parse(contentText);
-    } catch {
-      payloadJson = null;
-    }
-    const rawItems = Array.isArray(payloadJson?.results)
-      ? payloadJson.results
-      : Array.isArray(payloadJson?.facts)
-        ? payloadJson.facts
-        : Array.isArray(payloadJson)
-          ? payloadJson
-          : contentText
-            ? [{ text: String(contentText).slice(0, 280), context: 'cammut' }]
-            : [];
-    const items = rawItems.slice(0, 8).map((item, idx) => ({
-      id: String(item?.id || `mem-${idx + 1}`),
-      text: redactSecretText(String(item?.text || item?.content || item?.summary || item || '').slice(0, 280)),
-      context: redactSecretText(String(item?.context || item?.type || 'memory').slice(0, 80)),
-    }));
-    return { ok: Boolean(res.ok && !parsed?.error), items, error: parsed?.error ? String(parsed.error.message || 'rpc-error') : null };
+    const text = parsed?.result?.content?.[0]?.text || rawText;
+    const rpcError = parsed?.error ? String(parsed.error.message || 'rpc-error') : null;
+    const toolError = Boolean(parsed?.result?.isError);
+    const error = rpcError || (toolError ? String(text).slice(0, 200) : (!res.ok ? `HTTP ${res.status}` : (!parsed ? 'Invalid MCP reply' : null)));
+    return { ok: Boolean(res.ok && !rpcError), status: res.status, text, parsed, rpcError, toolError, error };
   } catch (err) {
-    return { ok: false, error: redactSecretText(err?.message || 'Cammut recall failed'), items: [] };
+    return { ok: false, status: 0, text: '', parsed: null, rpcError: null, toolError: false, error: redactSecretText(err?.message || 'Cammut call failed') };
   }
+}
+
+// A Hindsight tool through the gateway, for example cammutCall(host, 'hindsight/recall', { query }).
+export function cammutCall(gatewayHost, tool, args = {}, opts = {}) {
+  return cammutMcp(gatewayHost, 'cammut_call', { tool, arguments: args }, opts);
+}
+
+async function recallCammutMemory(gatewayHost, query, opts = {}, fetchImpl) {
+  if (!fetchImpl) return { ok: false, error: 'Fetch unavailable', items: [] };
+  const defaultTag = process.env.ARC_PROJECT_TAG || 'project:arc-harness';
+  const tags = Array.isArray(opts.tags) && opts.tags.length > 0 ? opts.tags : [defaultTag];
+  const budget = typeof opts.budget === 'string' && opts.budget ? opts.budget : 'low';
+  const r = await cammutCall(gatewayHost, 'hindsight/recall', { query, tags, budget }, { fetchImpl, timeoutMs: 2500 });
+  if (r.status === 0) return { ok: false, error: redactSecretText(r.error || 'Cammut recall failed'), items: [] };
+  const contentText = r.text;
+  let payloadJson = null;
+  try {
+    payloadJson = JSON.parse(contentText);
+  } catch {
+    payloadJson = null;
+  }
+  const rawItems = Array.isArray(payloadJson?.results)
+    ? payloadJson.results
+    : Array.isArray(payloadJson?.facts)
+      ? payloadJson.facts
+      : Array.isArray(payloadJson)
+        ? payloadJson
+        : contentText
+          ? [{ text: String(contentText).slice(0, 280), context: 'cammut' }]
+          : [];
+  const items = rawItems.slice(0, 8).map((item, idx) => ({
+    id: String(item?.id || `mem-${idx + 1}`),
+    text: redactSecretText(String(item?.text || item?.content || item?.summary || item || '').slice(0, 280)),
+    context: redactSecretText(String(item?.context || item?.type || 'memory').slice(0, 80)),
+  }));
+  return { ok: r.ok, items, error: r.rpcError };
 }
 
 async function retainCammutMemory(gatewayHost, content, opts = {}, fetchImpl) {
   if (!fetchImpl || !content) return { ok: false, error: 'Fetch unavailable' };
-  try {
-    const sig = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(1500) : undefined;
-    const tags = Array.isArray(opts.tags) && opts.tags.length ? opts.tags : [process.env.ARC_PROJECT_TAG || 'project:arc-harness', 'source:arc-console'];
-    const pl = { jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name: 'cammut_call', arguments: { tool: 'hindsight/retain', arguments: { content: sStr(content, 600), context: sStr(opts.context || 'arc-console review', 120), tags } } } };
-    const res = await fetchImpl(`http://${gatewayHost}/cammut/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify(pl), signal: sig });
-    const p = parseMcpTextBody(await res.text()), e = p?.error || (p?.result?.isError ? { message: 'rpc-tool-error' } : null);
-    return { ok: Boolean(res.ok && p && !e), error: e ? sStr(e.message || 'rpc-error', 120) : (!p ? 'Invalid MCP reply' : null) };
-  } catch (err) { return { ok: false, error: sStr(err?.message || 'Cammut retain failed', 120) }; }
+  const tags = Array.isArray(opts.tags) && opts.tags.length ? opts.tags : [process.env.ARC_PROJECT_TAG || 'project:arc-harness', 'source:arc-console'];
+  const r = await cammutCall(gatewayHost, 'hindsight/retain', { content: sStr(content, 600), context: sStr(opts.context || 'arc-console review', 120), tags }, { fetchImpl, timeoutMs: 1500 });
+  if (r.status === 0) return { ok: false, error: sStr(r.error || 'Cammut retain failed', 120) };
+  const e = r.rpcError || (r.toolError ? 'rpc-tool-error' : null);
+  return { ok: Boolean(r.ok && r.parsed && !e), error: e ? sStr(e, 120) : (!r.parsed ? 'Invalid MCP reply' : null) };
 }
 const CONSOLE_TARGET_TYPES = new Set(['session', 'branch', 'claim', 'evidence', 'source', 'release']);
 const VERDICT_MAP = Object.freeze(Object.assign(Object.create(null), { approve: 'Approve', revise: 'Revise', hold: 'Hold' }));
@@ -815,7 +836,7 @@ export function createResearchSessionStore(opts = {}) {
     ledger: { available: false, total: 0, latest: null, recent: [] },
     molecullageData: { available: false, sourcesCount: 231, domainsCount: 8, frozen: null, sources: [] },
     gatewayConfig: { available: false, cammutRecall: false, anthropicPromptCaching: false, defaultReasoningEffort: 'none' },
-    localPlugins: { plugins: [], preflights: [] },
+    localPlugins: { plugins: [], addons: [], preflights: [] },
     molecullageLauncherAvailable: false,
     memoryQuery: '',
     memoryResults: [],
@@ -913,15 +934,13 @@ export function createResearchSessionStore(opts = {}) {
       summary: ev.summary,
       atMs: ev.atMs,
     }));
-    const srvStatus = liveState.gateway.reachable
-      ? `online, ${liveState.gateway.routes.length} routes, cammut ${liveState.gateway.cammut ? 'on' : 'off'}`
-      : `local config (${liveState.gateway.status})`;
+    const srv = gatewayStatus(liveState.gateway);
     const studioStatus = liveState.molecullageData.available
-      ? `ready (${liveState.molecullageData.sourcesCount} sources on disk)`
-      : 'ready';
+      ? `Ready, ${liveState.molecullageData.sourcesCount} sources on disk.`
+      : 'Ready.';
     const keyStatus = liveState.gatewayConfig.available
-      ? `cammutRecall ${liveState.gatewayConfig.cammutRecall ? 'on' : 'off'}, promptCaching ${liveState.gatewayConfig.anthropicPromptCaching ? 'on' : 'off'}`
-      : 'not configured';
+      ? `Memory recall ${liveState.gatewayConfig.cammutRecall ? 'on' : 'off'}, prompt caching ${liveState.gatewayConfig.anthropicPromptCaching ? 'on' : 'off'}.`
+      : 'Not set up yet.';
     const apps = [
       { id: 'molecullage', label: 'Molecullage figure and structure pack', scopes: ['read', 'render'], grants: activeGrants.filter((g) => g.appId.startsWith('molecullage')).length },
       { id: 'inspect', label: 'Scoped archive inspector', scopes: ['read', 'verify'], grants: activeGrants.filter((g) => g.appId.startsWith('inspect')).length },
@@ -936,12 +955,12 @@ export function createResearchSessionStore(opts = {}) {
     }
     return {
       Servers: [
-        { id: 'srv-cammut', label: 'Loopback Cammut gateway', endpoint: gatewayHost, status: srvStatus },
-        { id: 'srv-studio', label: 'Molecullage studio server', endpoint: liveState.molecullageLauncherAvailable ? '~/.arc/molecullage-mcp-launcher.mjs' : 'stdio local', status: studioStatus },
+        { id: 'srv-cammut', label: 'Local Cammut gateway', endpoint: gatewayHost, ...srv },
+        { id: 'srv-studio', label: 'Molecullage studio server', endpoint: liveState.molecullageLauncherAvailable ? '~/.arc/molecullage-mcp-launcher.mjs' : 'stdio local', state: 'ok', status: studioStatus },
       ],
       Keys: [
-        { id: 'key-cammut', label: 'Gateway and memory settings', ref: '~/.arc/gateway-config.json', status: keyStatus },
-        { id: 'key-signing', label: 'Release bundle public key', ref: 'cred://arc-native/release-verify', status: 'pinned' },
+        { id: 'key-cammut', label: 'Gateway and memory settings', ref: '~/.arc/gateway-config.json', state: liveState.gatewayConfig.available ? 'ok' : 'idle', status: keyStatus },
+        { id: 'key-signing', label: 'Release bundle public key', ref: 'cred://arc-native/release-verify', state: 'ok', status: 'Pinned.' },
       ],
       Apps: apps,
       Audit: [...sessionEvents, ...hohEvents].slice(-8),
@@ -974,6 +993,9 @@ export function createResearchSessionStore(opts = {}) {
       memory: {
         ok: true,
         gateway: gatewayHost,
+        ...gatewayStatus(liveState.gateway),
+        recall: Boolean(liveState.gatewayConfig.cammutRecall),
+        configured: Boolean(liveState.gatewayConfig.available),
         reachable: liveState.gateway.reachable,
         routes: liveState.gateway.routes,
         cammut: liveState.gateway.cammut,
@@ -1005,6 +1027,7 @@ export function createResearchSessionStore(opts = {}) {
         text: proseText,
         report: detectFormulaicProse(proseText),
       },
+      addons: { ok: true, items: (liveState.localPlugins.addons || []).map((a) => ({ ...a })) },
       consents: listActiveGrants(),
     };
   }
@@ -1034,6 +1057,7 @@ export function createResearchSessionStore(opts = {}) {
   };
 }
 
+// extra.cammut: async ({ clean, method, host, origin, payload }) => body, the Cammut console routes (components.js serveCammutRoute).
 // extra.updater: the updater of updater.js. Update routes: state (read) and action (POST only, same-origin or loopback pages only).
 const LOOPBACK_ORIGIN = /^(?:127\.0\.0\.1|localhost|\[::1\])$/;
 // The desktop window loads arc-app://app and its requests arrive as http://arc.internal/... with Origin "null" and a loopback Host header
@@ -1070,6 +1094,22 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) payload = {};
 
   const clean = routePath.replace(/^\/+/, '');
+  if (clean.startsWith('api/arc-core/cammut/') && extra && typeof extra.cammut === 'function') {
+    // The desktop window sends http://arc.internal/... with Origin "null" (seen in the live test of the update routes).
+    // Judge a Cammut request by the same rule as the update routes: a loopback Host (or, without one, a local page),
+    // a local Origin when the browser names one, and a JSON body for a POST. Anything else is refused here, so a plain
+    // cross-site form never reaches the Cammut guard. A local request reaches the guard as 127.0.0.1 with no Origin.
+    let local = typeof reqOrPath === 'string';
+    if (!local) {
+      const hostName = hostHeader ? hostHeader.replace(/:\d+$/, '') : null;
+      let originOk = !origin || origin === 'null';
+      if (!originOk) { try { originOk = isLocalPage(new URL(origin)); } catch { originOk = false; } }
+      if (method === 'POST' && !jsonBody) return { ok: false, status: 415, error: 'Send Cammut actions as application/json.' };
+      local = (hostName ? LOOPBACK_ORIGIN.test(hostName) : Boolean(pageUrl && isLocalPage(pageUrl))) && originOk;
+    }
+    if (!local) return { ok: false, status: 403, error: 'The Cammut console answers only to this computer\'s own app.' };
+    return extra.cammut({ clean, method, host: '127.0.0.1', origin: null, payload });
+  }
   if (clean === 'api/arc-core/session/head') return store.head();
   if (clean === 'api/arc-core/session/timeline') return store.timeline();
   if (clean === 'api/arc-core/session/tree') return store.tree();
@@ -1159,6 +1199,8 @@ export function registerConsoleRoutes(ctx, store = createResearchSessionStore(),
     '/api/arc-core/console/action',
     '/api/arc-core/update/state',
     '/api/arc-core/update/action',
+    '/api/arc-core/cammut/state',
+    '/api/arc-core/cammut/action',
   ];
   const disposers = [];
   ctx.inject(['connection'], (c) => {

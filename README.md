@@ -10,13 +10,13 @@
 <p align="center">We build AI-driven computational biology and chemistry around advanced harness-gated approach where the environment make our results humanely acceptable, verifiable and reliable.</p>
 
 <p align="center">
-  <a href="../../releases/tag/v0.6.0"><img alt="Release 0.6.0" src="https://img.shields.io/badge/release-0.6.0-54453c?style=flat-square"></a>
+  <a href="../../releases/tag/v0.6.1"><img alt="Release 0.6.1" src="https://img.shields.io/badge/release-0.6.1-54453c?style=flat-square"></a>
   <a href="../../actions/workflows/ci.yml"><img alt="Checks" src="https://img.shields.io/badge/checks-Node%2024%20%2B%20Rust%20%2B%20Go-54453c?style=flat-square"></a>
   <a href="#plugins"><img alt="Plugins: 7" src="https://img.shields.io/badge/plugins-7%20built--in-54453c?style=flat-square"></a>
   <a href="LICENSE"><img alt="Licence: MIT" src="https://img.shields.io/badge/licence-MIT-54453c?style=flat-square"></a>
   <a href="#quick-start"><img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows%20x64-54453c?style=flat-square"></a>
   <a href="SECURITY.md"><img alt="Security policy" src="https://img.shields.io/badge/security-policy-54453c?style=flat-square"></a>
-  <a href="CHANGELOG.md"><img alt="Changelog" src="https://img.shields.io/badge/changelog-0.6.0-54453c?style=flat-square"></a>
+  <a href="CHANGELOG.md"><img alt="Changelog" src="https://img.shields.io/badge/changelog-0.6.1-54453c?style=flat-square"></a>
   <a href="CITATION.cff"><img alt="Citation" src="https://img.shields.io/badge/cite-CITATION.cff-54453c?style=flat-square"></a>
 </p>
 
@@ -38,7 +38,7 @@
 
 Arc Harness checks scientific claims one at a time, and the model that built a claim never signs it. Models read and edit workspace files, run shell commands under explicit permission modes, retrieve web documents, and query shared memory, while every non-trivial change passes through an independent verification gate run by a separate model family or deterministic validator.
 
-This repository ships the **Arc Harness 0.6.0** build kit. It contains seven built-in plugins, the unified C2 console, the 1M Library memory index, and the tiered web crawler. It also includes the native Go loopback gateway, six zero-dependency Rust validators, headless benchmark runners, and Windows release packaging tools. Every package, plugin, binary, Electron archive, and release bundle shares one canonical version in [`VERSION`](VERSION), enforced in CI by [`scripts/version-sync.mjs`](scripts/version-sync.mjs).
+This repository ships the **Arc Harness 0.6.1** build kit. It contains seven built-in plugins, the unified C2 console, the 1M Library memory index, and the tiered web crawler. It also includes the native Go loopback gateway, six zero-dependency Rust validators, headless benchmark runners, and Windows release packaging tools. Every package, plugin, binary, Electron archive, and release bundle shares one canonical version in [`VERSION`](VERSION), enforced in CI by [`scripts/version-sync.mjs`](scripts/version-sync.mjs).
 
 <table>
   <tr>
@@ -59,11 +59,11 @@ Arc Harness separates interactive session work, provider credentials, web retrie
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/images/architecture-light.svg">
-    <img src="docs/images/architecture-light.svg" width="100%" alt="Arc Harness 0.6.0 system architecture">
+    <img src="docs/images/architecture-light.svg" width="100%" alt="Arc Harness 0.6.1 system architecture">
   </picture>
 </p>
 
-- **Desktop shell and seven plugins**: `arc-core`, `arc-hoh`, `arc-web-crawler`, `arc-molecullage`, `arc-mermaid`, `arc-theme`, and `arc-mode` mount over Cordis with unified `0.6.0` versioning and zero external marketplace calls.
+- **Desktop shell and seven plugins**: `arc-core`, `arc-hoh`, `arc-web-crawler`, `arc-molecullage`, `arc-mermaid`, `arc-theme`, and `arc-mode` mount over Cordis with unified `0.6.1` versioning and zero external marketplace calls.
 - **Native Go gateway (`native/arc-gateway`)**: a single Windows background binary serving `/vertex/v1`, `/radium/v1`, `/merge/v1`, `/gc/v1`, `/timeweb/v1`, and `/cammut/mcp`. It translates Vertex AI streaming thoughts into `reasoning_content`, captures and replays Gemini `thought_signature` tokens, and compresses large requests with gzip. During long thinking pauses it emits SSE keepalive heartbeats. On transient HTTP 429, 409, and 503 responses it retries up to 5 times with jittered backoff, and normalizes remaining 429 bursts to `rate_limit_exceeded` JSON so downstream retry policies finish cleanly.
 - **Zero-dependency Rust validators (`native/arc-validators`)**: verifies SHA-256 digests, prose rules, secret boundaries, SVG icon bounds, network grants, and seal checks with no external crates.
 
@@ -114,17 +114,17 @@ Its write-once **1M Library reader** (`lib/library-index.js`) deduplicates notes
 
 ## Plugins
 
-Every built-in plugin ships at unified Arc Harness version **`0.6.0`**:
+Every built-in plugin ships at unified Arc Harness version **`0.6.1`**:
 
 | Plugin | Version | Role |
 |---|---|---|
-| [`plugins/arc-hoh`](plugins/arc-hoh/README.md) | `0.6.0` | Propose, freeze, and accept gate, held-out replay gate, hypothesis tree, claim graph, Dawid-Skene reliability, branch budgets, Intuition Router, and interactive Trace tab. |
-| [`plugins/arc-core`](plugins/arc-core/README.md) | `0.6.0` | C2 unified console, write-once SHA-256 1M Library index, seven MCP tools, 30-day consent dialog, Shelf search, Workshop toolpacks, and TOFU SSH memory deployment. |
-| [`plugins/arc-web-crawler`](plugins/arc-web-crawler/README.md) | `0.6.0` | Open-source keyless web search, 3-tier stealth TLS/Patchright fetcher, Cloudflare Turnstile and CAPTCHA verifier, PDF/Markdown analyzer, and bounded same-origin crawler. |
-| [`plugins/arc-molecullage`](plugins/arc-molecullage/README.md) | `0.6.0` | Interactive Molecullage studio with 231-source atlas filtering, pinned sources, five-gate figure check runner, and 3D structure/Blender pipeline controls. |
-| [`plugins/arc-mermaid`](plugins/arc-mermaid/README.md) | `0.6.0` | Deterministic Mermaid SVG/PNG renderer in chat code blocks gated by Molecullage layout, contrast, and colour-vision checks. |
-| [`plugins/arc-theme`](plugins/arc-theme/README.md) | `0.6.0` | Paper (`#faf9f6`), Dark (`#171614`), Black and white, and Radium themes, Geist fonts, 24 px menu blur, Settings copy map, and skippable 7.4 s intro. |
-| [`plugins/arc-mode`](plugins/arc-mode/README.md) | `0.6.0` | Advanced settings page with Arc Harness mode toggle, live rules/hooks/skills inventory, and measured benchmark tables. |
+| [`plugins/arc-hoh`](plugins/arc-hoh/README.md) | `0.6.1` | Propose, freeze, and accept gate, held-out replay gate, hypothesis tree, claim graph, Dawid-Skene reliability, branch budgets, Intuition Router, and interactive Trace tab. |
+| [`plugins/arc-core`](plugins/arc-core/README.md) | `0.6.1` | C2 unified console, write-once SHA-256 1M Library index, seven MCP tools, 30-day consent dialog, Shelf search, Workshop toolpacks, and TOFU SSH memory deployment. |
+| [`plugins/arc-web-crawler`](plugins/arc-web-crawler/README.md) | `0.6.1` | Open-source keyless web search, 3-tier stealth TLS/Patchright fetcher, Cloudflare Turnstile and CAPTCHA verifier, PDF/Markdown analyzer, and bounded same-origin crawler. |
+| [`plugins/arc-molecullage`](plugins/arc-molecullage/README.md) | `0.6.1` | Interactive Molecullage studio with 231-source atlas filtering, pinned sources, five-gate figure check runner, and 3D structure/Blender pipeline controls. |
+| [`plugins/arc-mermaid`](plugins/arc-mermaid/README.md) | `0.6.1` | Deterministic Mermaid SVG/PNG renderer in chat code blocks gated by Molecullage layout, contrast, and colour-vision checks. |
+| [`plugins/arc-theme`](plugins/arc-theme/README.md) | `0.6.1` | Paper (`#faf9f6`), Dark (`#171614`), Black and white, and Radium themes, Geist fonts, 24 px menu blur, Settings copy map, and skippable 7.4 s intro. |
+| [`plugins/arc-mode`](plugins/arc-mode/README.md) | `0.6.1` | Advanced settings page with Arc Harness mode toggle, live rules/hooks/skills inventory, and measured benchmark tables. |
 
 ## Quick start
 
@@ -136,7 +136,7 @@ Every built-in plugin ships at unified Arc Harness version **`0.6.0`**:
 
 ### Install from release bundle
 
-Download **`Arc-Harness-Kit-0.6.0-win-x64.zip`** and **`SHA256SUMS.txt`** from [GitHub Releases](../../releases/tag/v0.6.0), verify the archive digest, extract the kit, and run the build and install steps below. The release bundle includes precompiled `bin/arc-gateway.exe` and `bin/arc-validators.exe` alongside all seven `0.6.0` plugins.
+Download **`Arc-Harness-Kit-0.6.1-win-x64.zip`** and **`SHA256SUMS.txt`** from [GitHub Releases](../../releases/tag/v0.6.1), verify the archive digest, extract the kit, and run the build and install steps below. The release bundle includes precompiled `bin/arc-gateway.exe` and `bin/arc-validators.exe` alongside all seven `0.6.1` plugins.
 
 ### Update an installed copy
 
@@ -145,13 +145,13 @@ The **Updates** panel of the C2 console reads the latest GitHub release, compare
 ### Build from source
 
 ```powershell
-# 1. Verify syntax, unified 0.6.0 versioning, and all unit suites
+# 1. Verify syntax, unified 0.6.1 versioning, and all unit suites
 npm test
 cargo test --manifest-path native/arc-validators/Cargo.toml
 go test -C native/arc-gateway ./...
 
 # 2. Place base resources (app.asar, app-update.yml, icon.png, tray.ico) in pristine/
-#    and build the clean-room Arc Harness 0.6.0 archive
+#    and build the clean-room Arc Harness 0.6.1 archive
 node tools/build.mjs
 npm run test:archive
 
@@ -220,10 +220,10 @@ Five additional workflow recordings live in [`media/`](media/README.md): [`gates
 
 Full phase proofs and checklists live in [`wiki/Roadmap.md`](wiki/Roadmap.md).
 
-| Phase | Scope | Status in 0.6.0 | Verification |
+| Phase | Scope | Status in 0.6.1 | Verification |
 |---|---|---|---|
 | **0. Working basics** | Loopback Go gateway, Vertex streaming thoughts, 5x 429 retry and `rate_limit_exceeded` normalization, gzip, heartbeats, skippable intro. | Shipped | `go test`, `build-check.mjs`, `desktop-journey.mjs` |
-| **1. Lean workbench** | Unused screens disabled, Trace sidebar tab, reversible `~/.arc` home, unified `VERSION` (`0.6.0`) across app and kit. | Shipped | `version-sync.mjs`, `ui-crawl.mjs --lean` |
+| **1. Lean workbench** | Unused screens disabled, Trace sidebar tab, reversible `~/.arc` home, unified `VERSION` (`0.6.1`) across app and kit. | Shipped | `version-sync.mjs`, `ui-crawl.mjs --lean` |
 | **1b. Interactive C2 console** | Research, Memory, Molecullage, and Prose workspaces with owner notes, verdicts, pins, 30-day consent, and draft protection. | Shipped | `plugins/arc-core/test/ui-panel.test.mjs` |
 | **2. Memory and 1M index** | Five-label policy, secret rejection, SHA-256 write-once 1M Library reader, supersession linking, Platt router, TOFU SSH deploy. | Shipped | `plugins/arc-core/test/library-index.test.mjs` |
 | **3. Verification engine** | Propose/freeze/accept gate, held-out patch replay, Bayesian hypothesis tree, claim graph, Dawid-Skene reliability, Intuition Router. | Shipped | `plugins/arc-hoh/test/*.test.mjs` |
@@ -235,11 +235,11 @@ Full phase proofs and checklists live in [`wiki/Roadmap.md`](wiki/Roadmap.md).
 
 | Resource | Purpose |
 |---|---|
-| [Changelog](CHANGELOG.md) | Release history from `0.1.0` through `0.6.0` |
+| [Changelog](CHANGELOG.md) | Release history from `0.1.0` through `0.6.1` |
 | [Security policy](SECURITY.md) | Private vulnerability reporting and threat boundaries |
 | [Contributing](CONTRIBUTING.md) | Patch rules, spawn audit, and pre-push checks |
 | [Code of conduct](CODE_OF_CONDUCT.md) | Community standards |
-| [Citation](CITATION.cff) | Machine-readable citation metadata for `0.6.0` |
+| [Citation](CITATION.cff) | Machine-readable citation metadata for `0.6.1` |
 | [Wiki](wiki/Home.md) | Architecture notes, model routing, Cammut setup, and troubleshooting |
 
 ## Limits
@@ -257,7 +257,7 @@ If you use Arc Harness in research or software engineering work, cite [`CITATION
 @software{arc_harness_2026,
   title   = {Arc Harness: a desktop AI harness that never grades its own work},
   author  = {{Arc Harness contributors}},
-  version = {0.6.0},
+  version = {0.6.1},
   year    = {2026},
   url     = {https://github.com/danilkotelnikov/Arc-Science},
   license = {MIT}
@@ -266,6 +266,6 @@ If you use Arc Harness in research or software engineering work, cite [`CITATION
 
 ## Credit
 
-Arc Harness builds on [DeepSeek Harness](NOTICE.md) 0.2.1-rc.5 under the MIT License. Arc Harness is an independent open-source project with its own versioning (`0.6.0`) and has no affiliation with the upstream publisher.
+Arc Harness builds on [DeepSeek Harness](NOTICE.md) 0.2.1-rc.5 under the MIT License. Arc Harness is an independent open-source project with its own versioning (`0.6.1`) and has no affiliation with the upstream publisher.
 
 Code in this repository is licensed under MIT ([`LICENSE`](LICENSE)). Geist and Geist Mono are licensed under the SIL Open Font License 1.1 ([`THIRD_PARTY_LICENSES/`](THIRD_PARTY_LICENSES/)). The AS cube emblem is excluded from the MIT grant, as noted in [`NOTICE.md`](NOTICE.md).

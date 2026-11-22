@@ -4,10 +4,34 @@ All notable changes to Arc Harness are listed here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-21
+
 ### Added
 
-- **Updates for an installed copy (`plugins/arc-core/lib/updater.js`, Updates panel in `plugins/arc-core/ui/panel.js`)**: reads the latest plain `x.y.z` GitHub release and downloads the kit zip and `SHA256SUMS.txt`. It checks the zip, every plugin file and both programs. It then swaps the seven plugins (in `~/.arc/local-plugins` and each profile's `node_modules` copy) and the two programs, with one backup. A failed check after the swap rolls back by itself. Modes are `off`, `notify` (default) and `auto`; a manual check, update and roll back work in every mode.
+- **Updates for an installed copy (`plugins/arc-core/lib/updater.js`, Updates panel in `plugins/arc-core/ui/panel.js`; #32)**: reads the latest plain `x.y.z` GitHub release and downloads the kit zip and `SHA256SUMS.txt`. It checks the zip, every plugin file and both programs. It then swaps the seven plugins (in `~/.arc/local-plugins` and each profile's `node_modules` copy) and the two programs, with one backup. A failed check after the swap rolls back by itself. Modes are `off`, `notify` (default) and `auto`; a manual check, update and roll back work in every mode.
 - **Per-file digests in `RELEASE-MANIFEST.json` (`tools/release-bundle.mjs`)**: a `files` map with the SHA-256 of every file under `plugins/` and `bin/`. The release bundler now calls the system `tar.exe` on Windows, so a GNU tar earlier in `PATH` cannot break the zip step.
+- **Cammut console tab (`plugins/arc-core`)**: a Cammut connector in the C2 console with Servers, Tools, Observer and Parts. It adds and removes Cammut servers in the gateway (`cammut.upstreams`, per-server key names, no key values), runs Hindsight tools with confirm classes (read, write, delete), and browses memory read-only. Routes: `api/arc-core/cammut/state` and `api/arc-core/cammut/action` (POST only, loopback Host and Origin).
+- **Built-in memory store (`memory-policy.js`)**: `persistFile` for the policy store and `createEmbeddedMemoryServer`, a small store behind the Hindsight tool names retain, recall, list_memories and list_tags. The Tools tab runs them when its source is the built-in store, so retain there saves a note that the Observer then shows.
+- **Hot-swappable parts (`components.js`)**: parts load on first use, swap while the app runs after a self-test, and roll back when the new copy fails.
+- **Gateway (`native/arc-gateway`)**: `cammut.upstreams` and `cammut.auth` (server address to key name) can be saved through `POST /api/config` with the token. An added server never receives the owner's `authFile` header. The answers that need no token (`GET /api/config`, `/health`) and every address error show an address without user name, password or query; an address saved with them by an older build keeps its stored form, also when a save posts its plain form back. The default local server always keeps the owner's `authFile`, also after a remove and a new add.
+- **Console navigation and Settings sections (`plugins/arc-core/ui/panel.js`; #33, #38)**: tabbed top controls, plain status rows, and Settings sections for Memory, Connectors, Keys and Add-ons. The console reloads on window focus, and a slow state answer never overwrites a newer one.
+- **Labelled sentence sets for the prose gate (#34)**: the fitted, held-out and blind sets that the gate is measured on.
+
+### Fixed
+
+The fixes below answer an independent review of the update feature (#41, #42). Each got a failing test first.
+
+- **A failed update leaves the earlier backup in place (`plugins/arc-core/lib/updater.js`)**: before a swap, the backup of the update before it moves to `updates/backup-prev` and `<program>.arc-backup-prev`. A swap that fails puts it back, so Roll back keeps working; a swap that lands drops it. A step that never ran can no longer pull an older program back in.
+- **A new copy that stays locked no longer blocks the rollback (`updater.js`)**: the old folder or program returns first, and the unfinished `.arc-new` copy is cleared afterwards. A copy that is still held stays until the next update removes it, and the add-on list skips it.
+- **The test switch checks the folders it uses (`updater.js`)**: a folder name of only spaces counts as not given.
+- **A refusal no longer hides the restart prompt (`plugins/arc-core/ui/panel.js`)**: the Updates view shows an action's refusal only while the update state is the one the user acted on, and drops it for good once that state changes.
+- **A set-aside backup stops counting before anything else is cleared (`updater.js`)**: its journal is deleted first wherever it is dropped, and Roll back keeps its own journal while an older one cannot be deleted. One Roll back goes one step.
+- **The add-on list skips the unfinished copy of a held update (`plugins/arc-core/lib/console.js`)**.
+- **The pull request screen has no comment command (`.github/workflows/pr-screen.yml`; #42)**: it returns its comment, and a workflow step posts it, so `gh pr comment --body-file` cannot post a file. The checkout keeps no token, and `Grep` cannot read `/proc`.
+
+### Reviewed and left unchanged
+
+- **Update actions without a token**: the review asked for a token on the update routes. A measurement on the running desktop app showed that its only local port answers 401 without the app's own sign-in token and 403 to every request that names an origin, so no code changed. A signed-in web window was not measured.
 
 ## [0.6.0] - 2026-11-19
 
