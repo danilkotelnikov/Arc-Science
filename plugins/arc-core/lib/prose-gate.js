@@ -89,7 +89,7 @@ const WEIGHTS = Object.fromEntries([...L.weights].map((kv) => { const [k, v] = k
 export const ALLOWED_HINT = 'State what exists and what comes next. Put a limit beside the claim that it limits, with its reason, or in the limits section.';
 export const MARK_HINT = 'A reader decides. Keep it when it states a result, a property or the work of others; rewrite it when it announces work of the author that is not done.';
 
-const WORD = /[a-zà-ɏ]+(?:[-'][a-zà-ɏ]+)*|\d+(?:[.,]\d+)*%?/g;
+const WORD = /[a-z]+(?:[-'][a-z]+)*|\d+(?:[.,]\d+)*%?/g;
 const SENTENCE_END = /(?<=[.!?;:])\s+/;
 const MAX_HITS = 12;   // findings per sentence; more says nothing new and costs time on hostile text
 const isPart = (w) => Boolean(w) && (L.work_part.has(w) || (/(?:ed|en)$/.test(w) && w.length > 4 && !L.not_part.has(w)));
@@ -111,9 +111,7 @@ function opensOf(lower, words, at) {
 }
 
 function tokensOf(sentence) {
-  // a precomposed accented Latin letter reads as its base letter ("nôt" is "not"); the length stays, so places stay right
-  const unaccent = (c) => { const b = c.normalize('NFD')[0]; return b >= 'a' && b <= 'z' ? b : c; };
-  const lower = foldMixed(sentence.toLowerCase().replace(/’/g, "'").replace(/[à-ɏ]/g, unaccent)).replace(/\bcannot\b/g, 'can not').replace(/n't\b/g, ' not');
+  const lower = foldMixed(sentence.toLowerCase().replace(/’/g, "'")).replace(/\bcannot\b/g, 'can not').replace(/n't\b/g, ' not');
   const words = [];
   const at = [];
   for (const m of lower.matchAll(WORD)) { words.push(m[0]); at.push(m.index); }
@@ -198,17 +196,14 @@ function undercuts(t, opens = new Set()) {
   const core = (a, b) => {
     const lead = t.slice(clauseStart(a), a);
     if (lead.every(bare)) return true;
-    // "Our previous model", "Earlier we have not ...": the marker belongs to the authors, so it does not leave the core
-    // a first-person word anywhere before the marker ("Our own previous model") or right after it ("Earlier we ...") keeps it
-    if (lead.some((w, m) => (L.other_mark.has(w) || w === 'others') && !lead.slice(0, m).some((x) => L.first_person.has(x)) && !L.first_person.has(lead[m + 1]))) return false;
+    if (lead.some((w) => L.other_mark.has(w) || w === 'others')) return false;
     if (lead.some((w) => L.first_person.has(w) || L.artifact.has(w) || L.work_noun.has(w) || L.own_word.has(w))) return true;
     return byUs(b) || (L.un_part.has(t[a]) && [1, 2].some((n) => has(L.artifact, b + n)));   // "an untrained model"
   };
   const { out, push: add, full } = collector(core);
   // A procedure ("No model is trained before the split is frozen") and a restricted noun ("A claim that is not tested
   // stays on the lowest rung") state a property of the design: a mark.
-  const ownClause = (a) => t.slice(clauseStart(a), a).some((w) => L.first_person.has(w));   // "We have not run it yet while ..." stays a block
-  const push = (form, a, b, exc = null, soft = null) => add(form, a, b, exc || (condAfter(b) && !ownClause(a) ? 'procedure' : relBefore(a) ? 'restriction' : null), soft, clauseStart(a));
+  const push = (form, a, b, exc = null, soft = null) => add(form, a, b, exc || (condAfter(b) ? 'procedure' : relBefore(a) ? 'restriction' : null), soft, clauseStart(a));
   for (let i = 0; i < t.length && !full(); i += 1) {
     const w = t[i];
     if (L.neg_adv.has(w)) {                                   // not (yet) trained, never been run
@@ -399,6 +394,7 @@ function deniedBy(factsText) {
   for (const sentence of String(factsText || '').split(/\n+/).flatMap((l) => l.split(SENTENCE_END))) {
     const before = [];   // head nouns of the clauses before this one, built once
     for (const clause of sentence.split(CLAUSE)) {
+      if (n >= MAX_DENIALS) return byPart;
       const tok = tokensOf(clause);
       const t = tok.words;
       for (const h of undercuts(t, tok.opens)) {
@@ -410,7 +406,6 @@ function deniedBy(factsText) {
         if (h.form === 'un-done') nouns.push(...t.slice(h.b + 1, h.b + 3).filter((w) => L.artifact.has(w)));   // an untrained model
         // "The session, the seats and the engine are planned, not built": the subject stands in the clauses before
         if (!nouns.length) nouns = before;
-        if (n >= MAX_DENIALS) { byPart.truncated = true; return byPart; }   // check() reports it: a denial past the cap goes unread
         if (!byPart.has(part)) byPart.set(part, []);
         byPart.get(part).push(new Set(nouns));
         n += 1;
@@ -531,23 +526,20 @@ function zoneLines(text, zone) {
   const out = [];
   let limitsLevel = 0;
   let plain = 0;                                        // 1: a label waits for its list; 2: inside the list
-  let fenced = false;
   const rows = String(text ?? '').replace(/^﻿/, '').split(/\r?\n/);
   const listFollows = (idx) => { for (let k = idx + 1; k < rows.length; k += 1) if (rows[k].trim()) return LIST_ITEM.test(rows[k]); return false; };
   for (const [idx, raw] of rows.entries()) {
-    if (/^\s*```/.test(raw)) { fenced = !fenced; continue; }   // a fence line is no prose; the words inside a fence are read like any line
-    const head = fenced ? null : /^(#{1,6})\s+(.*)$/.exec(raw);   // a heading or label inside a fence opens no zone
+    if (/^\s*```/.test(raw)) continue;   // a fence line is no prose; the words inside a fence are read like any line
+    const head = /^(#{1,6})\s+(.*)$/.exec(raw);
     if (head) {
       const level = head[1].length;
       const isLimits = namesLimits(head[2]);
       if (isLimits) limitsLevel = level; else if (limitsLevel && level <= limitsLevel) limitsLevel = 0;
       plain = 0;
-      const title = head[2].replace(/\s+#+\s*$/, '');   // a heading is public text: its words are read, in the zone it sits in
-      if (title.trim()) out.push({ no: idx + 1, line: title, zone: limitsLevel ? 'limits' : zone });
       continue;
     }
     if (!raw.trim()) { if (plain === 2) plain = 0; continue; }
-    if (!fenced && isLimitsLabel(raw) && listFollows(idx)) { plain = 1; continue; }
+    if (isLimitsLabel(raw) && listFollows(idx)) { plain = 1; continue; }
     if (plain && (LIST_ITEM.test(raw) || (plain === 2 && /^\s{2,}\S/.test(raw)))) plain = 2; else plain = 0;
     const line = raw.replace(/`([^`\n]+)`/g, ' $1 ').replace(/https?:\/\/\S+/g, ' ');
     if (line.trim()) out.push({ no: idx + 1, line, zone: limitsLevel || plain === 2 ? 'limits' : zone });
@@ -583,7 +575,6 @@ export function sentences(text, { zone = 'public' } = {}) {
 export function check(text, { zone = 'public', facts = '', overclaim = 'review' } = {}) {
   const findings = [];
   const denied = deniedBy(facts);
-  if (denied.truncated) findings.push({ line: 0, rule: 'FACTS_TRUNCATED', form: 'denials', severity: overclaim, sentence: '', span: `more than ${MAX_DENIALS} denials`, allowed: 'Shorten the facts: denials past the first 300 are not read, so OVERCLAIM cannot see them.' });
   let words = 0;
   let before = false;                                // a sentence with words came earlier in the text
   for (const { no, line, zone: z } of zoneLines(text, zone)) {

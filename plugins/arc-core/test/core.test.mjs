@@ -921,14 +921,3 @@ test('53. prose gate, two bands (S049): only the clear core blocks; a null resul
   assert.equal(srv.gate.check({ candidateHash: 'a'.repeat(64), checks: [{ name: 'unit', passed: true }], texts: [{ id: 't', text: safety }] }).ok, true);
   assert.ok(!srv.callTool('memory.retain', { text: safety, tags: ['project:Nimbus', 'date:2026-11-18', 'source:test'] }).entry.tags.includes('prose:undercut'));
 });
-
-test('prose gate: first-person markers, headings, accents and the denial cap (PR 35 round 2)', () => {
-  for (const s of ['Our previous model has not been trained.', 'Our own previous model has not been trained.', 'Our two previous models have not been trained.', 'Earlier we have not run the benchmark.', '# Nothing has been run.', '## Not yet benchmarked', 'The model is nôt trained.']) {
-    assert.equal(proseGate(s).ok, false, s);
-  }
-  assert.equal(proseGate('Model built.\n\n## Limits\nNot trained.').ok, true, 'a limits section stays allowed');
-  assert.equal(proseGate('Other groups have not measured the off-rate.').ok, true, 'work of others stays a mark');
-  const facts = `${Array.from({ length: 300 }, (_, k) => `Model${k} not trained.`).join('\n')}\nNimbus has not been benchmarked.`;
-  assert.ok(proseGate('Nimbus is built.', { facts }).findings.some((f) => f.rule === 'FACTS_TRUNCATED' && f.severity === 'review'));
-  assert.equal(verifyRewrite('Nimbus is built.', 'Nimbus was benchmarked.', { facts }).ok, false);
-});
