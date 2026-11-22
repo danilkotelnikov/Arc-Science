@@ -136,6 +136,7 @@ function blindTable(name, cases, runs) {
     const a = rs[0].answers;
     first[j] = a;
     const missing = a.filter((x) => x === null).length;
+    out.missing = (out.missing || 0) + missing;
     out[j] = row(`rules + ${JUDGES[j].label}`, rules.map((r, i) => r || a[i] === true));
     row(`${JUDGES[j].label} alone`, a.map((x) => x === true));
     const agree = kappa(a, labels);
@@ -168,8 +169,10 @@ function blockRule(t) {
   const gain = (t.out.both.tp - t.out.rules.tp) / t.pos;
   const upper = wilson(t.out.both.fp, t.neg)[1];
   const selfOk = Object.keys(JUDGES).filter((j) => t.out[j]).every((j) => (t.out[j].selfKappa ?? 0) >= 0.8);
-  const ok = gain >= 0.10 && upper <= 0.05 && selfOk;
-  return `${ok ? 'may block' : 'review mark only'} (gain ${(gain * 100).toFixed(1)} points >= 10: ${gain >= 0.1}; false-alarm upper bound ${(upper * 100).toFixed(1)}% <= 5%: ${upper <= 0.05}; self-agreement kappa >= 0.8 for each judge: ${selfOk})`;
+  // A missing answer may hide a false alarm, so the bound is not trusted while any answer in the set is missing.
+  const complete = !t.out.missing;
+  const ok = gain >= 0.10 && upper <= 0.05 && selfOk && complete;
+  return `${ok ? 'may block' : 'review mark only'} (no missing judge answer: ${complete}; gain ${(gain * 100).toFixed(1)} points >= 10: ${gain >= 0.1}; false-alarm upper bound ${(upper * 100).toFixed(1)}% <= 5%: ${upper <= 0.05}; self-agreement kappa >= 0.8 for each judge: ${selfOk})`;
 }
 
 // The judge answers are joined to the cases by position, so each run keeps the hash of its case file (review F101).
@@ -292,7 +295,9 @@ async function main(argv) {
     const rewritten = new Set(fresh.map(keyOf));
     const saved = load().labels;
     const labels = saved ? { labels: { ...saved, byKey: Object.fromEntries(Object.entries(saved.byKey || {}).filter(([k]) => !rewritten.has(k))) } } : {};
-    console.log(report(merge({ reps, rulesSha: sha(rules), ruleLine: RULE_LINE, ranAt: only ? d.ranAt : new Date().toISOString(), arms, ...labels }))); return 0;
+    // A repair was made from the old text of its key: drop those too.
+    const repairs = (load().repairs || []).filter((r) => !rewritten.has(keyOf(r)));
+    console.log(report(merge({ reps, rulesSha: sha(rules), ruleLine: RULE_LINE, ranAt: only ? d.ranAt : new Date().toISOString(), arms, repairs, ...labels }))); return 0;
   }
   if (cmd === 'repair') {
     const T = Object.fromEntries(d.tasks.map((t) => [t.id, t]));
@@ -313,7 +318,9 @@ async function main(argv) {
     const want = flag('--judge', d.labels?.judge || 'argon');
     if (d.labels?.judge && want !== d.labels.judge && Object.values(have).some((v) => v !== null && v !== undefined)) { console.error(`the saved labels come from judge ${d.labels.judge}; --judge ${want} would mix judges`); return 2; }
     const res = await labelTexts(order.map((r) => r.text), want);
-    const byKey = { ...(load().labels?.byKey || {}), ...Object.fromEntries(order.map((r, i) => [keyOf(r), res.labels[i]])) };
+    // arms may have rewritten a key while the judge ran: keep a label only if its text is still the one that was sent.
+    const now = Object.fromEntries((load().arms || []).map((r) => [keyOf(r), r.text]));
+    const byKey = { ...(load().labels?.byKey || {}), ...Object.fromEntries(order.map((r, i) => [r, res.labels[i]]).filter(([r]) => now[keyOf(r)] === r.text).map(([r, l]) => [keyOf(r), l])) };
     const calls = [...(d.labels?.calls || []), ...res.calls];
     console.log(report(merge({ labels: { judge: res.judge, model: res.model, question: QUESTION, calls, byKey } }))); return 0;
   }
@@ -322,6 +329,7 @@ async function main(argv) {
     const sets = { blind3: loadCases(BLIND), heldout: loadCases(HELDOUT) };
     const stale = staleSets(d);
     if (stale.length) { console.error(`the saved judge answers for ${stale.join(', ')} belong to another version of its case file; run the blind command again`); return 2; }
+    const started = d.blind.ranAt;
     const runs = load().blind.runs;
     for (const r of runs) {
       const miss = r.answers.map((a, i) => (a === null ? i : -1)).filter((i) => i >= 0);
@@ -331,6 +339,8 @@ async function main(argv) {
       r.calls = [...r.calls, ...again.calls.map((c) => ({ ...c, fill: true }))];
       process.stderr.write(`${r.judge} run ${r.run} ${r.set}: asked again for ${miss.length}, still without answer ${r.answers.filter((x) => x === null).length}\n`);
     }
+    // A blind run that ended during these calls has new answers and a new hash; writing the old runs back would overwrite them.
+    if (load().blind.ranAt !== started) { console.error('a blind run finished while fill was asking; nothing was written, run fill again'); return 2; }
     console.log(report(merge({ blind: { ...load().blind, runs } }))); return 0;
   }
   if (cmd === 'blind') {
