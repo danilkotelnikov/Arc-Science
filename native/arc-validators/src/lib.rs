@@ -176,4 +176,16 @@ mod tests {
         let hits = arc_rules::lint_prose("Four research programmes.\nEach page states the method and what has not been done.", false);
         assert_eq!(hits.iter().filter(|h| h.rule == "SELF_UNDERCUT").map(|h| h.line).collect::<Vec<_>>(), vec![2]);
     }
+
+    // Review of PR 36: one long clause of marked hits walked back to the clause start for every hit, about 9 s for 36,000 words.
+    // The clause index keeps it linear; the bound is loose so a slow runner passes and a quadratic scan does not.
+    #[test]
+    fn prose_gate_stays_linear_on_one_long_clause() {
+        let started = std::time::Instant::now();
+        let en = format!("The model {}today.", "we have not run it if needed ".repeat(6000));
+        let ru = format!("Кот {}сегодня.", "пока не запущен ".repeat(6000));
+        assert_eq!(prose_gate::verdict(&en, prose_gate::zone_of("public")), "review");
+        assert_eq!(prose_gate::verdict(&ru, prose_gate::zone_of("public")), "review");
+        assert!(started.elapsed().as_secs() < 5, "two long clauses took {:?}", started.elapsed());
+    }
 }
