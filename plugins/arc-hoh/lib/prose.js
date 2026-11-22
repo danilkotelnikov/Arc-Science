@@ -38,10 +38,8 @@ function unfrozenVoice(paths, { VOICE, NOT_PROSE }) {
   const frozen = new Set(paths.map(same));
   const out = [];
   for (const root of new Set(paths.map(gitRoot).filter(Boolean))) {
-    let listed = '';
-    try {
-      listed = execFileSync('git', ['-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all'], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
-    } catch { continue; }   // git missing or no repository: nothing known
+    // A git failure (missing, timeout, output over the buffer) throws: proseOfFiles then returns null and the gate stays unmet.
+    const listed = execFileSync('git', ['-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all'], { encoding: 'utf8', windowsHide: true, timeout: 10000, maxBuffer: 256 * 1024 * 1024 });
     for (const entry of listed.split('\0')) {
       const rel = entry.slice(3);
       if (entry.length < 4 || entry[0] === 'D' || entry[1] === 'D' || !VOICE.test(rel) || NOT_PROSE.test(rel)) continue;
