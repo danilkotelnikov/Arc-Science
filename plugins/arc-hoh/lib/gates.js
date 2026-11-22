@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { readFile, stat, mkdir, appendFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { proseReasons } from './prose.js';
 
 export const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 /** The identity of a check: the digest of its whole text, so that a shared prefix or outer spaces change nothing. */
@@ -135,11 +136,11 @@ const shortHash = (id) => { const h = bareHash(id); return h.length > 12 ? h.sli
  * compared with the agent ids the runtime reports for the two calls (freeze and gate).
  * input: { candidate, cycle, builder, reviewer, checks[{id,command,exit,excerpt,timed_out?}], probes[{id,description,result}],
  *          preservation[{id,ok}], findings[{id,severity,status,reason}], requirements[{id,state}] }
- * context: { freeze, propose, fileCheck: {ok, reason}, caller }
+ * context: { freeze, propose, fileCheck: {ok, reason}, caller, prose: proseOfFiles() result or null }
  * Returns { verdict: 'accepted'|'unmet'|'blocked', reasons: string[] }.
  */
 export function decideGate(input, context = {}) {
-  const { freeze = null, propose = null, fileCheck = null, caller = null } = context;
+  const { freeze = null, propose = null, fileCheck = null, caller = null, prose = null } = context;
   const reasons = [];
   let blocked = false;
   const block = (msg) => { blocked = true; reasons.push(msg); };
@@ -149,6 +150,8 @@ export function decideGate(input, context = {}) {
   if (!freeze) unmet('no freeze recorded for this goal');
   else if (bareHash(input.candidate) !== bareHash(freeze.candidate)) unmet(`the candidate hash differs from the frozen hash: sent ${shortHash(input.candidate)}, frozen ${shortHash(freeze.candidate)}; send the candidate that hoh_freeze returned`);
   else if (!fileCheck || fileCheck.ok !== true) unmet('the files changed after the freeze' + (fileCheck && fileCheck.reason ? ': ' + fileCheck.reason : ''));
+  // The prose gate is part of every acceptance (D-20261122-50); its result comes from the gate tool, never from input.
+  proseReasons(prose, clip).forEach(unmet);
 
   if (!Number.isInteger(input.cycle) || input.cycle < 1) unmet('cycle must be a whole number from 1');
   else if (input.cycle > MAX_CYCLES) block(`cycle ${input.cycle} is past the limit of ${MAX_CYCLES}: stop and ask the user`);

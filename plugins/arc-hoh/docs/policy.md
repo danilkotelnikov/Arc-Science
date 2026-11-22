@@ -16,6 +16,7 @@ Harness of Harness makes the agent plan, test and prove its work in a fixed cycl
 - The gate also needs each proposed check back, word for word, as the command of a reported check. A later proposal adds checks and never removes one.
 - The gate also needs every check to exit 0 with an output excerpt and no timeout, every probe to pass, and the preservation list to hold.
 - The gate also needs every requirement verified and no blocking or major finding open.
+- The gate runs the prose gate of arc-core on the frozen text files itself. A sentence in a README, index page, site file, abstract, pitch, proposal, talk, slide or about page that announces work the author has not done stops acceptance. Other text files are read as reports, so their findings are marks. Code, tests and fixtures are not read. A changed voice file that the freeze left out is read too, and only a real block in it counts. The ledger entry keeps the counts.
 - Missing evidence counts as unmet. A skipped check never turns into a pass.
 - Cycle 4 or later is blocked. The agent stops and asks the user.
 - Each verdict goes to the ledger and to shared memory.

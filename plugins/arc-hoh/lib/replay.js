@@ -115,16 +115,19 @@ export const TRAPS = Object.freeze([
   { id: 'T07-planned-check-never-ran', why: 'The proposed check has no row, and another check passed in its place.', checks: [row({ id: 'other', command: 'echo ok' })] },
   { id: 'T08-string-exit-code', why: 'The string "0" is not the integer 0.', checks: [row({ exit: '0' })] },
   { id: 'T09-kept-behaviour-broken', why: 'A check that guards earlier behaviour failed.', preservation: [{ id: 'baseline-1', ok: false }] },
+  { id: 'T10-prose-block', why: 'The frozen README announces work that is not done.',
+    context: { prose: { files: [{ file: 'README.md', zone: 'public', blocks: 1, marks: 0 }], blocks: [{ file: 'README.md', line: 1, rule: 'SELF_UNDERCUT', span: 'not run', sentence: 'We have not run the benchmark.' }], marks: 0 } } },
 ]);
 
-/** Run each trap through the gate. `passed` is true when the gate wrongly accepts it. */
+/** Run each trap through the gate. `passed` is true when the gate wrongly accepts it. A trap's `context` replaces parts of the gate's own context. */
 export function runTraps(traps = TRAPS, gate = decideGate) {
-  return traps.map(({ id, why, ...parts }) => {
+  return traps.map(({ id, why, context: own = {}, ...parts }) => {
     const input = {
       candidate: 'c', cycle: 1, builder: 'a', reviewer: 'b', checks: [row()], probes: [{ id: 'p', description: 'empty input', result: 'pass' }],
       preservation: [{ id: 'k', ok: true }], findings: [], requirements: [{ id: 'r', state: 'verified' }], ...parts,
     };
-    const context = { freeze: { candidate: 'c', caller: 'lead' }, propose: { seq: 1, checks: ['npm test'], digests: [checkDigest('npm test')] }, fileCheck: { ok: true }, caller: 'reviewer' };
+    const context = { freeze: { candidate: 'c', caller: 'lead' }, propose: { seq: 1, checks: ['npm test'], digests: [checkDigest('npm test')] }, fileCheck: { ok: true }, caller: 'reviewer',
+      prose: { files: [], blocks: [], marks: 0 }, ...own };
     const got = gate(input, context);
     if (typeof got?.then === 'function') {
       got.then(undefined, () => {});
