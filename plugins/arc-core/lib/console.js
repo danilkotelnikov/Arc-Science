@@ -1136,6 +1136,8 @@ export async function serveConsoleRoute(reqOrPath, maybeBody = {}, store = creat
       try { return { ok: true, ...updater.setMode(payload.mode) }; } catch (err) { return { ok: false, error: String(err.message || err) }; }
     }
     if (payload.kind === 'channel') {
+      // the check that follows a change cannot run while an update runs, so the change waits
+      if (updater.getState().busy) return { ok: false, error: 'An update is running. Change the channel when it has ended.' };
       try { updater.setChannel(payload.channel); } catch (err) { return { ok: false, error: String(err.message || err) }; }
       return { ok: true, ...(await updater.check()) }; // the answer holds the newest version of the new channel
     }

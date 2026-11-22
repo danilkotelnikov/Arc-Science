@@ -1304,3 +1304,37 @@ test('console route: an install that ends at once with an error is answered as a
   assert.equal(r.started, undefined);
   assert.ok(typeof r.error === 'string' && r.error.length > 0 && r.error.length <= 300);
 });
+
+test('a check of a channel that is no longer chosen does not mark the state as failed when it fails late', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  let release = null;
+  const held = new Promise((resolve) => { release = resolve; });
+  const slow = e.make({ fetchImpl: async () => { await held; throw new TypeError('fetch failed'); } });
+  const first = slow.check(); // made for Release
+  await new Promise((r) => setTimeout(r, 30));
+  e.u.setChannel('beta');
+  release();
+  const s = await first;
+  assert.deepEqual({ phase: s.phase, failed: s.failed }, { phase: 'idle', failed: false }, 'the failure belongs to a channel that is no longer chosen');
+  // the same failure for the chosen channel is still a failure
+  const again = await e.make({ fetchImpl: async () => { throw new TypeError('fetch failed'); } }).check();
+  assert.deepEqual({ phase: again.phase, failed: again.failed }, { phase: 'failed', failed: true });
+});
+
+test('release notes: text within the limit stays whole, and longer text carries one character more so that a reader can tell it was cut', () => {
+  const rel = (body) => ({ tag_name: 'v0.6.1', draft: false, prerelease: false, assets: [], body });
+  assert.equal(pickRelease([rel('n'.repeat(1200))]).notes.length, 1200);
+  assert.equal(pickRelease([rel('n'.repeat(1199))]).notes.length, 1199);
+  assert.equal(pickRelease([rel('n'.repeat(5000))]).notes.length, 1201);
+});
+
+test('console route: the channel does not change while an update runs', async () => {
+  const calls = [];
+  const busy = { getState: () => ({ busy: true, channel: 'release' }), setChannel: (c) => { calls.push(c); return {}; }, check: async () => ({}) };
+  const r = await serveConsoleRoute(post('api/arc-core/update/action', { kind: 'channel', channel: 'beta' }), {}, createResearchSessionStore(), { updater: busy });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /update is running/);
+  assert.ok(r.error.length <= 90);
+  assert.deepEqual(calls, [], 'the choice was not saved');
+});

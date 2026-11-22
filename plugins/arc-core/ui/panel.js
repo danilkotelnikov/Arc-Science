@@ -474,6 +474,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     " .ak-dot.warn{background:transparent;box-shadow:inset 0 0 0 2px var(--ak-label-2)}",
     " .ak-empty{margin:0;padding:14px 0;font-size:13px;line-height:20px;color:var(--ak-label-3)}",
     " .ak-alert{margin:0 0 8px;font-size:13px;line-height:20px}",
+    " .ak-notice{color:var(--ak-label-2)}",
     " .ak-mask{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;background:color-mix(in srgb,var(--ak-on-primary) 64%,transparent)}",
     " .ak-modal{width:min(420px,calc(100vw - 32px));border-radius:20px;background:var(--ak-layer);box-shadow:0 0 0 .5px var(--ak-line-3),0 3px 8px color-mix(in srgb,var(--ak-label) 6%,transparent),0 0 20px color-mix(in srgb,var(--ak-label) 8%,transparent)}",
     " .ak-modal header{display:flex;justify-content:space-between;align-items:center;padding:22px 14px 12px 24px}",
@@ -735,7 +736,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     // the updater says whether its last step failed; a roll back the user asked for is no failure and only waits for a restart
     const failed = typeof u.failed === "boolean" ? u.failed : u.phase === "failed";
     // the updater starts some messages with its code name (ERR_UPDATE_HTTP: ...); the line shows the plain words
-    const trouble = String(error || (failed ? u.message || "" : "")).replace(/^ERR_[A-Z0-9_]+:\s*/, "");
+    // (also the code name of the system, such as ENOSPC or EPERM: three or more capitals before a colon at the very start)
+    const plain = (text) => String(text || "").replace(/^[A-Z][A-Z0-9_]{2,}:\s*/, "");
+    const trouble = plain(error || (failed ? u.message : ""));
+    // a refusal that the updater gives after its check (nothing newer, the newest version changed) is a plain line, no error
+    const notice = !trouble && u.phase === "idle" ? plain(u.message) : "";
     const kept = u.backupVersion && u.backupVersion !== "0.0.0" ? ver(u.backupVersion) : ""; // 0.0.0 stands for a version nobody could read
     const need = (icon, key) => h("span", { className: "ak-need" }, h(Ic, { n: icon }), t(key));
     const mark = running
@@ -752,7 +757,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       : u.available ? h(KStatus, { text: t("upd.s.nokit") })
       : h(KStatus, { text: t("upd.s.current"), dot: "on" });
     const cutNotes = (text) => {
-      if (text.length < 1200) return text; // the updater cuts the notes of a release at 1200 characters
+      if (text.length <= 1200) return text; // the updater sends at most one character more, which says the text was cut
       const head = text.slice(0, 1199);
       return (/[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head) + "\u2026";
     };
@@ -770,6 +775,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     return frame(
       title(h(KBtn, { look: "outline", icon: "update", label: t("updates.check"), disabled: busy, onClick: () => act({ kind: "check" }) })),
       trouble ? h("p", { role: "alert", className: "ak-alert" }, oneLine(trouble)) : null,
+      notice ? h("p", { role: "status", className: "ak-alert ak-notice" }, oneLine(notice)) : null,
       trouble.length > 90 ? about(t("upd.detail"), oneLine(trouble, 600), "start") : null,
       h("div", { className: "ak-rows" },
         h(KRow, {
@@ -815,7 +821,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       // with automatic install on, an alpha installs without a further question, and the line says so
       asking === "alpha" && chan !== "alpha" ? h(Confirm, {
         t, title: t("upd.alpha.title"), text: t(u.mode === "auto" ? "upd.alpha.conseq.auto" : "upd.alpha.conseq"), action: t("upd.alpha.go"),
-        onClose: close, onConfirm: () => { act({ kind: "channel", channel: "alpha" }); close(); },
+        // the channel buttons wait while the change is on its way, so the focus goes to the choice list
+        onClose: close, onConfirm: () => { act({ kind: "channel", channel: "alpha" }); close(true); },
       }) : null,
       asking === "back" && canGoBack ? h(Confirm, {
         t, title: t("upd.goback.title", { v: ver(u.latest) }), text: t("upd.back.conseq", { v: ver(u.latest) }), action: t("upd.goback.go"),

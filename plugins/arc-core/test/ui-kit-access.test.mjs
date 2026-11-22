@@ -984,3 +984,53 @@ test('Updates: an error line starts with its plain words, without the code name 
   assert.equal(line('Could not reach GitHub or read its answer: ERR_X: y'), 'Could not reach GitHub or read its answer: ERR_X: y', 'only a code at the very start is dropped');
   assert.equal(text(alertsOf(upage(ready, { error: 'ERR_UPDATE_SIZE: the download is too large' }))[0]), 'the download is too large');
 });
+
+// ---- the small notes of the channels review (S060)
+test('Updates: a refusal that the updater gives after its check is shown as a plain line, not as an error', async () => {
+  const ready = await realState({ releases: [rel('0.6.1')] });
+  const moved = 'The newest version of the channel changed. Look at the page again.';
+  const tree = upage(derive(ready, { phase: 'idle', message: moved }));
+  assert.equal(alertsOf(tree).length, 0);
+  const lines = all(tree, (n) => n.props?.role === 'status' && has(n, 'ak-notice'));
+  assert.equal(lines.length, 1);
+  assert.deepEqual(lines[0].children, [moved]);
+  assert.equal(all(upage(ready), (n) => has(n, 'ak-notice')).length, 0, 'no line without a message');
+  // a long message is cut like any line; while an update runs, or after a failure, the line is not doubled
+  assert.ok(all(upage(derive(ready, { phase: 'idle', message: 'm'.repeat(300) })), (n) => has(n, 'ak-notice'))[0].children[0].length <= 90);
+  assert.equal(all(upage(derive(ready, { busy: true, phase: 'installing', message: 'Replacing plugins' })), (n) => has(n, 'ak-notice')).length, 0);
+  assert.equal(all(upage(derive(ready, { phase: 'failed', failed: true, message: 'Bad kit.' })), (n) => has(n, 'ak-notice')).length, 0);
+  // the real updater gives such a line when Update now meets nothing newer
+  assert.match(updaterSource, /phase\('idle', `Already up to date/);
+});
+
+test('Updates: an error line drops the code name of the system as well', async () => {
+  const ready = await realState({ releases: [rel('0.6.1')] });
+  const raw = (message) => alertsOf(upage(derive(ready, { phase: 'failed', failed: true, message })))[0].children[0];
+  assert.equal(raw('ENOSPC: no space left on device, write'), 'no space left on device, write');
+  assert.equal(raw('EPERM: operation not permitted, rename'), 'operation not permitted, rename');
+  assert.equal(raw('HTTP 404 from github.com'), 'HTTP 404 from github.com', 'a word in capitals without a colon stays');
+  assert.equal(raw('Could not reach GitHub or read its answer: EPERM: x'), 'Could not reach GitHub or read its answer: EPERM: x');
+  assert.equal(raw('OK: fine'), 'OK: fine', 'two capitals are no code name');
+  assert.equal(alertsOf(upage(ready, { error: 'EBUSY: resource busy or locked' }))[0].children[0], 'resource busy or locked');
+});
+
+test('Updates: after the Alpha question is confirmed, the focus goes to a control that can take it', async () => {
+  const ready = await realState({ releases: [rel('0.6.1')] });
+  const pick = { isConnected: true, n: 0, focus() { this.n++; } };
+  const from = { isConnected: true, n: 0, focus() { this.n++; }, closest: () => ({ querySelector: (sel) => (sel === '.ak-dd' ? pick : null) }) };
+  const view = mount((m) => m.kit.UpdatesPage, { info: ready, t, onAction: () => {} }, { globals: { setTimeout: (fn) => fn() } });
+  chanButtons(view.render())[2].props.onClick({ currentTarget: from });
+  button(dialogOf(view.render()), 'Cancel').props.onClick({});
+  assert.deepEqual([from.n, pick.n], [1, 0], 'Cancel gives the focus back to the Alpha button');
+  chanButtons(view.render())[2].props.onClick({ currentTarget: from });
+  button(dialogOf(view.render()), 'Switch to Alpha').props.onClick({});
+  assert.deepEqual([from.n, pick.n], [1, 1], 'the channel buttons wait while the change is on its way, so the choice list takes the focus');
+});
+
+test('Updates: notes of exactly the limit are shown whole', () => {
+  const page = (notes) => all(upage({ installed: '0.6.0', latest: '0.6.1', notes, phase: 'idle', mode: 'notify' }, { open: true }), (n) => has(n, 'ak-notes'))[0].children[0];
+  assert.equal(page('n'.repeat(1200)), 'n'.repeat(1200));
+  const cut = page('n'.repeat(1201));
+  assert.equal(cut.length, 1200);
+  assert.ok(cut.endsWith('\u2026'));
+});

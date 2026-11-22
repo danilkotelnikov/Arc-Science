@@ -69,7 +69,7 @@ export function pickRelease(list, wanted, channel = 'release') {
     if (wanted ? version !== wanted : (best && compareVersions(version, best.version) <= 0)) continue;
     const assets = Array.isArray(r.assets) ? r.assets : [];
     const zip = assets.find((a) => a && a.name === kitName(version)), sums = assets.find((a) => a && a.name === 'SHA256SUMS.txt');
-    best = { version, tag: r.tag_name, url: clean(r.html_url, 300), notes: clean(r.body, 1200), kit: zip && sums ? { name: zip.name, url: zip.browser_download_url, sumsUrl: sums.browser_download_url } : null };
+    best = { version, tag: r.tag_name, url: clean(r.html_url, 300), notes: clean(r.body, 1201), /* the page shows 1200; one character more says the text was cut */ kit: zip && sums ? { name: zip.name, url: zip.browser_download_url, sumsUrl: sums.browser_download_url } : null };
   }
   return best;
 }
@@ -306,9 +306,9 @@ export function createUpdater(opts = {}) {
   const check = async () => (mem.busy ? getState() : doCheck());
   // forChannel: the channel of the update that asked for this check. An update reads its channel once, at its start.
   async function doCheck(forChannel) {
+    const channel = forChannel || settings().channel; // read now: another window of the app may have changed it
     phase('checking');
     try {
-      const channel = forChannel || settings().channel; // read now: another window of the app may have changed it
       let all = [];
       // GitHub lists the newest releases first. A full page with no version for this channel can hide one on an older page
       // (a final behind many pre-releases), so up to three pages are read.
@@ -325,7 +325,9 @@ export function createUpdater(opts = {}) {
       if (settings().channel === channel) save({ lastCheck: top ? { channel, latest: top.version, installable: Boolean(top.kit), reason: top.kit ? '' : 'no-kit', releaseUrl: top.url, notes: top.notes, checkedAt: new Date(now()).toISOString() } : { channel, latest: null, installable: false, reason: 'no-release', checkedAt: new Date(now()).toISOString() } });
       phase('idle', top ? '' : 'No release with a plain version number was found.');
     } catch (err) {
-      phase('failed', `Could not reach GitHub or read its answer: ${clean(err.message, 200)}`);
+      // a check for a channel that is no longer chosen says nothing about the new one, also when it fails
+      if (settings().channel === channel) phase('failed', `Could not reach GitHub or read its answer: ${clean(err.message, 200)}`);
+      else phase('idle');
     }
     return getState();
   }
