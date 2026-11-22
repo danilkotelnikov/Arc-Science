@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { hashFiles, appendLedger, verifyLedger, lastFreeze, decideGate, ledgerFile, optedOut, checkDigest, MAX_CYCLES } from '../lib/gates.js';
 import { formatNotes, parseMcpBody, redact } from '../lib/brief.js';
 import { makeTools, registerPrompt, callerOf } from '../lib/register.js';
@@ -16,7 +17,77 @@ const goodGate = (candidate) => ({
   probes: [{ id: 'p1', description: 'empty input', result: 'pass' }],
   preservation: [{ id: 'k1', ok: true }], findings: [], requirements: [{ id: 'r1', state: 'verified' }],
 });
-const goodCtx = (candidate) => ({ freeze: { candidate, caller: 'lead' }, propose: { seq: 1 }, fileCheck: { ok: true }, caller: 'reviewer-1' });
+const goodCtx = (candidate) => ({ freeze: { candidate, caller: 'lead' }, propose: { seq: 1 }, fileCheck: { ok: true }, caller: 'reviewer-1',
+  prose: { files: [], blocks: [], marks: 0 } });
+
+test('the prose gate reads the frozen text itself, and a block in author voice stops acceptance (D-20261122-50)', async () => {
+  const c = 'sha256:' + 'a'.repeat(64);
+  const base = goodGate(c);
+  const missing = decideGate(base, { ...goodCtx(c), prose: null });
+  assert.equal(missing.verdict, 'unmet');
+  assert.match(missing.reasons.join(' '), /prose gate did not run/);
+  // a result that the reviewer sends is no result: only the gate tool fills the context
+  assert.equal(decideGate({ ...base, prose: { files: [], blocks: [], marks: 0 } }, { ...goodCtx(c), prose: null }).verdict, 'unmet');
+  const blocked = decideGate(base, { ...goodCtx(c), prose: { files: [{ file: '/w/README.md', zone: 'public', blocks: 1, marks: 0 }],
+    blocks: [{ file: '/w/README.md', line: 3, rule: 'SELF_UNDERCUT', span: 'have not run', sentence: 'We have not run the benchmark.' }], marks: 0 } });
+  assert.equal(blocked.verdict, 'unmet');
+  assert.match(blocked.reasons.join(' '), /prose gate: README\.md:3 .*We have not run the benchmark\./);
+
+  const { proseOfFiles } = await import('../lib/prose.js');
+  const d = await tmp();
+  const put = async (name, text) => { const f = path.join(d, ...name.split('/')); await mkdir(path.dirname(f), { recursive: true }); await writeFile(f, text); return f; };
+  const undercut = await put('README.md', '# Tool\n\nThe tool reads a file.\n\nWe have not run the benchmark.\n');
+  const r1 = await proseOfFiles([undercut]);
+  assert.equal(r1.blocks.length, 1);
+  assert.equal(r1.blocks[0].line, 5);
+  assert.equal(r1.files[0].zone, 'public');
+  assert.equal((await proseOfFiles([await put('README.md', '# Tool\n\nThe tool reads a file.\n')])).blocks.length, 0);
+  const code = await proseOfFiles([await put('lib/work.js', '// We have not run the benchmark.\n')]);
+  assert.deepEqual([code.files.length, code.blocks.length], [0, 0]);
+  const report = await proseOfFiles([await put('notes.md', 'We have not run the benchmark.\n')]);
+  assert.deepEqual([report.files[0].zone, report.blocks.length, report.marks > 0], ['report', 0, true]);
+  const mark = await proseOfFiles([await put('about.md', 'Calls are not recorded.\n')]);
+  assert.deepEqual([mark.blocks.length, mark.marks], [0, 1]);
+  const fixture = await proseOfFiles([await put('test/README.md', 'We have not run the benchmark.\n'), await put('lib/a.js', '')]);
+  assert.deepEqual([fixture.files.length, fixture.blocks.length], [0, 0]);
+  assert.equal(await proseOfFiles([undercut], {}), null, 'no engine: no result, so the gate stays unmet');
+  // review fixes: entities, the voice list of the house rules, folder names read from the project root, a changed README left out
+  assert.equal((await proseOfFiles([await put('index.html', '<p>We haven&#8217;t run the benchmark.</p>\n')])).blocks.length, 1);
+  for (const name of ['README.markdown', 'proposal.md', 'slides/one.html']) {
+    assert.equal((await proseOfFiles([await put(name, 'We have not run the benchmark.\n')])).blocks.length, 1, name);
+  }
+  const proj = path.join(d, 'tests', 'proj');
+  await mkdir(proj, { recursive: true });
+  execFileSync('git', ['init', '-q', proj], { windowsHide: true });
+  const projReadme = path.join(proj, 'README.md'), projLib = path.join(proj, 'lib.js');
+  await writeFile(projReadme, 'We have not run the benchmark.\n'); await writeFile(projLib, 'export const a = 1;\n');
+  assert.equal((await proseOfFiles([projReadme])).blocks.length, 1, 'a project under a tests folder keeps its README');
+  // a changed README left out of the freeze is read: its block stops acceptance, its clean text does not
+  const left = await proseOfFiles([projLib]);
+  assert.deepEqual(left.blocks.map((b) => [path.basename(b.file), b.frozen]), [['README.md', false]]);
+  assert.match(decideGate(base, { ...goodCtx(c), prose: left }).reasons.join(' '), /README\.md:1 SELF_UNDERCUT \(changed, not frozen\)/);
+  await writeFile(projReadme, 'The tool reads a file. The benchmark run comes next.\n');
+  const cleanLeft = await proseOfFiles([projLib]);
+  assert.deepEqual([cleanLeft.blocks.length, cleanLeft.files.some((f) => f.frozen === false)], [0, true]);
+  assert.equal(decideGate(base, { ...goodCtx(c), prose: cleanLeft }).verdict, 'accepted');
+
+  // end to end: the block is a reason, the ledger keeps the counts, a fixed and frozen-again file is accepted
+  const [propose, freeze, gate, verify] = makeTools((def) => def, { ARC_HOME: d }, { retain: async () => true });
+  const lead = { agent: { id: 'lead-1' } }, reviewer = { agent: { id: 'rev-1' } };
+  const readme = await put('README.md', 'The gate reads each frozen file.\n\nWe have not run the benchmark.\n');
+  await propose.execute({ goal: 'prose', hypothesis: 'h', boundary: 'b', checks: ['node test.js'], probes: ['empty'] }, lead);
+  const fr = await freeze.execute({ goal: 'prose', files: [readme] }, lead);
+  const no = await gate.execute({ goal: 'prose', ...goodGate(fr.candidate) }, reviewer);
+  assert.equal(no.verdict, 'unmet');
+  assert.match(no.reasons.join(' '), /prose gate: README\.md:3 /);
+  await writeFile(readme, 'The gate reads each frozen file.\n\nThe benchmark run comes next.\n');
+  const fr2 = await freeze.execute({ goal: 'prose', files: [readme] }, lead);
+  assert.equal((await gate.execute({ goal: 'prose', ...goodGate(fr2.candidate) }, reviewer)).verdict, 'accepted');
+  const rows = (await readFile(ledgerFile({ ARC_HOME: d }), 'utf8')).trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.type === 'gate');
+  assert.deepEqual(rows.map((r) => [r.prose.files, r.prose.blocks]), [[1, 1], [1, 0]]);
+  assert.equal((await verify.execute({}, {})).ok, true);
+  await rm(d, { recursive: true });
+});
 
 test('hashFiles is stable, order free, and changes with content', async () => {
   const d = await tmp();

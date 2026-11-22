@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { check, checkJson, repair, verifyRewrite } from '../plugins/arc-core/lib/prose-gate.js';
+import { VOICE, visibleText } from '../plugins/arc-core/lib/prose-voice.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CASES = path.join(ROOT, 'plugins', 'arc-core', 'test', 'prose-gate.cases.txt');
@@ -56,14 +57,10 @@ function fileCheck(file, { zone, facts }) {
   if (file.endsWith('.json')) {
     try { return checkJson(JSON.parse(raw), { zone, facts }); } catch { /* not JSON after all: check it as text */ }
   }
-  const text = /\.html?$/i.test(file)
-    ? raw.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, (m) => '\n'.repeat((m.match(/\n/g) || []).length)).replace(/<[^>]+>/g, ' ')
-    : raw;
-  return check(text, { zone, facts });
+  return check(/\.html?$/i.test(file) ? visibleText(raw) : raw, { zone, facts });
 }
 
-// Text that speaks for the author. A build folder, a dependency folder and a file over 2 MB are skipped.
-const VOICE = /(^|[\\/])(readme[^\\/]*\.md|index\.html?|site\.json|content\.json|abstract[^\\/]*\.(md|tex|txt)|pitch[^\\/]*\.md|about[^\\/]*\.(md|html))$/i;
+// Text that speaks for the author (VOICE, shared with the HoH gate). A build folder, a dependency folder and a file over 2 MB are skipped.
 const SKIP_DIR = /^(node_modules|\.git|dist|build|target|out|scratch|_scratch|pristine|__pycache__|\.venv|venv|site-packages|\.next|vendor|third_party)$/i;
 function* voiceFiles(dir, depth = 0) {
   let entries = [];

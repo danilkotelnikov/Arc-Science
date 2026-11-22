@@ -1,6 +1,7 @@
 // arc-hoh 0.2.0 (2026-10-31): the tools and prompt sections. No arc imports here, so node can test it.
 import { appendLedger, checkDigest, clip, goalEvents, hashFiles, lastEvent, ledgerFile, optedOut, verifyLedger, decideGate, withLedger } from './gates.js';
 import { CONTRACT, briefText } from './contract.js';
+import { proseOfFiles } from './prose.js';
 import { retainNote } from './brief.js';
 import { routeOptimalDecision, pairBuilderAndChecker, emitDecisionPacket, TAINT_LEVELS, joinTaint, enforceConsentNonEscalation } from './intuition.js';
 
@@ -111,7 +112,7 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
 
   const gate = defineTool({
     name: 'hoh_gate',
-    description: 'HoH step 10. The reviewer calls this, not the agent that froze the candidate. It accepts only when: a proposal and a freeze exist; the files still match the freeze; every proposed check is reported by its own words; every check exited 0 with an excerpt and did not time out; every probe passed; the reviewer is not the builder and not the agent that froze; the preservation list holds; no blocking or major finding is open; every requirement is verified. Missing evidence is unmet. The verdict is written to the ledger and to Cammut.',
+    description: 'HoH step 10. The reviewer calls this, not the agent that froze the candidate. It accepts only when: a proposal and a freeze exist; the files still match the freeze; every proposed check is reported by its own words; every check exited 0 with an excerpt and did not time out; every probe passed; the reviewer is not the builder and not the agent that froze; the preservation list holds; no blocking or major finding is open; every requirement is verified; the prose gate, which the gate runs itself on the frozen text files, finds no block. Missing evidence is unmet. The verdict is written to the ledger and to Cammut.',
     parameters: {
       goal: { type: 'string', required: true, description: 'The same goal name as in hoh_propose and hoh_freeze.' },
       candidate: { type: 'string', required: true, description: 'The candidate id that hoh_freeze returned.' },
@@ -176,11 +177,13 @@ export function makeTools(defineTool, env = process.env, deps = {}) {
         }
       }
       const caller = callerOf(exec);
-      const { verdict, reasons } = decideGate(args, { freeze: freezeRow, propose: proposeRow, fileCheck, caller });
+      const prose = freezeRow && Array.isArray(freezeRow.paths) ? await proseOfFiles(freezeRow.paths) : null;
+      const { verdict, reasons } = decideGate(args, { freeze: freezeRow, propose: proposeRow, fileCheck, caller, prose });
       const { seq } = await appendLedger(file(), {
         type: 'gate', goal: args.goal, candidate: args.candidate, cycle: args.cycle, verdict, reasons, caller,
         callerFamily: callerFamilyOf(exec),
         builder: args.builder, reviewer: args.reviewer, checks: (args.checks || []).map((c) => c.id),
+        prose: prose ? { files: prose.files.length, blocks: prose.blocks.length, marks: prose.marks, unfrozen: prose.files.filter((f) => f.frozen === false).length } : { ran: false },
       });
       let retained = false;
       if (retainOn()) {
