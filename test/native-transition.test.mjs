@@ -108,9 +108,9 @@ test('N2 & N4: vendored plugin bundler audits licenses, rejects UNLICENSED plugi
   );
   assert.match(bundle.noticesText, /Based on DeepSeek Harness \(dsh-v0\.2\.1-rc\.5\), MIT/);
   assert.match(bundle.noticesText, /SIL Open Font License 1\.1/);
-  assert.match(bundle.noticesText, /arc-core@0\.6\.0/);
-  assert.match(bundle.noticesText, /arc-mermaid@0\.6\.0/);
-  assert.match(bundle.noticesText, /arc-web-crawler@0\.6\.0/);
+  // the notices name every built-in plugin at the version of the VERSION file, so a version bump needs no edit here
+  const arcVersion = fs.readFileSync(new URL('../VERSION', import.meta.url), 'utf8').trim();
+  for (const name of ['arc-core', 'arc-mermaid', 'arc-web-crawler']) assert.ok(bundle.noticesText.includes(`\`${name}@${arcVersion}\``), `${name}@${arcVersion} is in the notices`);
 
   // Negative test: reject a plugin with UNLICENSED or missing license
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-vendor-bad-'));

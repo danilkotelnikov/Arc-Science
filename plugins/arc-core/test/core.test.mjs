@@ -921,3 +921,14 @@ test('53. prose gate, two bands (S049): only the clear core blocks; a null resul
   assert.equal(srv.gate.check({ candidateHash: 'a'.repeat(64), checks: [{ name: 'unit', passed: true }], texts: [{ id: 't', text: safety }] }).ok, true);
   assert.ok(!srv.callTool('memory.retain', { text: safety, tags: ['project:Nimbus', 'date:2026-11-18', 'source:test'] }).entry.tags.includes('prose:undercut'));
 });
+
+test('54. prose gate, review of PR 36: one long clause stays linear in English and Russian', () => {
+  // Every hit walked back to its clause start, so 36,000 words of marked hits took 7 s (English) and 36 s (Russian).
+  // The bound is loose: a slow runner passes, a quadratic scan does not.
+  const started = Date.now();
+  for (const text of [`The model ${'we have not run it if needed '.repeat(6000)}today.`, `The ${'cat has not run '.repeat(6000)}today.`, `Кот ${'пока не запущен '.repeat(6000)}сегодня.`]) {
+    const r = proseGate(text);
+    assert.ok(r.findings.length > 0 && r.findings.every((f) => f.severity === 'review'), text.slice(0, 40));
+  }
+  assert.ok(Date.now() - started < 3000, `three long clauses took ${Date.now() - started} ms`);
+});

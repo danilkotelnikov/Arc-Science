@@ -146,3 +146,21 @@ test('the round filter counts Claude commits and marked commits', { skip: spawnS
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), '2');
 });
+
+// Review finding 4 (21.XI.2026). The action writes its own token into the origin URL in .git/config (agent mode,
+// src/github/operations/git-config.ts at the pinned commit), and `gh pr comment --body-file <path>` posts any file.
+// So the screen gets no comment command at all: it returns its comment, and a workflow step posts it.
+test('the screen cannot post a file as a comment: it returns its comment, and the workflow posts it', () => {
+  const claudeJob = screen.slice(screen.indexOf('  claude:\n'));
+  const checkout = claudeJob.slice(0, claudeJob.indexOf('- name: Count the fix rounds'));
+  assert.match(checkout, /persist-credentials: false/, 'the checkout leaves no token behind; the action sets up its own for the push');
+  const screenOnly = screen.slice(screen.indexOf('- name: Screen'), screen.indexOf('- name: Post the screen comment'));
+  assert.doesNotMatch(screenOnly, /Bash\(gh pr comment/, 'gh pr comment --body-file would post any file the runner can read');
+  assert.match(screenOnly, /--allowedTools "Read,Grep,Glob,Bash\(gh pr diff:\*\),mcp__github_inline_comment__create_inline_comment"/);
+  assert.match(screenOnly, /--disallowedTools "[^"]*Grep\(\/\/proc\/\*\*\)/, 'Grep must not read the environment either');
+  assert.match(screenOnly, /"comment":\{"type":"string"\}/, 'the comment is part of the answer');
+  const post = screen.slice(screen.indexOf('- name: Post the screen comment'), screen.indexOf('- name: Read the new comments'));
+  assert.match(post, /BODY: \$\{\{ fromJSON\(steps\.screen\.outputs\.structured_output \|\| '\{\}'\)\.comment \}\}/);
+  assert.match(post, /run: gh pr comment "\$PR" -R "\$REPO" --body "\$BODY"\n/, 'the text travels in a variable, never inside the command');
+  assert.equal((post.match(/\$\{\{/g) || []).length, (post.match(/^ +(if|GH_TOKEN|PR|REPO|BODY): .*\$\{\{/gm) || []).length, 'no expression is pasted into the script line');
+});

@@ -325,6 +325,51 @@ impl<'a> Words<'a> {
     }
 }
 
+/// JS clauseIndex: the clause start of every token and running counts of three word kinds (a word that is not bare, a mark of
+/// another group, a word of the author or the project), built in one pass. A hit then costs O(1), so a sentence stays linear
+/// however long its clause is (review of PR 36: a 30,000-word clause took seconds).
+struct ClauseIndex {
+    start: Vec<isize>,
+    full: Vec<u32>,
+    other: Vec<u32>,
+    own: Vec<u32>,
+}
+
+impl ClauseIndex {
+    fn new(
+        n: isize,
+        opens_at: impl Fn(isize) -> bool,
+        full: impl Fn(isize) -> bool,
+        other: impl Fn(isize) -> bool,
+        own: impl Fn(isize) -> bool,
+    ) -> Self {
+        let len = n.max(0) as usize + 1;
+        let mut ix = ClauseIndex { start: vec![0; len], full: vec![0; len], other: vec![0; len], own: vec![0; len] };
+        for k in 0..len as isize {
+            let u = k as usize;
+            ix.start[u] = if k == 0 || opens_at(k) { k } else { ix.start[u - 1] };
+            if u + 1 < len {
+                ix.full[u + 1] = ix.full[u] + full(k) as u32;
+                ix.other[u + 1] = ix.other[u] + other(k) as u32;
+                ix.own[u + 1] = ix.own[u] + own(k) as u32;
+            }
+        }
+        ix
+    }
+    fn clause_start(&self, a: isize) -> isize {
+        if a > 0 && (a as usize) < self.start.len() {
+            self.start[a as usize]
+        } else {
+            a
+        }
+    }
+    /// How many words of one kind lie in s..a.
+    fn count(&self, run: &[u32], s: isize, a: isize) -> u32 {
+        let at = |x: isize| run[(x.max(0) as usize).min(run.len() - 1)];
+        at(a) - at(s)
+    }
+}
+
 /// Every place in one English sentence where the author announces work that is not done.
 pub fn undercuts_en(t: &[String], opens: &HashSet<isize>) -> Vec<Hit> {
     let w = Words { t, lx: lexicon() };
@@ -332,13 +377,14 @@ pub fn undercuts_en(t: &[String], opens: &HashSet<isize>) -> Vec<Hit> {
     let mut out = Coll::new();
     // JS clauseStart: back to the token after punctuation or after a conjunction
     let conj = ["and", "but", "while", "whereas", "so", "because", "although", "though"];
-    let clause_start = |a: isize| {
-        let mut s = a;
-        while s > 0 && !opens.contains(&s) && !conj.iter().any(|c| w.eq(s - 1, c)) {
-            s -= 1;
-        }
-        s
-    };
+    let ci = ClauseIndex::new(
+        n,
+        |k| opens.contains(&k) || conj.iter().any(|c| w.eq(k - 1, c)),
+        |k| !(w.has("aux", k) || w.has("filler", k) || w.has("status_now", k)),
+        |k| w.has("other_mark", k) || w.eq(k, "others"),
+        |k| w.has("first_person", k) || w.has("artifact", k) || w.has("work_noun", k) || w.has("own_word", k),
+    );
+    let clause_start = |a: isize| ci.clause_start(a);
     // JS condAfter and adverseNear: both stay inside the clause of the hit
     let cond_after = |end: isize| (end + 1..=end + 4).take_while(|&k| k < n && !opens.contains(&k)).any(|k| w.has("rule_cond", k));
     let rel_before = |start: isize| (start - 3..start).any(|k| k >= 0 && w.has("rel_front", k));
@@ -411,13 +457,13 @@ pub fn undercuts_en(t: &[String], opens: &HashSet<isize>) -> Vec<Hit> {
     // JS core: the clause of the hit has no subject, or its subject is the author or the project
     let core = |a: isize, b: isize| {
         let s = clause_start(a);
-        if (s..a).all(|k| w.has("aux", k) || w.has("filler", k) || w.has("status_now", k)) {
+        if ci.count(&ci.full, s, a) == 0 {
             return true;
         }
-        if (s..a).any(|k| w.has("other_mark", k) || w.eq(k, "others")) {
+        if ci.count(&ci.other, s, a) > 0 {
             return false;
         }
-        if (s..a).any(|k| w.has("first_person", k) || w.has("artifact", k) || w.has("work_noun", k) || w.has("own_word", k)) {
+        if ci.count(&ci.own, s, a) > 0 {
             return true;
         }
         by_us(b) || (w.has("un_part", a) && [1, 2].iter().any(|&d| w.has("artifact", b + d)))
@@ -660,25 +706,26 @@ pub fn undercuts_ru(t: &[String], opens: &HashSet<isize>) -> Vec<Hit> {
     let rel_before = |a: isize| ((a - 3).max(0)..a).any(|k| w.has("ru_rel", k));
     // JS undercutsRu core: no subject, a first-person word, an artifact or work noun, or "то, что ..."
     let conj = ["и", "но", "а", "однако"];
-    let clause_start = |a: isize| {
-        let mut s = a;
-        while s > 0 && !opens.contains(&s) && !conj.iter().any(|c| w.eq(s - 1, c)) {
-            s -= 1;
-        }
-        s
-    };
+    let ci = ClauseIndex::new(
+        n,
+        |k| opens.contains(&k) || conj.iter().any(|c| w.eq(k - 1, c)),
+        |k| !(w.has("ru_now", k) || w.has("ru_fill", k) || w.eq(k, "не") || w.eq(k, "нет")),
+        |k| starts("ru_other", k),
+        |k| w.has("ru_first", k) || starts("ru_artifact", k) || starts("ru_result", k),
+    );
+    let clause_start = |a: isize| ci.clause_start(a);
     let core = |a: isize| {
         let s = clause_start(a);
-        if (s..a).all(|k| w.has("ru_now", k) || w.has("ru_fill", k) || w.eq(k, "не") || w.eq(k, "нет")) {
+        if ci.count(&ci.full, s, a) == 0 {
             return true;
         }
-        if (s..a).any(|k| starts("ru_other", k)) {
+        if ci.count(&ci.other, s, a) > 0 {
             return false;
         }
         if w.eq(s, "что") && w.eq(s - 1, "то") {
             return true;
         }
-        (s..a).any(|k| w.has("ru_first", k) || starts("ru_artifact", k) || starts("ru_result", k))
+        ci.count(&ci.own, s, a) > 0
     };
     let push = |out: &mut Coll, form: &'static str, a: isize, b: isize, exc: Option<&'static str>| {
         let e = exc.or(if cond_near(a, b) {
