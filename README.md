@@ -89,7 +89,7 @@ Alongside the accept gate, `arc-hoh` includes held-out patch replay gates (`lib/
 
 ### Unified console and memory index
 
-`plugins/arc-core` combines Research, Memory, Molecullage, and Prose workspaces with Servers, Keys, Apps, Audit, 30-day consent grants, and six MCP tools (`shelf_search`, `claim_record`, `gate_check`, `toolpack_load`, `memory_retain`, `memory_recall`).
+`plugins/arc-core` combines Research, Memory, Molecullage, and Prose workspaces with Servers, Keys, Apps, Audit, 30-day consent grants, and seven MCP tools (`shelf_search`, `claim_record`, `gate_check`, `toolpack_load`, `memory_retain`, `memory_recall`, `prose_check`).
 
 Its write-once **1M Library reader** (`lib/library-index.js`) deduplicates notes by SHA-256 without re-tokenizing, serves warm queries with zero cold raw-body reads, links stale notes via write-time supersession while preserving explicit date pins, and calibrates widening thresholds with 2-fold out-of-fold Platt scaling.
 
@@ -119,7 +119,7 @@ Every built-in plugin ships at unified Arc Harness version **`0.6.1`**:
 | Plugin | Version | Role |
 |---|---|---|
 | [`plugins/arc-hoh`](plugins/arc-hoh/README.md) | `0.6.1` | Propose, freeze, and accept gate, held-out replay gate, hypothesis tree, claim graph, Dawid-Skene reliability, branch budgets, Intuition Router, and interactive Trace tab. |
-| [`plugins/arc-core`](plugins/arc-core/README.md) | `0.6.1` | C2 unified console, write-once SHA-256 1M Library index, six MCP tools, 30-day consent dialog, Shelf search, Workshop toolpacks, and TOFU SSH memory deployment. |
+| [`plugins/arc-core`](plugins/arc-core/README.md) | `0.6.1` | C2 unified console, write-once SHA-256 1M Library index, seven MCP tools, 30-day consent dialog, Shelf search, Workshop toolpacks, and TOFU SSH memory deployment. |
 | [`plugins/arc-web-crawler`](plugins/arc-web-crawler/README.md) | `0.6.1` | Open-source keyless web search, 3-tier stealth TLS/Patchright fetcher, Cloudflare Turnstile and CAPTCHA verifier, PDF/Markdown analyzer, and bounded same-origin crawler. |
 | [`plugins/arc-molecullage`](plugins/arc-molecullage/README.md) | `0.6.1` | Interactive Molecullage studio with 231-source atlas filtering, pinned sources, five-gate figure check runner, and 3D structure/Blender pipeline controls. |
 | [`plugins/arc-mermaid`](plugins/arc-mermaid/README.md) | `0.6.1` | Deterministic Mermaid SVG/PNG renderer in chat code blocks gated by Molecullage layout, contrast, and colour-vision checks. |

@@ -7,6 +7,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { check as proseGateCheck } from './prose-gate.js';
+
 export const WORKSPACES = Object.freeze(['Research', 'Memory', 'Molecullage', 'Prose']);
 export const CONNECTORS = Object.freeze(['Servers', 'Keys', 'Apps', 'Audit', 'Cammut', 'Updates']);
 export const SEATS = Object.freeze(['Planner', 'Reviewer', 'Falsifier', 'Vision', 'Prose']);
@@ -165,6 +167,9 @@ export function detectFormulaicProse(text = '', opts = {}) {
       pushFinding('refused-word', m[0]);
     }
   }
+  for (const f of proseGateCheck(s).findings) {
+    if (f.rule === 'SELF_UNDERCUT') findings.push({ kind: 'self-undercut', match: f.span, allowed: f.allowed });
+  }
   return {
     ok: findings.length === 0,
     findings,
@@ -172,7 +177,15 @@ export function detectFormulaicProse(text = '', opts = {}) {
 }
 
 export function rewriteFormulaicProse(text = '') {
-  let out = String(text || '');
+  // A sentence that the prose gate blocks or marks stays whole for its writer or reader (S049); the phrase rules below
+  // rewrite only the other sentences. The split keeps each separator, so the text joins back as it was.
+  const touched = (s) => proseGateCheck(s).findings.some((f) => f.rule === 'SELF_UNDERCUT' || f.rule === 'UNSURE_ABSENCE');
+  const out = String(text || '').split(/((?<=[.!?;:])\s+)/).map((part, k) => (k % 2 || touched(part) ? part : rewritePhrases(part))).join('');
+  return out.replace(/\s{2,}/g, ' ').trim();
+}
+
+function rewritePhrases(text) {
+  let out = text;
   out = out.replace(
     /\b(not)\s+(?:[a-z]+\s+){0,3}[a-z]+,\s+but\s+((?:[a-z]+\s+){0,3}[a-z]+)\b/gi,
     (match, notWord, replacement) => {
@@ -210,7 +223,8 @@ export function rewriteFormulaicProse(text = '') {
   out = out.replace(/\btransformative\b/gi, 'large');
   out = out.replace(/\bdisruptive\b/gi, 'unusual');
   out = out.replace(/\bmission[- ]critical\b/gi, 'essential');
-  out = out.replace(/\s{2,}/g, ' ').trim();
+  // The rewrite leaves every undercut in place; the detector marks it for the writer (F102). The phrase rules above still
+  // shorten a sentence that the gate leaves clean ("rather than ...", "not X, but Y") without a report.
   return out;
 }
 
