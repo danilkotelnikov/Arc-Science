@@ -420,6 +420,13 @@ test('N8b: the Rust prose gate reads the engine lexicon and gives the JS verdict
     'The model is `not trained`.': 'undercut',
     'The flag `--dry-run` prints the plan.': 'clean',
     '```\nNot trained.\n```\nThe model is built.': 'undercut',
+    // review of PR 35: a heading inside a fence opens no zone; ~~~ is a fence; only the same marker, as long or longer,
+    // closes it; ```code``` on one line opens nothing, so a real Limits heading after it still opens its section
+    '~~~\n## Limits\n~~~\nThe model is not trained.': 'undercut',
+    '```\n## Limits\n```\nThe model is not trained.': 'undercut',
+    '````\n```\n## Limits\n````\nNot trained.': 'undercut',
+    '~~~\n```\n## Limits\n~~~\nNot trained.': 'undercut',
+    '```js```\n## Limits\nNot trained.': 'clean',
   };
   for (const text of Object.keys(pinned)) if (!zoneCases.some((c) => c.text === text)) zoneCases.push({ zone: 'public', text });
   const cases = [...loadCases(), ...loadCases(RU_CASES), ...loadCases(HELDOUT), ...loadCases(BLIND3), ...loadCases(RU_BLIND), ...loadCases(F102_BLIND), ...loadCases(BLIND4), ...loadCases(F102_BLIND2), ...loadCases(RU_BLIND2), ...zoneCases];

@@ -548,11 +548,20 @@ function zoneLines(text, zone) {
   const out = [];
   let limitsLevel = 0;
   let plain = 0;                                        // 1: a label waits for its list; 2: inside the list
+  let fence = null;                                     // the open fence: its character (` or ~) and its length
   const rows = String(text ?? '').replace(/^﻿/, '').split(/\r?\n/);
   const listFollows = (idx) => { for (let k = idx + 1; k < rows.length; k += 1) if (rows[k].trim()) return LIST_ITEM.test(rows[k]); return false; };
   for (const [idx, raw] of rows.entries()) {
-    if (/^\s*```/.test(raw)) continue;   // a fence line is no prose; the words inside a fence are read like any line
-    const head = /^(#{1,6})\s+(.*)$/.exec(raw);
+    // A fence line is no prose; the words inside a fence are read like any line, but a heading or a label there opens no
+    // zone (review of PR 35). As in CommonMark, ``` and ~~~ open a fence, only the same character at the same length or
+    // longer closes it, and ```code``` on one line opens nothing.
+    const f = /^\s*(`{3,}|~{3,})/.exec(raw);
+    if (f) {
+      const ch = f[1][0], len = f[1].length, rest = raw.slice(f[0].length);
+      if (!fence) { if (!(ch === '`' && rest.includes('`'))) fence = { ch, len }; } else if (ch === fence.ch && len >= fence.len && !rest.trim()) fence = null;
+      continue;
+    }
+    const head = fence ? null : /^(#{1,6})\s+(.*)$/.exec(raw);
     if (head) {
       const level = head[1].length;
       const isLimits = namesLimits(head[2]);
@@ -561,7 +570,7 @@ function zoneLines(text, zone) {
       continue;
     }
     if (!raw.trim()) { if (plain === 2) plain = 0; continue; }
-    if (isLimitsLabel(raw) && listFollows(idx)) { plain = 1; continue; }
+    if (!fence && isLimitsLabel(raw) && listFollows(idx)) { plain = 1; continue; }
     if (plain && (LIST_ITEM.test(raw) || (plain === 2 && /^\s{2,}\S/.test(raw)))) plain = 2; else plain = 0;
     const line = raw.replace(/`([^`\n]+)`/g, ' $1 ').replace(/https?:\/\/\S+/g, ' ');
     if (line.trim()) out.push({ no: idx + 1, line, zone: limitsLevel || plain === 2 ? 'limits' : zone });

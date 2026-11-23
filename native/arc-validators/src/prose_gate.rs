@@ -965,14 +965,36 @@ pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'stati
     let mut out = Vec::new();
     let mut limits_level = 0usize;
     let mut plain = 0u8;
+    // JS fence: the open fence, its character (` or ~) and its length
+    let mut fence: Option<(char, usize)> = None;
     for (idx, raw) in rows.iter().enumerate() {
-        // a fence line is no prose; the words inside a fence are read like any line
-        if raw.trim_start_matches(is_ws).starts_with("```") {
-            continue;
+        // a fence line is no prose; the words inside a fence are read like any line, but a heading or a label there opens no
+        // zone. ``` and ~~~ open a fence, only the same character at the same length or longer closes it, and ```code```
+        // on one line opens nothing.
+        let lead = raw.trim_start_matches(is_ws);
+        if let Some(c @ ('`' | '~')) = lead.chars().next() {
+            let len = lead.chars().take_while(|&x| x == c).count();
+            if len >= 3 {
+                let rest = &lead[len..];
+                match fence {
+                    None => {
+                        if !(c == '`' && rest.contains('`')) {
+                            fence = Some((c, len));
+                        }
+                    }
+                    Some((fc, fl)) => {
+                        if c == fc && len >= fl && js_trim(rest).is_empty() {
+                            fence = None;
+                        }
+                    }
+                }
+                continue;
+            }
         }
         let hashes = raw.chars().take_while(|&c| c == '#').count();
         // JS /^(#{1,6})\s+(.*)$/: the text after the space run may hold no CR, U+2028 or U+2029
-        let heading = (1..=6).contains(&hashes)
+        let heading = fence.is_none()
+            && (1..=6).contains(&hashes)
             && raw[hashes..].starts_with(is_ws)
             && !raw[hashes..].trim_start_matches(is_ws).contains(['\r', '\u{2028}', '\u{2029}']);
         if heading {
@@ -992,7 +1014,7 @@ pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'stati
             continue;
         }
         let list_follows = rows[idx + 1..].iter().find(|r| !js_trim(r).is_empty()).is_some_and(|r| list_item(r));
-        if is_limits_label(raw) && list_follows {
+        if fence.is_none() && is_limits_label(raw) && list_follows {
             plain = 1;
             continue;
         }
