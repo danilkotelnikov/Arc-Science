@@ -941,3 +941,14 @@ test('55. prose gate, review of PR 35: denials past the cap of 300 are reported,
   // at the cap itself nothing is reported
   assert.deepEqual(proseGate('Nimbus is built.', { facts: Array.from({ length: 300 }, (_, k) => `Model${k} not trained.`).join('\n') }).findings, []);
 });
+
+test('56. prose gate, review of PR 35: accents, invisible characters, combining marks and Greek look-alikes split no word', () => {
+  const blocks = (s) => proseGate(s).findings.some((f) => f.rule === 'SELF_UNDERCUT');
+  for (const s of ['The model is nôt trained.', 'The model is no​t trained.', 'The model is nôt trained.', 'The model is nοt trained.',
+    'The model is not tráined.', 'Модель пока не обу​чена.']) assert.ok(blocks(s), s);
+  // Greek letters in science names are no MIXED_SCRIPT error, and a mark after a Cyrillic letter stays
+  assert.deepEqual(proseGate('TNFα and IFNγ rose by 2 μM in Aβ42 cells.').findings, []);
+  assert.deepEqual(proseGate('Исследователй проект работает.').findings, []);
+  // a kept accented name is no new name in a rewrite
+  assert.ok(!verifyRewrite('Snöggo runs free-energy cycles. Not trained.', 'Snöggo runs free-energy cycles.').reasons.some((r) => r.startsWith('new name')));
+});

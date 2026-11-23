@@ -427,6 +427,14 @@ test('N8b: the Rust prose gate reads the engine lexicon and gives the JS verdict
     '````\n```\n## Limits\n````\nNot trained.': 'undercut',
     '~~~\n```\n## Limits\n~~~\nNot trained.': 'undercut',
     '```js```\n## Limits\nNot trained.': 'clean',
+    // review of PR 35: an accent, an invisible character, a combining mark or a Greek look-alike does not split a word,
+    // and Greek letters in science names stay clean
+    'The model is nôt trained.': 'undercut',
+    'The model is no​t trained.': 'undercut',
+    'The model is nôt trained.': 'undercut',
+    'The model is nοt trained.': 'undercut',
+    'Модель пока не обу​чена.': 'undercut',
+    'TNFα and IFNγ rose by 2 μM in Aβ42 cells.': 'clean',
   };
   for (const text of Object.keys(pinned)) if (!zoneCases.some((c) => c.text === text)) zoneCases.push({ zone: 'public', text });
   const cases = [...loadCases(), ...loadCases(RU_CASES), ...loadCases(HELDOUT), ...loadCases(BLIND3), ...loadCases(RU_BLIND), ...loadCases(F102_BLIND), ...loadCases(BLIND4), ...loadCases(F102_BLIND2), ...loadCases(RU_BLIND2), ...zoneCases];

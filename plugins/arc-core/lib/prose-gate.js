@@ -60,7 +60,8 @@ own_word    project projects what
 ru_first    мы наш наша наше наши нашего нашей нашем нашим нашими наших нам нас нами я мне меня мной мой моя моё мое мои
 ru_artifact модел нейросет веса весов чекпоинт верси прототип конвейер пайплайн систем инструмент код дизайн метод модул компонент релиз функци движок движк сервер датасет набор утвержден проект
 ru_other    друг предыдущ прежн ранн
-homoglyph   аa еe оo рp сc уy хx іi јj ѕs кk ԁd ӏl
+homoglyph   аa еe оo рp сc уy хx іi јj ѕs кk ԁd ӏl οo αa εe ιi κk νv ρp τt υu χx
+latin_fold  àa áa âa ãa äa åa çc èe ée êe ëe ìi íi îi ïi ñn òo óo ôo õo öo ùu úu ûu üu ýy ÿy āa ăa ąa ćc ĉc ċc čc ďd ēe ĕe ėe ęe ěe ĝg ğg ġg ģg ĥh ĩi īi ĭi įi ĵj ķk ĺl ļl ľl ńn ņn ňn ōo ŏo őo ŕr ŗr řr śs ŝs şs šs ţt ťt ũu ūu ŭu ůu űu ųu ŵw ŷy źz żz žz ơo ưu ǎa ǐi ǒo ǔu ǖu ǘu ǚu ǜu ǟa ǡa ǧg ǩk ǫo ǭo ǰj ǵg ǹn ǻa ȁa ȃa ȅe ȇe ȉi ȋi ȍo ȏo ȑr ȓr ȕu ȗu șs țt ȟh ȧa ȩe ȫo ȭo ȯo ȱo ȳy øo đd łl ħh ıi ŧt ƀb
 ru_done_end н на но ны ён ена ено ены ли ла ло лся лась лось лись
 ru_now      пока ещё еще
 ru_absent   нет отсутствует отсутствуют отсутствие отсутствуют
@@ -99,8 +100,19 @@ const isPart = (w) => Boolean(w) && (L.work_part.has(w) || (/(?:ed|en)$/.test(w)
 const HOMO = new Map([...L.homoglyph].map((p) => [p[0], p[1]]));
 const RUN = /[a-zа-яёіјѕԁӏ]+/g;
 const isMixed = (w) => /[a-z]/.test(w) && /[а-яёіјѕԁӏ]/.test(w);
-const foldMixed = (lower) => lower.replace(RUN, (w) => (isMixed(w) ? [...w].map((c) => HOMO.get(c) || c).join('') : w));
+// A Greek look-alike inside a Latin word ("nοt" with an omicron) is folded for reading too. It is no MIXED_SCRIPT error:
+// TNFα and IFNγ are honest words in science text (review of PR 35).
+const RUN_FOLD = /[a-zа-яёіјѕԁӏα-ω]+/g;
+const foldMixed = (lower) => lower.replace(RUN_FOLD, (w) => (/[a-z]/.test(w) && /[а-яёіјѕԁӏα-ω]/.test(w) ? [...w].map((c) => HOMO.get(c) || c).join('') : w));
 const mixedWords = (sentence) => (sentence.toLowerCase().match(RUN) || []).filter(isMixed);
+// An accent, an invisible character or a combining mark does not split a Latin word ("nôt", "no&#8203;t", "o" + U+0302):
+// invisible characters go, a precomposed Latin letter takes its base letter from latin_fold (one table for JS and Rust,
+// since Rust has no Unicode normalisation), and combining marks after a Latin letter go (review of PR 35). A mark after
+// a Cyrillic letter stays, so "й" keeps its breve.
+const INVISIBLE = /[­͏؜ᅟᅠ឴឵᠋-᠏​-‏‪-‮⁠-⁤⁦-⁯ㅤ﻿ﾠ]/g;
+const LATIN_FOLD = new Map([...L.latin_fold].map((p) => [p[0], p[1]]));
+const MARKS_AFTER_LATIN = /([a-z])[̀-ͯ᪰-᫿᷀-᷿⃐-⃿︠-︯]+/g;
+const foldLatin = (lower) => lower.replace(INVISIBLE, '').replace(/[À-ɏ]/g, (c) => LATIN_FOLD.get(c) || c).replace(MARKS_AFTER_LATIN, '$1');
 
 // The token indexes that open a clause after punctuation: "Tested on Windows, not on Linux" opens a clause at "not".
 const CLAUSE_MARK = /[,;:()–—]/;
@@ -124,7 +136,7 @@ function clauseIndex(t, opensAt, kinds) {
 }
 
 function tokensOf(sentence) {
-  const lower = foldMixed(sentence.toLowerCase().replace(/’/g, "'")).replace(/\bcannot\b/g, 'can not').replace(/n't\b/g, ' not');
+  const lower = foldMixed(foldLatin(sentence.toLowerCase().replace(/’/g, "'"))).replace(/\bcannot\b/g, 'can not').replace(/n't\b/g, ' not');
   const words = [];
   const at = [];
   for (const m of lower.matchAll(WORD)) { words.push(m[0]); at.push(m.index); }
@@ -314,7 +326,7 @@ const startsWithAny = (w, set) => Boolean(w) && [...set].some((s) => w.startsWit
 const endsWithAny = (w, set) => Boolean(w) && [...set].some((s) => w.endsWith(s));
 
 function tokensRu(sentence) {
-  const lower = sentence.toLowerCase();
+  const lower = foldLatin(sentence.toLowerCase());
   const words = [];
   const at = [];
   for (const m of lower.matchAll(WORD_RU)) { words.push(m[0]); at.push(m.index); }

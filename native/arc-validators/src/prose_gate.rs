@@ -161,20 +161,21 @@ fn homoglyphs() -> &'static HashMap<char, char> {
     })
 }
 
-/// JS foldMixed: a run of Latin and Cyrillic letters that holds both scripts takes the Latin look-alike of each letter.
+/// JS foldMixed: a run of Latin letters with Cyrillic or Greek look-alikes takes the Latin look-alike of each letter.
 fn fold_mixed(lower: &str) -> String {
     let map = homoglyphs();
+    let other = |c: char| is_run_cyr(c) || ('α'..='ω').contains(&c);
     let chars: Vec<char> = lower.chars().collect();
     let mut out = String::with_capacity(lower.len());
     let mut i = 0;
     while i < chars.len() {
-        if chars[i].is_ascii_lowercase() || is_run_cyr(chars[i]) {
+        if chars[i].is_ascii_lowercase() || other(chars[i]) {
             let s = i;
-            while i < chars.len() && (chars[i].is_ascii_lowercase() || is_run_cyr(chars[i])) {
+            while i < chars.len() && (chars[i].is_ascii_lowercase() || other(chars[i])) {
                 i += 1;
             }
             let run = &chars[s..i];
-            let mixed = run.iter().any(|c| c.is_ascii_lowercase()) && run.iter().any(|&c| is_run_cyr(c));
+            let mixed = run.iter().any(|c| c.is_ascii_lowercase()) && run.iter().any(|&c| other(c));
             for c in run {
                 out.push(if mixed { *map.get(c).unwrap_or(c) } else { *c });
             }
@@ -186,13 +187,60 @@ fn fold_mixed(lower: &str) -> String {
     out
 }
 
+/// JS INVISIBLE: characters that show nothing and could split a word.
+fn is_invisible(c: char) -> bool {
+    matches!(c, '\u{ad}' | '\u{34f}' | '\u{61c}' | '\u{115f}' | '\u{1160}' | '\u{17b4}' | '\u{17b5}' | '\u{180b}'..='\u{180f}'
+        | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' | '\u{3164}' | '\u{feff}' | '\u{ffa0}')
+}
+
+/// JS MARKS_AFTER_LATIN: the combining marks that go after a Latin letter.
+fn is_mark(c: char) -> bool {
+    matches!(c, '\u{300}'..='\u{36f}' | '\u{1ab0}'..='\u{1aff}' | '\u{1dc0}'..='\u{1dff}' | '\u{20d0}'..='\u{20ff}' | '\u{fe20}'..='\u{fe2f}')
+}
+
+fn latin_fold() -> &'static HashMap<char, char> {
+    static MAP: OnceLock<HashMap<char, char>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        let mut m = HashMap::new();
+        if let Some(set) = lexicon().set("latin_fold") {
+            for p in set {
+                let mut cs = p.chars();
+                if let (Some(a), Some(b)) = (cs.next(), cs.next()) {
+                    m.insert(a, b);
+                }
+            }
+        }
+        m
+    })
+}
+
+/// JS foldLatin: invisible characters go, a precomposed Latin letter takes its base letter, and combining marks after a
+/// Latin letter go, so "nôt" and "o" + U+0302 read as Latin words. A mark after a Cyrillic letter stays.
+fn fold_latin(lower: &str) -> String {
+    let map = latin_fold();
+    let mut out = String::with_capacity(lower.len());
+    let mut prev: Option<char> = None;
+    for c in lower.chars() {
+        if is_invisible(c) {
+            continue;
+        }
+        let c = if ('\u{c0}'..='\u{24f}').contains(&c) { *map.get(&c).unwrap_or(&c) } else { c };
+        if is_mark(c) && prev.is_some_and(|p| p.is_ascii_lowercase()) {
+            continue;
+        }
+        out.push(c);
+        prev = Some(c);
+    }
+    out
+}
+
 pub fn tokens_en(sentence: &str) -> Vec<String> {
     tokens_en_opens(sentence).0
 }
 
 /// The English tokens and the indexes of the tokens that open a clause after punctuation (JS tokensOf opens).
 pub fn tokens_en_opens(sentence: &str) -> (Vec<String>, HashSet<isize>) {
-    let lower = expand_negations(&fold_mixed(&sentence.to_lowercase().replace('\u{2019}', "'")));
+    let lower = expand_negations(&fold_mixed(&fold_latin(&sentence.to_lowercase().replace('\u{2019}', "'"))));
     let b = lower.as_bytes();
     let mut out = Vec::new();
     let mut opens = HashSet::new();
@@ -256,7 +304,7 @@ pub fn tokens_ru(sentence: &str) -> Vec<String> {
 
 /// The Russian tokens and the indexes of the tokens that open a clause after punctuation.
 pub fn tokens_ru_opens(sentence: &str) -> (Vec<String>, HashSet<isize>) {
-    let chars: Vec<char> = sentence.to_lowercase().chars().collect();
+    let chars: Vec<char> = fold_latin(&sentence.to_lowercase()).chars().collect();
     let mut out = Vec::new();
     let mut opens = HashSet::new();
     let mut prev_end: Option<usize> = None;
