@@ -581,7 +581,7 @@ const HOST_TOOL_SPECS = {
   'gate.check': {
     safeName: 'gate_check',
     description: 'Verify candidate digest and checks, and measure the texts of the candidate with the prose gate.',
-    parameters: obj({ candidateHash: s('Candidate sha256.'), checks: arr(obj({ passed: bool(), name: s() }, ['passed'], true), 'Check items.'), proseErrors: int('Prose error count from the caller. It can add a failure and cannot remove one.'), texts: arr(obj({ id: s('Text id.'), text: s('Text of the candidate.'), zone: s('Zone.', { enum: ['public', 'report', 'limits'] }), facts: s('Sentences that say what is not done.') }, ['text']), 'Texts that the gate measures itself.') }, ['candidateHash', 'checks']),
+    parameters: obj({ candidateHash: s('Candidate sha256.'), checks: arr(obj({ passed: bool(), name: s() }, ['passed'], true), 'Check items.'), proseErrors: int('Prose error count from the caller. It can add a failure and cannot remove one.'), texts: arr(obj({ id: s('Text id.'), text: s('Text of the candidate.'), zone: s('Ignored: the gate reads every text as public. A limits heading or label inside the text still opens its section.', { enum: ['public', 'report', 'limits'] }), facts: s('Sentences that say what is not done.') }, ['text']), 'Texts that the gate measures itself.') }, ['candidateHash', 'checks']),
     outputSchema: obj({ ok: bool(), verdict: s('', { enum: ['accepted', 'unmet'] }), candidateHash: s(), failedChecks: arr(s()), prose: obj({ points: int(), findings: arr(proseFinding()) }, ['points', 'findings']) }, ['ok', 'verdict', 'candidateHash', 'failedChecks']),
   },
   'toolpack.load': {

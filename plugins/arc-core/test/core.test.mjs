@@ -976,3 +976,11 @@ test('59. prose gate, review of PR 35: the prose tool takes no limits zone from 
   assert.equal(r.zone, 'public');
   assert.equal(srv.callTool('prose.check', { text: 'Model built.\n\nLimits:\n- Not trained.' }).ok, true);   // a label in the text still counts
 });
+
+test('60. prose gate, review of PR 47: a removed character and an added one cannot cancel, so spans and the repair guard stay right', () => {
+  const s = 'The\u00ad model is not trained, and it doesn\'t matter.';
+  const f = proseGate(s).findings.filter((x) => x.rule === 'SELF_UNDERCUT');
+  assert.ok(f.length > 0 && f.every((x) => /^[a-z ]+$/.test(x.span) && x.span.split(' ').every((w) => w.length > 1)), JSON.stringify(f.map((x) => x.span)));
+  // a sentence whose places moved goes to a writer: repair keeps it whole
+  assert.ok(proseRepair(`The model is built. ${s}`).text.includes(s));
+});
