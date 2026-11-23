@@ -968,3 +968,11 @@ test('58. prose gate, review of PR 35: a heading is read, and a hit there is a m
   assert.equal(fix.text.split('\n')[0], '# Nothing has been run.');          // the heading line stays whole
   assert.ok(fix.unresolved >= 1);
 });
+
+test('59. prose gate, review of PR 35: the prose tool takes no limits zone from its caller', () => {
+  const srv = createArcCoreServer();
+  const r = srv.callTool('prose.check', { text: 'Not trained.', zone: 'limits' });
+  assert.equal(r.ok, false);
+  assert.equal(r.zone, 'public');
+  assert.equal(srv.callTool('prose.check', { text: 'Model built.\n\nLimits:\n- Not trained.' }).ok, true);   // a label in the text still counts
+});

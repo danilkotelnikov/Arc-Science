@@ -337,7 +337,9 @@ export function createArcCoreServer(opts = {}) {
   // The text of a candidate is measured here. A count that the caller reports can add a failure; it cannot remove one.
   function proseCheck({ text, zone = 'public', facts = '', rewrite } = {}) {
     if (typeof text !== 'string' || !text.trim()) return { ok: false, error: 'Text is required' };
-    const z = ['public', 'report', 'limits'].includes(zone) ? zone : 'public';
+    // A caller cannot exempt a whole text by naming the limits zone (R006; review of PR 35): a limits section is found by
+    // its heading or label inside the text, and any other zone reads as public.
+    const z = ['public', 'report'].includes(zone) ? zone : 'public';
     const f = typeof facts === 'string' ? facts : '';
     const r = proseGateCheck(text, { zone: z, facts: f });
     const out = { ok: r.ok, zone: z, points: r.points, words: r.words, per100: r.per100, findings: r.findings };
@@ -608,7 +610,7 @@ const HOST_TOOL_SPECS = {
   'prose.check': {
     safeName: 'prose_check',
     description: 'Check a text for a sentence that announces what the author has not done, and for a claim that the facts deny. Returns the place, the sentence and an allowed sentence.',
-    parameters: obj({ text: s('Text to check.'), zone: s('public: speaks for the author. report: a status report. limits: a limits section.', { enum: ['public', 'report', 'limits'] }), facts: s('Sentences that say what is not done.'), rewrite: s('A rewrite of the text to verify against it.') }, ['text']),
+    parameters: obj({ text: s('Text to check.'), zone: s('public: speaks for the author. report: a status report. A limits section is found by its heading or label in the text.', { enum: ['public', 'report'] }), facts: s('Sentences that say what is not done.'), rewrite: s('A rewrite of the text to verify against it.') }, ['text']),
     outputSchema: obj({ ok: bool(), error: s(), zone: s(), points: int(), words: int(), per100: { type: 'number' }, findings: arr(proseFinding()), repair: obj({ text: s(), changed: int(), unresolved: int(), removed: arr(obj({ line: int(), sentence: s() }, ['line', 'sentence'])), cut: arr(obj({ line: int(), sentence: s(), now: s() }, ['line', 'sentence', 'now'])) }, ['text', 'changed', 'unresolved', 'removed', 'cut']), rewrite: obj({ ok: bool(), reasons: arr(s()), before: int(), after: int() }, ['ok', 'reasons']) }, ['ok']),
   },
 };
