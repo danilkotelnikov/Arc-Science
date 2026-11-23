@@ -136,11 +136,15 @@ function clauseIndex(t, opensAt, kinds) {
 }
 
 function tokensOf(sentence) {
-  const lower = foldMixed(foldLatin(sentence.toLowerCase().replace(/’/g, "'"))).replace(/\bcannot\b/g, 'can not').replace(/n't\b/g, ' not');
+  const cased = sentence.toLowerCase().replace(/’/g, "'");
+  const latin = foldLatin(cased);
+  const folded = foldMixed(latin);
+  const lower = folded.replace(/\bcannot\b/g, 'can not').replace(/n't\b/g, ' not');
   const words = [];
   const at = [];
   for (const m of lower.matchAll(WORD)) { words.push(m[0]); at.push(m.index); }
-  return { words, at, opens: opensOf(lower, words, at), shifted: lower.length !== sentence.length };
+  // Each step is checked on its own: a removal in one step must not cancel an insertion in another.
+  return { words, at, opens: opensOf(lower, words, at), shifted: cased.length !== sentence.length || latin.length !== cased.length || lower.length !== folded.length };
 }
 
 // A hit blocks when it is in the clear core; any other hit is a mark. `why` names the reason for a mark.
@@ -326,11 +330,12 @@ const startsWithAny = (w, set) => Boolean(w) && [...set].some((s) => w.startsWit
 const endsWithAny = (w, set) => Boolean(w) && [...set].some((s) => w.endsWith(s));
 
 function tokensRu(sentence) {
-  const lower = foldLatin(sentence.toLowerCase());
+  const cased = sentence.toLowerCase();
+  const lower = foldLatin(cased);
   const words = [];
   const at = [];
   for (const m of lower.matchAll(WORD_RU)) { words.push(m[0]); at.push(m.index); }
-  return { words, at, opens: opensOf(lower, words, at), shifted: lower.length !== sentence.length };
+  return { words, at, opens: opensOf(lower, words, at), shifted: cased.length !== sentence.length || lower.length !== cased.length };
 }
 
 // "Модель пока не обучена", "Ничего не запускали", "Результатов пока нет", "Это только проект", "Нам предстоит обучить".
