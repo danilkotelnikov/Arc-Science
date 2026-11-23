@@ -932,3 +932,12 @@ test('54. prose gate, review of PR 36: one long clause stays linear in English a
   }
   assert.ok(Date.now() - started < 3000, `three long clauses took ${Date.now() - started} ms`);
 });
+
+test('55. prose gate, review of PR 35: denials past the cap of 300 are reported, never dropped without notice', () => {
+  const facts = `${Array.from({ length: 300 }, (_, k) => `Model${k} not trained.`).join('\n')}\nNimbus has not been benchmarked.`;
+  const r = proseGate('Nimbus is built.', { facts });
+  assert.deepEqual(r.findings.map((f) => [f.rule, f.severity]), [['FACTS_TRUNCATED', 'review']]);
+  assert.ok(verifyRewrite('Nimbus is built.', 'Nimbus was benchmarked.', { facts }).reasons.some((x) => x.startsWith('FACTS_TRUNCATED')));
+  // at the cap itself nothing is reported
+  assert.deepEqual(proseGate('Nimbus is built.', { facts: Array.from({ length: 300 }, (_, k) => `Model${k} not trained.`).join('\n') }).findings, []);
+});

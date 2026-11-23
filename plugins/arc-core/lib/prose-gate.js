@@ -406,7 +406,9 @@ const headNouns = (words) => {
   const cut = words.findIndex((w) => L.prep.has(w));
   return (cut > 0 ? words.slice(0, cut) : words).filter((w) => w.length >= 4 && !L.stop.has(w) && !L.work_part.has(w) && !L.neg_det.has(w) && !L.filler.has(w) && !L.aux.has(w));
 };
-// The denials, grouped by their participle. At most MAX_DENIALS are read, so a long facts text costs little (F101).
+// The denials, grouped by their participle. At most MAX_DENIALS are read, so a long facts text costs little (F101). When
+// one more denial follows, the map is marked `truncated` and check() reports it (review of PR 35): no denial goes unread
+// without notice.
 const MAX_DENIALS = 300;
 function deniedBy(factsText) {
   const byPart = new Map();
@@ -414,7 +416,6 @@ function deniedBy(factsText) {
   for (const sentence of String(factsText || '').split(/\n+/).flatMap((l) => l.split(SENTENCE_END))) {
     const before = [];   // head nouns of the clauses before this one, built once
     for (const clause of sentence.split(CLAUSE)) {
-      if (n >= MAX_DENIALS) return byPart;
       const tok = tokensOf(clause);
       const t = tok.words;
       for (const h of undercuts(t, tok.opens)) {
@@ -426,6 +427,7 @@ function deniedBy(factsText) {
         if (h.form === 'un-done') nouns.push(...t.slice(h.b + 1, h.b + 3).filter((w) => L.artifact.has(w)));   // an untrained model
         // "The session, the seats and the engine are planned, not built": the subject stands in the clauses before
         if (!nouns.length) nouns = before;
+        if (n >= MAX_DENIALS) { byPart.truncated = true; return byPart; }
         if (!byPart.has(part)) byPart.set(part, []);
         byPart.get(part).push(new Set(nouns));
         n += 1;
@@ -595,6 +597,10 @@ export function sentences(text, { zone = 'public' } = {}) {
 export function check(text, { zone = 'public', facts = '', overclaim = 'review' } = {}) {
   const findings = [];
   const denied = deniedBy(facts);
+  if (denied.truncated) {
+    findings.push({ line: 0, rule: 'FACTS_TRUNCATED', form: 'denials', severity: overclaim, sentence: '', span: `more than ${MAX_DENIALS} denials`,
+      allowed: `Shorten the facts. Denials after the first ${MAX_DENIALS} are not read, so OVERCLAIM cannot see them.` });
+  }
   let words = 0;
   let before = false;                                // a sentence with words came earlier in the text
   for (const { no, line, zone: z } of zoneLines(text, zone)) {
