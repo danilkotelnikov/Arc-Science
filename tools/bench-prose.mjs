@@ -64,6 +64,19 @@ const merge = (patch) => { const d = { ...load(), ...patch }; save(d); return d;
 const sha = (s) => createHash('sha256').update(s).digest('hex').slice(0, 16);
 const cleanOut = (s) => s.replace(/^\s*(STATUS|LEAD)\s*:\s*/gim, '').replace(/\*\*/g, '').trim();
 const keyOf = (r) => `${r.arm}:${r.task}:${r.rep}`;
+// A label and a repair belong to the text they were made for. After `arms` rewrites some keys, the saved labels and repairs
+// of those keys go (review of PR 37). Returns the patch for merge().
+export function dropRewritten(saved, rewritten) {
+  const patch = {};
+  if (saved.labels) patch.labels = { ...saved.labels, byKey: Object.fromEntries(Object.entries(saved.labels.byKey || {}).filter(([k]) => !rewritten.has(k))) };
+  if (saved.repairs) patch.repairs = saved.repairs.filter((r) => !rewritten.has(keyOf(r)));
+  return patch;
+}
+// `arms` may rewrite a key while a judge labels it, because there is no lock: a label is kept only when the text saved under
+// its key is still the text the judge read. Returns [key, label] pairs.
+export function freshLabels(rows, answers, textNow) {
+  return rows.map((r, i) => [keyOf(r), answers[i], r.text]).filter(([k, , text]) => textNow.get(k) === text).map(([k, v]) => [k, v]);
+}
 
 /** Writing tasks from the site facts: seven project cards and two home lines. Facts include the limits. */
 function makeTasks(site) {
@@ -130,12 +143,14 @@ function blindTable(name, cases, runs) {
   const row = (title, pred) => { const s = score(pred); lines.push(`  ${title.padEnd(34)} caught ${pct(s.tp, pos)}   false alarms ${pct(s.fp, neg)}`); return s; };
   const out = { rules: row('rules alone', rules) };
   const first = {};
+  let missingAll = 0;
   for (const j of Object.keys(JUDGES)) {
     const rs = (runs || []).filter((r) => r.judge === j && r.set === name);
     if (!rs.length) continue;
     const a = rs[0].answers;
     first[j] = a;
     const missing = a.filter((x) => x === null).length;
+    missingAll += missing;
     out[j] = row(`rules + ${JUDGES[j].label}`, rules.map((r, i) => r || a[i] === true));
     row(`${JUDGES[j].label} alone`, a.map((x) => x === true));
     const agree = kappa(a, labels);
@@ -159,12 +174,14 @@ function blindTable(name, cases, runs) {
     for (const j of js) parts.push(`rules + ${j} ${caught((i) => rules[i] || first[j][i] === true)}`);
     lines.push(`  ${title}: ${idx.length} sentences; caught by ${parts.join(', ')}`);
   }
-  return { lines, out, pos, neg };
+  return { lines, out, pos, neg, missing: missingAll };
 }
 
 /** The rule fixed before the measurement (research/prose-gate-review.md): may a judge block in the public zone? */
-function blockRule(t) {
+export function blockRule(t) {
   if (!t.out.both) return 'not measured';
+  // a missing answer would count as "not flagged" and lower the false-alarm bound, so no decision is made (review of PR 37)
+  if (t.missing) return `not measured: ${t.missing} judge answers are missing; run the fill command first`;
   const gain = (t.out.both.tp - t.out.rules.tp) / t.pos;
   const upper = wilson(t.out.both.fp, t.neg)[1];
   const selfOk = Object.keys(JUDGES).filter((j) => t.out[j]).every((j) => (t.out[j].selfKappa ?? 0) >= 0.8);
@@ -262,6 +279,16 @@ async function main(argv) {
       && Math.abs(fisher(21, 3, 18, 6) - 0.4614) < 0.001 && Math.abs(fisher(18, 6, 0, 24) / 3.68e-8 - 1) < 0.01;
     console.log(ok ? 'bench-prose self-test: wilson, kappa and fisher hold on known values' : 'bench-prose self-test FAILED: statistics');
     if (!ok) return 1;
+    // The merge steps of the review of PR 37: a rewritten key loses its label and repair, a label is kept only for the text the
+    // judge read, and a missing judge answer stops the block decision.
+    const saved = { labels: { judge: 'j', byKey: { 'A:t:1': true, 'A:t:2': false } }, repairs: [{ arm: 'A', task: 't', rep: 1 }, { arm: 'A', task: 't', rep: 2 }] };
+    const patch = dropRewritten(saved, new Set(['A:t:1']));
+    const kept = freshLabels([{ arm: 'A', task: 't', rep: 1, text: 'old' }, { arm: 'A', task: 't', rep: 2, text: 'same' }], [true, false], new Map([['A:t:1', 'new'], ['A:t:2', 'same']]));
+    const merges = JSON.stringify(Object.keys(patch.labels.byKey)) === '["A:t:2"]' && patch.repairs.length === 1 && patch.repairs[0].rep === 2
+      && JSON.stringify(kept) === '[["A:t:2",false]]' && JSON.stringify(dropRewritten({}, new Set(['A:t:1']))) === '{}'
+      && blockRule({ out: { both: { tp: 1, fp: 0 }, rules: { tp: 0 } }, pos: 1, neg: 1, missing: 2 }).startsWith('not measured: 2');
+    console.log(merges ? 'bench-prose self-test: labels, repairs and missing answers follow their texts' : 'bench-prose self-test FAILED: merge steps');
+    if (!merges) return 1;
     // The saved data must hold every part, and the judge answers must belong to the case files as they are now.
     if (!fs.existsSync(DATA)) { console.log('bench-prose self-test FAILED: no saved data'); return 1; }
     const d = load();
@@ -288,11 +315,8 @@ async function main(argv) {
     }
     const fresh = await pool(jobs, Number(flag('--width', 2)));
     const arms = only ? [...(load().arms || []).filter((r) => !only.has(r.task)), ...fresh] : fresh;
-    // A label belongs to the text it was given for: drop the labels of every key that this run rewrote.
-    const rewritten = new Set(fresh.map(keyOf));
-    const saved = load().labels;
-    const labels = saved ? { labels: { ...saved, byKey: Object.fromEntries(Object.entries(saved.byKey || {}).filter(([k]) => !rewritten.has(k))) } } : {};
-    console.log(report(merge({ reps, rulesSha: sha(rules), ruleLine: RULE_LINE, ranAt: only ? d.ranAt : new Date().toISOString(), arms, ...labels }))); return 0;
+    const own = dropRewritten(load(), new Set(fresh.map(keyOf)));
+    console.log(report(merge({ reps, rulesSha: sha(rules), ruleLine: RULE_LINE, ranAt: only ? d.ranAt : new Date().toISOString(), arms, ...own }))); return 0;
   }
   if (cmd === 'repair') {
     const T = Object.fromEntries(d.tasks.map((t) => [t.id, t]));
@@ -313,7 +337,8 @@ async function main(argv) {
     const want = flag('--judge', d.labels?.judge || 'argon');
     if (d.labels?.judge && want !== d.labels.judge && Object.values(have).some((v) => v !== null && v !== undefined)) { console.error(`the saved labels come from judge ${d.labels.judge}; --judge ${want} would mix judges`); return 2; }
     const res = await labelTexts(order.map((r) => r.text), want);
-    const byKey = { ...(load().labels?.byKey || {}), ...Object.fromEntries(order.map((r, i) => [keyOf(r), res.labels[i]])) };
+    const now = load();
+    const byKey = { ...(now.labels?.byKey || {}), ...Object.fromEntries(freshLabels(order, res.labels, new Map((now.arms || []).map((r) => [keyOf(r), r.text])))) };
     const calls = [...(d.labels?.calls || []), ...res.calls];
     console.log(report(merge({ labels: { judge: res.judge, model: res.model, question: QUESTION, calls, byKey } }))); return 0;
   }
@@ -331,7 +356,11 @@ async function main(argv) {
       r.calls = [...r.calls, ...again.calls.map((c) => ({ ...c, fill: true }))];
       process.stderr.write(`${r.judge} run ${r.run} ${r.set}: asked again for ${miss.length}, still without answer ${r.answers.filter((x) => x === null).length}\n`);
     }
-    console.log(report(merge({ blind: { ...load().blind, runs } }))); return 0;
+    // A blind run that finished while the judge read has replaced these runs, so nothing is written then. There is no lock:
+    // two commands can still meet between this check and the write.
+    const now = load();
+    if (now.blind?.ranAt !== d.blind.ranAt) { console.error('a blind run finished while fill ran; its answers stay and nothing is filled; run fill again'); return 2; }
+    console.log(report(merge({ blind: { ...now.blind, runs } }))); return 0;
   }
   if (cmd === 'blind') {
     const runsN = Number(flag('--runs', 2));
