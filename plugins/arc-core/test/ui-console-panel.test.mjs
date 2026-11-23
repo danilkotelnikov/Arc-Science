@@ -9,6 +9,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { createResearchSessionStore } from '../lib/index.js';
+import { serveConsoleRoute } from '../lib/console.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const source = fs.readFileSync(path.join(here, '../ui/panel.js'), 'utf8');
@@ -29,17 +30,19 @@ function expand(node) {
   return { ...node, children: (node.children || []).map(expand).flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false) };
 }
 // a panel that keeps its state between renders, so a test can click and look again
-function mount(props) {
+// `globals` enter the page context of the panel (fetch, document, setTimeout); `pick` chooses another component than the panel.
+function mount(props, { globals = {}, pick = null } = {}) {
   const states = {}, refs = {}; let i = 0, j = 0, effects = [];
   const React = { createElement, Fragment: 'fragment',
     useState: (v) => { const k = i++; if (!(k in states)) states[k] = v; return [states[k], (n) => { states[k] = typeof n === 'function' ? n(states[k]) : n; }]; },
     useRef: (v) => { const k = j++; if (!(k in refs)) refs[k] = { current: v }; return refs[k]; },
     useEffect: (fn) => { effects.push(fn); } };
-  const m = loadPanel(React);
+  const m = loadPanel(React, globals);
   const live = { ...props };
-  const render = () => { i = 0; j = 0; effects = []; const tree = expand({ type: m.kit.ConsolePanel, props: { t, ...live }, children: [] }); for (const f of effects) f(); return tree; };
-  return { render, set: (more) => Object.assign(live, more) };
+  const render = () => { i = 0; j = 0; effects = []; const tree = expand({ type: pick ? pick(m) : m.kit.ConsolePanel, props: pick ? {} : { t, ...live }, children: [] }); for (const f of effects) f(); return tree; };
+  return { render, set: (more) => Object.assign(live, more), refs };
 }
+const tick = () => new Promise((r) => setImmediate(r));
 const all = (node, pred, out = []) => { if (node && typeof node === 'object') { if (pred(node)) out.push(node); for (const c of node.children || []) all(c, pred, out); } return out; };
 const text = (node) => (node === null || node === undefined ? '' : typeof node !== 'object' ? String(node) : node.type === 'style' ? '' : (node.children || []).map(text).join(' ')).replace(/\s+/g, ' ').trim();
 const has = (node, cls) => String(node.props?.className || '').split(/\s+/).includes(cls);
@@ -92,8 +95,10 @@ test('a view is chosen in the panel; the four views with a workspace also tell t
   assert.deepEqual(sent, ['Memory', 'Molecullage', 'Prose']);
   assert.deepEqual(tabs(p.render()).filter((n) => n.props['aria-selected']).map(text), ['Status']);
   // the workspace of the store decides the first view until the user picks one
-  const first = mount({ data: snap({ head: { activeWorkspace: 'Molecullage', ladderRungs: [] } }) }).render();
-  assert.deepEqual(tabs(first).filter((n) => n.props['aria-selected']).map(text), ['Figures']);
+  for (const [workspace, name] of [['Research', 'Research'], ['Memory', 'Memory'], ['Molecullage', 'Figures'], ['Prose', 'Prose'], ['Unknown', 'Research']]) {
+    const first = mount({ data: snap({ head: { activeWorkspace: workspace, ladderRungs: [] } }) }).render();
+    assert.deepEqual(tabs(first).filter((n) => n.props['aria-selected']).map(text), [name], workspace);
+  }
 });
 
 test('Research: one row for each decision, claim and release of the store, with its kind and its state', () => {
@@ -112,7 +117,7 @@ test('Research: one row for each decision, claim and release of the store, with 
   assert.deepEqual(dots, ['on', '', '', 'on', '', 'warn']);
 });
 
-test('Research, a decision: the detail offers the other decisions, sends the chosen one, and Back returns to the list', () => {
+test('Research, a decision: the detail offers the other decisions, sends the chosen one, and Back returns to the list', async () => {
   const sent = [], chat = [];
   const p = mount({ data: snap(), onDecision: (r) => sent.push(r), onUseInChat: (x) => chat.push(x) });
   click(rowsOf(p.render(), 'research')[0]);
@@ -122,7 +127,10 @@ test('Research, a decision: the detail offers the other decisions, sends the cho
   assert.equal(rowsOf(tree, 'research').length, 0, 'the list gives way to the detail');
   assert.equal(text(all(detail, (n) => n.type === 'h2')[0]), 'CDR3 active-site insertion geometry');
   assert.equal(text(all(detail, (n) => has(n, 'ak-tag'))[0]), 'Decision');
-  assert.equal(text(all(detail, (n) => n.props?.['data-level'])[0]), 'Checked to level 2 of 6');
+  // the two operator switches of the ladder are no checks of a claim, so the scale ends at the fourth level
+  assert.equal(text(all(detail, (n) => n.props?.['data-level'])[0]), 'Checked to level 2 of 4');
+  const hint = all(detail, (n) => n.props?.['aria-label'] === 'About the levels')[0];
+  assert.ok(hint, 'the meaning of a level sits in a hint beside the line');
   assert.equal(text(all(detail, (n) => n.type === 'p')[0]), 'Support 2.84. Value for its cost 1.42.');
   const back = all(detail, (n) => n.props?.['data-back'])[0];
   assert.equal(back.props.autoFocus, true, 'the focus moves into the detail');
@@ -130,6 +138,7 @@ test('Research, a decision: the detail offers the other decisions, sends the cho
   assert.equal(button(detail, 'Pursue'), undefined);
   click(button(detail, 'Park'));
   assert.deepEqual(plain(sent), [{ branchId: 'b-cdr3-loop', action: 'Park' }]);
+  await tick();
   const more = all(detail, (n) => n.props?.['aria-haspopup'] === 'menu')[0];
   assert.equal(more.props['aria-label'], 'More actions');
   assert.equal(more.props['aria-expanded'], false);
@@ -139,6 +148,7 @@ test('Research, a decision: the detail offers the other decisions, sends the cho
   assert.deepEqual(items.map(text), ['Drop', 'Request a test']);
   click(items[1]);
   assert.deepEqual(plain(sent[1]), { branchId: 'b-cdr3-loop', action: 'Request a test' });
+  await tick();
   assert.equal(all(p.render(), (n) => n.props?.role === 'menuitem').length, 0, 'a choice closes the menu');
   click(button(p.render(), 'Use in chat'));
   assert.match(chat[0], /CDR3 active-site insertion geometry/);
@@ -162,11 +172,11 @@ test('Research, a claim: the detail shows the whole text and its source; a claim
   const p = mount({ data: snap(), item: 'claim:c-a100-share', onDecision: (r) => sent.push(r), onVerdict: (r) => sent.push(r) });
   const detail = all(p.render(), (n) => n.props?.['data-detail'])[0];
   assert.equal(text(all(detail, (n) => n.type === 'p')[0]), 'Combined autoencoder and denoiser Adam training states occupy 6.54 GB (8.2% of an 80 GB NVIDIA A100).');
-  assert.equal(text(all(detail, (n) => n.props?.['data-level'])[0]), 'Checked to level 1 of 6');
+  assert.equal(text(all(detail, (n) => n.props?.['data-level'])[0]), 'Checked to level 1 of 4');
   const ev = rowsOf(detail, 'evidence');
   assert.deepEqual(ev.map(nameOf), ['studio/jobs/ml-explainer/compute/sizes.json']);
   assert.deepEqual(ev.map(statusOf), ['Architecture']);
-  assert.deepEqual(all(detail, (n) => n.type === 'button').map(text), ['Research', 'Use in chat']);
+  assert.deepEqual(all(detail, (n) => n.type === 'button' && n.props['aria-label'] !== 'About the levels').map(text), ['Research', 'Use in chat']);
   assert.equal(all(detail, (n) => n.props?.['aria-haspopup'] === 'menu').length, 0);
   assert.deepEqual(sent, []);
 });
@@ -179,7 +189,7 @@ test('Research, the release: the verdict goes to the store and the state follows
     const p = mount({ data: store.snapshot(), item: 'release:candidate', onVerdict: (r) => sent.push(r) });
     let detail = all(p.render(), (n) => n.props?.['data-detail'])[0];
     assert.equal(statusOf(detail), 'Waits for you');
-    assert.deepEqual(rowsOf(detail, 'evidence').map((r) => [nameOf(r), statusOf(r)]), [['Release checks', 'Accepted'], ['Prose check', 'Clean']]);
+    assert.deepEqual(rowsOf(detail, 'evidence').map((r) => [nameOf(r), statusOf(r)]), [['Release checks', 'Accepted']], 'the text box of the Prose view is no check of the release, so the detail does not show it as one');
     click(button(detail, 'Approve'));
     assert.deepEqual(plain(sent), [{ targetType: 'release', targetId: 'candidate', verdict: 'Approve' }]);
     assert.equal((await store.annotateVerdict(sent[0])).ok, true);
@@ -319,8 +329,16 @@ test('Prose on a real store: Check text sends the draft, the marks show with a p
     tree = p.render();
     assert.equal(all(tree, (n) => n.type === 'textarea')[0].props.value, store.snapshot().prose.text);
     assert.notEqual(store.snapshot().prose.text, draft);
-    await click(button(tree, 'Use a sample'));
-    assert.equal(calls[2][0], 'check');
+    // the sample only fills the box, as in the approved preview: nothing is sent and the stored text stays
+    const stored = store.snapshot().prose.text;
+    click(button(tree, 'Use a sample'));
+    assert.equal(calls.length, 2, 'the sample was sent as a check');
+    assert.equal(store.snapshot().prose.text, stored);
+    tree = p.render();
+    const sample = all(tree, (n) => n.type === 'textarea')[0].props.value;
+    assert.notEqual(sample, stored);
+    await click(button(tree, 'Check text'));
+    assert.deepEqual(calls[2], ['check', sample]);
     assert.ok(store.snapshot().prose.report.findings.length > 0, 'the sample shows the check at work');
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
@@ -338,6 +356,7 @@ test('Status: one line for each part, with what the state says about it', () => 
   const lines = (tree) => Object.fromEntries(rowsOf(tree, 'statusline').map((r) => [nameOf(r), statusOf(r)]));
   assert.deepEqual(Object.keys(lines(off)), ['Local gateway', 'Providers', 'Tool servers', 'Memory', 'Add-ons']);
   assert.equal(lines(off)['Local gateway'], 'Not reached');
+  assert.equal(lines(off).Providers, 'Not reached', 'a gateway that did not answer gives no count of providers');
   assert.equal(lines(off).Memory, 'Not reached');
   assert.ok(rowsOf(off, 'statusline').every((r) => all(r, (n) => n.type === 'svg').length === 1), 'each line carries its own icon');
   const on = mount({ view: 'status', data: { ...base,
@@ -386,4 +405,116 @@ test('the app mounts the new panel in the side pane, with every action wired to 
   assert.match(pane, /h\(ConsolePanel, \{/);
   assert.ok(!/h\(View, \{/.test(pane), 'the old view is no longer mounted');
   for (const kind of ['workspace', 'decision', 'verdict', 'molecullage-pin', 'prose', 'prose-rewrite', 'memory-search', 'molecullage-search', 'refresh']) assert.ok(pane.includes(`kind: "${kind}"`), `the pane does not send ${kind}`);
+});
+
+// ---- after the isolated review of f8a44a8 (S062): one test for each confirmed finding
+
+test('Research: an action holds its buttons until the state that follows it has arrived, so a second click sends nothing', async () => {
+  const sent = []; let done = null;
+  const p = mount({ data: snap(), item: 'release:candidate', onVerdict: (r) => { sent.push(plain(r)); return new Promise((resolve) => { done = resolve; }); } });
+  click(button(p.render(), 'Approve'));
+  const held = all(p.render(), (n) => n.props?.['data-detail'])[0];
+  const actions = all(held, (n) => n.type === 'button' && !n.props['data-back'] && text(n) !== 'Use in chat' && !n.props['aria-describedby'] && n.props['aria-label'] !== 'About the levels');
+  assert.ok(actions.length >= 2, 'the main button and the menu button are in the detail');
+  assert.ok(actions.every((n) => n.props.disabled === true), 'an action button stays live while the action is on its way');
+  for (const n of actions) click(n); // a second click, also on a button that a slow page still shows as live
+  assert.equal(all(p.render(), (n) => n.props?.role === 'menuitem').length, 0, 'the menu does not open while the action is on its way');
+  assert.equal(sent.length, 1);
+  done(true);
+  await tick();
+  const free = all(p.render(), (n) => n.props?.['data-detail'])[0];
+  assert.ok(all(free, (n) => n.type === 'button').every((n) => !n.props.disabled));
+});
+
+test('Use in chat writes the text into the chat box of the app and says so in one status line', () => {
+  const box = { tagName: 'TEXTAREA', value: '', disabled: false, readOnly: false, offsetParent: {}, closest: () => null, dispatchEvent() {}, focus() {} };
+  const p = mount({ data: snap(), item: 'claim:c-1mel-contacts' }, { globals: { document: { querySelectorAll: () => [box] } } });
+  click(button(p.render(), 'Use in chat')); // no onUseInChat here, as in the app
+  assert.match(box.value, /PDB 1MEL forms 55 heavy-atom residue pairs/);
+  assert.deepEqual(all(p.render(), (n) => n.props?.role === 'status').map(text), [mod.en['chat.ready']]);
+});
+
+test('Research: Back puts the focus on the row that was open', () => {
+  const asked = []; let focused = 0;
+  const p = mount({ data: snap(), item: 'branch:b-surface-patch' }, { globals: { setTimeout: (fn) => fn() } });
+  p.render();
+  // the first ref of the panel is its root element; the test stands in for the page
+  p.refs[0].current = { querySelector: (sel) => { asked.push(sel); return { focus: () => { focused++; } }; } };
+  click(all(p.render(), (n) => n.props?.['data-back'])[0]);
+  assert.deepEqual(asked, ['[data-row="research"][data-id="branch:b-surface-patch"]']);
+  assert.equal(focused, 1);
+});
+
+test('Prose: each kind of mark carries its own plain reason, and an unknown kind a general one', () => {
+  const base = snap();
+  const findings = [{ kind: 'refused-word', match: 'holistic' }, { kind: 'contrast-x-not-y', match: 'not a, but b' }, { kind: 'formulaic-phrase', match: 'a testament to' }, { kind: 'new-kind', match: 'x' }];
+  const tree = mount({ view: 'prose', data: { ...base, prose: { ok: true, text: 'Some text.', report: { ok: false, findings } } } }).render();
+  const reasons = rowsOf(tree, 'finding').map((r) => text(all(r, (n) => has(n, 'sub'))[0]));
+  assert.deepEqual(reasons, [mod.en['pane.prose.why.word'], mod.en['pane.prose.why.contrast'], mod.en['pane.prose.why.stock'], mod.en['pane.prose.why.other']]);
+  assert.equal(new Set(reasons).size, 4);
+});
+
+test('Memory: the same failure is said once, also when the state and the action both carry it', () => {
+  const base = snap(), line = 'The memory gateway did not answer.';
+  const tree = mount({ view: 'memory', actionError: line, data: { ...base, memory: { ...base.memory, lastQuery: 'x', results: [], error: line } } }).render();
+  assert.deepEqual(alerts(tree), [line]);
+});
+
+test('Figures: a search without a hit says Nothing matches and keeps the pinned sources in view', () => {
+  const base = snap();
+  const tree = mount({ view: 'figures', data: { ...base, molecullage: { ...base.molecullage, query: 'zzz', items: [], pins: [{ id: 'pdb', name: 'RCSB PDB' }] } } }).render();
+  assert.equal(text(all(tree, (n) => has(n, 'ak-empty'))[0]), 'Nothing matches.');
+  assert.deepEqual(rowsOf(tree, 'source').map(nameOf), ['RCSB PDB Pinned']);
+});
+
+test('the evidence level of a claim reads from the dictionary, and an unknown level keeps its own word', () => {
+  for (const lv of ['measured', 'published', 'simulated', 'architecture', 'target']) assert.equal(typeof mod.en[`pane.evidence.${lv}`], 'string', lv);
+  const base = snap();
+  const tree = mount({ data: { ...base, claims: { ok: true, items: [{ id: 'c1', text: 'One.', level: 'simulated', source: 's', rung: 'L1' }, { id: 'c2', text: 'Two.', level: 'hearsay', source: 's', rung: 'L1' }] } } }).render();
+  assert.deepEqual(rowsOf(tree, 'research').slice(3, 5).map(statusOf), [mod.en['pane.evidence.simulated'], 'Hearsay']);
+});
+
+test('the side pane that the app registers runs the new panel on the console route: a decision and a text check reach the store', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-panel-'));
+  try {
+    const store = createResearchSessionStore({ arcHome: tmp, molecullageRoot: path.join(tmp, 'no-library'), live: false });
+    const posts = [];
+    const fetch = async (url, init) => { const body = JSON.parse(init.body); posts.push([String(url), body]); const out = await serveConsoleRoute(String(url), body, store); return { ok: true, json: async () => JSON.parse(JSON.stringify(out)) }; };
+    const settle = async () => { for (let k = 0; k < 8; k++) await tick(); };
+    let Pane = null, guide = '';
+    const p = mount({}, { globals: { fetch }, pick: (m) => {
+      if (!Pane) {
+        const slots = { inject: (name, fn) => { fn(); return () => {}; }, register: (opts, comp) => { if (opts.name === 'sidebar.right.pane.tab') Pane = comp; return () => {}; } };
+        const sidebarRightTabs = { register: (tab) => { guide = tab.guide[0].description(); return () => {}; } };
+        m.apply({ effect: () => {}, locale: { register: () => {}, bind: () => t }, slots, inject: (names, fn) => { fn({ sidebarRightTabs, slots }); } });
+      }
+      return Pane;
+    } });
+    p.render();
+    assert.equal(typeof Pane, 'function', 'the app got a pane component');
+    assert.ok(!/connector|Settings|Molecullage/i.test(guide), `the line of the tab names parts that the panel no longer has: ${guide}`);
+    await settle();
+    let tree = p.render();
+    assert.equal(tree.props['data-arc-panel'], 'console');
+    assert.equal(rowsOf(tree, 'research').length, 6, 'the pane passes the console state to the panel');
+    click(rowsOf(tree, 'research')[1]);
+    click(button(p.render(), 'Pursue'));
+    await settle();
+    assert.equal(store.snapshot().tree.branches[1].decision, 'Pursue', 'the decision reached the store');
+    assert.equal(statusOf(all(p.render(), (n) => n.props?.['data-detail'])[0]), 'Pursued');
+    click(tabs(p.render()).find((n) => n.props['data-view'] === 'prose'));
+    await settle();
+    const draft = 'The method is not a shortcut, but a careful protocol.';
+    all(p.render(), (n) => n.type === 'textarea')[0].props.onChange({ target: { value: draft } });
+    await click(button(p.render(), 'Check text'));
+    await settle();
+    assert.equal(store.snapshot().prose.text, draft, 'the text reached the store');
+    assert.ok(rowsOf(p.render(), 'finding').length >= 1);
+    assert.deepEqual(posts.filter(([url]) => url === 'api/arc-core/console/action').map(([, body]) => body.kind), ['decision', 'workspace', 'prose']);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test('the root test command of the repository, which CI runs, lists the tests of the side panel', () => {
+  const root = JSON.parse(fs.readFileSync(path.join(here, '../../../package.json'), 'utf8'));
+  assert.ok(root.scripts.test.includes('plugins/arc-core/test/ui-console-panel.test.mjs'));
 });

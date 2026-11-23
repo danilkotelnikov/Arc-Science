@@ -28,7 +28,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
 
   const en = {
     "tab.title": "Arc console",
-    "tab.guide": "Unified console for Research, Memory, Molecullage, Prose, connectors and Settings.",
+    "tab.guide": "Research, memory, figures and text checks.",
     "state.loading": "Loading console…",
     "state.error": "Could not read the console state.",
     "nav.workspaces": "Workspaces",
@@ -271,6 +271,13 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "pane.state.revise": "To revise",
     "pane.state.hold": "On hold",
     "pane.level": "Checked to level {n} of {m}",
+    "pane.level.about": "About the levels",
+    "pane.level.hint": "Each level is a harder check. Level {m} is the hardest.",
+    "pane.evidence.measured": "Measured",
+    "pane.evidence.published": "Published",
+    "pane.evidence.simulated": "Simulated",
+    "pane.evidence.architecture": "Architecture",
+    "pane.evidence.target": "Target",
     "pane.research.support": "Support {s}. Value for its cost {v}.",
     "pane.research.empty": "No research entries yet.",
     "pane.evidence": "Evidence",
@@ -278,9 +285,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "pane.more.for": "More for {name}",
     "pane.release.title": "Release candidate {hash}",
     "pane.release.checks": "Release checks",
-    "pane.release.prose": "Prose check",
-    "pane.release.clean": "The prose check is clean. Your verdict decides the release.",
-    "pane.release.marks": "The prose check has marks. Your verdict decides the release.",
+    "pane.release.text": "Your verdict decides the release.",
     "pane.search": "Search",
     "pane.memory.search": "Search the shared notes",
     "pane.figures.search": "Search the sources",
@@ -292,7 +297,6 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "pane.prose.place": "Paste a text to check",
     "pane.prose.sample": "Use a sample",
     "pane.prose.clean": "Clean",
-    "pane.prose.has": "Has marks",
     "pane.prose.count": "To fix: {n}",
     "pane.prose.tofix": "To fix",
     "pane.prose.rewrite": "Replace with plain words",
@@ -1796,13 +1800,16 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   const DECISION_STATE = { Pursue: ["pursued", "on"], Park: ["parked", ""], Drop: ["dropped", ""], "Request a test": ["test", "warn"] };
   const VERDICT_STATE = { Approve: ["approved", "on"], Revise: ["revise", "warn"], Hold: ["hold", ""] };
   const VERDICTS = ["Approve", "Revise", "Hold"];
+  const OPERATOR_RUNGS = ["L5", "L6"]; // switches of the operator in the ladder of the state: no checks of a claim
+  // the word of an evidence level comes from the dictionary; a level the dictionary does not know keeps its own word
+  const levelWord = (lv, t) => (en[`pane.evidence.${lv}`] ? t(`pane.evidence.${lv}`) : capital(lv));
   const PROSE_WHY = { "refused-word": "pane.prose.why.word", "contrast-x-not-y": "pane.prose.why.contrast", "formulaic-phrase": "pane.prose.why.stock" };
   const PROSE_SAMPLE = "The new assay is not a shortcut, but a careful protocol.";
   const rungNo = (r) => { const m = /^L(\d+)$/.exec(String(r || "")); return m ? Number(m[1]) : 0; };
   const capital = (s) => { const x = String(s || ""); return x ? x[0].toUpperCase() + x.slice(1) : ""; };
 
   // a short list of actions behind one button. Escape closes the open list only; the arrow keys open it and move in it.
-  function Menu({ label, items, onPick }) {
+  function Menu({ label, items, onPick, disabled = false }) {
     const [open, setOpen] = React.useState(false);
     const keys = (e) => {
       if (e.key === "Escape") {
@@ -1814,7 +1821,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       }
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
       e.preventDefault?.();
-      if (!open) { setOpen(true); return; }
+      if (!open) { if (!disabled) setOpen(true); return; }
       const list = Array.from(e.currentTarget?.querySelectorAll?.("[role=menuitem]") || []);
       const at = list.indexOf(e.currentTarget?.ownerDocument?.activeElement);
       list[e.key === "ArrowDown" ? (at + 1) % list.length : (at <= 0 ? list.length : at) - 1]?.focus?.();
@@ -1825,8 +1832,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       if (onPick) onPick(id);
     };
     return h("span", { className: "ak-pick", onKeyDown: keys, onBlur: (e) => { if (!e.currentTarget?.contains?.(e.relatedTarget)) setOpen(false); } },
-      h("button", { type: "button", className: "ak-btn icon", "aria-haspopup": "menu", "aria-expanded": open, "aria-label": label, onClick: () => setOpen(!open) }, h(Ic, { n: "more" })),
-      open ? h("div", { className: "ak-menu", role: "menu", "aria-label": label },
+      h("button", { type: "button", className: "ak-btn icon", "aria-haspopup": "menu", "aria-expanded": open && !disabled, "aria-label": label, disabled, onClick: () => { if (!disabled) setOpen(!open); } }, h(Ic, { n: "more" })),
+      open && !disabled ? h("div", { className: "ak-menu", role: "menu", "aria-label": label },
         items.map(([id, text], i) => h("button", { key: id, type: "button", role: "menuitem", "data-act": id, tabIndex: -1, autoFocus: i === 0, onClick: (e) => pick(id, e) }, text))) : null);
   }
 
@@ -1841,8 +1848,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     }
     for (const c of (state.claims && state.claims.items) || []) {
       const lv = String(c.level || "");
-      out.push({ id: `claim:${c.id}`, type: "claim", ref: c, title: String(c.text || c.id), kind: t("pane.kind.claim"), state: lv ? capital(lv) : t("pane.state.open"), dot: lv === "measured" || lv === "published" ? "on" : "", level: rungNo(c.rung),
-        text: String(c.text || ""), evidence: c.source ? [[String(c.source), capital(lv)]] : [], acts: [],
+      out.push({ id: `claim:${c.id}`, type: "claim", ref: c, title: String(c.text || c.id), kind: t("pane.kind.claim"), state: lv ? levelWord(lv, t) : t("pane.state.open"), dot: lv === "measured" || lv === "published" ? "on" : "", level: rungNo(c.rung),
+        text: String(c.text || ""), evidence: c.source ? [[String(c.source), levelWord(lv, t)]] : [], acts: [],
         chat: `Claim [${c.level}, ${c.rung}]: ${c.text} (source: ${c.source})` });
     }
     const rel = state.release;
@@ -1850,8 +1857,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       const v = verdicts["release:candidate"] && verdicts["release:candidate"].verdict;
       const [word, dot] = VERDICT_STATE[v] || ["waits", "warn"];
       out.push({ id: "release:candidate", type: "release", ref: rel, title: t("pane.release.title", { hash: oneLine(rel.candidateHash, 16) }), kind: t("pane.kind.release"), state: t(`pane.state.${word}`), dot, level: 0,
-        text: t(rel.proseOk ? "pane.release.clean" : "pane.release.marks"),
-        evidence: [[t("pane.release.checks"), capital(rel.verdict)], [t("pane.release.prose"), t(rel.proseOk ? "pane.prose.clean" : "pane.prose.has")]], acts: VERDICTS.filter((a) => a !== v),
+        // The text box of the Prose view is no check of a release text, so the release does not show it as one.
+        text: t("pane.release.text"),
+        evidence: [[t("pane.release.checks"), capital(rel.verdict)]], acts: VERDICTS.filter((a) => a !== v),
         chat: `Review release gate (${rel.verdict}, candidate ${rel.candidateHash})` });
     }
     return out;
@@ -1865,6 +1873,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const [draft, setDraft] = React.useState(null); // the typed text of the Prose view, until a check takes it
     const [fb, setFb] = React.useState("");
     const root = React.useRef ? React.useRef(null) : { current: null };
+    const [busy, setBusy] = React.useState(false); // an action of the open detail is on its way
+    const inFlight = React.useRef ? React.useRef(false) : { current: false };
     // React needs the same hooks on every render, so the panel computes on an empty state before its data arrives.
     const state = data || {}, head = state.head || {};
     const view = PANEL_VIEWS.includes(picked) ? picked : VIEW_OF_WORKSPACE[head.activeWorkspace] || "research";
@@ -1888,10 +1898,15 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     let body;
     if (open) {
       const [main, ...rest] = open.acts;
-      const run = (a) => {
-        if (open.type === "branch" && onDecision) onDecision({ branchId: open.ref.id, action: a });
-        if (open.type === "release" && onVerdict) onVerdict({ targetType: "release", targetId: "candidate", verdict: a });
+      // The main button shows the next action, so its meaning changes when the new state arrives. The action buttons are
+      // held from the click until then: the second click of a double click must not send the opposite action.
+      const run = async (a) => {
+        const fn = open.type === "branch" ? onDecision : open.type === "release" ? onVerdict : null;
+        if (!fn || inFlight.current) return;
+        inFlight.current = true; setBusy(true);
+        try { await fn(open.type === "branch" ? { branchId: open.ref.id, action: a } : { targetType: "release", targetId: "candidate", verdict: a }); } catch { /* the pane shows the refusal in its own line */ } finally { inFlight.current = false; setBusy(false); }
       };
+      const levels = Math.max((head.ladderRungs || []).filter((r) => r && !OPERATOR_RUNGS.includes(r.id)).length || 4, open.level);
       const word = (a) => (open.type === "release" ? t(`verdict.${a.toLowerCase()}`) : a);
       const title = oneLine(open.title, 90);
       body = h("div", { className: "ak-detail", "data-detail": open.id },
@@ -1900,15 +1915,16 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         h("div", { className: "ak-meta" },
           h("span", { className: "ak-tag" }, open.kind),
           h(KStatus, { text: open.state, dot: open.dot }),
-          open.level ? h("span", { className: "ak-status", "data-level": open.level }, t("pane.level", { n: open.level, m: Math.max((head.ladderRungs || []).length, open.level) })) : null),
+          open.level ? h("span", { className: "ak-status", "data-level": open.level }, t("pane.level", { n: open.level, m: levels })) : null,
+          open.level ? h(InfoHint, { label: t("pane.level.about"), text: t("pane.level.hint", { m: levels }), glyph: h(Ic, { n: "info" }) }) : null),
         open.text && open.text !== title ? h("p", null, open.text) : null,
         open.evidence.length ? h(React.Fragment, null,
           h("div", { className: "ak-group" }, t("pane.evidence")),
           h("div", { className: "ak-rows" }, open.evidence.map(([name, level], i) => h(KRow, { key: i, kind: "evidence", id: String(i), name: oneLine(name, 90), mono: open.type === "claim", end: h(KStatus, { text: level }) })))) : null,
         h("div", { className: "ak-acts" },
-          main ? h(KBtn, { look: "primary", label: word(main), onClick: () => run(main) }) : null,
+          main ? h(KBtn, { look: "primary", label: word(main), disabled: busy, onClick: () => run(main) }) : null,
           h(KBtn, { look: "outline", label: t("chat.use"), onClick: () => use(open.chat) }),
-          rest.length ? h(Menu, { label: t("pane.more"), items: rest.map((a) => [a, word(a)]), onPick: run }) : null));
+          rest.length ? h(Menu, { label: t("pane.more"), items: rest.map((a) => [a, word(a)]), disabled: busy, onPick: run }) : null));
     } else if (view === "research") {
       body = items.length === 0 ? empty("pane.research.empty") : h("div", { className: "ak-rows" }, items.map((r) => h("button", { key: r.id, type: "button", className: "ak-row", "data-row": "research", "data-id": r.id, onClick: () => setItem(r.id) },
         h("span", { className: "text" }, h("span", { className: "name" }, oneLine(r.title, 90)), h("span", { className: "sub" }, r.kind)),
@@ -1917,7 +1933,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       const m = state.memory || {}, hits = Array.isArray(m.results) ? m.results : [];
       body = h(React.Fragment, null,
         search("memory", memQ, setMemQ, onSearchMemory, t("pane.memory.search"), false),
-        m.error ? h("p", { role: "alert", className: "ak-alert" }, oneLine(m.error)) : null,
+        // the pane may carry the same refusal as its own line above: one failure is said once
+        m.error && oneLine(m.error) !== oneLine(actionError) ? h("p", { role: "alert", className: "ak-alert" }, oneLine(m.error)) : null,
         hits.length ? h("div", { className: "ak-rows" }, hits.map((n, i) => h(KRow, {
           key: n.id || i, kind: "note", id: String(n.id || i), name: String(n.text || ""), chips: [oneLine(n.context || "memory", 40)],
           end: h(KBtn, { look: "outline", small: true, label: t("chat.use"), aria: t("pane.use.label", { name: oneLine(n.text, 40) }), onClick: () => use(`Shared memory [${n.context || "memory"}]: ${n.text}`) }),
@@ -1927,9 +1944,11 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       const keyOf = (s) => s.id || s.name, pinned = new Set(pins.map((p) => p.id));
       const said = (v) => (typeof v === "string" && v.trim() && v.trim().toLowerCase() !== "none" ? v.trim() : ""); // the library writes "none" for an empty field
       const rows = [...pins.filter((p) => !found.some((s) => keyOf(s) === p.id)), ...found];
+      const asked = String(f.query || "").trim(); // the search that the store answered last
       body = h(React.Fragment, null,
         search("figures", figQ, setFigQ, onSearchFigures, t("pane.figures.search"), true),
-        rows.length === 0 ? empty("pane.figures.none") : h("div", { className: "ak-rows" }, rows.map((s) => {
+        found.length === 0 && asked ? empty("pane.nothing") : null,
+        rows.length === 0 ? (asked ? null : empty("pane.figures.none")) : h("div", { className: "ak-rows" }, rows.map((s) => {
           const k = keyOf(s), on = pinned.has(k), name = oneLine(s.name || k, 60);
           return h(KRow, {
             key: k, kind: "source", id: String(k), name, tail: on ? h("span", { className: "ak-tag" }, t("molecullage.pinned")) : null, sub: oneLine(said(s.use) || said(s.kind) || said(s.section), 90),
@@ -1946,7 +1965,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         h("textarea", { className: "ak-area", name: "prose", value: now, placeholder: t("pane.prose.place"), "aria-label": t("pane.prose.text"), onChange: (e) => setDraft(e.target.value) }),
         h("div", { className: "ak-acts" },
           h(KBtn, { look: "primary", label: t("prose.apply"), onClick: () => send(onProseCheck, now, false) }),
-          h(KBtn, { look: "outline", label: t("pane.prose.sample"), onClick: () => send(onProseCheck, PROSE_SAMPLE, true) }),
+          // the sample only fills the box, as in the approved preview: the stored text stays until Check text sends it
+          h(KBtn, { look: "outline", label: t("pane.prose.sample"), onClick: () => setDraft(PROSE_SAMPLE) }),
           now !== stored || !stored.trim() ? null : marks.length ? h(KStatus, { text: t("pane.prose.count", { n: marks.length }), dot: "warn" }) : h(KStatus, { text: t("pane.prose.clean"), dot: "on" })),
         marks.length && now === stored ? h(React.Fragment, null,
           h("div", { className: "ak-group" }, t("pane.prose.tofix")),
@@ -1958,7 +1978,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       const line = (id, icon, name, [text, dot]) => h(KRow, { key: id, kind: "statusline", id, name: h(React.Fragment, null, h(Ic, { n: icon }), name), end: h(KStatus, { text, dot }) });
       body = h("div", { className: "ak-rows" },
         line("gateway", "gateway", t("pane.status.gateway"), m.reachable ? [t("pane.status.running"), "on"] : off),
-        line("providers", "chip", t("pane.status.providers"), [t("pane.status.listed", { n: (m.routes || []).length }), undefined]),
+        line("providers", "chip", t("pane.status.providers"), !m.reachable ? off : [t("pane.status.listed", { n: (m.routes || []).length }), undefined]),
         line("servers", "plug", t("pane.status.servers"), [t("pane.status.of", { n: srv.filter((s) => s && s.state === "ok").length, m: srv.length }), undefined]),
         line("memory", "layers", t("pane.status.memory"), !m.reachable ? off : m.configured === false ? [t("state.unset"), ""] : m.recall ? [t("pane.status.recall.on"), "on"] : [t("pane.status.recall.off"), ""]),
         line("addons", "blocks", t("pane.status.addons"), [t("pane.status.installed", { n: add.length }), undefined]),
@@ -2041,7 +2061,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         onPinSource: (req) => dispatch({ kind: "molecullage-pin", ...req }),
         onProseCheck: async (text) => (await dispatch({ kind: "prose", text }))?.ok !== false,
         onProseRewrite: async (text) => (await dispatch({ kind: "prose-rewrite", ...(typeof text === "string" ? { text } : {}) }))?.ok !== false,
-        onSearchMemory: (query) => dispatch({ kind: "memory-search", query }),
+        // a refused search leaves its line in the state: the state is read again, so the hits of the search before it leave the view
+        onSearchMemory: async (query) => { const r = await dispatch({ kind: "memory-search", query }); if (r && r.ok === false) await dispatch({ kind: "refresh" }); },
         onSearchFigures: (query) => dispatch({ kind: "molecullage-search", query }),
         onRefresh: () => dispatch({ kind: "refresh" }),
       });

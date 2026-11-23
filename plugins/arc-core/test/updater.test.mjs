@@ -1354,12 +1354,46 @@ test('release notes: text within the limit stays whole, and longer text carries 
   assert.equal(pickRelease([rel('n'.repeat(5000))]).notes.length, 1201);
 });
 
-test('console route: the channel does not change while an update runs', async () => {
+test('console route: the channel does not change while an update runs', async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-route-')); t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const calls = [];
   const busy = { getState: () => ({ busy: true, channel: 'release' }), setChannel: (c) => { calls.push(c); return {}; }, check: async () => ({}) };
-  const r = await serveConsoleRoute(post('api/arc-core/update/action', { kind: 'channel', channel: 'beta' }), {}, createResearchSessionStore(), { updater: busy });
+  const r = await serveConsoleRoute(post('api/arc-core/update/action', { kind: 'channel', channel: 'beta' }), {}, createResearchSessionStore({ arcHome: tmp, live: false }), { updater: busy });
   assert.equal(r.ok, false);
   assert.match(r.error, /update is running/);
   assert.ok(r.error.length <= 90);
   assert.deepEqual(calls, [], 'the choice was not saved');
+});
+
+test('an install whose own check failed leaves a failure line in the state, also when the channel changed meanwhile', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  const other = e.make();
+  let broken = false;
+  const u = e.make({ fetchImpl: async (url, o) => { if (broken && /\/releases\?/.test(String(url))) { other.setChannel('beta'); throw new TypeError('fetch failed'); } return fetch(url, o); } });
+  await u.check();
+  broken = true;
+  assert.equal((await u.install()).ok, false);
+  const s = u.getState();
+  assert.equal(s.failed, true, 'the page would show nothing for this refusal');
+  assert.match(String(s.message), /Could not reach GitHub/);
+});
+
+test('a plain check that fails while an install reads the release list does not stop that install', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  // the first list read belongs to the plain check: it is held and then fails. The second belongs to the install.
+  let n = 0; const open = [null, null];
+  const held = [new Promise((r) => { open[0] = r; }), new Promise((r) => { open[1] = r; })];
+  const u = e.make({ fetchImpl: async (url, o) => { if (/\/releases\?/.test(String(url))) { const k = n++; if (k < 2) await held[k]; if (k === 0) throw new TypeError('fetch failed'); } return fetch(url, o); } });
+  const first = u.check();
+  await pause(30);
+  const inst = u.install();
+  await pause(120); // the install now waits for its own list read
+  open[0]();
+  await first;
+  open[1]();
+  const r = await inst;
+  assert.equal(r.ok, true, `the failure of another check stopped the install: ${r.error}`);
 });
