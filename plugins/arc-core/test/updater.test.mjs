@@ -1322,6 +1322,31 @@ test('a check of a channel that is no longer chosen does not mark the state as f
   assert.deepEqual({ phase: again.phase, failed: again.failed }, { phase: 'failed', failed: true });
 });
 
+test('an install whose own check failed does not go on with an older release list, also when the channel changed meanwhile', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  const other = e.make();
+  let broken = false;
+  const u = e.make({ fetchImpl: async (url, o) => { if (broken && /\/releases\?/.test(String(url))) { other.setChannel('beta'); throw new TypeError('fetch failed'); } return fetch(url, o); } });
+  assert.equal((await u.check()).latest, '0.6.1'); // this window now holds a release list from an earlier check
+  const before = u.getState().installed;
+  broken = true;
+  const r = await u.install();
+  assert.equal(r.ok, false, 'the install went on although its own check had failed');
+  assert.match(String(r.error), /Could not reach GitHub/);
+  assert.equal(u.getState().installed, before);
+});
+
+test('an install of a version that no release carries says so in the state, so the page can show it', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  const r = await e.u.install({ version: '0.9.9' });
+  assert.equal(r.ok, false);
+  const s = e.u.getState();
+  assert.equal(s.phase, 'idle');
+  assert.match(String(s.message), /0\.9\.9 was not found/);
+});
+
 test('release notes: text within the limit stays whole, and longer text carries one character more so that a reader can tell it was cut', () => {
   const rel = (body) => ({ tag_name: 'v0.6.1', draft: false, prerelease: false, assets: [], body });
   assert.equal(pickRelease([rel('n'.repeat(1200))]).notes.length, 1200);

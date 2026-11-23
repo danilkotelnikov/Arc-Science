@@ -308,6 +308,7 @@ export function createUpdater(opts = {}) {
   async function doCheck(forChannel) {
     const channel = forChannel || settings().channel; // read now: another window of the app may have changed it
     phase('checking');
+    mem.checkError = ''; // what this check failed with, for the update that asked for it
     try {
       let all = [];
       // GitHub lists the newest releases first. A full page with no version for this channel can hide one on an older page
@@ -326,7 +327,8 @@ export function createUpdater(opts = {}) {
       phase('idle', top ? '' : 'No release with a plain version number was found.');
     } catch (err) {
       // a check for a channel that is no longer chosen says nothing about the new one, also when it fails
-      if (settings().channel === channel) phase('failed', `Could not reach GitHub or read its answer: ${clean(err.message, 200)}`);
+      mem.checkError = `Could not reach GitHub or read its answer: ${clean(err.message, 200)}`;
+      if (settings().channel === channel) phase('failed', mem.checkError);
       else phase('idle');
     }
     return getState();
@@ -508,10 +510,11 @@ export function createUpdater(opts = {}) {
       if (!journal()) await prevBack(); // an update that stopped before or during its swap left the earlier backup aside
       const channel = settings().channel; // read once, here: the check and the pick below use this one value
       const st = await doCheck(channel);
-      if (st.phase === 'failed') return { ok: false, error: st.message };
+      // the check of this update failed: an older release list must not stand in, also when the channel changed meanwhile
+      if (st.phase === 'failed' || mem.checkError) return { ok: false, error: mem.checkError || st.message };
       const named = back ? undefined : version;
       const pick = pickRelease(mem.releases, named, channel);
-      if (!pick) return { ok: false, error: named ? `Release ${clean(named, 40)} was not found.` : 'No release was found.' };
+      if (!pick) { const none = named ? `Release ${clean(named, 40)} was not found.` : 'No release was found.'; phase('idle', none); return { ok: false, error: none }; }
       toVersion = pick.version;
       if (back && expect && (expect.version !== toVersion || expect.channel !== channel)) {
         const moved = 'The newest version of the channel changed. Look at the page again.';

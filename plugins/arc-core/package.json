@@ -25,7 +25,7 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node --test test/core.test.mjs test/ui-panel.test.mjs test/ui-kit-access.test.mjs test/updater.test.mjs test/cammut-console.test.mjs test/cammut-panel.test.mjs test/library-index.test.mjs"
+    "test": "node --test test/core.test.mjs test/ui-panel.test.mjs test/ui-kit-access.test.mjs test/ui-console-panel.test.mjs test/updater.test.mjs test/cammut-console.test.mjs test/cammut-panel.test.mjs test/library-index.test.mjs"
   },
   "arc": {
     "bundle": {

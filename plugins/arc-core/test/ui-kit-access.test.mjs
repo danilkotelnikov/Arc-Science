@@ -1034,3 +1034,10 @@ test('Updates: notes of exactly the limit are shown whole', () => {
   assert.equal(cut.length, 1200);
   assert.ok(cut.endsWith('\u2026'));
 });
+
+test('Updates: a long version name that the updater accepts shows whole', async () => {
+  const long = '0.10.10-alpha.1234567'; // 21 characters, and a valid version
+  const s = await realState({ installed: '0.6.0', releases: [{ ...rel(long), prerelease: true }], channel: 'alpha' });
+  assert.equal(s.latest, long);
+  assert.ok(text(upage(s)).includes(long), 'the page cut a version that the updater accepts');
+});
