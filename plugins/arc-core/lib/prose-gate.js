@@ -390,6 +390,10 @@ function readSentence(sentence) {
   const ru = CYR.test(sentence) ? tokensRu(sentence) : null;
   return { en, enHits: undercuts(en.words, en.opens), ru, ruHits: ru ? undercutsRu(ru.words, ru.opens) : [], words: ru ? ru.words.length : en.words.length };
 }
+// A heading names a section, and "Not yet supported" or "Untested platforms" may be an honest title: a hit in a heading is
+// a mark for a reader, never a block (review of PR 35).
+const toMark = (h) => (isBlock(h) ? { ...h, band: 'mark', why: 'heading' } : h);
+const asTitle = (r, heading) => (heading ? { ...r, enHits: r.enHits.map(toMark), ruHits: r.ruHits.map(toMark) } : r);
 
 // A sentence that may announce missing work and may state a scope: "does not include a visual interface", "no data exists".
 // A script cannot tell the two apart, so the gate marks the sentence for a reader and does not block it.
@@ -517,9 +521,13 @@ export function repair(text, { drop = true } = {}) {
   let changed = 0;
   const removed = [];
   const cut = [];
-  const limits = new Set(zoneLines(text, 'public').filter((z) => z.zone === 'limits').map((z) => z.no));   // check() exempts these lines, so repair keeps them
+  const zones = zoneLines(text, 'public');
+  const limits = new Set(zones.filter((z) => z.zone === 'limits').map((z) => z.no));   // check() exempts these lines, so repair keeps them
+  const heads = new Set(zones.filter((z) => z.heading).map((z) => z.no));
   const lines = String(text ?? '').split('\n').map((line, idx) => {
     if (limits.has(idx + 1)) return line;
+    // a heading is never cut or removed: a writer renames it
+    if (heads.has(idx + 1)) { if (line.split(SENTENCE_END).some((s) => repairSentence(s) !== s)) unresolved += 1; return line; }
     const parts = line.split(SENTENCE_END);
     const kept = [];
     for (const s of parts) {
@@ -579,6 +587,10 @@ function zoneLines(text, zone) {
       const isLimits = namesLimits(head[2]);
       if (isLimits) limitsLevel = level; else if (limitsLevel && level <= limitsLevel) limitsLevel = 0;
       plain = 0;
+      // A heading is public text, a page or section title: its words are read in the zone it opens or sits in (review of
+      // PR 35). A closing run of # goes, as in CommonMark.
+      const title = head[2].replace(/\s+#+\s*$/, '').replace(/`([^`\n]+)`/g, ' $1 ').replace(/https?:\/\/\S+/g, ' ');
+      if (title.trim()) out.push({ no: idx + 1, line: title, zone: limitsLevel ? 'limits' : zone, heading: true });
       continue;
     }
     if (!raw.trim()) { if (plain === 2) plain = 0; continue; }
@@ -593,10 +605,10 @@ function zoneLines(text, zone) {
 /** The sentences of a text as the gate reads them, with their zone and whether a rule finds an undercut. The judge reads these. */
 export function sentences(text, { zone = 'public' } = {}) {
   const out = [];
-  for (const { no, line, zone: z } of zoneLines(text, zone)) {
+  for (const { no, line, zone: z, heading } of zoneLines(text, zone)) {
     for (const s of line.split(SENTENCE_END)) {
       if (!s.trim()) continue;
-      const r = readSentence(s);
+      const r = asTitle(readSentence(s), heading);
       const hits = [...r.enHits, ...r.ruHits];
       // held: the clause of each exception mark, from its first word to the end of the hit ("No adverse events were
       // reported"). A rewrite must keep it; a mark for an unclear subject is no exception and a writer may rewrite it.
@@ -624,9 +636,9 @@ export function check(text, { zone = 'public', facts = '', overclaim = 'review' 
   }
   let words = 0;
   let before = false;                                // a sentence with words came earlier in the text
-  for (const { no, line, zone: z } of zoneLines(text, zone)) {
+  for (const { no, line, zone: z, heading } of zoneLines(text, zone)) {
     for (const sentence of line.split(SENTENCE_END)) {
-      const r = readSentence(sentence);
+      const r = asTitle(readSentence(sentence), heading);
       words += r.words;
       const any = r.enHits.some(isBlock) || r.ruHits.some(isBlock);
       const marked = r.enHits.some(isMark) || r.ruHits.some(isMark);

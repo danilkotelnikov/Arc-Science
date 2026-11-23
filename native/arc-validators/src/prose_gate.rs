@@ -1007,7 +1007,8 @@ fn strip_code_and_urls(raw: &str) -> String {
 }
 
 /// The lines of a text with their zone ("public", "report" or "limits"), as zoneLines in the engine.
-pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'static str)> {
+/// The last field says the line is a heading: a hit there is a mark, never a block (JS asTitle).
+pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'static str, bool)> {
     let body = text.strip_prefix('\u{feff}').unwrap_or(text);
     let rows: Vec<&str> = body.split('\n').map(|r| r.strip_suffix('\r').unwrap_or(r)).collect();
     let mut out = Vec::new();
@@ -1053,6 +1054,15 @@ pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'stati
                 limits_level = 0;
             }
             plain = 0;
+            // JS: a heading is public text, read in the zone it opens or sits in; a closing run of # (/\s+#+\s*$/) goes
+            let title = raw[hashes..].trim_start_matches(is_ws);
+            let end = title.trim_end_matches(is_ws);
+            let bare = end.trim_end_matches('#');
+            let title = if bare.len() < end.len() && bare.ends_with(is_ws) { bare.trim_end_matches(is_ws) } else { title };
+            let line = strip_code_and_urls(title);
+            if !js_trim(&line).is_empty() {
+                out.push((idx + 1, line, if limits_level > 0 { "limits" } else { zone }, true));
+            }
             continue;
         }
         if js_trim(raw).is_empty() {
@@ -1073,7 +1083,7 @@ pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'stati
         plain = if plain > 0 && (list_item(raw) || (plain == 2 && indented)) { 2 } else { 0 };
         let line = strip_code_and_urls(raw);
         if !js_trim(&line).is_empty() {
-            out.push((idx + 1, line, if limits_level > 0 || plain == 2 { "limits" } else { zone }));
+            out.push((idx + 1, line, if limits_level > 0 || plain == 2 { "limits" } else { zone }, false));
         }
     }
     out
@@ -1082,8 +1092,8 @@ pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'stati
 /// The line and form of every undercut in the block band outside a limits zone (JS SELF_UNDERCUT).
 pub fn findings(text: &str, zone: &'static str) -> Vec<(usize, &'static str)> {
     let mut out = Vec::new();
-    for (no, line, z) in zone_lines(text, zone) {
-        if z == "limits" {
+    for (no, line, z, heading) in zone_lines(text, zone) {
+        if z == "limits" || heading {
             continue;
         }
         for s in split_sentences(&line) {
@@ -1098,10 +1108,10 @@ pub fn findings(text: &str, zone: &'static str) -> Vec<(usize, &'static str)> {
 /// The verdict that tools/prose-gate.mjs scoreCases gives a case: "undercut", "review" or "clean".
 pub fn verdict(text: &str, zone: &'static str) -> &'static str {
     let mut review = false;
-    for (_, line, z) in zone_lines(text, zone) {
+    for (_, line, z, heading) in zone_lines(text, zone) {
         for s in split_sentences(&line) {
             let hits = undercuts_of(&s);
-            if z != "limits" && hits.iter().any(|h| h.band == "block") {
+            if z != "limits" && !heading && hits.iter().any(|h| h.band == "block") {
                 return "undercut";
             }
             // the mark band (JS UNSURE_ABSENCE with a reason), and the older scope-or-gap mark when nothing else is found

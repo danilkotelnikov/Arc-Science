@@ -958,3 +958,13 @@ test('57. prose gate, review of PR 35: a one-word JSON value is read, so a statu
   assert.deepEqual(r.findings.map((f) => [f.path, f.rule, f.severity]), [['status', 'SELF_UNDERCUT', 'error']]);
   assert.equal(proseGateJson({ limits: { status: 'Untrained' } }).ok, true);   // a limits key still opens its zone
 });
+
+test('58. prose gate, review of PR 35: a heading is read, and a hit there is a mark that repair never cuts', () => {
+  assert.deepEqual(proseGate('# Nothing has been run.\nThe tool runs.').findings.map((f) => [f.line, f.rule, f.form]), [[1, 'UNSURE_ABSENCE', 'heading']]);
+  assert.equal(proseGate('## Not yet supported\n- Linux').ok, true);
+  assert.equal(proseGate('## Method ##\nNot trained.').ok, false);              // the body under a heading still blocks
+  assert.equal(proseGate('## Limits ##\nNot trained.').ok, true);               // a closing run of # keeps a limits title
+  const fix = proseRepair('# Nothing has been run.\nModel built. Not trained.');
+  assert.equal(fix.text.split('\n')[0], '# Nothing has been run.');          // the heading line stays whole
+  assert.ok(fix.unresolved >= 1);
+});

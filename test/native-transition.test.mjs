@@ -435,6 +435,11 @@ test('N8b: the Rust prose gate reads the engine lexicon and gives the JS verdict
     'The model is nοt trained.': 'undercut',
     'Модель пока не обу​чена.': 'undercut',
     'TNFα and IFNγ rose by 2 μM in Aβ42 cells.': 'clean',
+    // review of PR 35: a heading is read, and a hit there is a mark ("Not yet supported" may be an honest title)
+    '# Nothing has been run.\nThe tool runs.': 'review',
+    '## Not yet benchmarked ##\nThe tool runs.': 'review',
+    '## Limits ##\nNot trained.': 'clean',
+    '## Method\nNot trained.': 'undercut',
   };
   for (const text of Object.keys(pinned)) if (!zoneCases.some((c) => c.text === text)) zoneCases.push({ zone: 'public', text });
   const cases = [...loadCases(), ...loadCases(RU_CASES), ...loadCases(HELDOUT), ...loadCases(BLIND3), ...loadCases(RU_BLIND), ...loadCases(F102_BLIND), ...loadCases(BLIND4), ...loadCases(F102_BLIND2), ...loadCases(RU_BLIND2), ...zoneCases];
