@@ -952,3 +952,9 @@ test('56. prose gate, review of PR 35: accents, invisible characters, combining 
   // a kept accented name is no new name in a rewrite
   assert.ok(!verifyRewrite('Snöggo runs free-energy cycles. Not trained.', 'Snöggo runs free-energy cycles.').reasons.some((r) => r.startsWith('new name')));
 });
+
+test('57. prose gate, review of PR 35: a one-word JSON value is read, so a status like "Untrained" blocks', () => {
+  const r = proseGateJson({ status: 'Untrained', id: 'nimbus-1', href: 'https://example.org/a', title: 'Nimbus' });
+  assert.deepEqual(r.findings.map((f) => [f.path, f.rule, f.severity]), [['status', 'SELF_UNDERCUT', 'error']]);
+  assert.equal(proseGateJson({ limits: { status: 'Untrained' } }).ok, true);   // a limits key still opens its zone
+});

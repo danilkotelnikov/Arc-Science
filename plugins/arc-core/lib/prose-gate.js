@@ -678,9 +678,10 @@ export function checkJson(value, { zone = 'public', facts = '' } = {}) {
   let words = 0;
   const walk = (node, where, z) => {
     if (typeof node === 'string') {
-      // markup is read as text; a single word is no sentence ("Not trained" is two words, F101)
+      // markup is read as text. A single word is read too: a status such as "Untrained" or "Pending" speaks for the author
+      // (review of PR 35; 446 one-word values of the real site files gave no finding).
       const text = node.replace(/<[^>]*>/g, ' ');
-      if (!/\S\s+\S/.test(text)) return;
+      if (!text.trim()) return;
       const r = check(text, { zone: z, facts });
       points += r.points; words += r.words;
       for (const f of r.findings) findings.push({ ...f, path: where });
