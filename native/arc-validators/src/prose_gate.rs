@@ -161,20 +161,21 @@ fn homoglyphs() -> &'static HashMap<char, char> {
     })
 }
 
-/// JS foldMixed: a run of Latin and Cyrillic letters that holds both scripts takes the Latin look-alike of each letter.
+/// JS foldMixed: a run of Latin letters with Cyrillic or Greek look-alikes takes the Latin look-alike of each letter.
 fn fold_mixed(lower: &str) -> String {
     let map = homoglyphs();
+    let other = |c: char| is_run_cyr(c) || ('α'..='ω').contains(&c);
     let chars: Vec<char> = lower.chars().collect();
     let mut out = String::with_capacity(lower.len());
     let mut i = 0;
     while i < chars.len() {
-        if chars[i].is_ascii_lowercase() || is_run_cyr(chars[i]) {
+        if chars[i].is_ascii_lowercase() || other(chars[i]) {
             let s = i;
-            while i < chars.len() && (chars[i].is_ascii_lowercase() || is_run_cyr(chars[i])) {
+            while i < chars.len() && (chars[i].is_ascii_lowercase() || other(chars[i])) {
                 i += 1;
             }
             let run = &chars[s..i];
-            let mixed = run.iter().any(|c| c.is_ascii_lowercase()) && run.iter().any(|&c| is_run_cyr(c));
+            let mixed = run.iter().any(|c| c.is_ascii_lowercase()) && run.iter().any(|&c| other(c));
             for c in run {
                 out.push(if mixed { *map.get(c).unwrap_or(c) } else { *c });
             }
@@ -186,13 +187,60 @@ fn fold_mixed(lower: &str) -> String {
     out
 }
 
+/// JS INVISIBLE: characters that show nothing and could split a word.
+fn is_invisible(c: char) -> bool {
+    matches!(c, '\u{ad}' | '\u{34f}' | '\u{61c}' | '\u{115f}' | '\u{1160}' | '\u{17b4}' | '\u{17b5}' | '\u{180b}'..='\u{180f}'
+        | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' | '\u{3164}' | '\u{feff}' | '\u{ffa0}')
+}
+
+/// JS MARKS_AFTER_LATIN: the combining marks that go after a Latin letter.
+fn is_mark(c: char) -> bool {
+    matches!(c, '\u{300}'..='\u{36f}' | '\u{1ab0}'..='\u{1aff}' | '\u{1dc0}'..='\u{1dff}' | '\u{20d0}'..='\u{20ff}' | '\u{fe20}'..='\u{fe2f}')
+}
+
+fn latin_fold() -> &'static HashMap<char, char> {
+    static MAP: OnceLock<HashMap<char, char>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        let mut m = HashMap::new();
+        if let Some(set) = lexicon().set("latin_fold") {
+            for p in set {
+                let mut cs = p.chars();
+                if let (Some(a), Some(b)) = (cs.next(), cs.next()) {
+                    m.insert(a, b);
+                }
+            }
+        }
+        m
+    })
+}
+
+/// JS foldLatin: invisible characters go, a precomposed Latin letter takes its base letter, and combining marks after a
+/// Latin letter go, so "nôt" and "o" + U+0302 read as Latin words. A mark after a Cyrillic letter stays.
+fn fold_latin(lower: &str) -> String {
+    let map = latin_fold();
+    let mut out = String::with_capacity(lower.len());
+    let mut prev: Option<char> = None;
+    for c in lower.chars() {
+        if is_invisible(c) {
+            continue;
+        }
+        let c = if ('\u{c0}'..='\u{24f}').contains(&c) { *map.get(&c).unwrap_or(&c) } else { c };
+        if is_mark(c) && prev.is_some_and(|p| p.is_ascii_lowercase()) {
+            continue;
+        }
+        out.push(c);
+        prev = Some(c);
+    }
+    out
+}
+
 pub fn tokens_en(sentence: &str) -> Vec<String> {
     tokens_en_opens(sentence).0
 }
 
 /// The English tokens and the indexes of the tokens that open a clause after punctuation (JS tokensOf opens).
 pub fn tokens_en_opens(sentence: &str) -> (Vec<String>, HashSet<isize>) {
-    let lower = expand_negations(&fold_mixed(&sentence.to_lowercase().replace('\u{2019}', "'")));
+    let lower = expand_negations(&fold_mixed(&fold_latin(&sentence.to_lowercase().replace('\u{2019}', "'"))));
     let b = lower.as_bytes();
     let mut out = Vec::new();
     let mut opens = HashSet::new();
@@ -256,7 +304,7 @@ pub fn tokens_ru(sentence: &str) -> Vec<String> {
 
 /// The Russian tokens and the indexes of the tokens that open a clause after punctuation.
 pub fn tokens_ru_opens(sentence: &str) -> (Vec<String>, HashSet<isize>) {
-    let chars: Vec<char> = sentence.to_lowercase().chars().collect();
+    let chars: Vec<char> = fold_latin(&sentence.to_lowercase()).chars().collect();
     let mut out = Vec::new();
     let mut opens = HashSet::new();
     let mut prev_end: Option<usize> = None;
@@ -959,20 +1007,43 @@ fn strip_code_and_urls(raw: &str) -> String {
 }
 
 /// The lines of a text with their zone ("public", "report" or "limits"), as zoneLines in the engine.
-pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'static str)> {
+/// The last field says the line is a heading: a hit there is a mark, never a block (JS asTitle).
+pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'static str, bool)> {
     let body = text.strip_prefix('\u{feff}').unwrap_or(text);
     let rows: Vec<&str> = body.split('\n').map(|r| r.strip_suffix('\r').unwrap_or(r)).collect();
     let mut out = Vec::new();
     let mut limits_level = 0usize;
     let mut plain = 0u8;
+    // JS fence: the open fence, its character (` or ~) and its length
+    let mut fence: Option<(char, usize)> = None;
     for (idx, raw) in rows.iter().enumerate() {
-        // a fence line is no prose; the words inside a fence are read like any line
-        if raw.trim_start_matches(is_ws).starts_with("```") {
-            continue;
+        // a fence line is no prose; the words inside a fence are read like any line, but a heading or a label there opens no
+        // zone. ``` and ~~~ open a fence, only the same character at the same length or longer closes it, and ```code```
+        // on one line opens nothing.
+        let lead = raw.trim_start_matches(is_ws);
+        if let Some(c @ ('`' | '~')) = lead.chars().next() {
+            let len = lead.chars().take_while(|&x| x == c).count();
+            if len >= 3 {
+                let rest = &lead[len..];
+                match fence {
+                    None => {
+                        if !(c == '`' && rest.contains('`')) {
+                            fence = Some((c, len));
+                        }
+                    }
+                    Some((fc, fl)) => {
+                        if c == fc && len >= fl && js_trim(rest).is_empty() {
+                            fence = None;
+                        }
+                    }
+                }
+                continue;
+            }
         }
         let hashes = raw.chars().take_while(|&c| c == '#').count();
         // JS /^(#{1,6})\s+(.*)$/: the text after the space run may hold no CR, U+2028 or U+2029
-        let heading = (1..=6).contains(&hashes)
+        let heading = fence.is_none()
+            && (1..=6).contains(&hashes)
             && raw[hashes..].starts_with(is_ws)
             && !raw[hashes..].trim_start_matches(is_ws).contains(['\r', '\u{2028}', '\u{2029}']);
         if heading {
@@ -983,6 +1054,15 @@ pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'stati
                 limits_level = 0;
             }
             plain = 0;
+            // JS: a heading is public text, read in the zone it opens or sits in; a closing run of # (/\s+#+\s*$/) goes
+            let title = raw[hashes..].trim_start_matches(is_ws);
+            let end = title.trim_end_matches(is_ws);
+            let bare = end.trim_end_matches('#');
+            let title = if bare.len() < end.len() && bare.ends_with(is_ws) { bare.trim_end_matches(is_ws) } else { title };
+            let line = strip_code_and_urls(title);
+            if !js_trim(&line).is_empty() {
+                out.push((idx + 1, line, if limits_level > 0 { "limits" } else { zone }, true));
+            }
             continue;
         }
         if js_trim(raw).is_empty() {
@@ -992,7 +1072,7 @@ pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'stati
             continue;
         }
         let list_follows = rows[idx + 1..].iter().find(|r| !js_trim(r).is_empty()).is_some_and(|r| list_item(r));
-        if is_limits_label(raw) && list_follows {
+        if fence.is_none() && is_limits_label(raw) && list_follows {
             plain = 1;
             continue;
         }
@@ -1003,7 +1083,7 @@ pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'stati
         plain = if plain > 0 && (list_item(raw) || (plain == 2 && indented)) { 2 } else { 0 };
         let line = strip_code_and_urls(raw);
         if !js_trim(&line).is_empty() {
-            out.push((idx + 1, line, if limits_level > 0 || plain == 2 { "limits" } else { zone }));
+            out.push((idx + 1, line, if limits_level > 0 || plain == 2 { "limits" } else { zone }, false));
         }
     }
     out
@@ -1012,8 +1092,8 @@ pub fn zone_lines(text: &str, zone: &'static str) -> Vec<(usize, String, &'stati
 /// The line and form of every undercut in the block band outside a limits zone (JS SELF_UNDERCUT).
 pub fn findings(text: &str, zone: &'static str) -> Vec<(usize, &'static str)> {
     let mut out = Vec::new();
-    for (no, line, z) in zone_lines(text, zone) {
-        if z == "limits" {
+    for (no, line, z, heading) in zone_lines(text, zone) {
+        if z == "limits" || heading {
             continue;
         }
         for s in split_sentences(&line) {
@@ -1028,10 +1108,10 @@ pub fn findings(text: &str, zone: &'static str) -> Vec<(usize, &'static str)> {
 /// The verdict that tools/prose-gate.mjs scoreCases gives a case: "undercut", "review" or "clean".
 pub fn verdict(text: &str, zone: &'static str) -> &'static str {
     let mut review = false;
-    for (_, line, z) in zone_lines(text, zone) {
+    for (_, line, z, heading) in zone_lines(text, zone) {
         for s in split_sentences(&line) {
             let hits = undercuts_of(&s);
-            if z != "limits" && hits.iter().any(|h| h.band == "block") {
+            if z != "limits" && !heading && hits.iter().any(|h| h.band == "block") {
                 return "undercut";
             }
             // the mark band (JS UNSURE_ABSENCE with a reason), and the older scope-or-gap mark when nothing else is found

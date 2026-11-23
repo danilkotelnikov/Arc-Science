@@ -932,3 +932,55 @@ test('54. prose gate, review of PR 36: one long clause stays linear in English a
   }
   assert.ok(Date.now() - started < 3000, `three long clauses took ${Date.now() - started} ms`);
 });
+
+test('55. prose gate, review of PR 35: denials past the cap of 300 are reported, never dropped without notice', () => {
+  const facts = `${Array.from({ length: 300 }, (_, k) => `Model${k} not trained.`).join('\n')}\nNimbus has not been benchmarked.`;
+  const r = proseGate('Nimbus is built.', { facts });
+  assert.deepEqual(r.findings.map((f) => [f.rule, f.severity]), [['FACTS_TRUNCATED', 'review']]);
+  assert.ok(verifyRewrite('Nimbus is built.', 'Nimbus was benchmarked.', { facts }).reasons.some((x) => x.startsWith('FACTS_TRUNCATED')));
+  // at the cap itself nothing is reported
+  assert.deepEqual(proseGate('Nimbus is built.', { facts: Array.from({ length: 300 }, (_, k) => `Model${k} not trained.`).join('\n') }).findings, []);
+});
+
+test('56. prose gate, review of PR 35: accents, invisible characters, combining marks and Greek look-alikes split no word', () => {
+  const blocks = (s) => proseGate(s).findings.some((f) => f.rule === 'SELF_UNDERCUT');
+  for (const s of ['The model is nôt trained.', 'The model is no​t trained.', 'The model is nôt trained.', 'The model is nοt trained.',
+    'The model is not tráined.', 'Модель пока не обу​чена.']) assert.ok(blocks(s), s);
+  // Greek letters in science names are no MIXED_SCRIPT error, and a mark after a Cyrillic letter stays
+  assert.deepEqual(proseGate('TNFα and IFNγ rose by 2 μM in Aβ42 cells.').findings, []);
+  assert.deepEqual(proseGate('Исследователй проект работает.').findings, []);
+  // a kept accented name is no new name in a rewrite
+  assert.ok(!verifyRewrite('Snöggo runs free-energy cycles. Not trained.', 'Snöggo runs free-energy cycles.').reasons.some((r) => r.startsWith('new name')));
+});
+
+test('57. prose gate, review of PR 35: a one-word JSON value is read, so a status like "Untrained" blocks', () => {
+  const r = proseGateJson({ status: 'Untrained', id: 'nimbus-1', href: 'https://example.org/a', title: 'Nimbus' });
+  assert.deepEqual(r.findings.map((f) => [f.path, f.rule, f.severity]), [['status', 'SELF_UNDERCUT', 'error']]);
+  assert.equal(proseGateJson({ limits: { status: 'Untrained' } }).ok, true);   // a limits key still opens its zone
+});
+
+test('58. prose gate, review of PR 35: a heading is read, and a hit there is a mark that repair never cuts', () => {
+  assert.deepEqual(proseGate('# Nothing has been run.\nThe tool runs.').findings.map((f) => [f.line, f.rule, f.form]), [[1, 'UNSURE_ABSENCE', 'heading']]);
+  assert.equal(proseGate('## Not yet supported\n- Linux').ok, true);
+  assert.equal(proseGate('## Method ##\nNot trained.').ok, false);              // the body under a heading still blocks
+  assert.equal(proseGate('## Limits ##\nNot trained.').ok, true);               // a closing run of # keeps a limits title
+  const fix = proseRepair('# Nothing has been run.\nModel built. Not trained.');
+  assert.equal(fix.text.split('\n')[0], '# Nothing has been run.');          // the heading line stays whole
+  assert.ok(fix.unresolved >= 1);
+});
+
+test('59. prose gate, review of PR 35: the prose tool takes no limits zone from its caller', () => {
+  const srv = createArcCoreServer();
+  const r = srv.callTool('prose.check', { text: 'Not trained.', zone: 'limits' });
+  assert.equal(r.ok, false);
+  assert.equal(r.zone, 'public');
+  assert.equal(srv.callTool('prose.check', { text: 'Model built.\n\nLimits:\n- Not trained.' }).ok, true);   // a label in the text still counts
+});
+
+test('60. prose gate, review of PR 47: a removed character and an added one cannot cancel, so spans and the repair guard stay right', () => {
+  const s = 'The\u00ad model is not trained, and it doesn\'t matter.';
+  const f = proseGate(s).findings.filter((x) => x.rule === 'SELF_UNDERCUT');
+  assert.ok(f.length > 0 && f.every((x) => /^[a-z ]+$/.test(x.span) && x.span.split(' ').every((w) => w.length > 1)), JSON.stringify(f.map((x) => x.span)));
+  // a sentence whose places moved goes to a writer: repair keeps it whole
+  assert.ok(proseRepair(`The model is built. ${s}`).text.includes(s));
+});

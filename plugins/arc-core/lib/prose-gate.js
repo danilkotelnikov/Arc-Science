@@ -60,7 +60,8 @@ own_word    project projects what
 ru_first    мы наш наша наше наши нашего нашей нашем нашим нашими наших нам нас нами я мне меня мной мой моя моё мое мои
 ru_artifact модел нейросет веса весов чекпоинт верси прототип конвейер пайплайн систем инструмент код дизайн метод модул компонент релиз функци движок движк сервер датасет набор утвержден проект
 ru_other    друг предыдущ прежн ранн
-homoglyph   аa еe оo рp сc уy хx іi јj ѕs кk ԁd ӏl
+homoglyph   аa еe оo рp сc уy хx іi јj ѕs кk ԁd ӏl οo αa εe ιi κk νv ρp τt υu χx
+latin_fold  àa áa âa ãa äa åa çc èe ée êe ëe ìi íi îi ïi ñn òo óo ôo õo öo ùu úu ûu üu ýy ÿy āa ăa ąa ćc ĉc ċc čc ďd ēe ĕe ėe ęe ěe ĝg ğg ġg ģg ĥh ĩi īi ĭi įi ĵj ķk ĺl ļl ľl ńn ņn ňn ōo ŏo őo ŕr ŗr řr śs ŝs şs šs ţt ťt ũu ūu ŭu ůu űu ųu ŵw ŷy źz żz žz ơo ưu ǎa ǐi ǒo ǔu ǖu ǘu ǚu ǜu ǟa ǡa ǧg ǩk ǫo ǭo ǰj ǵg ǹn ǻa ȁa ȃa ȅe ȇe ȉi ȋi ȍo ȏo ȑr ȓr ȕu ȗu șs țt ȟh ȧa ȩe ȫo ȭo ȯo ȱo ȳy øo đd łl ħh ıi ŧt ƀb
 ru_done_end н на но ны ён ена ено ены ли ла ло лся лась лось лись
 ru_now      пока ещё еще
 ru_absent   нет отсутствует отсутствуют отсутствие отсутствуют
@@ -99,8 +100,19 @@ const isPart = (w) => Boolean(w) && (L.work_part.has(w) || (/(?:ed|en)$/.test(w)
 const HOMO = new Map([...L.homoglyph].map((p) => [p[0], p[1]]));
 const RUN = /[a-zа-яёіјѕԁӏ]+/g;
 const isMixed = (w) => /[a-z]/.test(w) && /[а-яёіјѕԁӏ]/.test(w);
-const foldMixed = (lower) => lower.replace(RUN, (w) => (isMixed(w) ? [...w].map((c) => HOMO.get(c) || c).join('') : w));
+// A Greek look-alike inside a Latin word ("nοt" with an omicron) is folded for reading too. It is no MIXED_SCRIPT error:
+// TNFα and IFNγ are honest words in science text (review of PR 35).
+const RUN_FOLD = /[a-zа-яёіјѕԁӏα-ω]+/g;
+const foldMixed = (lower) => lower.replace(RUN_FOLD, (w) => (/[a-z]/.test(w) && /[а-яёіјѕԁӏα-ω]/.test(w) ? [...w].map((c) => HOMO.get(c) || c).join('') : w));
 const mixedWords = (sentence) => (sentence.toLowerCase().match(RUN) || []).filter(isMixed);
+// An accent, an invisible character or a combining mark does not split a Latin word ("nôt", "no&#8203;t", "o" + U+0302):
+// invisible characters go, a precomposed Latin letter takes its base letter from latin_fold (one table for JS and Rust,
+// since Rust has no Unicode normalisation), and combining marks after a Latin letter go (review of PR 35). A mark after
+// a Cyrillic letter stays, so "й" keeps its breve.
+const INVISIBLE = /[­͏؜ᅟᅠ឴឵᠋-᠏​-‏‪-‮⁠-⁤⁦-⁯ㅤ﻿ﾠ]/g;
+const LATIN_FOLD = new Map([...L.latin_fold].map((p) => [p[0], p[1]]));
+const MARKS_AFTER_LATIN = /([a-z])[̀-ͯ᪰-᫿᷀-᷿⃐-⃿︠-︯]+/g;
+const foldLatin = (lower) => lower.replace(INVISIBLE, '').replace(/[À-ɏ]/g, (c) => LATIN_FOLD.get(c) || c).replace(MARKS_AFTER_LATIN, '$1');
 
 // The token indexes that open a clause after punctuation: "Tested on Windows, not on Linux" opens a clause at "not".
 const CLAUSE_MARK = /[,;:()–—]/;
@@ -124,11 +136,15 @@ function clauseIndex(t, opensAt, kinds) {
 }
 
 function tokensOf(sentence) {
-  const lower = foldMixed(sentence.toLowerCase().replace(/’/g, "'")).replace(/\bcannot\b/g, 'can not').replace(/n't\b/g, ' not');
+  const cased = sentence.toLowerCase().replace(/’/g, "'");
+  const latin = foldLatin(cased);
+  const folded = foldMixed(latin);
+  const lower = folded.replace(/\bcannot\b/g, 'can not').replace(/n't\b/g, ' not');
   const words = [];
   const at = [];
   for (const m of lower.matchAll(WORD)) { words.push(m[0]); at.push(m.index); }
-  return { words, at, opens: opensOf(lower, words, at), shifted: lower.length !== sentence.length };
+  // Each step is checked on its own: a removal in one step must not cancel an insertion in another.
+  return { words, at, opens: opensOf(lower, words, at), shifted: cased.length !== sentence.length || latin.length !== cased.length || lower.length !== folded.length };
 }
 
 // A hit blocks when it is in the clear core; any other hit is a mark. `why` names the reason for a mark.
@@ -314,11 +330,12 @@ const startsWithAny = (w, set) => Boolean(w) && [...set].some((s) => w.startsWit
 const endsWithAny = (w, set) => Boolean(w) && [...set].some((s) => w.endsWith(s));
 
 function tokensRu(sentence) {
-  const lower = sentence.toLowerCase();
+  const cased = sentence.toLowerCase();
+  const lower = foldLatin(cased);
   const words = [];
   const at = [];
   for (const m of lower.matchAll(WORD_RU)) { words.push(m[0]); at.push(m.index); }
-  return { words, at, opens: opensOf(lower, words, at), shifted: lower.length !== sentence.length };
+  return { words, at, opens: opensOf(lower, words, at), shifted: cased.length !== sentence.length || lower.length !== cased.length };
 }
 
 // "Модель пока не обучена", "Ничего не запускали", "Результатов пока нет", "Это только проект", "Нам предстоит обучить".
@@ -378,6 +395,10 @@ function readSentence(sentence) {
   const ru = CYR.test(sentence) ? tokensRu(sentence) : null;
   return { en, enHits: undercuts(en.words, en.opens), ru, ruHits: ru ? undercutsRu(ru.words, ru.opens) : [], words: ru ? ru.words.length : en.words.length };
 }
+// A heading names a section, and "Not yet supported" or "Untested platforms" may be an honest title: a hit in a heading is
+// a mark for a reader, never a block (review of PR 35).
+const toMark = (h) => (isBlock(h) ? { ...h, band: 'mark', why: 'heading' } : h);
+const asTitle = (r, heading) => (heading ? { ...r, enHits: r.enHits.map(toMark), ruHits: r.ruHits.map(toMark) } : r);
 
 // A sentence that may announce missing work and may state a scope: "does not include a visual interface", "no data exists".
 // A script cannot tell the two apart, so the gate marks the sentence for a reader and does not block it.
@@ -406,7 +427,9 @@ const headNouns = (words) => {
   const cut = words.findIndex((w) => L.prep.has(w));
   return (cut > 0 ? words.slice(0, cut) : words).filter((w) => w.length >= 4 && !L.stop.has(w) && !L.work_part.has(w) && !L.neg_det.has(w) && !L.filler.has(w) && !L.aux.has(w));
 };
-// The denials, grouped by their participle. At most MAX_DENIALS are read, so a long facts text costs little (F101).
+// The denials, grouped by their participle. At most MAX_DENIALS are read, so a long facts text costs little (F101). When
+// one more denial follows, the map is marked `truncated` and check() reports it (review of PR 35): no denial goes unread
+// without notice.
 const MAX_DENIALS = 300;
 function deniedBy(factsText) {
   const byPart = new Map();
@@ -414,7 +437,6 @@ function deniedBy(factsText) {
   for (const sentence of String(factsText || '').split(/\n+/).flatMap((l) => l.split(SENTENCE_END))) {
     const before = [];   // head nouns of the clauses before this one, built once
     for (const clause of sentence.split(CLAUSE)) {
-      if (n >= MAX_DENIALS) return byPart;
       const tok = tokensOf(clause);
       const t = tok.words;
       for (const h of undercuts(t, tok.opens)) {
@@ -426,6 +448,7 @@ function deniedBy(factsText) {
         if (h.form === 'un-done') nouns.push(...t.slice(h.b + 1, h.b + 3).filter((w) => L.artifact.has(w)));   // an untrained model
         // "The session, the seats and the engine are planned, not built": the subject stands in the clauses before
         if (!nouns.length) nouns = before;
+        if (n >= MAX_DENIALS) { byPart.truncated = true; return byPart; }
         if (!byPart.has(part)) byPart.set(part, []);
         byPart.get(part).push(new Set(nouns));
         n += 1;
@@ -503,9 +526,13 @@ export function repair(text, { drop = true } = {}) {
   let changed = 0;
   const removed = [];
   const cut = [];
-  const limits = new Set(zoneLines(text, 'public').filter((z) => z.zone === 'limits').map((z) => z.no));   // check() exempts these lines, so repair keeps them
+  const zones = zoneLines(text, 'public');
+  const limits = new Set(zones.filter((z) => z.zone === 'limits').map((z) => z.no));   // check() exempts these lines, so repair keeps them
+  const heads = new Set(zones.filter((z) => z.heading).map((z) => z.no));
   const lines = String(text ?? '').split('\n').map((line, idx) => {
     if (limits.has(idx + 1)) return line;
+    // a heading is never cut or removed: a writer renames it
+    if (heads.has(idx + 1)) { if (line.split(SENTENCE_END).some((s) => repairSentence(s) !== s)) unresolved += 1; return line; }
     const parts = line.split(SENTENCE_END);
     const kept = [];
     for (const s of parts) {
@@ -546,20 +573,33 @@ function zoneLines(text, zone) {
   const out = [];
   let limitsLevel = 0;
   let plain = 0;                                        // 1: a label waits for its list; 2: inside the list
+  let fence = null;                                     // the open fence: its character (` or ~) and its length
   const rows = String(text ?? '').replace(/^﻿/, '').split(/\r?\n/);
   const listFollows = (idx) => { for (let k = idx + 1; k < rows.length; k += 1) if (rows[k].trim()) return LIST_ITEM.test(rows[k]); return false; };
   for (const [idx, raw] of rows.entries()) {
-    if (/^\s*```/.test(raw)) continue;   // a fence line is no prose; the words inside a fence are read like any line
-    const head = /^(#{1,6})\s+(.*)$/.exec(raw);
+    // A fence line is no prose; the words inside a fence are read like any line, but a heading or a label there opens no
+    // zone (review of PR 35). As in CommonMark, ``` and ~~~ open a fence, only the same character at the same length or
+    // longer closes it, and ```code``` on one line opens nothing.
+    const f = /^\s*(`{3,}|~{3,})/.exec(raw);
+    if (f) {
+      const ch = f[1][0], len = f[1].length, rest = raw.slice(f[0].length);
+      if (!fence) { if (!(ch === '`' && rest.includes('`'))) fence = { ch, len }; } else if (ch === fence.ch && len >= fence.len && !rest.trim()) fence = null;
+      continue;
+    }
+    const head = fence ? null : /^(#{1,6})\s+(.*)$/.exec(raw);
     if (head) {
       const level = head[1].length;
       const isLimits = namesLimits(head[2]);
       if (isLimits) limitsLevel = level; else if (limitsLevel && level <= limitsLevel) limitsLevel = 0;
       plain = 0;
+      // A heading is public text, a page or section title: its words are read in the zone it opens or sits in (review of
+      // PR 35). A closing run of # goes, as in CommonMark.
+      const title = head[2].replace(/\s+#+\s*$/, '').replace(/`([^`\n]+)`/g, ' $1 ').replace(/https?:\/\/\S+/g, ' ');
+      if (title.trim()) out.push({ no: idx + 1, line: title, zone: limitsLevel ? 'limits' : zone, heading: true });
       continue;
     }
     if (!raw.trim()) { if (plain === 2) plain = 0; continue; }
-    if (isLimitsLabel(raw) && listFollows(idx)) { plain = 1; continue; }
+    if (!fence && isLimitsLabel(raw) && listFollows(idx)) { plain = 1; continue; }
     if (plain && (LIST_ITEM.test(raw) || (plain === 2 && /^\s{2,}\S/.test(raw)))) plain = 2; else plain = 0;
     const line = raw.replace(/`([^`\n]+)`/g, ' $1 ').replace(/https?:\/\/\S+/g, ' ');
     if (line.trim()) out.push({ no: idx + 1, line, zone: limitsLevel || plain === 2 ? 'limits' : zone });
@@ -570,10 +610,10 @@ function zoneLines(text, zone) {
 /** The sentences of a text as the gate reads them, with their zone and whether a rule finds an undercut. The judge reads these. */
 export function sentences(text, { zone = 'public' } = {}) {
   const out = [];
-  for (const { no, line, zone: z } of zoneLines(text, zone)) {
+  for (const { no, line, zone: z, heading } of zoneLines(text, zone)) {
     for (const s of line.split(SENTENCE_END)) {
       if (!s.trim()) continue;
-      const r = readSentence(s);
+      const r = asTitle(readSentence(s), heading);
       const hits = [...r.enHits, ...r.ruHits];
       // held: the clause of each exception mark, from its first word to the end of the hit ("No adverse events were
       // reported"). A rewrite must keep it; a mark for an unclear subject is no exception and a writer may rewrite it.
@@ -595,11 +635,15 @@ export function sentences(text, { zone = 'public' } = {}) {
 export function check(text, { zone = 'public', facts = '', overclaim = 'review' } = {}) {
   const findings = [];
   const denied = deniedBy(facts);
+  if (denied.truncated) {
+    findings.push({ line: 0, rule: 'FACTS_TRUNCATED', form: 'denials', severity: overclaim, sentence: '', span: `more than ${MAX_DENIALS} denials`,
+      allowed: `Shorten the facts. Denials after the first ${MAX_DENIALS} are not read, so OVERCLAIM cannot see them.` });
+  }
   let words = 0;
   let before = false;                                // a sentence with words came earlier in the text
-  for (const { no, line, zone: z } of zoneLines(text, zone)) {
+  for (const { no, line, zone: z, heading } of zoneLines(text, zone)) {
     for (const sentence of line.split(SENTENCE_END)) {
-      const r = readSentence(sentence);
+      const r = asTitle(readSentence(sentence), heading);
       words += r.words;
       const any = r.enHits.some(isBlock) || r.ruHits.some(isBlock);
       const marked = r.enHits.some(isMark) || r.ruHits.some(isMark);
@@ -651,9 +695,10 @@ export function checkJson(value, { zone = 'public', facts = '' } = {}) {
   let words = 0;
   const walk = (node, where, z) => {
     if (typeof node === 'string') {
-      // markup is read as text; a single word is no sentence ("Not trained" is two words, F101)
+      // markup is read as text. A single word is read too: a status such as "Untrained" or "Pending" speaks for the author
+      // (review of PR 35; 446 one-word values of the real site files gave no finding).
       const text = node.replace(/<[^>]*>/g, ' ');
-      if (!/\S\s+\S/.test(text)) return;
+      if (!text.trim()) return;
       const r = check(text, { zone: z, facts });
       points += r.points; words += r.words;
       for (const f of r.findings) findings.push({ ...f, path: where });
