@@ -393,6 +393,7 @@ test('rollback restores every plugin copy and binary, remembers the version, and
   assert.equal(s.installed, '0.6.0');
   assert.equal(s.hasBackup, false);
   assert.deepEqual({ v: s.skipped.version, why: s.skipped.reason }, { v: '0.7.0', why: 'rolled-back' });
+  assert.deepEqual({ phase: s.phase, failed: s.failed, restart: s.restartNeeded }, { phase: 'rolled-back', failed: false, restart: true }, 'a roll back the user asked for is no failure');
   // auto mode skips 0.7.0 …
   e.u.setMode('auto');
   const t1 = await e.u.tick();
@@ -420,6 +421,9 @@ test('post-swap failure rolls back by itself and remembers the version as failed
   assert.equal(r.ok, false);
   assert.match(r.error, /rolled back/i);
   assert.equal(u.getState().phase, 'rolled-back');
+  assert.equal(u.getState().failed, true, 'a failed update that was put back is a failure');
+  // a roll back by the user after it clears the mark, although the phase has the same name
+  assert.equal((await e.make().getState()).failed, false, 'a fresh process reports no failure');
   for (const n of UPDATE_PLUGINS) assert.equal(marker(e, n), `export const marker = '${n}-0.6.0';\n`);
   assert.equal(fs.readFileSync(path.join(e.gatewayDir, 'arc-gateway.exe'), 'utf8'), 'GW-0.6.0');
   assert.deepEqual({ v: u.getState().skipped.version, why: u.getState().skipped.reason.split(':')[0] }, { v: '0.7.0', why: 'failed' });
@@ -931,4 +935,406 @@ test('repair 6: while the older journal cannot be deleted, Roll back keeps its o
   await v.rollback();
   allAt(e, '0.7.0');
   assert.equal(v.getState().hasBackup, false, 'the second Roll back only finished the clean-up');
+});
+
+test('console route: an install that the updater refuses at once is answered as a refusal; a real install still answers started', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.7.0'));
+  const store = createResearchSessionStore();
+  const call = (body) => serveConsoleRoute(post('api/arc-core/update/action', body), {}, store, { updater: e.u });
+  await e.u.check();
+  // a lock that another process left a moment ago (an update that was cut short, or the second window of the app)
+  const lockFile = path.join(e.home, 'updates', 'lock');
+  fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: 1, at: Date.now(), token: 'another-process' }));
+  const refused = await call({ kind: 'install' });
+  assert.equal(refused.ok, false, 'the refusal is not answered as a start');
+  assert.match(refused.error, /already running/);
+  assert.equal(refused.started, undefined);
+  assert.equal(refused.state.busy, false);
+  assert.equal(marker(e), "export const marker = 'arc-core-0.6.0';\n");
+  fs.rmSync(lockFile);
+  const started = await call({ kind: 'install' });
+  assert.deepEqual({ ok: started.ok, started: started.started }, { ok: true, started: true }, 'a real install still answers at once');
+  for (let i = 0; i < 400 && e.u.getState().phase !== 'done'; i++) await new Promise((r) => setTimeout(r, 25));
+  assert.equal(e.u.getState().installed, '0.7.0');
+});
+
+test('console route: Roll back with a version acts only when that version is still the kept one', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.7.0'));
+  assert.equal((await e.u.install()).ok, true);
+  assert.equal(e.u.getState().backupVersion, '0.6.0');
+  const store = createResearchSessionStore();
+  const call = (body) => serveConsoleRoute(post('api/arc-core/update/action', body), {}, store, { updater: e.u });
+  const stale = await call({ kind: 'rollback', version: '0.5.0' });
+  assert.equal(stale.ok, false);
+  assert.match(stale.error, /kept version/);
+  assert.equal(e.u.getState().installed, '0.7.0', 'nothing was rolled back');
+  for (const odd of [7, { v: 1 }, '']) assert.equal((await call({ kind: 'rollback', version: odd })).ok, false, 'a version that is no text of a version is refused');
+  assert.equal(e.u.getState().installed, '0.7.0');
+  const good = await call({ kind: 'rollback', version: '0.6.0' });
+  assert.equal(good.ok, true, good.error);
+  assert.equal(e.u.getState().installed, '0.6.0');
+});
+
+// =====================================================================================================
+// Channels (S058): Release, Beta and Alpha. A version is x.y.z, x.y.z-beta.N or x.y.z-alpha.N and nothing else.
+import { CHANNELS, parseVersion } from '../lib/updater.js';
+
+test('versions: one strict form, and one order in which a final stands above its betas and a beta above every alpha', () => {
+  for (const good of ['0.6.1', '10.0.0', '0.7.0-beta.1', '0.7.0-alpha.12']) assert.ok(parseVersion(good), good);
+  for (const bad of ['v0.6.1', '0.6', '0.6.1.2', '1.0.0-rc.1', '1.0.0-beta', '1.0.0-beta.1.2', '1.0.0-BETA.1', '1.0.0-beta.x', '1.0.0+build', ' 1.0.0', '1.0.0 ', '1.0.0-beta.1-alpha.1', '', null, undefined, 7, '1234567890.0.0']) assert.equal(parseVersion(bad), null, String(bad));
+  assert.deepEqual(CHANNELS, ['release', 'beta', 'alpha']);
+  // lowest first
+  const order = ['0.6.9', '0.7.0-alpha.1', '0.7.0-alpha.9', '0.7.0-alpha.10', '0.7.0-beta.1', '0.7.0-beta.2', '0.7.0-beta.11', '0.7.0', '0.7.1-alpha.1', '0.7.1', '0.10.0-alpha.1', '0.10.0', '1.0.0-beta.1', '1.0.0'];
+  for (let i = 0; i < order.length; i++) {
+    for (let j = 0; j < order.length; j++) {
+      assert.equal(compareVersions(order[i], order[j]), Math.sign(i - j), order[i] + ' against ' + order[j]);
+    }
+  }
+  // a sort by this order puts any shuffle back
+  const shuffled = order.map((v, i) => [v, (i * 7 + 3) % order.length]).sort((a, b) => a[1] - b[1]).map((x) => x[0]);
+  assert.notDeepEqual(shuffled, order);
+  assert.deepEqual([...shuffled].sort(compareVersions), order);
+  // text that is no version still compares by its leading numbers, as before
+  assert.equal(compareVersions('0.6.0', '0.6'), 0);
+  assert.equal(compareVersions('0.6.1-dev', '0.6.0'), 1);
+});
+
+test('pickRelease: each channel sees its own releases; a draft, a flagged plain tag and an odd tag stay out of all three', () => {
+  const rel = (tag, extra = {}) => ({ tag_name: tag, draft: false, prerelease: /-/.test(tag), assets: [], ...extra });
+  const list = [rel('v0.6.1'), rel('v0.7.0-alpha.3'), rel('v0.7.0-beta.1'), rel('v0.7.0-alpha.4'), rel('v0.9.0-beta.1', { draft: true }), rel('v0.8.0', { prerelease: true }), rel('v1.0.0-rc.1'), rel('nightly'), rel('v0.6.0')];
+  assert.equal(pickRelease(list).version, '0.6.1', 'the default is the Release channel');
+  assert.equal(pickRelease(list, undefined, 'release').version, '0.6.1');
+  assert.equal(pickRelease(list, undefined, 'beta').version, '0.7.0-beta.1');
+  assert.equal(pickRelease(list, undefined, 'alpha').version, '0.7.0-beta.1', 'a beta stands above the alphas of the same version');
+  assert.equal(pickRelease(list.filter((r) => !/beta/.test(r.tag_name)), undefined, 'alpha').version, '0.7.0-alpha.4');
+  // a final above the pre-releases wins on every channel
+  for (const ch of CHANNELS) assert.equal(pickRelease([...list, rel('v0.7.0')], undefined, ch).version, '0.7.0', ch);
+  // a named version must be one the channel may see
+  assert.equal(pickRelease(list, '0.7.0-beta.1', 'release'), null);
+  assert.equal(pickRelease(list, '0.7.0-alpha.3', 'beta'), null);
+  assert.equal(pickRelease(list, '0.7.0-alpha.3', 'alpha').version, '0.7.0-alpha.3');
+  assert.equal(pickRelease(list, '0.6.0', 'alpha').version, '0.6.0');
+  assert.equal(pickRelease(list, '0.8.0', 'alpha'), null, 'a plain tag that GitHub marks as a pre-release stays out');
+  assert.equal(pickRelease(list, undefined, 'nightly'), null, 'an unknown channel sees nothing');
+  // a beta tag that GitHub does not mark as a pre-release is still a beta, by its tag
+  assert.equal(pickRelease([rel('v0.6.1'), rel('v0.7.0-beta.1', { prerelease: false })]).version, '0.6.1');
+  // the kit of a beta carries the whole version in its name
+  const kit = (v) => [{ name: 'Arc-Harness-Kit-' + v + '-win-x64.zip', browser_download_url: 'https://github.com/k' }, { name: 'SHA256SUMS.txt', browser_download_url: 'https://github.com/s' }];
+  assert.equal(pickRelease([rel('v0.7.0-beta.1', { assets: kit('0.7.0-beta.1') })], undefined, 'beta').kit.name, 'Arc-Harness-Kit-0.7.0-beta.1-win-x64.zip');
+  assert.equal(pickRelease([rel('v0.7.0-beta.1', { assets: kit('0.7.0') })], undefined, 'beta').kit, null, 'a kit named for the final is not the kit of its beta');
+});
+
+test('channel: Release by default; the choice is kept on disk; a check made for another channel does not count', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  e.srv.state.publish(buildKit('0.7.0-beta.1'), { prerelease: true });
+  assert.equal(e.u.getState().channel, 'release');
+  let s = await e.u.check();
+  assert.deepEqual({ latest: s.latest, available: s.available, ahead: s.ahead }, { latest: '0.6.1', available: true, ahead: false });
+  assert.throws(() => e.u.setChannel('nightly'), /Unknown channel/);
+  assert.throws(() => e.u.setChannel(), /Unknown channel/);
+  s = e.u.setChannel('beta');
+  assert.equal(s.channel, 'beta');
+  assert.deepEqual({ latest: s.latest, available: s.available, checkedAt: s.checkedAt }, { latest: null, available: false, checkedAt: null }, 'the result for Release says nothing about Beta');
+  // another process of the app (the web window) reads the same choice and also holds no result for it
+  const other = e.make();
+  assert.equal(other.getState().channel, 'beta');
+  assert.equal(other.getState().latest, null);
+  s = await other.check();
+  assert.deepEqual({ latest: s.latest, available: s.available, installable: s.installable }, { latest: '0.7.0-beta.1', available: true, installable: true });
+  assert.equal(e.u.getState().latest, '0.7.0-beta.1', 'the first process reads the result that the second one saved');
+  // back on Release, the Beta result does not count either
+  assert.equal(e.u.setChannel('release').latest, null);
+  // a settings file with an odd channel reads as Release; a result from before channels existed counts for Release
+  fs.writeFileSync(path.join(e.home, 'updates', 'settings.json'), JSON.stringify({ mode: 'notify', channel: 'canary' }));
+  assert.equal(e.u.getState().channel, 'release');
+  const st = JSON.parse(fs.readFileSync(path.join(e.home, 'updates', 'state.json'), 'utf8'));
+  delete st.lastCheck.channel; st.lastCheck.latest = '0.6.1';
+  fs.writeFileSync(path.join(e.home, 'updates', 'state.json'), JSON.stringify(st));
+  assert.equal(e.u.getState().latest, '0.6.1');
+});
+
+test('a beta kit built by the real bundler installs on Beta: beta.1, then beta.2, then the final; Release never sees the betas', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.7.0-beta.1'), { prerelease: true });
+  // on Release nothing is offered, and the beta cannot be installed by its name
+  assert.equal((await e.u.check()).latest, null);
+  const refused = await e.u.install({ version: '0.7.0-beta.1' });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /was not found/);
+  assert.equal(marker(e), "export const marker = 'arc-core-0.6.0';\n");
+  e.u.setChannel('beta');
+  let r = await e.u.install();
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.version, '0.7.0-beta.1');
+  let s = e.u.getState();
+  assert.equal(s.installed, '0.7.0-beta.1', 'the installed version keeps its beta mark');
+  assert.equal(fs.readFileSync(path.join(e.gatewayDir, 'arc-gateway.exe'), 'utf8'), 'GW-0.7.0-beta.1');
+  assert.deepEqual({ available: s.available, ahead: s.ahead }, { available: false, ahead: false });
+  e.srv.state.publish(buildKit('0.7.0-beta.2'), { prerelease: true });
+  s = await e.u.check();
+  assert.deepEqual({ latest: s.latest, available: s.available }, { latest: '0.7.0-beta.2', available: true });
+  r = await e.u.install();
+  assert.equal(r.ok, true, r.error);
+  assert.equal(e.u.getState().backupVersion, '0.7.0-beta.1');
+  e.srv.state.publish(buildKit('0.7.0'));
+  s = await e.u.check();
+  assert.deepEqual({ latest: s.latest, available: s.available }, { latest: '0.7.0', available: true }, 'the final stands above its betas');
+  r = await e.u.install();
+  assert.equal(r.ok, true, r.error);
+  assert.equal(e.u.getState().installed, '0.7.0');
+  // Roll back still goes one step, to the beta before
+  r = await e.u.rollback();
+  assert.equal(r.ok, true, r.error);
+  assert.equal(e.u.getState().installed, '0.7.0-beta.2');
+});
+
+test('no silent downgrade: ahead of the channel, automatic install and a plain install do nothing; Go back is an explicit action to the newest version of the channel', async (t) => {
+  const e = await setup({ version: '0.7.0-beta.2' }); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.0'));
+  e.srv.state.publish(buildKit('0.6.1'));
+  e.srv.state.publish(buildKit('0.7.0-beta.3'), { prerelease: true });
+  const at = () => marker(e);
+  const before = at();
+  assert.equal(before, "export const marker = 'arc-core-0.7.0-beta.2';\n");
+  let s = await e.u.check(); // the Release channel
+  assert.deepEqual({ installed: s.installed, latest: s.latest, available: s.available, ahead: s.ahead }, { installed: '0.7.0-beta.2', latest: '0.6.1', available: false, ahead: true });
+  e.u.setMode('auto');
+  assert.equal((await e.u.tick()).action, 'none', 'automatic install never goes back');
+  assert.equal(at(), before);
+  for (const req of [{}, { version: '0.6.1' }, { version: '0.6.0' }, { auto: true }]) {
+    const r = await e.u.install(req);
+    assert.equal(r.ok, false, JSON.stringify(req));
+    assert.match(r.error, /Already up to date/);
+    assert.equal(at(), before);
+  }
+  const hidden = await e.u.install({ version: '0.7.0-beta.3' });
+  assert.equal(hidden.ok, false, 'a version the channel may not see cannot be named');
+  assert.match(hidden.error, /was not found/);
+  assert.equal(at(), before);
+  // automatic install and Go back never combine, also while a Go back would be possible
+  const never = await e.u.install({ back: true, auto: true });
+  assert.equal(never.ok, false);
+  assert.match(never.error, /never goes back/);
+  assert.equal(at(), before);
+  // Go back takes its target from the channel, never from the caller
+  const back = await e.u.install({ back: true, version: '0.6.0' });
+  assert.equal(back.ok, true, back.error);
+  assert.equal(back.version, '0.6.1');
+  s = e.u.getState();
+  assert.deepEqual({ installed: s.installed, ahead: s.ahead, available: s.available, backup: s.backupVersion, restart: s.restartNeeded }, { installed: '0.6.1', ahead: false, available: false, backup: '0.7.0-beta.2', restart: true });
+  assert.equal(at(), "export const marker = 'arc-core-0.6.1';\n");
+  // with nothing ahead, Go back is refused and changes nothing
+  const again = await e.u.install({ back: true });
+  assert.equal(again.ok, false);
+  assert.match(again.error, /not newer/);
+  assert.equal(at(), "export const marker = 'arc-core-0.6.1';\n");
+  // automatic install and Go back never combine
+  const both = await e.u.install({ back: true, auto: true });
+  assert.equal(both.ok, false);
+  // Roll back returns to the beta
+  assert.equal((await e.u.rollback()).ok, true);
+  assert.equal(at(), before);
+});
+
+test('the channel is read when an update starts, so a choice made in another window counts', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  e.srv.state.publish(buildKit('0.7.0-beta.1'), { prerelease: true });
+  e.u.setMode('auto');
+  const other = e.make();
+  other.setChannel('beta'); // the web window
+  const r = await e.u.tick(); // the desktop window, which never heard of the change
+  assert.deepEqual({ action: r.action, version: r.version }, { action: 'installed', version: '0.7.0-beta.1' });
+});
+
+test('release list: when a full page holds no version for the channel, the next pages are read, three at most', async (t) => {
+  const inst = makeInstall(); t.after(() => rm(inst.root));
+  const pre = (i) => ({ tag_name: 'v0.9.0-alpha.' + i, draft: false, prerelease: true, assets: [] });
+  const pages = { 1: Array.from({ length: 30 }, (_, i) => pre(60 - i)), 2: Array.from({ length: 30 }, (_, i) => pre(30 - i)), 3: [{ tag_name: 'v0.6.1', draft: false, prerelease: false, assets: [] }] };
+  const seen = [];
+  const fetchImpl = async (url) => { seen.push(String(url).replace(/^.*releases/, '')); const n = Number(new URL(url).searchParams.get('page') || 1); return new Response(JSON.stringify(pages[n] || []), { status: 200 }); };
+  const make = () => createUpdater({ home: inst.home, gatewayDir: inst.gatewayDir, env: ENV, api: 'http://127.0.0.1:9', repo: 'o/r', fetchImpl });
+  const u = make();
+  assert.equal((await u.check()).latest, '0.6.1', 'the final behind sixty alphas is found');
+  assert.deepEqual(seen, ['?per_page=30', '?per_page=30&page=2', '?per_page=30&page=3']);
+  seen.length = 0;
+  u.setChannel('alpha');
+  assert.equal((await u.check()).latest, '0.9.0-alpha.60');
+  assert.deepEqual(seen, ['?per_page=30'], 'a page that holds a version for the channel is enough');
+  // an endless list of full pages without a version ends after three pages
+  seen.length = 0;
+  pages[3] = pages[2]; pages[4] = pages[2];
+  u.setChannel('release');
+  assert.equal((await u.check()).latest, null);
+  assert.equal(seen.length, 3);
+});
+
+test('console routes: the channel is set and checked at once; Go back and a version name are checked before the updater sees them', async (t) => {
+  const e = await setup({ version: '0.7.0-beta.2' }); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  e.srv.state.publish(buildKit('0.7.0-beta.3'), { prerelease: true });
+  const store = createResearchSessionStore();
+  const call = (body) => serveConsoleRoute(post('api/arc-core/update/action', body), {}, store, { updater: e.u });
+  for (const bad of ['nightly', '', 7, null, undefined, ['beta']]) {
+    const r = await call({ kind: 'channel', channel: bad });
+    assert.equal(r.ok, false, JSON.stringify(bad));
+    assert.match(r.error, /Unknown channel/);
+  }
+  assert.equal(e.u.getState().channel, 'release');
+  let r = await call({ kind: 'channel', channel: 'beta' });
+  assert.deepEqual({ ok: r.ok, channel: r.channel, latest: r.latest, available: r.available }, { ok: true, channel: 'beta', latest: '0.7.0-beta.3', available: true }, 'the answer already holds the newest version of the new channel');
+  r = await call({ kind: 'channel', channel: 'release' });
+  assert.deepEqual({ latest: r.latest, ahead: r.ahead }, { latest: '0.6.1', ahead: true });
+  // a version that is no version is refused; it never turns into another action
+  for (const odd of ['0.6.1; rm', '../0.6.1', '0.6', '0.06.1', 6, { v: '0.6.1' }, null]) {
+    for (const body of [{ kind: 'install', version: odd, wait: true }, { kind: 'install', back: true, version: odd, channel: 'release', wait: true }]) {
+      const x = await call(body);
+      assert.equal(x.ok, false, JSON.stringify(body));
+      assert.match(x.error, /Not a version name/);
+    }
+  }
+  assert.equal(e.u.getState().installed, '0.7.0-beta.2');
+  // back must be the plain value true
+  const loose = await call({ kind: 'install', back: 'yes', wait: true });
+  assert.equal(loose.ok, false);
+  assert.match(loose.error, /Already up to date/);
+  const back = await call({ kind: 'install', back: true, wait: true });
+  assert.equal(back.ok, true, back.error);
+  assert.equal(back.version, '0.6.1');
+  assert.equal(back.state.installed, '0.6.1');
+});
+
+test('a roll back the user asks for after a failed update is no failure, although both end in the same phase', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.7.0'));
+  // the gateway of 0.7.1 passes its check as a staged copy and fails it in its installed place
+  const u = e.make({ run: (file, args) => (file.startsWith(e.gatewayDir) && fs.readFileSync(file, 'utf8') === 'GW-0.7.1' ? { status: 1, stdout: '', stderr: 'dies' } : fakeRun(file, args)) });
+  assert.equal((await u.install()).ok, true);
+  e.srv.state.publish(buildKit('0.7.1'));
+  const bad = await u.install();
+  assert.equal(bad.ok, false);
+  let s = u.getState();
+  assert.deepEqual({ phase: s.phase, failed: s.failed, installed: s.installed, backup: s.backupVersion }, { phase: 'rolled-back', failed: true, installed: '0.7.0', backup: '0.6.0' });
+  const back = await u.rollback();
+  assert.equal(back.ok, true, back.error);
+  s = u.getState();
+  assert.deepEqual({ phase: s.phase, failed: s.failed, installed: s.installed }, { phase: 'rolled-back', failed: false, installed: '0.6.0' });
+});
+
+test('versions: one spelling only, so a number with a leading zero is no version', () => {
+  for (const bad of ['0.06.1', '01.0.0', '0.6.01', '0.7.0-beta.01', '00.0.0']) assert.equal(parseVersion(bad), null, bad);
+  for (const good of ['0.0.0', '0.6.10', '10.20.30', '0.7.0-beta.10', '0.7.0-alpha.0']) assert.ok(parseVersion(good), good);
+  const rel = (tag) => ({ tag_name: tag, draft: false, prerelease: false, assets: [] });
+  assert.equal(pickRelease([rel('v0.6.1'), rel('v0.06.2')]).version, '0.6.1', 'a tag in a second spelling stays out');
+});
+
+test('Go back acts only when the version and the channel that the question named still hold', async (t) => {
+  const e = await setup({ version: '0.7.0-beta.2' }); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.0'));
+  e.srv.state.publish(buildKit('0.6.1'));
+  const before = marker(e);
+  // the question named 0.6.0, and a newer final appeared meanwhile
+  let r = await e.u.install({ back: true, expect: { version: '0.6.0', channel: 'release' } });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /changed/);
+  assert.equal(marker(e), before);
+  // the question was asked on another channel
+  r = await e.u.install({ back: true, expect: { version: '0.6.1', channel: 'beta' } });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /changed/);
+  assert.equal(marker(e), before);
+  // an expectation is only compared: it never becomes the target
+  const store = createResearchSessionStore();
+  const call = (body) => serveConsoleRoute(post('api/arc-core/update/action', body), {}, store, { updater: e.u });
+  r = await call({ kind: 'install', back: true, version: '0.6.0', channel: 'release', wait: true });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /changed/);
+  assert.equal(marker(e), before);
+  r = await call({ kind: 'install', back: true, version: '0.6.1', channel: 'nightly', wait: true });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Unknown channel/, 'a channel that is none is refused before the updater runs');
+  assert.equal(marker(e), before);
+  r = await call({ kind: 'install', back: true, version: '0.6.1', channel: 'release', wait: true });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.version, '0.6.1');
+});
+
+test('an update reads the channel once, at its start: a change that lands while the list is read does not mix two channels', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  e.srv.state.publish(buildKit('0.7.0-beta.1'), { prerelease: true });
+  const other = e.make();
+  let flipped = false;
+  // the other window changes the channel at the moment this window reads the release list
+  const u = e.make({ fetchImpl: async (url, o) => { if (/\/releases\?/.test(String(url)) && !flipped) { flipped = true; other.setChannel('beta'); } return fetch(url, o); } });
+  const r = await u.install();
+  assert.equal(flipped, true);
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.version, '0.6.1', 'the update that started on Release installs the Release version');
+});
+
+test('a check that ends after the channel changed does not replace the result of the new channel', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  e.srv.state.publish(buildKit('0.7.0-beta.1'), { prerelease: true });
+  let release = null;
+  const held = new Promise((resolve) => { release = resolve; });
+  const slow = e.make({ fetchImpl: async (url, o) => { const res = await fetch(url, o); await held; return res; } });
+  const first = slow.check(); // made for Release, and still on its way
+  await new Promise((r) => setTimeout(r, 50));
+  e.u.setChannel('beta');
+  assert.equal((await e.u.check()).latest, '0.7.0-beta.1');
+  release();
+  await first;
+  const s = e.u.getState();
+  assert.deepEqual({ channel: s.channel, latest: s.latest }, { channel: 'beta', latest: '0.7.0-beta.1' }, 'the late Release result did not take the place of the Beta result');
+});
+
+test('console route: an install that ends at once with an error is answered as a refusal, not as a start', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  // the folder of the updater cannot be made: a file stands in its place
+  fs.writeFileSync(path.join(e.home, 'updates'), 'not a folder');
+  const store = createResearchSessionStore();
+  const r = await serveConsoleRoute(post('api/arc-core/update/action', { kind: 'install' }), {}, store, { updater: e.u });
+  assert.equal(r.ok, false);
+  assert.equal(r.started, undefined);
+  assert.ok(typeof r.error === 'string' && r.error.length > 0 && r.error.length <= 300);
+});
+
+test('a check of a channel that is no longer chosen does not mark the state as failed when it fails late', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  let release = null;
+  const held = new Promise((resolve) => { release = resolve; });
+  const slow = e.make({ fetchImpl: async () => { await held; throw new TypeError('fetch failed'); } });
+  const first = slow.check(); // made for Release
+  await new Promise((r) => setTimeout(r, 30));
+  e.u.setChannel('beta');
+  release();
+  const s = await first;
+  assert.deepEqual({ phase: s.phase, failed: s.failed }, { phase: 'idle', failed: false }, 'the failure belongs to a channel that is no longer chosen');
+  // the same failure for the chosen channel is still a failure
+  const again = await e.make({ fetchImpl: async () => { throw new TypeError('fetch failed'); } }).check();
+  assert.deepEqual({ phase: again.phase, failed: again.failed }, { phase: 'failed', failed: true });
+});
+
+test('release notes: text within the limit stays whole, and longer text carries one character more so that a reader can tell it was cut', () => {
+  const rel = (body) => ({ tag_name: 'v0.6.1', draft: false, prerelease: false, assets: [], body });
+  assert.equal(pickRelease([rel('n'.repeat(1200))]).notes.length, 1200);
+  assert.equal(pickRelease([rel('n'.repeat(1199))]).notes.length, 1199);
+  assert.equal(pickRelease([rel('n'.repeat(5000))]).notes.length, 1201);
+});
+
+test('console route: the channel does not change while an update runs', async () => {
+  const calls = [];
+  const busy = { getState: () => ({ busy: true, channel: 'release' }), setChannel: (c) => { calls.push(c); return {}; }, check: async () => ({}) };
+  const r = await serveConsoleRoute(post('api/arc-core/update/action', { kind: 'channel', channel: 'beta' }), {}, createResearchSessionStore(), { updater: busy });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /update is running/);
+  assert.ok(r.error.length <= 90);
+  assert.deepEqual(calls, [], 'the choice was not saved');
 });

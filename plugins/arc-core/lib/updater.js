@@ -5,7 +5,8 @@
 // (pnpm copies them; the app loads the copy), plus bin/arc-gateway.exe (where it is installed) and bin/arc-validators.exe
 // (only where a copy already exists). It never touches ~/.arc data, the app archive, or any other plugin.
 //
-// Steps: read the release list, pick the highest x.y.z release (no draft, no pre-release), download the kit zip and
+// Steps: read the release list, pick the highest release that the chosen channel may see (Release: finals only; Beta: also
+// x.y.z-beta.N; Alpha: also x.y.z-alpha.N; never a draft), download the kit zip and
 // SHA256SUMS.txt of that same release, check the zip hash, read the zip (zip-slip and size caps), check every plugin and
 // binary file against RELEASE-MANIFEST.json and SHA256SUMS.txt, stage, smoke-test the staged programs, swap with a
 // backup, check the live files, and roll back by itself when that check fails.
@@ -30,27 +31,45 @@ const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const fail = (code, msg) => Object.assign(new Error(`${code}: ${msg}`), { code });
 
 // ---- versions and releases
-const SEMVER_TAG = /^v?(\d+)\.(\d+)\.(\d+)$/;
+// A version is x.y.z, x.y.z-beta.N or x.y.z-alpha.N, and nothing else. Every place that reads a version uses this one reader.
+// No number has a leading zero, so one version has one spelling in a tag, a kit name and a package file.
+const VERSION_RE = /^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})(?:-(alpha|beta)\.(0|[1-9]\d{0,8}))?$/;
+export const CHANNELS = Object.freeze(['release', 'beta', 'alpha']); // each channel also sees what the ones before it see
+const STAGE = Object.freeze({ alpha: 0, beta: 1, '': 2 }); // inside one x.y.z: every alpha, then every beta, then the final
+/** { nums: [x, y, z], pre: '' | 'beta' | 'alpha', n } for a version in the one strict form, or null. */
+export function parseVersion(v) {
+  const m = typeof v === 'string' ? VERSION_RE.exec(v) : null;
+  return m ? { nums: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] || '', n: m[4] ? Number(m[5]) : 0 } : null;
+}
+const channelOf = (parsed) => parsed.pre || 'release';
+// text that is no version (an odd local build) still compares by its leading numbers, as a final
+const loose = (v) => parseVersion(v) || { nums: [0, 1, 2].map((i) => Number((/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(v ?? '')) || [])[i + 1] || 0)), pre: '', n: 0 };
 export function compareVersions(a, b) {
-  const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
-  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0) ? 1 : -1;
-  return 0;
+  const x = loose(a), y = loose(b);
+  for (let i = 0; i < 3; i++) if (x.nums[i] !== y.nums[i]) return x.nums[i] > y.nums[i] ? 1 : -1;
+  if (STAGE[x.pre] !== STAGE[y.pre]) return STAGE[x.pre] > STAGE[y.pre] ? 1 : -1;
+  return x.n === y.n ? 0 : x.n > y.n ? 1 : -1;
 }
 const kitName = (v) => `Arc-Harness-Kit-${v}-win-x64.zip`;
 const clean = (s, n) => String(s ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').slice(0, n);
 
-/** The highest plain x.y.z release that is not a draft or a pre-release; { version, tag, url, notes, kit } or null. */
-export function pickRelease(list, wanted) {
+/**
+ * The highest release that the channel may see, or the named one if the channel may see it; { version, tag, url, notes, kit } or null.
+ * The tag decides: x.y.z is a final, x.y.z-beta.N a beta, x.y.z-alpha.N an alpha. A draft, a tag in another form, and a
+ * plain tag that GitHub marks as a pre-release stay out of every channel.
+ */
+export function pickRelease(list, wanted, channel = 'release') {
+  const reach = CHANNELS.indexOf(channel);
   let best = null;
   for (const r of Array.isArray(list) ? list : []) {
-    if (!r || r.draft || r.prerelease) continue;
-    const m = SEMVER_TAG.exec(String(r.tag_name || ''));
-    if (!m) continue;
-    const version = `${m[1]}.${m[2]}.${m[3]}`;
+    if (!r || r.draft || reach < 0) continue;
+    const p = parseVersion(String(r.tag_name || '').replace(/^v/, ''));
+    if (!p || (!p.pre && r.prerelease) || CHANNELS.indexOf(channelOf(p)) > reach) continue;
+    const version = `${p.nums.join('.')}${p.pre ? `-${p.pre}.${p.n}` : ''}`;
     if (wanted ? version !== wanted : (best && compareVersions(version, best.version) <= 0)) continue;
     const assets = Array.isArray(r.assets) ? r.assets : [];
     const zip = assets.find((a) => a && a.name === kitName(version)), sums = assets.find((a) => a && a.name === 'SHA256SUMS.txt');
-    best = { version, tag: r.tag_name, url: clean(r.html_url, 300), notes: clean(r.body, 1200), kit: zip && sums ? { name: zip.name, url: zip.browser_download_url, sumsUrl: sums.browser_download_url } : null };
+    best = { version, tag: r.tag_name, url: clean(r.html_url, 300), notes: clean(r.body, 1201), /* the page shows 1200; one character more says the text was cut */ kit: zip && sums ? { name: zip.name, url: zip.browser_download_url, sumsUrl: sums.browser_download_url } : null };
   }
   return best;
 }
@@ -227,8 +246,8 @@ export function createUpdater(opts = {}) {
     }
   };
 
-  const mem = { token: crypto.randomBytes(8).toString('hex'), phase: 'idle', message: '', busy: false, restartNeeded: false, healthy: null, releases: [], skippedBinaries: [], counter: 0 };
-  const settings = () => { const s = readJson(settingsFile, {}); return { mode: MODES.includes(s.mode) ? s.mode : 'notify', intervalHours: Number.isInteger(s.intervalHours) && s.intervalHours >= 1 && s.intervalHours <= 168 ? s.intervalHours : 12 }; };
+  const mem = { token: crypto.randomBytes(8).toString('hex'), phase: 'idle', message: '', busy: false, restartNeeded: false, healthy: null, undone: false, releases: [], skippedBinaries: [], counter: 0 };
+  const settings = () => { const s = readJson(settingsFile, {}); return { mode: MODES.includes(s.mode) ? s.mode : 'notify', channel: CHANNELS.includes(s.channel) ? s.channel : 'release', intervalHours: Number.isInteger(s.intervalHours) && s.intervalHours >= 1 && s.intervalHours <= 168 ? s.intervalHours : 12 }; };
   const persisted = () => readJson(stateFile, {});
   const save = (patch) => writeJson(stateFile, { ...persisted(), ...patch });
   const journal = () => readJson(journalFile, null);
@@ -236,19 +255,27 @@ export function createUpdater(opts = {}) {
   function readInstalled() {
     const cands = [path.join(localPlugins, 'arc-core', 'package.json')];
     try { for (const p of F.readdirSync(profilesDir)) cands.push(path.join(profilesDir, p, 'node_modules', 'arc-core', 'package.json')); } catch { /* no profiles */ }
-    for (const c of cands) { const v = readJson(c, null)?.version; if (typeof v === 'string' && /^\d+\.\d+\.\d+/.test(v)) return v.match(/^\d+\.\d+\.\d+/)[0]; }
+    // a beta keeps its mark: read as a final, it would hide the final that follows it. Text in another form keeps its x.y.z.
+    for (const c of cands) { const v = readJson(c, null)?.version; if (parseVersion(v)) return v; if (typeof v === 'string' && /^\d+\.\d+\.\d+/.test(v)) return v.match(/^\d+\.\d+\.\d+/)[0]; }
     return opts.installedVersion ?? '0.0.0';
   }
 
   function getState() {
     // with no journal in place, a backup that was set aside by an update that never started its swap still counts: Roll back puts it back first
-    const p = persisted(), c = p.lastCheck || {}, st = settings(), installed = readInstalled(), j = journal() ?? readJson(path.join(prevRoot, 'backup.json'), null);
+    const p = persisted(), st = settings(), installed = readInstalled(), j = journal() ?? readJson(path.join(prevRoot, 'backup.json'), null);
+    // A check made for another channel says nothing about this one (the choice is shared by every window of the app, the
+    // release list is not). A result from before channels existed was made for Release.
+    const c = p.lastCheck && (p.lastCheck.channel || 'release') === st.channel ? p.lastCheck : {};
     const available = Boolean(c.latest) && compareVersions(c.latest, installed) > 0;
     return {
       installed, latest: c.latest || null, available, installable: Boolean(c.installable), reason: c.reason || '', releaseUrl: c.releaseUrl || '', notes: c.notes || '', checkedAt: c.checkedAt || null,
       phase: mem.phase, message: mem.message, busy: mem.busy, mode: st.mode, intervalHours: st.intervalHours,
+      // ahead: the installed version is newer than the newest one of the channel (after a change to a calmer channel)
+      channel: st.channel, ahead: Boolean(c.latest) && compareVersions(installed, c.latest) > 0,
       hasBackup: Boolean(j && j.status === 'complete'), backupVersion: j && j.status === 'complete' ? j.fromVersion : null,
       skipped: p.skipped || null, skippedBinaries: mem.skippedBinaries, restartNeeded: mem.restartNeeded, healthy: mem.healthy,
+      // the last step failed: a failed step, or a failed update that was put back. A roll back the user asked for is no failure.
+      failed: mem.phase === 'failed' || (mem.phase === 'rolled-back' && mem.undone),
     };
   }
   const phase = (ph, message = '') => { mem.phase = ph; mem.message = message; if (opts.onPhase) { try { opts.onPhase(getState()); } catch { /* a listener must not stop an update */ } } };
@@ -277,17 +304,30 @@ export function createUpdater(opts = {}) {
 
   // ---- check
   const check = async () => (mem.busy ? getState() : doCheck());
-  async function doCheck() {
+  // forChannel: the channel of the update that asked for this check. An update reads its channel once, at its start.
+  async function doCheck(forChannel) {
+    const channel = forChannel || settings().channel; // read now: another window of the app may have changed it
     phase('checking');
     try {
-      const body = await get(`${api}/repos/${repo}/releases?per_page=30`, limits.maxApiBytes, 'application/vnd.github+json');
-      const list = JSON.parse(body.toString('utf8'));
-      mem.releases = Array.isArray(list) ? list : [];
-      const top = pickRelease(mem.releases);
-      save({ lastCheck: top ? { latest: top.version, installable: Boolean(top.kit), reason: top.kit ? '' : 'no-kit', releaseUrl: top.url, notes: top.notes, checkedAt: new Date(now()).toISOString() } : { latest: null, installable: false, reason: 'no-release', checkedAt: new Date(now()).toISOString() } });
+      let all = [];
+      // GitHub lists the newest releases first. A full page with no version for this channel can hide one on an older page
+      // (a final behind many pre-releases), so up to three pages are read.
+      for (let page = 1; page <= 3; page++) {
+        const body = await get(`${api}/repos/${repo}/releases?per_page=30${page > 1 ? `&page=${page}` : ''}`, limits.maxApiBytes, 'application/vnd.github+json');
+        const list = JSON.parse(body.toString('utf8'));
+        if (!Array.isArray(list)) break;
+        all = all.concat(list);
+        if (list.length < 30 || pickRelease(all, undefined, channel)) break;
+      }
+      mem.releases = all;
+      const top = pickRelease(mem.releases, undefined, channel);
+      // A check that ends after the channel changed must not take the place of the result for the new channel.
+      if (settings().channel === channel) save({ lastCheck: top ? { channel, latest: top.version, installable: Boolean(top.kit), reason: top.kit ? '' : 'no-kit', releaseUrl: top.url, notes: top.notes, checkedAt: new Date(now()).toISOString() } : { channel, latest: null, installable: false, reason: 'no-release', checkedAt: new Date(now()).toISOString() } });
       phase('idle', top ? '' : 'No release with a plain version number was found.');
     } catch (err) {
-      phase('failed', `Could not reach GitHub or read its answer: ${clean(err.message, 200)}`);
+      // a check for a channel that is no longer chosen says nothing about the new one, also when it fails
+      if (settings().channel === channel) phase('failed', `Could not reach GitHub or read its answer: ${clean(err.message, 200)}`);
+      else phase('idle');
     }
     return getState();
   }
@@ -449,7 +489,11 @@ export function createUpdater(opts = {}) {
   const unlock = () => { try { if (readJson(lockFile, {}).token === mem.token) F.rmSync(lockFile, { force: true }); } catch { /* a stale lock expires */ } };
 
   // ---- install
-  async function install({ version, auto = false } = {}) {
+  // back: go back to the newest version of the channel when the installed one is newer (after a change to a calmer channel).
+  // It is the only way to an older version. It takes no version from the caller, and automatic install never uses it.
+  // expect: what the Go back question named ({ version, channel }). It is only compared with the target, never used as one.
+  async function install({ version, auto = false, back = false, expect = null } = {}) {
+    if (back && auto) return { ok: false, error: 'Automatic install never goes back to an older version.' };
     if (mem.busy || !lock()) return { ok: false, error: 'An update is already running.' };
     mem.busy = true;
     let ops = [], toVersion = version || null, swapped = false;
@@ -462,13 +506,22 @@ export function createUpdater(opts = {}) {
         F.rmSync(journalFile, { force: true });
       }
       if (!journal()) await prevBack(); // an update that stopped before or during its swap left the earlier backup aside
-      const st = await doCheck();
+      const channel = settings().channel; // read once, here: the check and the pick below use this one value
+      const st = await doCheck(channel);
       if (st.phase === 'failed') return { ok: false, error: st.message };
-      const pick = pickRelease(mem.releases, version);
-      if (!pick) return { ok: false, error: version ? `Release ${version} was not found.` : 'No release was found.' };
+      const named = back ? undefined : version;
+      const pick = pickRelease(mem.releases, named, channel);
+      if (!pick) return { ok: false, error: named ? `Release ${clean(named, 40)} was not found.` : 'No release was found.' };
       toVersion = pick.version;
+      if (back && expect && (expect.version !== toVersion || expect.channel !== channel)) {
+        const moved = 'The newest version of the channel changed. Look at the page again.';
+        phase('idle', moved);
+        return { ok: false, error: moved };
+      }
       const installed = readInstalled();
-      if (compareVersions(toVersion, installed) <= 0) { phase('idle', `Already up to date (${installed}).`); return { ok: false, error: `Already up to date (${installed}).` }; }
+      const order = compareVersions(toVersion, installed);
+      if (back && order >= 0) { phase('idle', `The installed version ${installed} is not newer than the newest ${channel} version.`); return { ok: false, error: `The installed version ${installed} is not newer than the newest ${channel} version.` }; }
+      if (!back && order <= 0) { phase('idle', `Already up to date (${installed}).`); return { ok: false, error: `Already up to date (${installed}).` }; }
       if (!pick.kit) { phase('idle', 'This release has no installable kit.'); return { ok: false, error: 'This release has no installable kit.' }; }
       const sk = persisted().skipped;
       if (auto && sk && sk.version === toVersion) return { ok: false, error: `Version ${toVersion} is skipped (${sk.reason}).` };
@@ -527,6 +580,7 @@ export function createUpdater(opts = {}) {
       const transient = inUse || err.code === 'ERR_UPDATE_HTTP' || err.code === 'ERR_UPDATE_SIZE' || err.name === 'TimeoutError' || err.name === 'AbortError' || err instanceof TypeError;
       if (toVersion && !transient) save({ skipped: { version: toVersion, reason: `failed: ${msg}`, at: new Date(now()).toISOString() } });
       const text = inUse ? `${msg}.` : rolled ? `${msg}. The old files were put back (rolled back).` : msg;
+      mem.undone = rolled;
       phase(rolled ? 'rolled-back' : 'failed', text);
       return { ok: false, error: text };
     } finally {
@@ -561,7 +615,7 @@ export function createUpdater(opts = {}) {
       // Roll back goes one step. An older backup that a cut-short clean-up left behind must not show up as a second step.
       else { try { await dropPrev(); } catch { /* the next update clears it */ } }
       save({ skipped: { version: j.toVersion, reason: 'rolled-back', at: new Date(now()).toISOString() } });
-      mem.restartNeeded = true; mem.healthy = true;
+      mem.restartNeeded = true; mem.healthy = true; mem.undone = false;
       sweep();
       phase('rolled-back', `Back to ${j.fromVersion}. Restart Arc Harness to use it.`);
       return { ok: true, version: j.fromVersion };
@@ -573,6 +627,11 @@ export function createUpdater(opts = {}) {
     if (!MODES.includes(mode)) throw new Error(`Unknown update mode: ${clean(mode, 20)}. Use off, notify or auto.`);
     writeJson(settingsFile, { ...readJson(settingsFile, {}), mode });
     return getState();
+  }
+  function setChannel(channel) {
+    if (!CHANNELS.includes(channel)) throw new Error(`Unknown channel: ${clean(typeof channel === 'string' ? channel : '', 20)}. Use release, beta or alpha.`);
+    writeJson(settingsFile, { ...readJson(settingsFile, {}), channel });
+    return getState(); // the last check counted for the channel before, so this state holds no newest version until the next check
   }
   async function tick() {
     const { mode } = settings();
@@ -595,5 +654,5 @@ export function createUpdater(opts = {}) {
   }
   function stop() { for (const t of timers) clearTimeout(t); timers = []; }
 
-  return { getState, check, install, rollback, setMode, tick, sweep, start, stop };
+  return { getState, check, install, rollback, setMode, setChannel, tick, sweep, start, stop };
 }

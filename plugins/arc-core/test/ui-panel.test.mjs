@@ -676,7 +676,7 @@ test('10. Status rows use plain words, keep the raw code in a hint and offer the
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });
 
-test('11. Settings dialog gets Memory, Connectors, Keys, Add-ons and Updates sections; Updates leaves when its view is absent', () => {
+test('11. Settings dialog gets Memory, Connectors, Access, Add-ons and Updates sections; Updates leaves when its view is absent', () => {
   const { mod } = loadPanel();
   const t = makeTranslator(mod.en);
   const registerAll = () => {
@@ -689,7 +689,7 @@ test('11. Settings dialog gets Memory, Connectors, Keys, Add-ons and Updates sec
     return sections;
   };
   const sections = registerAll();
-  assert.deepEqual(sections.map((s) => s.id), ['memory', 'connectors', 'keys', 'add-ons', 'updates']);
+  assert.deepEqual(sections.map((s) => s.id), ['memory', 'connectors', 'access', 'add-ons', 'updates']);
   for (const s of sections) {
     assert.ok(s.order > 10 && s.order < 20, `${s.id} sits between Models (10) and Advanced (20)`);
     assert.match(s.label(), /^[A-Z][a-z-]+$/, `${s.id} label is one plain word`);
@@ -698,7 +698,7 @@ test('11. Settings dialog gets Memory, Connectors, Keys, Add-ons and Updates sec
   assert.deepEqual(sections.map((s) => s.order), [...sections.map((s) => s.order)].sort((a, b) => a - b));
   const savedConnectors = [...mod.CONNECTORS];
   mod.CONNECTORS.length = 4;
-  assert.deepEqual(registerAll().map((s) => s.id), ['memory', 'connectors', 'keys', 'add-ons']);
+  assert.deepEqual(registerAll().map((s) => s.id), ['memory', 'connectors', 'access', 'add-ons']);
   mod.CONNECTORS.length = 0;
   mod.CONNECTORS.push(...savedConnectors);
 
@@ -714,7 +714,8 @@ test('11. Settings dialog gets Memory, Connectors, Keys, Add-ons and Updates sec
     const data = store.snapshot();
     assert.deepEqual(data.addons.items.map((a) => [a.id, a.version]), [['arc-core', '0.6.0'], ['arc-theme', '']]);
     let consent = null, refreshed = 0;
-    for (const s of sections) {
+    // the Access and Updates pages are pages of the rewrite with their own tests (ui-kit-access.test.mjs)
+    for (const s of sections.filter((x) => x.id !== 'access' && x.id !== 'updates')) {
       const tree = renderTree({ type: mod.SettingsSectionView, props: { section: s.id, data, failed: false, onRefresh: () => { refreshed += 1; }, onOpenConsent: (r) => { consent = r; }, t }, children: [] });
       const nodes = allNodes(tree);
       assert.equal(tree.props['data-arc-settings'], s.id);
@@ -732,12 +733,8 @@ test('11. Settings dialog gets Memory, Connectors, Keys, Add-ons and Updates sec
       }
       if (s.id === 'connectors') {
         assert.ok(nodes.some((n) => n.props?.['data-connector-view'] === 'Servers'));
-        assert.ok(nodes.some((n) => n.props?.['data-connector-view'] === 'Apps'));
-        nodes.find((n) => n.props?.['data-connector-consent'] === 'molecullage').props.onClick();
-      }
-      if (s.id === 'updates') {
-        assert.ok(nodes.some((n) => n.props?.['data-connector-view'] === 'Updates'));
-        for (const a of ['data-update-check', 'data-update-install', 'data-update-rollback', 'data-updates-status']) assert.ok(nodes.some((n) => n.props?.[a]), `updates: keeps ${a}`);
+        // the apps moved to the Access page of the rewrite; the console tab keeps the review of an app's access
+        assert.equal(nodes.some((n) => n.props?.['data-connector-view'] === 'Apps'), false);
       }
       if (s.id === 'add-ons') {
         assert.ok(leaves(tree).includes('arc-core') && leaves(tree).includes('0.6.0'));
@@ -745,7 +742,7 @@ test('11. Settings dialog gets Memory, Connectors, Keys, Add-ons and Updates sec
       }
     }
     assert.equal(refreshed, 1);
-    assert.equal(consent.appId, 'molecullage-connector');
+    assert.equal(consent, null);
 
     const empty = renderTree({ type: mod.SettingsSectionView, props: { section: 'add-ons', data: { ...data, addons: { ok: true, items: [] } }, t }, children: [] });
     assert.ok(allNodes(empty).some((n) => n.props?.['data-empty-state'] === 'add-ons'));
