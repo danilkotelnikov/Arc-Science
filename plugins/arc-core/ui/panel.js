@@ -258,6 +258,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "pane.view.figures": "Figures",
     "pane.view.prose": "Prose",
     "pane.view.status": "Status",
+    "pane.view.cammut": "Cammut",
     "pane.kind.decision": "Decision",
     "pane.kind.claim": "Claim",
     "pane.kind.release": "Release",
@@ -1865,7 +1866,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     return out;
   }
 
-  function ConsolePanel({ data, failed = false, actionError = "", view: firstView = "", item: firstItem = "", onSelectView, onDecision, onVerdict, onPinSource, onUseInChat, onProseCheck, onProseRewrite, onSearchMemory, onSearchFigures, onRefresh, t }) {
+  function ConsolePanel({ data, failed = false, actionError = "", view: firstView = "", item: firstItem = "", onSelectView, onDecision, onVerdict, onPinSource, onUseInChat, onProseCheck, onProseRewrite, onSearchMemory, onSearchFigures, onRefresh, Cammut = null, t }) {
     const [picked, setPicked] = React.useState(firstView);
     const [item, setItem] = React.useState(firstItem);
     // null: the box shows the search that the store answered last, until the user types
@@ -1879,7 +1880,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     const inFlight = React.useRef ? React.useRef(false) : { current: false };
     // React needs the same hooks on every render, so the panel computes on an empty state before its data arrives.
     const state = data || {}, head = state.head || {};
-    const view = PANEL_VIEWS.includes(picked) ? picked : VIEW_OF_WORKSPACE[head.activeWorkspace] || "research";
+    // The Cammut console of the app is its own view, beside Memory, when the app passes it. It reads its own state.
+    const views = Cammut ? ["research", "memory", "cammut", "figures", "prose", "status"] : PANEL_VIEWS;
+    const view = views.includes(picked) ? picked : VIEW_OF_WORKSPACE[head.activeWorkspace] || "research";
     const items = researchItems(state, t);
     const open = view === "research" ? items.find((r) => r.id === item) || null : null;
     // an entry that left the state also closes its detail
@@ -1934,6 +1937,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       body = items.length === 0 ? empty("pane.research.empty") : h("div", { className: "ak-rows" }, items.map((r) => h("button", { key: r.id, type: "button", className: "ak-row", "data-row": "research", "data-id": r.id, onClick: () => { setFb(""); setItem(r.id); } },
         h("span", { className: "text" }, h("span", { className: "name" }, oneLine(r.title, 90)), h("span", { className: "sub" }, r.kind)),
         h("span", { className: "end" }, h(KStatus, { text: r.state, dot: r.dot })))));
+    } else if (view === "cammut") {
+      body = h(Cammut, { t });
     } else if (view === "memory") {
       const m = state.memory || {}, hits = Array.isArray(m.results) ? m.results : [];
       body = h(React.Fragment, null,
@@ -1958,7 +1963,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           return h(KRow, {
             key: k, kind: "source", id: String(k), name, tail: on ? h("span", { className: "ak-tag" }, t("molecullage.pinned")) : null, sub: oneLine(said(s.use) || said(s.kind) || said(s.section), 90),
             end: h(Menu, { label: t("pane.more.for", { name: oneLine(s.name || k, 40) }), items: [["pin", t(on ? "pane.unpin" : "molecullage.pin")], ["use", t("chat.use")]],
-              onPick: (a) => { if (a === "pin") { if (onPinSource) onPinSource({ source: s }); } else use(`Use Molecullage source "${s.name || k}" (${s.section || "library"}${said(s.licenceClass) || said(s.kind) ? `, licence: ${said(s.licenceClass) || said(s.kind)}` : ""}${s.doi ? `, ${s.doi}` : ""}${s.url ? `, ${s.url}` : ""})`); } }),
+              // a source without an id is pinned under the key of its row, because the store refuses a pin without an id
+              onPick: (a) => { if (a === "pin") { if (onPinSource) onPinSource({ source: s.id ? s : { ...s, id: k } }); } else use(`Use Molecullage source "${s.name || k}" (${s.section || "library"}${said(s.licenceClass) || said(s.kind) ? `, licence: ${said(s.licenceClass) || said(s.kind)}` : ""}${s.doi ? `, ${s.doi}` : ""}${s.url ? `, ${s.url}` : ""})`); } }),
           });
         })));
     } else if (view === "prose") {
@@ -1991,7 +1997,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     }
     return frame(
       h("div", { className: "ak-views", role: "tablist", "aria-label": t("pane.views"), onKeyDown: onTabKeys },
-        PANEL_VIEWS.map((id) => h("button", { key: id, type: "button", role: "tab", id: `ak-view-${id}`, className: "ak-tab", "aria-selected": view === id, tabIndex: view === id ? 0 : -1, "data-view": id,
+        views.map((id) => h("button", { key: id, type: "button", role: "tab", id: `ak-view-${id}`, className: "ak-tab", "aria-selected": view === id, tabIndex: view === id ? 0 : -1, "data-view": id,
           onClick: () => { setFb(""); setPicked(id); if (onSelectView && WORKSPACE_OF_VIEW[id]) onSelectView(WORKSPACE_OF_VIEW[id]); } }, t(`pane.view.${id}`)))),
       actionError ? alertLine(actionError) : null,
       fb ? h("p", { role: "status", className: "ak-alert ak-notice" }, fb) : null,
@@ -2060,6 +2066,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         failed,
         actionError,
         t,
+        Cammut: CONNECTORS.includes("Cammut") ? CammutPane : null,
         onSelectView: (workspace) => dispatch({ kind: "workspace", workspace }),
         onDecision: ({ branchId, action }) => dispatch({ kind: "decision", branchId, action }),
         onVerdict: (req) => dispatch({ kind: "verdict", ...req }),
@@ -2112,9 +2119,45 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     };
   }
 
+  // The Settings list of the app draws a gear for every page of an add-on: it picks the icon by the page id and knows
+  // none of ours. This pass puts our own icon into such an entry. It finds the entry by its label and swaps the drawing
+  // inside the icon that the app made; an entry of the app itself is never touched.
+  const SETTINGS_ICON = { memory: "layers", connectors: "plug", access: "shield", "add-ons": "blocks", updates: "update" };
+  function paintSettingsIcons(root, t) {
+    let done = 0;
+    try {
+      const byLabel = {};
+      for (const id of Object.keys(SETTINGS_ICON)) byLabel[t(`settings.nav.${id.replace("-", "")}`)] = SETTINGS_ICON[id];
+      for (const cell of Array.from(root.querySelectorAll('button[class*="navCell"]'))) {
+        const icon = byLabel[String(cell.textContent || "").trim()], svg = cell.querySelector('svg[class*="navIcon"]');
+        if (!icon || !svg || svg.getAttribute("data-arc-icon") === icon) continue;
+        svg.setAttribute("data-arc-icon", icon);
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-linecap", "round");
+        svg.setAttribute("stroke-linejoin", "round");
+        svg.innerHTML = ICONS[icon];
+        done++;
+      }
+    } catch { /* the page changed under the pass: the next pass draws the icons */ }
+    return done;
+  }
+  // The app draws its Settings list when the user opens Settings and again on each change, so the pass runs after page
+  // changes, at most once in 200 ms. Its own change of an icon starts one more pass, which then finds nothing to do.
+  function watchSettingsIcons(t) {
+    const D = typeof document !== "undefined" ? document : null, MO = typeof MutationObserver !== "undefined" ? MutationObserver : null;
+    if (!D || !D.body || !MO || typeof setTimeout !== "function") return () => {};
+    let queued = false;
+    const run = () => { queued = false; paintSettingsIcons(D, t); };
+    const mo = new MO(() => { if (!queued) { queued = true; setTimeout(run, 200); } });
+    mo.observe(D.body, { childList: true, subtree: true });
+    run();
+    return () => mo.disconnect();
+  }
+
   function apply(ctx) {
     ctx.effect(() => ctx.locale.register(NS, { en, zh: en }), "arc-core: dictionaries");
     const t = ctx.locale.bind(NS);
+    ctx.effect(() => watchSettingsIcons(t), "arc-core: settings icons");
     if (ctx.slots && typeof ctx.slots.inject === "function") {
       for (const sec of SETTINGS_SECTIONS.filter((x) => !x.connector || CONNECTORS.includes(x.connector))) {
         const Section = makeSettingsSection(sec.id, t);
@@ -2166,6 +2209,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     THEMES,
     en,
     pushToChatComposer,
+    paintSettingsIcons,
+    SETTINGS_ICON,
     SettingsSectionView,
     SETTINGS_SECTIONS,
     InfoHint,

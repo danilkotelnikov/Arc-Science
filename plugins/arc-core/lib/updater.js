@@ -308,6 +308,7 @@ export function createUpdater(opts = {}) {
   // own: an object of the caller that takes the failure of this one check, so no other check can write into its result.
   async function doCheck(forChannel, own = null) {
     const channel = forChannel || settings().channel; // read now: another window of the app may have changed it
+    const mine = (mem.checks = (mem.checks || 0) + 1); // the number of this check: a newer check has a higher one
     phase('checking');
     try {
       let all = [];
@@ -331,8 +332,9 @@ export function createUpdater(opts = {}) {
       if (own) own.error = said;
       // the check of an update is its own failure, whatever the channel is now; a plain check counts only for the chosen channel
       if (own || settings().channel === channel) phase('failed', said);
-      // a late failure for a channel that is no longer chosen leaves the result of a newer check alone
-      else if (mem.phase === 'checking') phase('idle');
+      // A late failure for a channel that is no longer chosen ends the checking phase only when no newer check
+      // has started since. A newer check, running or ended, keeps what it wrote.
+      else if (mine === mem.checks && mem.phase === 'checking') phase('idle');
     }
     return getState();
   }

@@ -721,3 +721,81 @@ test('the fields that the test fixtures lay over the state exist in the state of
   assert.ok('text' in s.prose && Array.isArray(s.prose.report.findings));
   assert.ok(Array.isArray(s.head.ladderRungs) && s.head.ladderRungs.every((r) => 'id' in r));
 });
+
+test('Figures: a source without an id is pinned and unpinned under the key that its row uses', (t0) => {
+  const store = tmpStore(t0);
+  const nameless = { id: '', name: 'A source without an id', kind: 'tool', licenceClass: 'MIT' };
+  const withIt = () => { const now = store.snapshot(); return { ...now, molecullage: { ...now.molecullage, items: [nameless] } }; };
+  const p = mount({ view: 'figures', data: withIt(), onPinSource: (r) => { const out = store.toggleMolecullagePin(plain(r)); assert.equal(out.ok, true, out.error); p.set({ data: withIt() }); } });
+  click(menuOf(p.render()));
+  click(items(p.render())[0]);
+  assert.deepEqual(rowsOf(p.render(), 'source').map(nameOf), ['A source without an id Pinned']);
+  click(menuOf(p.render()));
+  assert.deepEqual(items(p.render()).map(text), ['Unpin', 'Use in chat']);
+  click(items(p.render())[0]);
+  assert.equal(store.snapshot().molecullage.pins.length, 0);
+});
+
+// ---- the Cammut console inside the panel, and own icons in the Settings list of the app (D-20261124-51)
+
+test('the panel shows the Cammut console as its own view when the app passes it', () => {
+  const Cammut = () => createElement('section', { 'data-cammut-stand-in': 'true' }, 'console');
+  const sent = [];
+  const p = mount({ data: snap(), Cammut, onSelectView: (w) => sent.push(w) });
+  assert.deepEqual(tabs(p.render()).map(text), ['Research', 'Memory', 'Cammut', 'Figures', 'Prose', 'Status']);
+  click(tabs(p.render()).find((n) => n.props['data-view'] === 'cammut'));
+  const tree = p.render();
+  assert.equal(all(tree, (n) => n.props?.['data-cammut-stand-in']).length, 1);
+  assert.deepEqual(tabs(tree).filter((n) => n.props['aria-selected']).map(text), ['Cammut']);
+  assert.deepEqual(sent, [], 'the Cammut view has no workspace in the store');
+  assert.deepEqual(tabs(mount({ data: snap() }).render()).map(text), ['Research', 'Memory', 'Figures', 'Prose', 'Status'], 'without the console the panel keeps its five views');
+});
+
+test('the registered pane carries the Cammut console of the app as a view, and the console reads its own state', async (t0) => {
+  const store = tmpStore(t0);
+  const { p, settle, posts } = registered(store);
+  p.render(); await settle();
+  click(tabs(p.render()).find((n) => n.props['data-view'] === 'cammut'));
+  await settle();
+  assert.equal(all(p.render(), (n) => n.props?.['data-connector-view'] === 'Cammut').length, 1);
+  assert.ok(posts.some(([url]) => url === 'api/arc-core/cammut/state'), 'the console did not ask for its state');
+});
+
+// a stand-in for one entry of the Settings list of the app: a button with the icon that the app drew, and its label
+const navCell = (label) => { const attrs = {}; const svg = { innerHTML: '<path d="gear"/>', attrs, setAttribute: (k, v) => { attrs[k] = v; }, getAttribute: (k) => (k in attrs ? attrs[k] : null) }; return { textContent: ` ${label} `, svg, querySelector: (sel) => (sel.includes('navIcon') ? svg : null) }; };
+const navRoot = (cells) => ({ querySelectorAll: (sel) => (sel.includes('navCell') ? cells : []) });
+
+test('Settings icons: each page of the add-on gets its own icon in the list of the app, and the entries of the app stay as they are', () => {
+  const cells = ['General', 'Models', 'Memory', 'Connectors', 'Access', 'Add-ons', 'Updates'].map(navCell);
+  assert.equal(mod.paintSettingsIcons(navRoot(cells), t), 5);
+  for (const own of cells.slice(0, 2)) { assert.equal(own.svg.innerHTML, '<path d="gear"/>'); assert.deepEqual(own.svg.attrs, {}); }
+  const drawn = cells.slice(2).map((c) => c.svg.attrs['data-arc-icon']);
+  assert.deepEqual(drawn, ['layers', 'plug', 'shield', 'blocks', 'update']);
+  for (const c of cells.slice(2)) {
+    assert.equal(c.svg.innerHTML, mod.kit.ICONS[c.svg.attrs['data-arc-icon']]);
+    assert.equal(c.svg.attrs.stroke, 'currentColor', 'the icon takes the colour of its entry, so it follows the theme');
+  }
+  assert.equal(mod.paintSettingsIcons(navRoot(cells), t), 0, 'a second pass changes nothing');
+  cells[3] = navCell('Connectors'); // the app drew this entry again
+  assert.equal(mod.paintSettingsIcons(navRoot(cells), t), 1);
+  assert.equal(mod.paintSettingsIcons({ querySelectorAll: () => { throw new Error('gone'); } }, t), 0, 'a page that changed under the pass stops nothing');
+  assert.equal(mod.paintSettingsIcons(null, t), 0);
+});
+
+test('Settings icons: the pass starts with the add-on, runs again when the app draws new entries, and stops with the add-on', () => {
+  const cells = ['General', 'Access'].map(navCell);
+  let seen = null, stopped = 0, fire = null;
+  class MutationObserver { constructor(fn) { fire = fn; } observe(node, opts) { seen = { node, opts }; } disconnect() { stopped++; } }
+  const document = { body: {}, querySelectorAll: navRoot(cells).querySelectorAll };
+  const m = loadPanel(still, { document, MutationObserver, setTimeout: (fn) => { fn(); return 1; } });
+  const ends = [];
+  m.apply({ effect: (fn) => { ends.push(fn()); }, locale: { register: () => () => {}, bind: () => t }, slots: null, inject: () => {} });
+  assert.equal(seen.node, document.body);
+  assert.equal(seen.opts.childList && seen.opts.subtree, true);
+  assert.equal(cells[1].svg.attrs['data-arc-icon'], 'shield', 'an open Settings list gets its icons at once');
+  cells.push(navCell('Updates'));
+  fire([]);
+  assert.equal(cells[2].svg.attrs['data-arc-icon'], 'update');
+  for (const end of ends) if (typeof end === 'function') end();
+  assert.equal(stopped, 1);
+});

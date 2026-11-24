@@ -1411,3 +1411,24 @@ test('a late failed check of a channel that is no longer chosen does not erase t
   await first;
   assert.equal(u.getState().failed, true, 'the late failure of the Release check erased the failure of the Beta check');
 });
+
+test('a late failed check of a channel that is no longer chosen leaves the phase alone while a newer check still runs', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  e.srv.state.publish(buildKit('0.7.0-beta.1'), { prerelease: true });
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  let n = 0; const open = [null, null];
+  const held = [new Promise((r) => { open[0] = r; }), new Promise((r) => { open[1] = r; })];
+  const u = e.make({ fetchImpl: async (url, o) => { const k = n++; if (k < 2) await held[k]; if (k === 0) throw new TypeError('fetch failed'); return fetch(url, o); } });
+  const older = u.check(); // made for Release: held, and then it fails
+  await pause(30);
+  u.setChannel('beta');
+  const newer = u.check(); // made for Beta: held, and then it succeeds
+  await pause(30);
+  open[0]();
+  await older;
+  assert.equal(u.getState().phase, 'checking', 'the late failure of the older check ended the phase of the check that still runs');
+  open[1]();
+  const s = await newer;
+  assert.deepEqual({ phase: s.phase, latest: s.latest }, { phase: 'idle', latest: '0.7.0-beta.1' });
+});
