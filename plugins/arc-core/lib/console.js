@@ -742,7 +742,7 @@ export function createResearchSessionStore(opts = {}) {
     if (!targetId) return { ok: false, error: 'Source id is required' };
     const idx = molecullagePins.findIndex((p) => p.id === targetId); let pinned = false;
     if (idx >= 0) molecullagePins.splice(idx, 1);
-    else { const rawUrl = sStr(srcObj.url || url, 200); molecullagePins.push({ id: targetId, name: sStr(srcObj.name || name || title || targetId, 120), section: sStr(srcObj.section || section, 60), doi: sStr(srcObj.doi || doi, 120), url: /^https?:\/\/\S+$/i.test(rawUrl) ? rawUrl : '', pinnedAtMs: nowFn() }); if (molecullagePins.length > 200) molecullagePins.splice(0, molecullagePins.length - 200); pinned = true; }
+    else { const rawUrl = sStr(srcObj.url || url, 200); molecullagePins.push({ id: targetId, name: sStr(srcObj.name || name || title || targetId, 120), section: sStr(srcObj.section || section, 60), doi: sStr(srcObj.doi || doi, 120), url: /^https?:\/\/\S+$/i.test(rawUrl) ? rawUrl : '', licenceClass: sStr(srcObj.licenceClass, 60), kind: sStr(srcObj.kind, 60), use: sStr(srcObj.use, 200), pinnedAtMs: nowFn() }); if (molecullagePins.length > 200) molecullagePins.splice(0, molecullagePins.length - 200); pinned = true; }
     const saved = saveConsoleNotesSafe(); pushTimeline({ atMs: nowFn(), kind: 'molecullage-pin', summary: `${pinned ? 'Pinned' : 'Unpinned'} source ${targetId}` });
     return { ok: true, saved, pinned, id: targetId, pins: molecullagePins.map((p) => ({ ...p })) };
   }

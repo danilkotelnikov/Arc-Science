@@ -331,7 +331,8 @@ export function createUpdater(opts = {}) {
       if (own) own.error = said;
       // the check of an update is its own failure, whatever the channel is now; a plain check counts only for the chosen channel
       if (own || settings().channel === channel) phase('failed', said);
-      else phase('idle');
+      // a late failure for a channel that is no longer chosen leaves the result of a newer check alone
+      else if (mem.phase === 'checking') phase('idle');
     }
     return getState();
   }

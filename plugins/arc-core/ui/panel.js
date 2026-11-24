@@ -1868,8 +1868,10 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
   function ConsolePanel({ data, failed = false, actionError = "", view: firstView = "", item: firstItem = "", onSelectView, onDecision, onVerdict, onPinSource, onUseInChat, onProseCheck, onProseRewrite, onSearchMemory, onSearchFigures, onRefresh, t }) {
     const [picked, setPicked] = React.useState(firstView);
     const [item, setItem] = React.useState(firstItem);
-    const [memQ, setMemQ] = React.useState("");
-    const [figQ, setFigQ] = React.useState("");
+    // null: the box shows the search that the store answered last, until the user types
+    const [memQ, setMemQ] = React.useState(null);
+    const [figQ, setFigQ] = React.useState(null);
+    const [seeking, setSeeking] = React.useState(false); // a memory search of this panel is on its way
     const [draft, setDraft] = React.useState(null); // the typed text of the Prose view, until a check takes it
     const [fb, setFb] = React.useState("");
     const root = React.useRef ? React.useRef(null) : { current: null };
@@ -1890,6 +1892,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     }
     const focusLater = (sel) => { if (typeof setTimeout === "function") setTimeout(() => { const el = root.current && root.current.querySelector ? root.current.querySelector(sel) : null; if (el && el.focus) el.focus(); }, 0); };
     const use = (text) => { pushToChatComposer(text, setFb, t); if (onUseInChat) onUseInChat(text); };
+    // a line longer than one line is cut, and a hint beside it holds the whole message
+    const alertLine = (said) => { const full = String(said || ""); return h("p", { role: "alert", className: "ak-alert" }, oneLine(full), full.length > 90 ? h(InfoHint, { label: t("upd.detail"), text: oneLine(full, 600), align: "end", glyph: h(Ic, { n: "info" }) }) : null); };
+    const seek = onSearchMemory ? async (q) => { setSeeking(true); try { await onSearchMemory(q); } catch { /* the pane shows the refusal */ } finally { setSeeking(false); } } : null;
     const empty = (key) => h("p", { className: "ak-empty" }, t(key));
     const search = (kind, value, set, send, label, bare) => h("form", { className: "ak-search", "data-search": kind, onSubmit: (e) => { e?.preventDefault?.(); const q = String(value || "").trim(); if ((q || bare) && send) send(q); } },
       h("span", { className: "ak-field" }, h(Ic, { n: "search" }), h("input", { type: "text", name: "q", value, placeholder: label, "aria-label": label, onChange: (e) => set(e.target.value) })),
@@ -1910,13 +1915,13 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       const word = (a) => (open.type === "release" ? t(`verdict.${a.toLowerCase()}`) : a);
       const title = oneLine(open.title, 90);
       body = h("div", { className: "ak-detail", "data-detail": open.id },
-        h("button", { type: "button", className: "ak-btn sm ak-fold", "data-back": "true", autoFocus: true, onClick: () => { const id = open.id; setItem(""); focusLater(`[data-row="research"][data-id="${id}"]`); } }, h(Ic, { n: "back" }), t("pane.view.research")),
+        h("button", { type: "button", className: "ak-btn sm ak-fold", "data-back": "true", autoFocus: true, onClick: () => { const id = open.id; setFb(""); setItem(""); focusLater(`[data-row="research"][data-id="${id}"]`); } }, h(Ic, { n: "back" }), t("pane.view.research")),
         h("h2", null, title),
         h("div", { className: "ak-meta" },
           h("span", { className: "ak-tag" }, open.kind),
           h(KStatus, { text: open.state, dot: open.dot }),
           open.level ? h("span", { className: "ak-status", "data-level": open.level }, t("pane.level", { n: open.level, m: levels })) : null,
-          open.level ? h(InfoHint, { label: t("pane.level.about"), text: t("pane.level.hint", { m: levels }), glyph: h(Ic, { n: "info" }) }) : null),
+          open.level ? h(InfoHint, { label: t("pane.level.about"), text: t("pane.level.hint", { m: levels }), align: "end", glyph: h(Ic, { n: "info" }) }) : null),
         open.text && open.text !== title ? h("p", null, open.text) : null,
         open.evidence.length ? h(React.Fragment, null,
           h("div", { className: "ak-group" }, t("pane.evidence")),
@@ -1926,19 +1931,19 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
           h(KBtn, { look: "outline", label: t("chat.use"), onClick: () => use(open.chat) }),
           rest.length ? h(Menu, { label: t("pane.more"), items: rest.map((a) => [a, word(a)]), disabled: busy, onPick: run }) : null));
     } else if (view === "research") {
-      body = items.length === 0 ? empty("pane.research.empty") : h("div", { className: "ak-rows" }, items.map((r) => h("button", { key: r.id, type: "button", className: "ak-row", "data-row": "research", "data-id": r.id, onClick: () => setItem(r.id) },
+      body = items.length === 0 ? empty("pane.research.empty") : h("div", { className: "ak-rows" }, items.map((r) => h("button", { key: r.id, type: "button", className: "ak-row", "data-row": "research", "data-id": r.id, onClick: () => { setFb(""); setItem(r.id); } },
         h("span", { className: "text" }, h("span", { className: "name" }, oneLine(r.title, 90)), h("span", { className: "sub" }, r.kind)),
         h("span", { className: "end" }, h(KStatus, { text: r.state, dot: r.dot })))));
     } else if (view === "memory") {
       const m = state.memory || {}, hits = Array.isArray(m.results) ? m.results : [];
       body = h(React.Fragment, null,
-        search("memory", memQ, setMemQ, onSearchMemory, t("pane.memory.search"), false),
+        search("memory", memQ !== null ? memQ : String(m.lastQuery || ""), setMemQ, seek, t("pane.memory.search"), false),
         // the pane may carry the same refusal as its own line above: one failure is said once
-        m.error && oneLine(m.error) !== oneLine(actionError) ? h("p", { role: "alert", className: "ak-alert" }, oneLine(m.error)) : null,
+        m.error && oneLine(m.error) !== oneLine(actionError) ? alertLine(m.error) : null,
         hits.length ? h("div", { className: "ak-rows" }, hits.map((n, i) => h(KRow, {
           key: n.id || i, kind: "note", id: String(n.id || i), name: String(n.text || ""), chips: [oneLine(n.context || "memory", 40)],
           end: h(KBtn, { look: "outline", small: true, label: t("chat.use"), aria: t("pane.use.label", { name: oneLine(n.text, 40) }), onClick: () => use(`Shared memory [${n.context || "memory"}]: ${n.text}`) }),
-        }))) : m.lastQuery && !m.error ? empty("pane.nothing") : null);
+        }))) : m.lastQuery && !m.error && !seeking ? empty("pane.nothing") : null);
     } else if (view === "figures") {
       const f = state.molecullage || {}, pins = Array.isArray(f.pins) ? f.pins : [], found = Array.isArray(f.items) ? f.items : [];
       const keyOf = (s) => s.id || s.name, pinned = new Set(pins.map((p) => p.id));
@@ -1946,14 +1951,14 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       const rows = [...pins.filter((p) => !found.some((s) => keyOf(s) === p.id)), ...found];
       const asked = String(f.query || "").trim(); // the search that the store answered last
       body = h(React.Fragment, null,
-        search("figures", figQ, setFigQ, onSearchFigures, t("pane.figures.search"), true),
+        search("figures", figQ !== null ? figQ : String(f.query || ""), setFigQ, onSearchFigures, t("pane.figures.search"), true),
         found.length === 0 && asked ? empty("pane.nothing") : null,
         rows.length === 0 ? (asked ? null : empty("pane.figures.none")) : h("div", { className: "ak-rows" }, rows.map((s) => {
           const k = keyOf(s), on = pinned.has(k), name = oneLine(s.name || k, 60);
           return h(KRow, {
             key: k, kind: "source", id: String(k), name, tail: on ? h("span", { className: "ak-tag" }, t("molecullage.pinned")) : null, sub: oneLine(said(s.use) || said(s.kind) || said(s.section), 90),
             end: h(Menu, { label: t("pane.more.for", { name: oneLine(s.name || k, 40) }), items: [["pin", t(on ? "pane.unpin" : "molecullage.pin")], ["use", t("chat.use")]],
-              onPick: (a) => { if (a === "pin") { if (onPinSource) onPinSource({ source: s }); } else use(`Use Molecullage source "${s.name || k}" (${s.section || "library"}, licence: ${s.licenceClass || s.kind || "not stated"}${s.doi ? `, ${s.doi}` : ""}${s.url ? `, ${s.url}` : ""})`); } }),
+              onPick: (a) => { if (a === "pin") { if (onPinSource) onPinSource({ source: s }); } else use(`Use Molecullage source "${s.name || k}" (${s.section || "library"}${said(s.licenceClass) || said(s.kind) ? `, licence: ${said(s.licenceClass) || said(s.kind)}` : ""}${s.doi ? `, ${s.doi}` : ""}${s.url ? `, ${s.url}` : ""})`); } }),
           });
         })));
     } else if (view === "prose") {
@@ -1987,8 +1992,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     return frame(
       h("div", { className: "ak-views", role: "tablist", "aria-label": t("pane.views"), onKeyDown: onTabKeys },
         PANEL_VIEWS.map((id) => h("button", { key: id, type: "button", role: "tab", id: `ak-view-${id}`, className: "ak-tab", "aria-selected": view === id, tabIndex: view === id ? 0 : -1, "data-view": id,
-          onClick: () => { setPicked(id); if (onSelectView && WORKSPACE_OF_VIEW[id]) onSelectView(WORKSPACE_OF_VIEW[id]); } }, t(`pane.view.${id}`)))),
-      actionError ? h("p", { role: "alert", className: "ak-alert" }, oneLine(actionError)) : null,
+          onClick: () => { setFb(""); setPicked(id); if (onSelectView && WORKSPACE_OF_VIEW[id]) onSelectView(WORKSPACE_OF_VIEW[id]); } }, t(`pane.view.${id}`)))),
+      actionError ? alertLine(actionError) : null,
       fb ? h("p", { role: "status", className: "ak-alert ak-notice" }, fb) : null,
       h("div", { role: "tabpanel", "aria-labelledby": `ak-view-${view}` }, body));
   }
@@ -2043,13 +2048,13 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         return () => { consoleViews.delete(refresh); if (w) w.removeEventListener("focus", onFocus); };
       }, []);
 
-      return { data, failed, actionError, pendingConsent, setPendingConsent, dispatch };
+      return { data, failed, actionError, pendingConsent, setPendingConsent, dispatch, refresh };
   }
 
   function makePane(t) {
     return function ArcConsolePane() {
       // the side panel of the rewrite (S062). The older View stays exported for its own tests until it is removed.
-      const { data, failed, actionError, dispatch } = useConsole();
+      const { data, failed, actionError, dispatch, refresh } = useConsole();
       return h(ConsolePanel, {
         data,
         failed,
@@ -2061,8 +2066,9 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         onPinSource: (req) => dispatch({ kind: "molecullage-pin", ...req }),
         onProseCheck: async (text) => (await dispatch({ kind: "prose", text }))?.ok !== false,
         onProseRewrite: async (text) => (await dispatch({ kind: "prose-rewrite", ...(typeof text === "string" ? { text } : {}) }))?.ok !== false,
-        // a refused search leaves its line in the state: the state is read again, so the hits of the search before it leave the view
-        onSearchMemory: async (query) => { const r = await dispatch({ kind: "memory-search", query }); if (r && r.ok === false) await dispatch({ kind: "refresh" }); },
+        // A refused search leaves its line in the state. The state is read again, so the hits of the search before it leave
+        // the view; the refusal line of the pane stays, because a plain state read does not clear it.
+        onSearchMemory: async (query) => { const r = await dispatch({ kind: "memory-search", query }); if (r && r.ok === false) await refresh(); },
         onSearchFigures: (query) => dispatch({ kind: "molecullage-search", query }),
         onRefresh: () => dispatch({ kind: "refresh" }),
       });

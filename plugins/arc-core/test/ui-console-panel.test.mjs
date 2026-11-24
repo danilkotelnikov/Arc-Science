@@ -226,7 +226,7 @@ test('Memory: a search sends the trimmed words, an empty one sends nothing, and 
   const input = all(form, (n) => n.type === 'input')[0];
   assert.equal(input.props['aria-label'], 'Search the shared notes');
   assert.equal(all(form, (n) => n.type === 'button')[0].props.type, 'submit');
-  form.props.onSubmit({ preventDefault() {} });
+  assert.equal(input.props.value, 'baseline');
   input.props.onChange({ target: { value: '   ' } });
   all(p.render(), (n) => n.type === 'form')[0].props.onSubmit({ preventDefault() {} });
   assert.deepEqual(sent, []);
@@ -517,4 +517,207 @@ test('the side pane that the app registers runs the new panel on the console rou
 test('the root test command of the repository, which CI runs, lists the tests of the side panel', () => {
   const root = JSON.parse(fs.readFileSync(path.join(here, '../../../package.json'), 'utf8'));
   assert.ok(root.scripts.test.includes('plugins/arc-core/test/ui-console-panel.test.mjs'));
+});
+
+// ---- the findings carried from the second isolated review (S063)
+
+// the pane that the app registers, on the real console route of a real store. `gate.hold` keeps the answers of the state route back.
+function registered(store) {
+  const posts = [], gate = { hold: null };
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body); posts.push([String(url), body]);
+    if (gate.hold && String(url).endsWith('/state')) await gate.hold;
+    const out = await serveConsoleRoute(String(url), body, store);
+    return { ok: Boolean(out) && out.ok !== false, json: async () => JSON.parse(JSON.stringify(out)) };
+  };
+  let Pane = null;
+  const p = mount({}, { globals: { fetch }, pick: (m) => {
+    if (!Pane) {
+      const slots = { inject: (name, fn) => { fn(); return () => {}; }, register: (opts, comp) => { if (opts.name === 'sidebar.right.pane.tab') Pane = comp; return () => {}; } };
+      m.apply({ effect: () => {}, locale: { register: () => {}, bind: () => t }, slots, inject: (names, fn) => { fn({ sidebarRightTabs: { register: () => () => {} }, slots }); } });
+    }
+    return Pane;
+  } });
+  const settle = async () => { for (let k = 0; k < 8; k++) await tick(); };
+  const kinds = () => posts.filter(([url]) => url === 'api/arc-core/console/action').map(([, body]) => body.kind);
+  return { p, posts, gate, settle, kinds };
+}
+const tmpStore = (t0, opts = {}) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-panel-'));
+  t0.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  return createResearchSessionStore({ arcHome: tmp, molecullageRoot: path.join(tmp, 'no-library'), live: false, ...opts });
+};
+const menuOf = (node) => all(node, (n) => n.props?.['aria-haspopup'] === 'menu')[0];
+const items = (tree) => all(tree, (n) => n.props?.role === 'menuitem');
+
+test('Figures on a real store: a pinned source that the search does not return keeps its use line and its licence', (t0) => {
+  const store = tmpStore(t0);
+  const src = { id: 'tol', name: 'Paul Tol colour schemes', kind: 'palette', licenceClass: 'CC-BY-4.0', use: 'Colour sets that stay clear for all readers', section: 'colour' };
+  assert.equal(store.toggleMolecullagePin({ source: src }).ok, true);
+  const chat = [];
+  const p = mount({ data: store.snapshot(), view: 'figures', onUseInChat: (x) => chat.push(x) });
+  const row = rowsOf(p.render(), 'source')[0];
+  assert.equal(text(all(row, (n) => has(n, 'sub'))[0]), 'Colour sets that stay clear for all readers');
+  click(menuOf(row));
+  click(items(p.render())[1]);
+  assert.match(chat[0], /licence: CC-BY-4\.0/);
+});
+
+test('Figures: a source without a licence field says nothing about a licence', () => {
+  const base = snap(), chat = [];
+  const p = mount({ view: 'figures', onUseInChat: (x) => chat.push(x), data: { ...base, molecullage: { ...base.molecullage, items: [], pins: [{ id: 'old', name: 'A pin of an older store', section: 'library' }] } } });
+  click(menuOf(p.render()));
+  click(items(p.render())[1]);
+  assert.match(chat[0], /A pin of an older store/);
+  assert.ok(!/licen/i.test(chat[0]), `the text states a licence that the row does not hold: ${chat[0]}`);
+});
+
+test('the registered pane: a verdict, a rewrite and a source search reach the store, and a refused memory search keeps its one line', async (t0) => {
+  const store = tmpStore(t0);
+  const { p, settle, kinds } = registered(store);
+  p.render(); await settle();
+  click(rowsOf(p.render(), 'research')[5]);
+  click(button(p.render(), 'Approve'));
+  await settle();
+  assert.equal(store.snapshot().verdicts['release:candidate'].verdict, 'Approve');
+  click(tabs(p.render()).find((n) => n.props['data-view'] === 'prose'));
+  await settle();
+  const draft = 'The method is not a shortcut, but a careful protocol.';
+  all(p.render(), (n) => n.type === 'textarea')[0].props.onChange({ target: { value: draft } });
+  await click(button(p.render(), 'Check text')); await settle();
+  await click(button(p.render(), 'Replace with plain words')); await settle();
+  assert.notEqual(store.snapshot().prose.text, draft, 'the rewrite reached the store');
+  click(tabs(p.render()).find((n) => n.props['data-view'] === 'figures'));
+  await settle();
+  all(p.render(), (n) => n.type === 'input')[0].props.onChange({ target: { value: 'tol' } });
+  all(p.render(), (n) => n.type === 'form')[0].props.onSubmit({ preventDefault() {} });
+  await settle();
+  assert.equal(store.snapshot().molecullage.query, 'tol');
+  assert.equal(text(all(p.render(), (n) => has(n, 'ak-empty'))[0]), 'Nothing matches.');
+  // this store has no live gateway, so it refuses a memory search with one line
+  click(tabs(p.render()).find((n) => n.props['data-view'] === 'memory'));
+  await settle();
+  all(p.render(), (n) => n.type === 'input')[0].props.onChange({ target: { value: 'baseline' } });
+  all(p.render(), (n) => n.type === 'form')[0].props.onSubmit({ preventDefault() {} });
+  await settle();
+  assert.deepEqual(alerts(p.render()), ['Live gateway probing is turned off'], 'a refused search shows its line once and keeps it');
+  assert.deepEqual(kinds(), ['verdict', 'workspace', 'prose', 'prose-rewrite', 'workspace', 'molecullage-search', 'workspace', 'memory-search']);
+});
+
+test('the registered pane: the action buttons stay held until the state that follows the action has arrived', async (t0) => {
+  const store = tmpStore(t0);
+  const { p, gate, settle } = registered(store);
+  p.render(); await settle();
+  click(rowsOf(p.render(), 'research')[1]);
+  let open = null;
+  gate.hold = new Promise((r) => { open = r; });
+  click(button(p.render(), 'Pursue'));
+  await settle();
+  assert.equal(store.snapshot().tree.branches[1].decision, 'Pursue', 'the action itself is done');
+  const held = all(p.render(), (n) => n.props?.['data-detail'])[0];
+  assert.equal(all(held, (n) => has(n, 'primary'))[0].props.disabled, true, 'the main button is live before the new state is read');
+  open(); gate.hold = null;
+  await settle();
+  const free = all(p.render(), (n) => n.props?.['data-detail'])[0];
+  assert.equal(Boolean(all(free, (n) => has(n, 'primary'))[0].props.disabled), false);
+  assert.equal(statusOf(free), 'Pursued');
+});
+
+test('the search boxes show the search that the store answered last', () => {
+  const base = snap();
+  const mem = mount({ view: 'memory', data: { ...base, memory: { ...base.memory, lastQuery: 'baseline', results: [] } } }).render();
+  assert.equal(all(mem, (n) => n.type === 'input')[0].props.value, 'baseline');
+  const fig = mount({ view: 'figures', data: { ...base, molecullage: { ...base.molecullage, query: 'tol', items: [] } } }).render();
+  assert.equal(all(fig, (n) => n.type === 'input')[0].props.value, 'tol');
+});
+
+test('Memory: Nothing matches waits for the answer of the search that is on its way', async () => {
+  const base = snap(); let done = null;
+  const data = { ...base, memory: { ...base.memory, lastQuery: 'zzz', results: [] } };
+  const p = mount({ view: 'memory', data, onSearchMemory: () => new Promise((r) => { done = r; }) });
+  assert.equal(all(p.render(), (n) => has(n, 'ak-empty')).length, 1, 'an answered search without a hit says so');
+  all(p.render(), (n) => n.type === 'form')[0].props.onSubmit({ preventDefault() {} });
+  assert.equal(all(p.render(), (n) => has(n, 'ak-empty')).length, 0, 'the line shows although the search is still on its way');
+  done({ ok: true });
+  await tick();
+  assert.equal(all(p.render(), (n) => has(n, 'ak-empty')).length, 1);
+});
+
+test('an error line that is cut carries the whole message in a hint; a short one has no hint', () => {
+  const long = 'The gateway refused the action because the stored state is older than the request. '.repeat(3).trim();
+  const withHint = mount({ data: snap(), actionError: long }).render();
+  assert.ok(alerts(withHint)[0].length <= 90);
+  const hint = all(withHint, (n) => n.props?.['aria-label'] === mod.en['upd.detail']);
+  assert.equal(hint.length, 1);
+  const p = mount({ data: snap(), actionError: long });
+  click(all(p.render(), (n) => n.props?.['aria-label'] === mod.en['upd.detail'])[0]);
+  assert.ok(text(all(p.render(), (n) => n.props?.role === 'note')[0]).length > 150, 'the hint holds the rest of the message');
+  const short = mount({ data: snap(), actionError: 'Unknown branch: zzz' }).render();
+  assert.equal(all(short, (n) => n.props?.['aria-label'] === mod.en['upd.detail']).length, 0);
+});
+
+test('the line of Use in chat leaves when the view changes', () => {
+  const box = { tagName: 'TEXTAREA', value: '', disabled: false, readOnly: false, offsetParent: {}, closest: () => null, dispatchEvent() {}, focus() {} };
+  const p = mount({ data: snap(), item: 'claim:c-1mel-contacts' }, { globals: { document: { querySelectorAll: () => [box] } } });
+  click(button(p.render(), 'Use in chat'));
+  assert.equal(all(p.render(), (n) => n.props?.role === 'status').length, 1);
+  click(tabs(p.render()).find((n) => n.props['data-view'] === 'status'));
+  assert.equal(all(p.render(), (n) => n.props?.role === 'status').length, 0);
+});
+
+test('the level hint opens toward the panel, because its button sits near the right edge', () => {
+  const p = mount({ data: snap(), item: 'branch:b-cdr3-loop' });
+  click(all(p.render(), (n) => n.props?.['aria-label'] === 'About the levels')[0]);
+  const note = all(p.render(), (n) => n.props?.role === 'note')[0];
+  assert.equal(note.props.style.right, 0);
+  assert.equal(note.props.style.left, undefined);
+  assert.match(text(note), /Level 4 is the hardest/);
+});
+
+test('the menu of the kit: it closes when the focus leaves it, the arrow keys move inside it, and a choice returns the focus to its button', () => {
+  const p = mount({ data: snap(), item: 'branch:b-cdr3-loop' });
+  const wrap = () => all(p.render(), (n) => has(n, 'ak-pick'))[0];
+  click(menuOf(p.render()));
+  const made = [0, 1].map(() => ({ focused: 0, focus() { this.focused++; } }));
+  const at = (i) => ({ querySelectorAll: () => made, ownerDocument: { activeElement: made[i] } });
+  wrap().props.onKeyDown({ key: 'ArrowDown', preventDefault() {}, currentTarget: at(0) });
+  assert.equal(made[1].focused, 1);
+  wrap().props.onKeyDown({ key: 'ArrowDown', preventDefault() {}, currentTarget: at(1) });
+  assert.equal(made[0].focused, 1, 'the last entry leads to the first');
+  wrap().props.onKeyDown({ key: 'ArrowUp', preventDefault() {}, currentTarget: at(0) });
+  assert.equal(made[1].focused, 2, 'the first entry leads to the last');
+  wrap().props.onBlur({ currentTarget: { contains: () => true }, relatedTarget: {} });
+  assert.equal(items(p.render()).length, 2, 'the focus moved inside the menu');
+  wrap().props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null });
+  assert.equal(items(p.render()).length, 0);
+  click(menuOf(p.render()));
+  let back = 0;
+  const trigger = { focus() { back++; } };
+  items(p.render())[0].props.onClick({ currentTarget: { closest: () => ({ querySelector: () => trigger }) } });
+  assert.equal(back, 1);
+});
+
+test('Status and Research: each state word has its own case, on fixtures that are not symmetric', () => {
+  const base = snap();
+  const lines = (tree) => Object.fromEntries(rowsOf(tree, 'statusline').map((r) => [nameOf(r), statusOf(r)]));
+  const st = mount({ view: 'status', data: { ...base,
+    memory: { ...base.memory, reachable: true, configured: true, recall: false, routes: ['radium'] },
+    connectorsDetail: { ...base.connectorsDetail, Servers: [{ id: 'a', state: 'ok' }, { id: 'b', state: 'ok' }, { id: 'c', state: 'idle' }] },
+    addons: { ok: true, items: [{ id: 'x' }] }, update: { available: false, latest: '9.9.9' } } }).render();
+  assert.deepEqual(lines(st), { 'Local gateway': 'Running', Providers: 'Listed: 1', 'Tool servers': 'On: 2 of 3', Memory: 'Recall off', 'Add-ons': 'Installed: 1' });
+  const branch = (id, decision) => ({ id, title: id, supportLogLR: 0, voiPerCost: 0, rung: 'L1', status: 'active', decision });
+  const words = (verdict) => rowsOf(mount({ data: { ...base, tree: { ok: true, branches: [branch('a', 'Pursue'), branch('b', 'Park'), branch('c', 'Drop'), branch('d', 'Request a test'), branch('e', 'Later')] }, claims: { ok: true, items: [] }, verdicts: verdict ? { 'release:candidate': { verdict } } : {} } }).render(), 'research').map(statusOf);
+  assert.deepEqual(words(''), ['Pursued', 'Parked', 'Dropped', 'Needs a test', 'Open', 'Waits for you']);
+  assert.equal(words('Revise')[5], 'To revise');
+  assert.equal(words('Hold')[5], 'On hold');
+});
+
+test('the fields that the test fixtures lay over the state exist in the state of a real store', () => {
+  const s = snap();
+  for (const k of ['lastQuery', 'results', 'error', 'reachable', 'configured', 'recall', 'routes']) assert.ok(k in s.memory, `the state has no memory.${k}`);
+  for (const k of ['items', 'pins', 'query']) assert.ok(k in s.molecullage, `the state has no molecullage.${k}`);
+  assert.ok(Array.isArray(s.connectorsDetail.Servers) && s.connectorsDetail.Servers.every((x) => 'state' in x));
+  assert.ok(Array.isArray(s.addons.items));
+  assert.ok('text' in s.prose && Array.isArray(s.prose.report.findings));
+  assert.ok(Array.isArray(s.head.ladderRungs) && s.head.ladderRungs.every((r) => 'id' in r));
 });

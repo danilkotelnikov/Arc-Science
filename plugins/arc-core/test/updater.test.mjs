@@ -1397,3 +1397,17 @@ test('a plain check that fails while an install reads the release list does not 
   const r = await inst;
   assert.equal(r.ok, true, `the failure of another check stopped the install: ${r.error}`);
 });
+
+test('a late failed check of a channel that is no longer chosen does not erase the failure of the chosen channel', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  let n = 0, open = null; const held = new Promise((r) => { open = r; });
+  const u = e.make({ fetchImpl: async () => { const k = n++; if (k === 0) await held; throw new TypeError('fetch failed'); } });
+  const first = u.check(); // made for Release, and still on its way
+  await new Promise((r) => setTimeout(r, 30));
+  u.setChannel('beta');
+  assert.equal((await u.check()).failed, true, 'the check of the chosen channel failed');
+  open();
+  await first;
+  assert.equal(u.getState().failed, true, 'the late failure of the Release check erased the failure of the Beta check');
+});
