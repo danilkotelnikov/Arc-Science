@@ -1,0 +1,9 @@
+[package]
+name = "arc-hoh-core"
+version = "0.6.1"
+edition = "2021"
+license = "MIT"
+description = "Clean-room zero-dependency Rust Harness-of-Harness ledger, Change Tree engine, and decision core"
+
+[dependencies]
+arc-validators = { path = "../arc-validators" }
