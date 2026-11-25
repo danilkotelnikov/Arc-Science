@@ -31,6 +31,7 @@
 **Project**
 
 - [Roadmap](Roadmap)
+- [Clean-room Rust rebuild](Clean-room-Rust-rebuild)
 - [Credits and licenses](Credits-and-licenses)
 - [Contributing](Contributing)
 - [Glossary](Glossary)
