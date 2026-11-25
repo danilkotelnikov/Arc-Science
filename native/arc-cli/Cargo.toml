@@ -1,0 +1,14 @@
+[package]
+name = "arc-cli"
+version = "0.6.1"
+edition = "2021"
+license = "MIT"
+description = "Standalone clean-room zero-DSH Rust CLI for Arc Harness"
+
+[[bin]]
+name = "arc"
+path = "src/main.rs"
+
+[dependencies]
+arc-validators = { path = "../arc-validators" }
+arc-hoh-core = { path = "../arc-hoh-core" }
