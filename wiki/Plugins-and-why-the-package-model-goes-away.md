@@ -90,4 +90,4 @@ The [Roadmap](Roadmap) lists these steps:
 
 ## If you use plugins today
 
-Keep copying them in. Plan for the day the plugins sit inside the archive.
+Keep copying them in. Plan for the day the plugins sit inside the archive. For the clean-room full-Rust architecture that retires the package model and DeepSeek Harness dependencies completely, see [Clean-room Rust rebuild](Clean-room-Rust-rebuild).

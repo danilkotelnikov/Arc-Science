@@ -34,6 +34,7 @@ It should also have a place for a memory server and for its client. Rust is used
 
 The chosen path is option A on the page [Plugins and why the package model goes away](Plugins-and-why-the-package-model-goes-away).
 Keep the module system inside the app. Freeze one composition. Remove pnpm and the registry. First patch the current kit, then fork the upstream source.
+For the zero-DSH full-Rust successor architecture and precompiled Windows, ARM, and Linux binaries, see [Clean-room Rust rebuild](Clean-room-Rust-rebuild).
 
 ## Phase 6 in detail
 
