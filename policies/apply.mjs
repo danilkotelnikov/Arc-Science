@@ -18,7 +18,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const HOME = os.homedir();
 export const DSH = path.join(HOME, '.dsh');
 export const PROFILES = ['web', 'desktop'];
-const LOCAL = new Set(['dsh-hoh', 'dsh-theme-pair']);
+const LOCAL = new Set(['arc-hoh', 'arc-theme']);
 const ARCHIVE = path.join(HERE, '_originals.tar.xz');
 
 export const loadPolicies = () => JSON.parse(fs.readFileSync(path.join(HERE, 'policies.json'), 'utf8'));

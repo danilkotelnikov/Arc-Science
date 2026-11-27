@@ -1,6 +1,6 @@
 [
   {
-    "id": "dsh-hoh",
+    "id": "arc-hoh",
     "title": "Harness of Harness",
     "description": "Keeps every task honest with a proposal step, a frozen candidate, an independent accept gate and a hash-chained ledger.",
     "icon": "icons/harness-of-harness.svg",
@@ -34,8 +34,8 @@
       "After the third cycle, stop and ask the user."
     ],
     "settings": [
-      "DSH_HOH_BRIEF set to 0 switches off the shared-memory brief in the prompt.",
-      "DSH_HOH_RETAIN set to 0 stops the gate from writing verdicts to shared memory.",
+      "ARC_HOH_BRIEF set to 0 switches off the shared-memory brief in the prompt.",
+      "ARC_HOH_RETAIN set to 0 stops the gate from writing verdicts to shared memory.",
       "DSH_HOME moves the ledger folder. The default is the .dsh folder in your home folder.",
       "Fixed limits: three cycles, files up to 20 MB, six brief notes of 220 characters, a brief refresh every 20 minutes."
     ],
@@ -60,11 +60,11 @@
     ]
   },
   {
-    "id": "dsh-theme-pair",
-    "title": "Arc Science Theme",
+    "id": "arc-theme",
+    "title": "Arc Theme",
     "description": "Gives the interface the Arc Science paper look, with cream surfaces, a brown primary button, Geist type and rounded corners.",
     "icon": "icons/interface-skins.svg",
-    "purpose": "Arc Science Theme restyles the web interface in the Arc Science paper look. It follows the system light or dark mode.",
+    "purpose": "Arc Theme restyles the web interface in the Arc Science paper look. It follows the system light or dark mode.",
     "policy": [
       "The light theme uses cream paper, white cards and ink text.",
       "Primary buttons are dark brown on paper. The dark theme uses warm near-black surfaces.",
@@ -97,7 +97,7 @@
       "When an embedded font fails to load, the system font shows."
     ],
     "verify": [
-      "Open the Plugins page and find Arc Science Theme.",
+      "Open the Plugins page and find Arc Theme.",
       "Check that the page is cream in light mode and warm near-black in dark mode.",
       "Check that no blue remains, in light and in dark mode.",
       "Check that cards have rounded corners and that the text is Geist.",

@@ -10,11 +10,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { dataHome } from '../lib/testhome.mjs';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const home = os.homedir();
-const dsh = path.join(home, '.dsh');
+const dsh = path.join(dataHome());
 let bad = 0;
 const check = (ok, label) => { if (!ok) bad++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${label}`); };
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
@@ -112,12 +113,12 @@ for (const prof of ['web', 'desktop']) {
 
 // 5. the theme plugin copies equal the tested copy
 {
-  const src = path.join(dsh, 'local-plugins', 'dsh-theme-pair', 'lib');
+  const src = path.join(dsh, 'local-plugins', 'arc-theme', 'lib');
   const files = [];
   const walk = (d) => { for (const x of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, x.name); if (x.isDirectory()) walk(p); else files.push(path.relative(src, p)); } };
   walk(src);
   for (const prof of ['web', 'desktop']) {
-    const dst = path.join(dsh, 'profiles', prof, 'node_modules', 'dsh-theme-pair', 'lib');
+    const dst = path.join(dsh, 'profiles', prof, 'node_modules', 'arc-theme', 'lib');
     const off = files.filter((f) => { const a = read(path.join(src, f)), b = read(path.join(dst, f)); return !a || !b || sha(a) !== sha(b); });
     check(files.length > 0 && off.length === 0, `${prof}: the theme plugin copy equals the tested copy (${files.length} files${off.length ? ', differ: ' + off.slice(0, 3).join(', ') : ''})`);
   }

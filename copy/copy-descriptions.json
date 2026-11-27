@@ -1,0 +1,2262 @@
+{
+ "version": "2026-11-09",
+ "model": "gemini-3.8-flash on Vertex AI (version not reported)",
+ "rules": [
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Browse workspace file tree, click to preview or edit\"",
+   "replace": "\"Browse the workspace file tree. Click to preview or edit.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Git changes and this round's file edits, unified in a dual view\"",
+   "replace": "\"Git changes and this round's file edits in a unified dual view.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Workflow diagram · Team task board · Background tasks, real-time status\"",
+   "replace": "\"Workflow diagram, team task board, and background tasks with real-time status.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Independent follow-up thread inheriting current session context\"",
+   "replace": "\"Independent follow-up thread that inherits the current session context.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Real shell terminal (xterm + pty), reconnect on disconnect\"",
+   "replace": "\"Shell terminal (xterm + pty). Reconnects on disconnect.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Embedded web browser to handle external links in chat\"",
+   "replace": "\"Embedded web browser for external links in chat.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Redaction enabled: sensitive content is displayed as [REDACTED]; click to disable (at your own risk)\"",
+   "replace": "\"Redaction enabled: sensitive content is displayed as [REDACTED]. Click to disable (at your own risk).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Masking disabled: File content will be displayed as-is; click to enable\"",
+   "replace": "\"Masking disabled: file content is displayed as-is. Click to enable.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Content before changes is outside the window, shown as entirely new\"",
+   "replace": "\"Content before changes is outside the window and shown as entirely new.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Files switch in place within the same window; new windows expand the file tree by default\"",
+   "replace": "\"Files switch in place within the same window. New windows expand the file tree by default.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Windows without a path are File Explorer (file tree only); files each open in a new window (with file tree, collapsed by default)\"",
+   "replace": "\"Windows without a path show File Explorer (file tree only). Files open in new windows with the file tree collapsed by default.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Add patterns, e.g., node_modules, *.log, **/.git\"",
+   "replace": "\"Add patterns, such as node_modules, *.log, **/.git.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Enter file path (relative to session directory or absolute), press Enter to open\"",
+   "replace": "\"Enter a file path (relative to session directory or absolute) and press Enter to open.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Too many results, showing partial matches only\"",
+   "replace": "\"Too many results. Showing partial matches only.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Select a file from the right file tree or the path input above to start preview\"",
+   "replace": "\"Select a file from the file tree on the right or enter a path above to preview it.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"No archiving command available on system (neither zip nor tar found), unable to package and download\"",
+   "replace": "\"No archiving command found on the system (neither zip nor tar). Unable to package and download.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Leave empty for local workspace; when user@host or SSH alias is set, VSCode-family openers will use vscode-remote/ssh-remote protocols, and File Explorer / Zed / non-VSCode custom editors will be hidden from the menu\"",
+   "replace": "\"Leave empty for a local workspace. When user@host or an SSH alias is set, VSCode-family openers use vscode-remote/ssh-remote protocols, and File Explorer / Zed / non-VSCode custom editors are hidden from the menu.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Name + URL template ({path} placeholder) + VSCode-family or not; in SSH mode only VSCode-family can open remotes\"",
+   "replace": "\"Name, URL template ({path} placeholder), and VSCode-family status. In SSH mode, only VSCode-family editors can open remotes.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"This editor uses VSCode URL protocol (supports opening SSH remotes)\"",
+   "replace": "\"This editor uses the VSCode URL protocol and supports opening SSH remotes.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Editors without name or template (must contain {path} and start with scheme://) will not appear in the menu\"",
+   "replace": "\"Editors without a name or template (must contain {path} and start with scheme://) will not appear in the menu.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"A file with the same name already exists\"",
+   "replace": "\"A file with the same name already exists.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Too many entries in this directory, showing first portion only\"",
+   "replace": "\"Too many entries in this directory. Showing the first portion only.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"This action is no longer in the session history\"",
+   "replace": "\"This action is no longer in the session history.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Terminal connection failed multiple times\"",
+   "replace": "\"Terminal connection failed multiple times.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Failed to load terminal dependency node-pty\"",
+   "replace": "\"Failed to load terminal dependency node-pty.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Configured Shell not found: {name}. Please check the Shell path in Settings → Side Cards → Terminal\"",
+   "replace": "\"Configured Shell not found: {name}. Check the Shell path in Settings → Side Cards → Terminal.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Host does not provide terminal capabilities\"",
+   "replace": "\"The host does not provide terminal capabilities.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"This terminal process no longer exists; you can create a new one\"",
+   "replace": "\"This terminal process no longer exists. You can create a new one.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Scroll to zoom · Drag to pan · Esc to close\"",
+   "replace": "\"Scroll to zoom. Drag to pan. Esc to close.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"This file has unsaved edits, which will be discarded upon closing. Continue?\"",
+   "replace": "\"This file has unsaved edits that will be discarded on close. Continue?\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"File too large ({size}), only paged preview available; editable within {limit}\"",
+   "replace": "\"File too large ({size}). Only a paged preview is available. Editable under {limit}.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Reached the preview limit of {rows} rows. Please download to view the rest\"",
+   "replace": "\"Reached the preview limit of {rows} rows. Download to view the rest.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Current directory is not a git repository\"",
+   "replace": "\"Current directory is not a Git repository.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Too many changes, displaying only the first 2000\"",
+   "replace": "\"Too many changes. Displaying only the first 2000.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Select the model used to generate commit messages; follows the current chat model by default.\"",
+   "replace": "\"Choose the model used to generate commit messages. Follows the current chat model by default.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Current deployment does not expose model services, can only follow current chat\"",
+   "replace": "\"Model services are not available in this setup; can only follow the current chat model.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"No available models found (you can enter provider/model above directly)\"",
+   "replace": "\"No available models found. You can enter provider/model above directly.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Too many branches; currently showing a linear history list (does not reflect branch topology)\"",
+   "replace": "\"Too many branches. Showing a linear history list that does not reflect branch topology.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Commit history has changed, please refresh\"",
+   "replace": "\"Commit history has changed. Refresh to update.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Session file history is currently unavailable\"",
+   "replace": "\"Session file history is currently unavailable.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Plugin not loaded, tab temporarily unavailable:\"",
+   "replace": "\"Plugin not loaded. Tab is temporarily unavailable:\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"When enabled, the model can proactively open files, folders, and HTTP(S) pages in the sidebar via the sidebar_open tool (disabled by default)\"",
+   "replace": "\"When enabled, the model can open files, folders, and HTTP(S) pages in the sidebar using the sidebar_open tool (disabled by default).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Settings have been modified in another window, please try again\"",
+   "replace": "\"Settings were modified in another window. Try again.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Preview not supported for this file type\"",
+   "replace": "\"Preview is not supported for this file type.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Automatically activate task management page when subagents are detected\"",
+   "replace": "\"Automatically open the task management page when subagents are detected\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"When a new subagent is created in the current session, create a task management page in the sidebar with an unread red badge; will not steal focus if the sidebar is open on another page, click the red badge to view; also expands the sidebar on widescreen, does not force full-screen drawer on narrow screen; will not auto-create once disabled\"",
+   "replace": "\"Creates a task management page with an unread red badge in the sidebar when a subagent is created in the current session. Does not take focus if the sidebar is open to another page; click the red badge to view it. Expands the sidebar on wide screens without forcing a full-screen drawer on narrow screens. Will not create pages automatically once disabled.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Automatically activate task management page on new background task\"",
+   "replace": "\"Automatically open task management page on new background task\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Automatically collapse completed, failed, or stopped leaf tasks with no subagents; enabled by default\"",
+   "replace": "\"Automatically collapse completed, failed, or stopped leaf tasks without subagents. Enabled by default.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Only automatically collapse when the entire branch has ended; branches with running descendants are never collapsed; enabled by default\"",
+   "replace": "\"Only automatically collapse a branch when all of its tasks have ended. Branches with running descendants are never collapsed. Enabled by default.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Automatically collapse when idle members reach 3 or more; enabled by default\"",
+   "replace": "\"Automatically collapse when there are 3 or more idle members. Enabled by default.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Automatically collapse the background task drawer when the total number of agents reaches 8 or more; manual toggle still available; enabled by default\"",
+   "replace": "\"Automatically collapse the background task drawer when total agents reach 8 or more. You can still toggle it manually. Enabled by default.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"When enabled, the model can create and operate sidebar terminals via 8 tools such as terminal_create (disabled by default)\"",
+   "replace": "\"When enabled, the model can create and manage sidebar terminals using 8 tools such as terminal_create. Disabled by default.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Auto open terminal on first expansion of bottom panel\"",
+   "replace": "\"Automatically open terminal on first expansion of bottom panel\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Attempt to automatically open a new terminal tab in the bottom panel the first time it is expanded in each session (max terminal limit still applies; enabled by default)\"",
+   "replace": "\"Try to open a new terminal tab in the bottom panel the first time it is expanded in each session. Maximum terminal limits still apply. Enabled by default.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Custom terminal font family (CSS font-family, e.g. \\\"JetBrains Mono\\\", monospace; leave empty to follow theme monospace font)\"",
+   "replace": "\"Custom terminal font family (CSS font-family, such as \\\"JetBrains Mono\\\", monospace). Leave empty to use the theme monospace font.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Shell launched for UI and model terminals (absolute path or executable name). Leave empty to resolve in standard order: yaml config.shell → $SHELL / login shell / Windows powershell.exe. Takes effect for terminals opened afterwards\"",
+   "replace": "\"Shell launched for UI and model terminals (absolute path or executable name). Leave empty to resolve in standard order: yaml config.shell → $SHELL / login shell / Windows powershell.exe. Applies to terminals opened after changing this setting.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Explicit shell startup arguments, space-separated; completely replaces default arguments when non-empty (consistent with YAML shellArgs contract)\"",
+   "replace": "\"Space-separated shell startup arguments. When set, these completely replace the default arguments (matching the YAML shellArgs contract).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"On mobile / narrow screens, new subagents or background tasks will no longer automatically switch to the tasks page (can still be opened manually within the page)\"",
+   "replace": "\"On narrow screens, new subagents or background tasks will not automatically switch to the tasks page. You can still open them manually.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Enter URL to start browsing (sandbox mode)\"",
+   "replace": "\"Enter a URL to start browsing (sandbox mode)\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Blocked: only http/https links are supported\"",
+   "replace": "\"Blocked: only http/https links are supported.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Blocked: accessing local or internal addresses in the browser is not allowed\"",
+   "replace": "\"Blocked: accessing local or internal addresses in the browser is not allowed.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Sandbox disabled: this HTML shares origin with the UI and can read session files and internal APIs (can be restored in settings)\"",
+   "replace": "\"Sandbox disabled: this HTML shares an origin with the UI and can read session files and internal APIs. You can re-enable the sandbox in Settings.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Sandbox mode: Enabled · Page cannot access UI data or local files; login state and third-party cookies may be unavailable\"",
+   "replace": "\"Sandbox mode enabled. The page cannot access UI data or local files. Login state and third-party cookies may be unavailable.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Open HTML previews in non-sandbox mode by default (unsafe)\"",
+   "replace": "\"Open HTML previews outside the sandbox by default (unsafe)\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"When enabled, HTML previews open in non-sandboxed mode by default (same origin as UI, can read session files and internal APIs); can temporarily restore sandbox in the status bar\"",
+   "replace": "\"When enabled, HTML previews open outside the sandbox by default. They share an origin with the UI and can read session files and internal APIs. You can temporarily restore the sandbox from the status bar.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"When disabled, previewed HTML will run same-origin with the UI, able to read session files, local storage, and call internal APIs. Enable only for fully trusted files\"",
+   "replace": "\"When disabled, previewed HTML runs in the same origin as the UI and can read session files, local storage, and call internal APIs. Enable only for fully trusted files.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Highlight uncommitted changes with color in the editor gutter and show line blame (author, time, and commit summary) on hover; when disabled, the editor shows no change markers\"",
+   "replace": "\"Highlight uncommitted changes in the editor gutter and show line blame (author, time, and commit summary) on hover. When disabled, the editor shows no change markers.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"When disabled, any visited website will run same-origin with the UI, able to read session data and impersonate your login state. Enable only for fully trusted sites\"",
+   "replace": "\"When disabled, visited websites run in the same origin as the UI and can read session data and use your login state. Enable only for fully trusted sites.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Comma-separated whitelist of loopback addresses (e.g., localhost:5174 or 127.0.0.1:8080) that the sidebar browser can access; defaults to empty, blocking all local addresses. Sandbox isolation remains active; pages cannot read UI data\"",
+   "replace": "\"Comma-separated list of loopback addresses (such as localhost:5174 or 127.0.0.1:8080) that the sidebar browser can access. Defaults to empty, blocking all local addresses. Sandbox isolation remains active and pages cannot read UI data.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"This site prohibits display in other pages via X-Frame-Options / frame-ancestors and cannot be loaded in the sidebar. You can open it directly in a browser\"",
+   "replace": "\"This site blocks embedding via X-Frame-Options or frame-ancestors and cannot be loaded in the sidebar. You can open it directly in a browser.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Subagents spawned by the current main agent will appear here\"",
+   "replace": "\"Subagents spawned by the current main agent will appear here.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Each side chat is an independent tab in the tab bar, running with the current session context inherited, without entering the main session\"",
+   "replace": "\"Each side chat is an independent tab that inherits the current session context without joining the main session.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Promote this thread to a top-level session in the main session list\"",
+   "replace": "\"Promote this thread to a top-level session in the main session list.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Archive this side chat (can be recovered from \\\"Show Archived\\\" in the session list)\"",
+   "replace": "\"Archive this side chat. You can restore it from Show Archived in the session list.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"This thread is running; stop it before archiving\"",
+   "replace": "\"This thread is running. Stop it before archiving.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Complete at least one round of conversation before saving\"",
+   "replace": "\"Complete at least one round of conversation before saving.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"The last incomplete follow-up will not be included in the new session\"",
+   "replace": "\"The last incomplete follow-up will not be included in the new session.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Inherit main conversation (host did not provide model catalog)\"",
+   "replace": "\"Inherit main conversation (host did not provide model catalog).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Total {total} lines · Showing {shown} lines\"",
+   "replace": "\"Showing {shown} of {total} lines\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"{count} background tasks · {running} running\"",
+   "replace": "\"{count} background tasks, {running} running\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Waiting for the model to read this task's output (output will appear here after the model runs job_output)\"",
+   "replace": "\"Waiting for the model to read output from this task. Output will appear here after the model runs job_output.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Default display mode when opening task management (can still be switched temporarily within the page)\"",
+   "replace": "\"Default display mode when opening task management. You can still switch modes temporarily on the page.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Hierarchical node graph, zoomable and pannable\"",
+   "replace": "\"Hierarchical node graph with zoom and pan.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Classic indented tree, keyboard navigable\"",
+   "replace": "\"Classic indented tree with keyboard navigation.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Task modified by someone else, refreshed\"",
+   "replace": "\"Task modified by another user. Refreshed.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Unable to open context diagnostics for \\\"{label}\\\"\"",
+   "replace": "\"Unable to open context diagnostics for \\\"{label}\\\".\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"The \\\"Context\\\" page in arc-context is unavailable (not installed or registered)\"",
+   "replace": "\"The Context page in arc-context is unavailable because it is not installed or registered.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Sidebar pages (Tabs) can be extended by plugins. Plugins register via ctx.betterSidebar service; click \\\"Install\\\" to copy the command and run it in the terminal where Arc Harness is hosted.\"",
+   "replace": "\"Plugins can extend sidebar tabs by registering with the ctx.betterSidebar service. Click Install to copy the command, then run it in the terminal where Arc Harness runs.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"File previewers can be extended by plugins. Plugins register via ctx.betterSidebar service; click \\\"Install\\\" to copy the command and run it in the terminal where Arc Harness is hosted.\"",
+   "replace": "\"Plugins can extend file previewers by registering with the ctx.betterSidebar service. Click Install to copy the command, then run it in the terminal where Arc Harness runs.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Browse more plugins on GitHub (topic: arc-better-sidebar)\"",
+   "replace": "\"Browse more plugins on GitHub (topic: arc-better-sidebar).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"No plugins yet. Feel free to publish yours under the GitHub topic\"",
+   "replace": "\"No plugins yet. You can publish yours under the GitHub topic.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Adds an \\\"Export\\\" button to better-sidebar's Markdown toolbar: one-click render current .md into standalone HTML (inlining tables/code blocks/Mermaid charts, layout matching preview theme) saved directly to the same directory, or export to PDF via print dialog\"",
+   "replace": "\"Adds an Export button to the better-sidebar Markdown toolbar. Renders the current .md file into standalone HTML in the same directory, inlining tables, code blocks, and Mermaid charts to match the preview theme. Also supports exporting to PDF through the print dialog.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Distribute system prompt personas by workspace or session: one persona can apply to multiple workspace directories and sessions, supporting exact/prefix/contains/regex matching (more specific wins, with a default fallback); manage in Settings and Chat \\\"Persona\\\" Tab, takes effect on next message\"",
+   "replace": "\"Assign system prompt personas by workspace or session. One persona can apply to multiple workspace directories and sessions using exact, prefix, contains, or regex matching, with more specific rules taking precedence over a default fallback. Manage personas in Settings and the chat Persona tab; changes take effect on the next message.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Provides Office suite preview (.docx / .xlsx / .pptx) for better-sidebar editor, splitting heavy Office rendering libraries out of the main package for on-demand installation\"",
+   "replace": "\"Adds Office previews (.docx, .xlsx, .pptx) to the better-sidebar editor. Office rendering libraries are separated from the main package for on-demand installation.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Real-time session flowchart: three-column swimlane for User, Assistant, and Tool calls, with parallel grouping, subagent branches, drill-down, and live status; registers native \\\"Flow Mirror\\\" Tab when better-sidebar is installed, falls back to standalone drawer\"",
+   "replace": "\"Real-time session flowchart with a three-column swimlane for User, Assistant, and Tool calls. Includes parallel grouping, subagent branches, drill-down views, and live status. Registers a Flow Mirror tab when better-sidebar is installed, or falls back to a standalone drawer.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Connects local Suhuang Scroll Runtime to Arc Harness settings and better-sidebar, supporting model configuration, connection test, and continuous evaluation control; requires Suhuang Scroll Runtime and arc-better-sidebar before use\"",
+   "replace": "\"Connects a local Suhuang Scroll Runtime to Arc Harness Settings and better-sidebar. Supports model configuration, connection tests, and continuous evaluation controls. Requires Suhuang Scroll Runtime and arc-better-sidebar.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Condition-driven agent wake-up system: file/process/port/HTTP/command/webhook sensors auto-wake dormant sessions when conditions are met; registers \\\"Sentinel\\\" Tab showing global server monitoring table\"",
+   "replace": "\"Condition-driven agent wake-up system. File, process, port, HTTP, command, and webhook sensors wake dormant sessions when conditions are met. Registers a Sentinel tab that displays a global server monitoring table.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Select-to-ask tab pagination based on better-sidebar: Select text in conversation → ask in right panel → independent follow-up session in the same workspace (❓ Follow-up · Topic): fast non-thinking model compresses main conversation context and injects it with quotes without interrupting the main conversation; follow-ups can be nested, continued, and archived\"",
+   "replace": "\"Select text in a conversation and ask questions in the right panel using better-sidebar. Creates an independent follow-up session in the same workspace (Follow-up - Topic). A fast non-thinking model compresses and quotes main session context without interrupting it. Follow-ups can be nested, continued, and archived.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Inline video file preview in better-sidebar editor (.mp4/.webm/.mov/.mkv/.avi, etc.), with built-in /video host route supporting HTTP Range (206); plays without downloading the entire file, seek bar smoothly draggable\"",
+   "replace": "\"Inline video preview in the better-sidebar editor (.mp4, .webm, .mov, .mkv, .avi, etc.). Uses a built-in /video route with HTTP Range (206) support to stream without downloading the full file, enabling smooth seeking.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Inline audio file preview in better-sidebar editor (.mp3/.wav/.flac/.ogg/.m4a/.aac/.opus), with built-in waveform player and real-time spectrum: zoomable waveform, click/drag seeking, A-B loop, channel switching, real-time spectrum and full-track spectrogram; media route supports HTTP Range for smooth seeking at any file size\"",
+   "replace": "\"Preview audio files (.mp3/.wav/.flac/.ogg/.m4a/.aac/.opus) inline in the better-sidebar editor. Includes a built-in waveform player and real-time spectrum, zoomable waveform, click and drag seeking, A-B loop, channel switching, and full-track spectrogram. Media routes support HTTP Range for smooth seeking on files of any size.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Code preview navigation: Automatically detects language and highlights syntax by file type, symbol outline (filter classes/methods/variables + one-click jump), in-file search (highlight all matches, previous/next, case sensitive), taking over code file previews in better-sidebar\"",
+   "replace": "\"Code preview navigation. Detects language and highlights syntax automatically by file type. Includes symbol outlines with class, method, and variable filters, one-click jumps, and in-file search with match highlighting, next/previous navigation, and case matching. Replaces standard code file previews in better-sidebar.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Faithful vscode-git-graph commit graph tab port: accessible exclusively via native better-sidebar tab, auto-binds session workspace, full git ops (checkout/merge/rebase/push/tag/stash), syncs light/dark theme, click file diff opens built-in DiffTab directly; requires arc-better-sidebar\"",
+   "replace": "\"Port of the vscode-git-graph commit graph. Available exclusively as a native better-sidebar tab. Binds automatically to the session workspace. Supports checkout, merge, rebase, push, tag, and stash operations, syncs light and dark themes, and opens file diffs directly in the built-in DiffTab. Requires arc-better-sidebar.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"\\\"Global Docs\\\" in the Arc Harness sidebar: Global Markdown notes accessible from any workspace at any time—select from list to read, floating outline jump, open externally in Chrome / VS Code, copy code, configurable directory (default ~/.arc/docs)\"",
+   "replace": "\"Global Docs in the Arc Harness sidebar. Read global Markdown notes from any workspace at any time. Select notes from a list, jump using floating outlines, open externally in Chrome or VS Code, copy code blocks, and configure custom storage directories (default ~/.arc/docs).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Typst document editing tool: Shares workspace with current session, WYSIWYG editing and typesetting for Typst documents; useful for authoring and typesetting papers, reports, exams, resumes, charts, posters, sheet music, and PPTX-exported slides\"",
+   "replace": "\"Typst document editor. Shares the current session workspace and provides WYSIWYG editing and typesetting for Typst documents. Ideal for writing and formatting papers, reports, exams, resumes, charts, posters, sheet music, and PPTX slide exports.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Integrate CitroLabs/ego-lite into Arc Harness as an agent browser: 32 ego_* tools driving real Chromium, with a native sidebar \\\"ego Browser\\\" tab to watch every page the agent visits in real time and take over via click/drag/typing directly; auto-registers tab when better-sidebar is installed, falls back to a floating window if not\"",
+   "replace": "\"Integrate CitroLabs/ego-lite into Arc Harness as an agent browser. Includes 32 ego_* tools to control Chromium. Watch pages visited by the agent in real time and interact directly using click, drag, and keyboard inputs from the ego Browser sidebar tab. Auto-registers in better-sidebar when installed, or opens as a floating window.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Read paper PDFs in the Arc Harness sidebar: Native PDF display, select text to translate with LLM in context, completely isolated from main conversation, purely as a reading assistant\"",
+   "replace": "\"Read PDF papers in the Arc Harness sidebar. Features native PDF display and context-aware text translation using models. Operates as an isolated reading assistant separate from the main conversation.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Cross-session memory: Only injects changed parts (zero injection when unchanged), with expiration review reminders, relevance-ranked retrieval, and sidebar tabs.\"",
+   "replace": "\"Cross-session memory. Injects only changed entries, injects nothing when data is unchanged, alerts on expiring memories, ranks results by relevance, and includes dedicated sidebar tabs.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Records every file read, written, or edited by the model, viewing content and line-by-line diffs grouped by file; includes Markdown reading mode and sensitive data redaction, opens as a standalone floating window when better-sidebar is not installed\"",
+   "replace": "\"Tracks every file read, written, or edited by the model. View content and line-by-line diffs grouped by file. Includes Markdown reading mode and sensitive data redaction. Opens as a floating window if better-sidebar is not installed.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Cross-session memory engine: autoDream background consolidation, session summaries, and user profiles, SQLite + manually editable Markdown mirror, completely offline and private; registers \\\"Memory Bank\\\" tab when better-sidebar is installed (four views: Memories/Entities/Status/Settings), or keeps a standalone sidebar panel when not installed\"",
+   "replace": "\"Cross-session memory engine with autoDream background consolidation, session summaries, and user profiles. Uses SQLite with an editable Markdown mirror. Fully offline and private. Registers a Memory Bank tab with Memories, Entities, Status, and Settings views when better-sidebar is installed, or provides a standalone sidebar panel.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Folds sessions by user turn into \\\"Input + Tool Steps + Output\\\" summaries; click any step to jump back to its place in conversation; zero LLM calls, read-only\"",
+   "replace": "\"Summarizes sessions by user turn into Input, Tool Steps, and Output. Click any step to jump to its place in the conversation. Read-only with zero model calls.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Browse the workspace tree; click a file to preview or edit\"",
+   "replace": "\"Browse the workspace tree. Click a file to preview or edit it.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Git changes and this session's file edits, in one tab\"",
+   "replace": "\"Git changes and this session's file edits in one tab.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Workflow graph, team task board, and background jobs, live\"",
+   "replace": "\"Live workflow graph, team task board, and background tasks.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"An independent follow-up thread inheriting this session's context\"",
+   "replace": "\"Independent follow-up thread that inherits the context of this session.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"An embedded browser that can take over chat links\"",
+   "replace": "\"Embedded browser that handles links from chat.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Redaction off: file content renders verbatim; click to enable\"",
+   "replace": "\"Redaction off: file contents display verbatim. Click to enable.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Prior content is outside the loaded window; shown as all-added\"",
+   "replace": "\"Earlier content is outside the loaded range. Showing as all-added lines.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Files switch in place in the same window; new windows start with the tree open\"",
+   "replace": "\"Files switch in place within the same window. New windows open with the file tree visible.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Remove matching entries from the file tree and search entirely (VS Code files.exclude style; * and ? wildcards, a doublestar-slash head matches any depth); excluded entries never block the breadcrumb fold\"",
+   "replace": "\"Hide matching entries from the file tree and search results, matching VS Code files.exclude syntax (* and ? wildcards, or **/ to match any depth). Excluded entries do not break breadcrumb folding.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Add a pattern, e.g. node_modules, *.log, **/.git\"",
+   "replace": "\"Add a pattern, such as node_modules, *.log, or **/.git\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"File path (relative to the session directory or absolute), Enter to open\"",
+   "replace": "\"File path (relative to the session directory or absolute). Press Enter to open.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Too many results — showing a partial list\"",
+   "replace": "\"Too many results. Showing a partial list.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Pick a file from the tree panel or the path input above to start previewing\"",
+   "replace": "\"Select a file from the tree panel or enter a path above to start previewing.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Always show the plugin’s own Open with targets\"",
+   "replace": "\"Always show the plugin's own Open with targets\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"By default the plugin’s own targets (file manager / VS Code / Cursor / Zed / custom editors, SSH remotes) show only when the host reports no local associated application; turn this on to keep both side by side\"",
+   "replace": "\"By default, the plugin's targets (file manager, VS Code, Cursor, Zed, custom editors, and SSH remotes) appear only when Arc Harness detects no local default application. Enable this to show both options together.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"No archive command is available on this system (neither zip nor tar), so the selection cannot be packed for download\"",
+   "replace": "\"No archive tool (zip or tar) is available on this system. The selection cannot be compressed for download.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Empty = local workspace; with a user@host or SSH alias, VSCode-family openers switch to the vscode-remote/ssh-remote protocol and the File Manager / Zed / non-VSCode-family custom editors are hidden from the menu\"",
+   "replace": "\"Leave empty for a local workspace. With a user@host or SSH alias, VSCode-family openers switch to the vscode-remote/ssh-remote protocol, and File Manager, Zed, and other non-VSCode editors are hidden from the menu.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Name + URL template ({path} placeholder) + VSCode-family flag; in remote mode only VSCode-family editors can open a remote path\"",
+   "replace": "\"Name, URL template ({path} placeholder), and VSCode-family flag. In remote mode, only VSCode-family editors can open a remote path.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"This editor speaks the VSCode URL dialect (supports SSH-remote opens)\"",
+   "replace": "\"This editor uses the VSCode URL scheme and supports opening remote paths over SSH.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Editors with a missing name or a template without {path} / scheme:// are not shown in the menu\"",
+   "replace": "\"Editors without a name, or without {path} or scheme:// in the template, are hidden from the menu.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"This folder has too many entries; only the first ones are shown\"",
+   "replace": "\"This folder has too many entries. Only the first entries are shown.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"This operation is no longer in the session log\"",
+   "replace": "\"This operation is no longer in the session log.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Terminal dependency node-pty failed to load\"",
+   "replace": "\"Terminal dependency node-pty failed to load.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Run the command below in a terminal or cmd on the Arc Harness machine to repair it, then retry (node-pty stays in sync with the Arc Harness core version):\"",
+   "replace": "\"Run the command below in a terminal or cmd on the Arc Harness machine to repair it, then retry. node-pty stays in sync with the Arc Harness core version.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Configured shell not found: {name} — check the shell path under Settings → Side card → Terminal\"",
+   "replace": "\"Configured shell not found: {name}. Check the shell path under Settings → Side card → Terminal.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"The host provides no terminal capability\"",
+   "replace": "\"The host does not support terminals.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"That terminal no longer exists — start a new one\"",
+   "replace": "\"That terminal no longer exists. Start a new one.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Scroll to zoom · drag to pan · Esc to close\"",
+   "replace": "\"Scroll to zoom. Drag to pan. Esc to close.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"The file changed on disk since it was loaded. The save was stopped; your edits are still in the editor.\"",
+   "replace": "\"The file changed on disk since it was loaded. Save was canceled. Your edits are still in the editor.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"File is too large ({size}) — paged preview only; editable up to {limit}\"",
+   "replace": "\"The file is too large ({size}). Showing a paged preview only. Editable up to {limit}.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Preview is capped at {rows} rows — download the rest\"",
+   "replace": "\"Preview is limited to {rows} rows. Download the file to view the rest.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Too many changes; showing the first 2,000 entries\"",
+   "replace": "\"Too many changes. Showing the first 2,000 entries.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"No models discovered (type provider/model above instead)\"",
+   "replace": "\"No models found. Enter provider/model above instead.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Too many branches; showing a linear history list (not branch topology)\"",
+   "replace": "\"Too many branches. Showing a linear history list instead of branch topology.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Session file records are unavailable right now\"",
+   "replace": "\"Session file records are currently unavailable.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"This discards the worktree changes of \\\"{path}\\\" (not recoverable).\"",
+   "replace": "\"This discards working tree changes to \\\"{path}\\\". This cannot be undone.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Apply the changes of \\\"{subject}\\\" to the current branch.\"",
+   "replace": "\"Apply the changes from \\\"{subject}\\\" to the current branch.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"When enabled, the model can actively open files, folders, and HTTP(S) pages in the sidebar through the sidebar_open tool (off by default)\"",
+   "replace": "\"When enabled, the model can open files, folders, and HTTP(S) pages in the sidebar with the sidebar_open tool (off by default).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"The setting changed in another window — please retry\"",
+   "replace": "\"This setting changed in another window. Try again.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Automatically fold leaf tasks that have completed, failed, or stopped and have no child agents; on by default\"",
+   "replace": "\"Automatically fold completed, failed, or stopped leaf tasks that have no child agents (on by default).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Automatically fold a branch only once the whole branch has finished; a branch with any running descendant is never folded; on by default\"",
+   "replace": "\"Automatically fold a branch only after the entire branch finishes. A branch with running descendants never folds (on by default).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Automatically fold idle teammates once 3 or more are waiting for new instructions; on by default\"",
+   "replace": "\"Automatically fold idle teammates once 3 or more wait for instructions (on by default).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Automatically collapse the background jobs drawer when there are 8 or more agents in total; the manual toggle still works; on by default\"",
+   "replace": "\"Automatically collapse the background jobs drawer when 8 or more agents exist in total. You can still toggle it manually (on by default).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"When enabled, the model can create and drive sidebar terminals through the 8 terminal_* tools (off by default)\"",
+   "replace": "\"When enabled, the model can create and control sidebar terminals through the 8 terminal_* tools (off by default).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Auto-open a terminal on the bottom panel's first expansion\"",
+   "replace": "\"Auto-open a terminal when first expanding the bottom panel\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"When the bottom panel is expanded for the first time in a session, try to open a fresh terminal tab there (the terminal quota still applies; on by default)\"",
+   "replace": "\"Open a new terminal tab the first time you expand the bottom panel in a session. Terminal quotas still apply (on by default).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Custom terminal font family (a CSS font-family stack like \\\"JetBrains Mono\\\", monospace; leave empty to follow the theme's monospace font)\"",
+   "replace": "\"Custom terminal font family (CSS font-family stack such as \\\"JetBrains Mono\\\", monospace; leave empty to use the theme monospace font)\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Shell spawned for UI and model terminals (absolute path or bare executable). Empty keeps the legacy order: yaml config.shell → $SHELL / login shell / Windows powershell.exe. Applies to terminals opened afterwards\"",
+   "replace": "\"Shell for UI and model terminals (absolute path or executable name). Leaving this empty keeps the fallback order: yaml config.shell -> $SHELL / login shell / Windows powershell.exe. Applies to terminals opened later.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Explicit shell arguments, space-separated; when non-empty they fully replace the defaults (same contract as the yaml shellArgs)\"",
+   "replace": "\"Explicit shell arguments, separated by spaces. If provided, they replace all defaults, matching the yaml shellArgs setting.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Terminal font size in px (9–32, default 13)\"",
+   "replace": "\"Terminal font size in px (9-32, default 13)\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Blocked: only http/https URLs are allowed\"",
+   "replace": "\"Blocked: only http and https URLs are allowed.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Blocked: local and internal addresses cannot be browsed here\"",
+   "replace": "\"Blocked: local and internal addresses cannot be opened here.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Sandbox off: this HTML runs with full GUI privileges (re-enable in settings)\"",
+   "replace": "\"Sandbox off: this HTML runs with full GUI privileges (re-enable in Settings).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Sandbox mode: on · pages cannot access the GUI's data or local files; logins and third-party cookies may not work\"",
+   "replace": "\"Sandbox mode: on. Pages cannot access GUI data or local files. Logins and third-party cookies may not work.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"When on, every newly opened HTML preview starts in the unsandboxed state (same origin as the GUI — it can read session files and internal APIs); the status row still offers a one-tap restore\"",
+   "replace": "\"When enabled, new HTML previews start unsandboxed with the same origin as the GUI, allowing them to read session files and internal APIs. You can restore the sandbox from the status row.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"With the sandbox off, previewed HTML runs with the same origin as the GUI: it can read session files, local storage and call internal APIs. Only enable for fully trusted files\"",
+   "replace": "\"With the sandbox off, previewed HTML shares the GUI origin: it can read session files and local storage, and call internal APIs. Only enable this for fully trusted files.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Tint the line-number gutter of the code editor for uncommitted changes and show that line's blame (author, time and commit summary) on hover; off hides every marker\"",
+   "replace": "\"Tint the line-number gutter for uncommitted changes and show line blame on hover (author, time, and commit summary). Turning this off hides all markers.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"With the sandbox off, any visited site runs with the same origin as the GUI: it can read session data and act as your logged-in session. Only enable for fully trusted sites\"",
+   "replace": "\"When the sandbox is off, visited sites share the GUI origin: they can read session data and act as your logged-in session. Only enable this for fully trusted sites.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Comma-separated allowlist of loopback addresses (e.g. localhost:5174 or 127.0.0.1:8080) the sidebar browser may visit; empty blocks all local addresses by default. The sandbox still applies — pages cannot read GUI data\"",
+   "replace": "\"Comma-separated allowlist of loopback addresses (such as localhost:5174 or 127.0.0.1:8080) the sidebar browser may visit. Leaving this empty blocks all local addresses by default. The sandbox still applies: pages cannot read GUI data.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"The site forbids being displayed inside other pages (X-Frame-Options / frame-ancestors), so it cannot load in the sidebar. Open it directly in your browser instead.\"",
+   "replace": "\"This site cannot load in the sidebar because it forbids being embedded in other pages (X-Frame-Options or frame-ancestors). Open it directly in your browser instead.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Subagents spawned under the main agent will appear here\"",
+   "replace": "\"Subagents started by the main agent appear here.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Every side conversation is its own tab in the tab strip — it inherits the current session's context and never enters the main conversation\"",
+   "replace": "\"Each side conversation opens in its own tab. It inherits context from the current session and never enters the main conversation.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Archive this side conversation (find it again via “Show archived” in the session list)\"",
+   "replace": "\"Archive this side conversation (find it again under \\\"Show archived\\\" in the session list).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"This thread is running — stop it before archiving\"",
+   "replace": "\"This thread is running. Stop it before archiving.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Save is available after the first completed turn\"",
+   "replace": "\"Saving is available after the first completed turn.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"The last unanswered follow-up will not be included in the saved session\"",
+   "replace": "\"The last unanswered follow-up is not included in the saved session.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Abort the running turn (queued work is kept)\"",
+   "replace": "\"Abort the running turn (queued work is kept).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"How the Tasks page renders on open (the in-page toggle still flips it ad hoc)\"",
+   "replace": "\"How the Tasks page renders when opened. The in-page toggle can still change this at any time.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Classic indentation tree, keyboard navigable\"",
+   "replace": "\"Classic indentation tree with keyboard navigation.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"No description yet — click Edit to add one\"",
+   "replace": "\"No description yet. Click Edit to add one.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Could not open Context diagnostics for \\\"{label}\\\"\"",
+   "replace": "\"Could not open Context diagnostics for \\\"{label}\\\".\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"The arc-context \\\"Context\\\" page is unavailable (not installed or not registered)\"",
+   "replace": "\"The arc-context \\\"Context\\\" page is unavailable because it is not installed or not registered.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Sidebar pages (tabs) can be extended by plugins. Plugins register through the ctx.betterSidebar service; clicking Install copies the install command — paste it into a terminal where your Arc Harness profile lives and run it.\"",
+   "replace": "\"Plugins can extend sidebar pages (tabs) by registering through the ctx.betterSidebar service. Clicking Install copies the install command. Paste and run it in the terminal for your Arc Harness profile.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"File previewers can be extended by plugins. Plugins register through the ctx.betterSidebar service; clicking Install copies the install command — paste it into a terminal where your Arc Harness profile lives and run it.\"",
+   "replace": "\"Plugins can extend file previewers by registering through the ctx.betterSidebar service. Clicking Install copies the install command. Paste and run it in the terminal for your Arc Harness profile.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"No plugins curated yet — publish yours under the GitHub topic\"",
+   "replace": "\"No plugins curated yet. Publish yours under the GitHub topic.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"System-prompt personas by workspace or session: one persona can cover several workspace directories and several sessions, matched exactly, by prefix, by substring or by regex, most specific wins, and one persona can be marked as the default; managed from a settings page and a \\\"Persona\\\" tab on the conversation, effective on the next message\"",
+   "replace": "\"Configure system-prompt personas by workspace or session. A persona can match multiple workspace directories or sessions exactly, by prefix, by substring, or by regex, with the most specific match winning. One persona can be set as the default. Manage personas in Settings or the conversation \\\"Persona\\\" tab; changes take effect on the next message.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Office-suite preview (.docx / .xlsx / .pptx) for the better-sidebar editor, keeping the heavy Office render libraries out of the core bundle\"",
+   "replace": "\"Previews Office files (.docx, .xlsx, and .pptx) in the better-sidebar editor without loading heavy Office rendering libraries into the core bundle.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Live session flowgraph with three lanes for user, assistant, and tool calls, plus parallel groups, sub-agent branches, drill-down, and live status; registers a native Flowglass tab when better-sidebar is installed and keeps its standalone drawer as a fallback\"",
+   "replace": "\"Live session flowgraph showing user, assistant, and tool-call lanes, parallel groups, subagent branches, drill-down details, and live status. Registers a native Flowglass tab when better-sidebar is installed, with a standalone drawer as fallback.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Git Forge tab: GitHub/Gitea (and other forge) account library + per-project grants + hard push policy; tokens stay in local secrets (never in model context); read-only GitForge tool and agent HTTPS credential helper\"",
+   "replace": "\"Git Forge tab: manage GitHub, Gitea, and other forge accounts with per-project permissions and strict push policies. Tokens remain in local secrets and are never exposed to model context. Includes a read-only GitForge tool and an agent HTTPS credential helper.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Condition-driven agent wakeup: file/process/port/http/command/webhook sensors wake dormant sessions when conditions fire; registers a \\\"Sentinel\\\" tab with the server-wide watch table\"",
+   "replace": "\"Condition-driven agent wakeup. File, process, port, HTTP, command, and webhook sensors wake dormant sessions when conditions trigger. Registers a Sentinel tab with a server-wide watch table.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Codex-style side chat + selection annotations: fork the current session into a persistent side panel (archived out of the session list, multi-instance, /side command, survives reload, model follows the main session); select assistant text → numbered badge + note editor → an \\\"N annotations\\\" chip that rides your next message, or ask straight into a side chat\"",
+   "replace": "\"Codex-style side chat and selection annotations. Fork the current session into a persistent side panel that supports multiple instances, survives reloads, follows the main session model, uses the /side command, and stays archived out of the session list. Select assistant text to add a numbered badge and note editor, attach an annotations chip to your next message, or ask directly in a side chat.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Connect the local Suhuang Scroll Runtime to Arc Harness settings and better-sidebar for model configuration, connection tests, and continuous grading controls; requires Suhuang Scroll Runtime and arc-better-sidebar\"",
+   "replace": "\"Connect the local Suhuang Scroll Runtime to Arc Harness Settings and better-sidebar for model configuration, connection tests, and continuous grading controls. Requires Suhuang Scroll Runtime and arc-better-sidebar.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Inline video preview (.mp4/.webm/.mov/.mkv/.avi etc.) for the better-sidebar editor, backed by a dedicated /video host route with HTTP Range (206) support — scrubbing works and playback starts before the whole file is fetched\"",
+   "replace": "\"Inline video preview for .mp4, .webm, .mov, .mkv, .avi, and other formats in the better-sidebar editor. Backed by a dedicated /video route with HTTP Range (206) support so scrubbing works and playback starts before the entire file downloads.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Inline audio preview (.mp3/.wav/.flac/.ogg/.m4a/.aac/.opus) for the better-sidebar editor: a zoomable waveform player (click/drag seek, A-B loop, channel switch) plus a live spectrum and a whole-file spectrogram — its own media route supports HTTP Range, so any size seeks\"",
+   "replace": "\"Inline audio preview for .mp3, .wav, .flac, .ogg, .m4a, .aac, and .opus files in the better-sidebar editor. Includes a zoomable waveform player with click-and-drag seeking, A-B looping, channel switching, live spectrum, and full-file spectrogram. Its media route supports HTTP Range for seeking in files of any size.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Code preview navigator: detects the language by file type and highlights syntax, symbol outline (class / method / variable filters + one-click jump), and in-file search (highlight all matches, prev/next, match case) — takes over code file preview in the better-sidebar editor\"",
+   "replace": "\"Code preview navigator for the better-sidebar editor. Automatically detects file language and provides syntax highlighting, a symbol outline with class, method, and variable filters and one-click jump, and in-file search with match highlighting, case matching, and previous or next navigation.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"A vscode-git-graph-faithful commit-graph tab: mounts as a better-sidebar native tab auto-bound to the session workspace, with the full git toolset (checkout/merge/rebase/push/tag/stash), light/dark theme tracking, and click-a-file diff via the built-in DiffTab; requires arc-better-sidebar installed first\"",
+   "replace": "\"A Git Graph tab faithful to vscode-git-graph. Mounts as a native better-sidebar tab bound to the session workspace, featuring full Git tools (checkout, merge, rebase, push, tag, stash), light and dark theme matching, and file diffs through the built-in DiffTab. Requires arc-better-sidebar.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Global docs in the Arc Harness sidebar: read your own Markdown notes from any workspace — a file list, an outline, open in Chrome / VS Code, and copy buttons; the docs directory is configurable (default ~/.arc/docs)\"",
+   "replace": "\"Global docs in the Arc Harness sidebar. Read your Markdown notes from any workspace, with a file list, an outline, copy buttons, and options to open in Chrome or VS Code. The docs directory is configurable (default: ~/.arc/docs).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"A Typst document editor sharing the current session workspace, with WYSIWYG typesetting for papers, reports, exams, resumes, charts, posters, sheet music, and slides exported as PPTX\"",
+   "replace": "\"A Typst document editor that shares the current session workspace. Provides visual typesetting for papers, reports, exams, resumes, charts, posters, sheet music, and slides exported as PPTX.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"The agent browser for Arc Harness: 32 ego_* tools drive a real Chromium, with a native sidebar \\\"ego browser\\\" tab giving a live view of every page the agent visits — you can click, drag, and type to take over. Registers the tab automatically when better-sidebar is present, otherwise falls back to a floating bubble\"",
+   "replace": "\"The agent browser for Arc Harness. 32 ego_* tools drive Chromium, while a native sidebar ego browser tab provides a live view of every page the agent visits so you can click, drag, or type to take over. Automatically registers the tab when better-sidebar is installed, or falls back to a floating bubble.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Read paper PDFs in the Arc Harness sidebar: native PDF rendering, select text to translate it with the LLM, using context while staying fully isolated from the main conversation — a reading aid only\"",
+   "replace": "\"Read PDF papers in the Arc Harness sidebar. Features native PDF rendering and lets you select text to translate it with the model using context, while staying fully isolated from the main conversation as a reading aid.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Cross-session memory that injects only what changed — nothing at all when nothing changed — with review-date reminders, relevance-ranked search and a sidebar tab.\"",
+   "replace": "\"Cross-session memory that injects only what changed, and nothing when nothing changed. Includes review-date reminders, relevance-ranked search, and a sidebar tab.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Records every file the model reads, writes, or edits; grouped list with content and line diffs, Markdown reading mode and secret redaction; standalone floating window without better-sidebar\"",
+   "replace": "\"Records every file the model reads, writes, or edits. Shows a grouped list with content and line diffs, a Markdown reading mode, and secret redaction. Opens in a standalone floating window when better-sidebar is not installed.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Cross-session memory engine: autoDream background consolidation, session summarization and user profile; SQLite + human-editable Markdown mirrors, fully offline and private. Registers a \\\"Memory Library\\\" tab (memories/entities/status/settings views) when better-sidebar is present and keeps its standalone sidebar panel as a fallback\"",
+   "replace": "\"Cross-session memory engine with autoDream background consolidation, session summarization, and user profiles. Uses SQLite with human-editable Markdown mirrors that stay fully offline and private. Registers a Memory Library tab with memories, entities, status, and settings views when better-sidebar is installed, and keeps a standalone sidebar panel as a fallback.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Fold the session into user turns (input + tool steps + output) and click any step to jump back to its exact spot in the conversation — no LLM calls, read-only\"",
+   "replace": "\"Fold the session into user turns (input, tool steps, and output). Click any step to jump to its exact location in the conversation. Read-only with no model calls.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-better-sidebar/lib/client.js",
+   "find": "\"Independent native Arc Harness side conversation with a standalone split view and an optional Better Sidebar page; its own shortcut remains available in both modes.\"",
+   "replace": "\"Independent native Arc Harness side conversation with a standalone split view and an optional Better Sidebar page. Its shortcut remains available in both modes.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Some legacy catalog installs have unknown locations. Find the skill and choose a destination to reinstall and reassociate.\"",
+   "replace": "\"Some legacy catalog installs have unknown locations. Locate the skill and choose a destination to reinstall and reconnect it.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Installed and enabled, but the list could not refresh. Reopen Discover Skills; do not install again.\"",
+   "replace": "\"Installed and enabled, but the list could not refresh. Reopen Discover Skills instead of installing again.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Moved to trash, but the list could not refresh. Refresh the skill list or reopen Settings; do not uninstall again.\"",
+   "replace": "\"Moved to Trash, but the list could not refresh. Refresh the skill list or reopen Settings instead of uninstalling again.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"The original project is unregistered or unavailable. Re-register it in the sidebar and refresh to manage this copy.\"",
+   "replace": "\"The original project is unregistered or unavailable. Register it again in the sidebar and refresh to manage this copy.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Local edits detected. Replacement overwrites current files and keeps a complete backup for restoration.\"",
+   "replace": "\"Local edits detected. Replacing overwrites current files and creates a complete backup for restoration.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"No matching skills.sh skills were found.\"",
+   "replace": "\"No matching skills found on skills.sh.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"No matching skills were returned by ClawHub.\"",
+   "replace": "\"No matching skills found on ClawHub.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Failed to load the ClawHub ranking. Check your connection and retry.\"",
+   "replace": "\"Failed to load ClawHub rankings. Check your connection and retry.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Discover skills from subscribed GitHub repositories or community registries, and install them to user Arc Harness skills or Shared Agent, or a registered project's .arc/skills.\"",
+   "replace": "\"Discover skills from subscribed GitHub repositories or community registries. Install them to Arc Harness user skills, Shared Agent, or a registered project's .arc/skills.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Refresh checks repositories and skill updates without replacing local files. Historical backups are not cleaned automatically and use additional disk space.\"",
+   "replace": "\"Refresh checks repositories and skill updates without replacing local files. Past backups are not removed automatically and use extra disk space.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"For Arc Harness only. The path uses your current ARC_HOME.\"",
+   "replace": "\"For Arc Harness only. This path uses your current ARC_HOME.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Other agents using this directory can read this skill too.\"",
+   "replace": "\"Other agents that use this directory can also read this skill.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"User directories offer Arc Harness skills or Shared Agent; registered projects write only to .arc/skills. The chooser shows actual paths. Missing directories are created after confirmation. Unsafe paths cannot be selected.\"",
+   "replace": "\"User directories include Arc Harness skills or Shared Agent. Registered projects write only to .arc/skills. The chooser shows actual paths. Missing directories are created after confirmation. Unsafe paths cannot be selected.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Move only this repository\\u2019s tracked installed copy, including local edits, to Trash. You can restore it from Trash later.\"",
+   "replace": "\"Move only this repository's tracked copy and local edits to Trash. You can restore it later.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Uninstalling this skill also affects other agents that use the selected directory.\"",
+   "replace": "\"Uninstalling this skill also affects other agents using this directory.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Moving the installed skill to Trash. Please wait\\u2026\"",
+   "replace": "\"Moving the installed skill to Trash.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Skill moved to Trash. You can restore it from Trash.\"",
+   "replace": "\"Skill moved to Trash. You can restore it later.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"For example: skills. Leave empty to scan the repository.\"",
+   "replace": "\"For example: skills. Leave empty to scan the entire repository.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Skills may include scripts. Read the instructions and trust the source before installing. Resources are copied; scripts are not executed.\"",
+   "replace": "\"Skills may include scripts. Read instructions and trust the source before installing. Resources are copied. Scripts are not executed.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Repository archive exceeds 32 MiB. Choose a smaller repository; a subdirectory filter does not reduce the download size.\"",
+   "replace": "\"Repository archive exceeds 32 MiB. Choose a smaller repository. Subdirectory filters do not reduce download size.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Skill files were preserved but source tracking could not be saved. Restore disk write access and reopen Repositories to verify files and recover the record.\"",
+   "replace": "\"Skill files were preserved, but source tracking could not be saved. Restore write access and reopen Repositories to verify files and recover the record.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Source tracking exceeds 16 MiB. Remove unneeded Trash records or legacy identities first. Active installation copies are kept.\"",
+   "replace": "\"Source tracking exceeds 16 MiB. Remove unneeded Trash records or legacy identities first. Active installations are kept.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Invalid repository URL, path or contents. Check the input and repository size.\"",
+   "replace": "\"Invalid repository URL, path, or contents. Check the input and repository size.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Repository request failed. Check your connection or retry later. The previous catalog was kept.\"",
+   "replace": "\"Repository request failed. Check your connection or try again later. The previous catalog was kept.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Repository state is corrupt or unreadable. Preserve the file and repair it before retrying.\"",
+   "replace": "\"Repository state is corrupt or unreadable. Save a copy of the file and repair it before trying again.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"A skill with this name exists or installation failed. Local files were not overwritten.\"",
+   "replace": "\"A skill with this name already exists or installation failed. Local files were not overwritten.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"The copied skill was removed because its enabled state could not be saved. Restore disk write access and install again.\"",
+   "replace": "\"The copied skill was removed because its enabled state could not be saved. Restore write access and install it again.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Select a registered workspace first. No directory is created before you confirm.\"",
+   "replace": "\"Select a registered workspace first. No directory is created until you confirm.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"No registered workspaces yet. Add one in the sidebar, then come back.\"",
+   "replace": "\"No registered workspaces yet. Add one in the sidebar, then return here.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Created in the selected workspace. It appears in sessions of that workspace.\"",
+   "replace": "\"Created in the selected workspace. It appears in sessions for that workspace.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"If automatic update fails, run this command in the current Arc Harness terminal, then restart Arc Harness Web.\"",
+   "replace": "\"If the automatic update fails, run this command in the current Arc Harness terminal, then restart Arc Harness Web.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"If automatic update fails, fully quit Arc Harness Desktop, then run this command with Desktop's own Arc Harness. A regular Arc Harness rejects the desktop profile.\"",
+   "replace": "\"If the automatic update fails, quit Arc Harness Desktop, then run this command with Desktop's own Arc Harness. A standard Arc Harness rejects the desktop profile.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Update complete. Fully quit and reopen Arc Harness Desktop.\"",
+   "replace": "\"Update complete. Quit and reopen Arc Harness Desktop.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Automatic update is unavailable. Use the manual command.\"",
+   "replace": "\"Automatic updates are unavailable. Use the manual command.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Show Skills below Plugins in the sidebar. The Settings entry stays either way.\"",
+   "replace": "\"Show Skills below Plugins in the sidebar. The Settings entry remains either way.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Allow checking and installing new versions online. Hides the update entry when disabled.\"",
+   "replace": "\"Check for and install new versions online. Hides the update option when disabled.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Load and manage Agent Skills on this computer in one place.\"",
+   "replace": "\"Load and manage skills on this computer in one place.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"No skills yet. Use More on a skill to place it here.\"",
+   "replace": "\"No skills yet. Select More on a skill to add it here.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Deleted category \\u201C{name}\\u201D. Skills returned to Uncategorized and were not trashed.\"",
+   "replace": "\"Deleted category “{name}”. Skills returned to Uncategorized and were not deleted.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Drag to reorder or move to another category\"",
+   "replace": "\"Drag to reorder or move to another category.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"A category with this name already exists: {name}\"",
+   "replace": "\"A category with this name already exists: {name}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Category name is required and must be at most 24 characters\"",
+   "replace": "\"Category name is required and must be 24 characters or fewer.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"The target skill is not in the destination category\"",
+   "replace": "\"The target skill is not in the destination category.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Created skills are not linked to repository updates, and no source file is modified.\"",
+   "replace": "\"Created skills are not linked to repository updates. Source files are not modified.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Supports .zip, a skill folder, or one SKILL.md\"",
+   "replace": "\"Supports .zip files, a skill folder, or a single SKILL.md.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Archives and folders must contain SKILL.md\"",
+   "replace": "\"Archives and folders must contain SKILL.md.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"SKILL.md must include a YAML name and description\"",
+   "replace": "\"SKILL.md must include a YAML name and description.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Import copies all content and never modifies the source\"",
+   "replace": "\"Import copies all content and never modifies the source.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"\\u201C{name}\\u201D will move out of its current skill source and can be restored to the same location later.\"",
+   "replace": "\"“{name}” will be moved out of its skill source. You can restore it to the same location later.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"\\u201C{name}\\u201D will be permanently deleted from trash and cannot be recovered.\"",
+   "replace": "\"“{name}” will be permanently deleted from the trash and cannot be recovered.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Imported: {imported}; skipped existing skills: {skipped}\"",
+   "replace": "\"Imported: {imported}. Skipped existing skills: {skipped}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"No skills were imported; existing skills were skipped: {names}\"",
+   "replace": "\"No skills were imported. Existing skills were skipped: {names}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Some skills were not shown because the directory is too large or deeply nested: {path}\"",
+   "replace": "\"Some skills were hidden because the directory is too large or nested too deeply: {path}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"The manager state file could not be read; all skills are disabled and state writes are blocked until it is repaired: {path}\"",
+   "replace": "\"Could not read the manager state file. All skills are disabled and state writes are blocked until it is repaired: {path}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Old version backup was not cleaned up: {path} ({error})\"",
+   "replace": "\"Could not clean up backup of old version: {path} ({error}).\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Workspace directory is unavailable: {path}\"",
+   "replace": "\"Workspace directory is unavailable: {path}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"The project skill directory is unsafe, so the write was refused: {path}\"",
+   "replace": "\"The project skill directory is unsafe, so the write was refused: {path}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"This directory link cannot be deleted or overwritten: {path}\"",
+   "replace": "\"Cannot delete or overwrite this directory link: {path}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Skill lacks complete frontmatter, cannot {action}: {name}\"",
+   "replace": "\"Skill lacks complete frontmatter. Cannot {action}: {name}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Skill structure is incomplete, cannot {action}: {name}\"",
+   "replace": "\"Skill structure is incomplete. Cannot {action}: {name}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Skill sources containing symbolic links are not supported: {path}\"",
+   "replace": "\"Skill sources with symbolic links are not supported: {path}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Skill source directory depth exceeds {depth} levels: {path}\"",
+   "replace": "\"Skill source directory depth exceeds {depth} levels: {path}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Import source cannot be the same as, contain, or be inside the Arc Harness skills directory\"",
+   "replace": "\"The import source cannot match, contain, or be inside the Arc Harness skills directory.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"No skill entries found in the directory: {path}\"",
+   "replace": "\"No skill entries were found in the directory: {path}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Cannot generate a valid kebab-case name (original: {name})\"",
+   "replace": "\"Cannot generate a valid kebab-case name (original: {name}).\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Batch source contains duplicate skill names: {name}\"",
+   "replace": "\"Batch source contains duplicate skill names: {name}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Overwrite import rollback failed; backups kept at: {path} ({error})\"",
+   "replace": "\"Failed to roll back the overwrite import. Backups were kept at: {path} ({error}).\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Too many uploaded files; maximum {limit}\"",
+   "replace": "\"Too many uploaded files. Maximum is {limit}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Upload is too large; limit {limit} bytes\"",
+   "replace": "\"Upload is too large. Limit is {limit} bytes.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"ZIP archive is too large; limit {limit} bytes\"",
+   "replace": "\"ZIP archive is too large. Limit is {limit} bytes.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Upload contains a duplicate path: {path}\"",
+   "replace": "\"Upload contains a duplicate path: {path}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Cannot restore because a skill with the same name exists: {name}\"",
+   "replace": "\"Cannot restore because a skill with the same name exists: {name}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"The original project is not an active workspace, so this skill cannot be restored: {path}\"",
+   "replace": "\"The original project is not an active workspace, so this skill cannot be restored: {path}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Move-to-trash rollback failed; unrecovered content was kept at: {path} ({error})\"",
+   "replace": "\"Failed to roll back move to trash. Unrecovered content was kept at: {path} ({error}).\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"The manager state file could not be read, so overwriting it was refused: {path}\"",
+   "replace": "\"Could not read the manager state file, so overwriting it was refused: {path}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"A skill with the same name already exists: {name}\"",
+   "replace": "\"A skill with the same name already exists: {name}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Forbidden mutation request (missing client marker)\"",
+   "replace": "\"Forbidden mutation request (missing client marker).\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Server returned a non-JSON response (HTTP {status})\"",
+   "replace": "\"Server returned a non-JSON response (HTTP {status}).\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Shadowed by higher-priority source {root}\"",
+   "replace": "\"Shadowed by higher-priority source {root}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"View project skills by workspace. Toggles do not modify other agents\\u2019 source files.\"",
+   "replace": "\"View project skills by workspace. Toggles do not modify other agents' source files.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Overridden by the same skill in {source}\"",
+   "replace": "\"Overridden by the same skill in {source}.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Added {count} skills to \\u201C{category}\\u201D. Files were not moved.\"",
+   "replace": "\"Added {count} skills to \\\"{category}\\\". Files were not moved.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"No directory picker is available here; type the path instead.\"",
+   "replace": "\"No directory picker is available here. Type the path instead.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"The skills folder settings could not be read; defaults are in use: {path}\"",
+   "replace": "\"Could not read skills folder settings. Using defaults: {path}\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Register skill folders for agents that are not in the built-in list. Read-only: nothing is moved or modified. You can also point at a product folder and scan for the skills folders inside it.\"",
+   "replace": "\"Register skill folders for agents not in the built-in list. Read-only: nothing is moved or modified. You can also select a product folder to scan for skills folders inside it.\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Display name (empty uses the folder name)\"",
+   "replace": "\"Display name (leave blank to use folder name)\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"Custom sources reached the limit: {limit}\"",
+   "replace": "\"Custom sources limit reached: {limit}\"",
+   "min": 1
+  },
+  {
+   "file": "@michengai/arc-skills-manager/lib/client.js",
+   "find": "\"A custom source needs a display name: {path}\"",
+   "replace": "\"A custom source requires a display name: {path}\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Import sessions from other tools (discovery + single/multi-select import)\"",
+   "replace": "\"Import sessions from other tools with discovery and single or multi-select import.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Import sessions from 25+ tools like Claude Code / Codex / ChatGPT and continue chatting\"",
+   "replace": "\"Import sessions from over 25 tools, such as Claude Code, Codex, and ChatGPT, and continue chatting.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Filter by external tool; switching source rescans\"",
+   "replace": "\"Filter by external tool. Switching sources rescans.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Show only sessions under this workspace (works together with search)\"",
+   "replace": "\"Show only sessions in this workspace. Works with search.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Skipped {n} unchanged / unsafely resumable conversations\"",
+   "replace": "\"Skipped {n} unchanged or unsafely resumable conversations.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"{n} sources blocked by ignored record{reason}, not imported (unblock permanently: /unignore)\"",
+   "replace": "\"{n} sources blocked by ignored record{reason} and not imported. Unblock permanently with /unignore.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Rescan; reuses scan-cache if source files unchanged, usually takes a few seconds\"",
+   "replace": "\"Rescan. Reuses the scan cache if source files are unchanged, which usually takes a few seconds.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Import Selected and Archive Old Sessions ({n})\"",
+   "replace": "\"Import selected and archive old sessions ({n})\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"{n} old session(s) not archived: corresponding import was unsuccessful (skipped or failed), old sessions left intact\"",
+   "replace": "\"{n} old sessions were not archived because the import was skipped or failed. Old sessions were left intact.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Delete all imported sessions created by this plugin (irreversible)\"",
+   "replace": "\"Delete all imported sessions created by this plugin. This cannot be undone.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Delete Arc Harness session corresponding to this import record\"",
+   "replace": "\"Delete the Arc Harness session for this import record.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"This will delete uploaded temporary files not referenced by import records (including all incomplete uploads). Referenced temporary files will be kept. Are you sure you want to continue?\"",
+   "replace": "\"This will delete temporary uploads not referenced by import records, including incomplete uploads. Referenced temporary files will be kept. Are you sure you want to continue?\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Deletion completed: {deleted} succeeded, {failed} failed\"",
+   "replace": "\"Deletion complete: {deleted} succeeded, {failed} failed.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Remove registrations of workspaces created by this plugin that no longer have sessions (directories and logs preserved)\"",
+   "replace": "\"Unregister workspaces created by this plugin that have no sessions. Directories and logs are preserved.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Delete uploaded files not referenced by import records (referenced ones are kept: re-import semantics use them as source keys)\"",
+   "replace": "\"Delete uploaded files not referenced by import records. Referenced files are kept as source keys for re-importing.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Cleaned up {removed} staged upload(s), kept {kept} referenced\"",
+   "replace": "\"Cleaned up {removed} staged uploads and kept {kept} referenced files.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"{n} scan target(s) failed and skipped: {sources} (hover to see reason)\"",
+   "replace": "\"{n} scan targets failed and were skipped: {sources} (hover to view reason).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Import failed: abnormal service response (route may not be registered, please restart Arc Harness and try again)\"",
+   "replace": "\"Import failed: unexpected service response. The route may not be registered. Restart Arc Harness and try again.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Import panel service response error (route may not be registered, please restart Arc Harness and try again)\"",
+   "replace": "\"Import panel service error. The route may not be registered. Restart Arc Harness and try again.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Import this session: creates a new session if not imported; if continued in Arc Harness, creates a new copy instead of appending to your conversation\"",
+   "replace": "\"Import this session. Creates a new session if not yet imported. If continued in Arc Harness, creates a new copy instead of appending to your conversation.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Select destination: Arc Harness session environment allows continuing the conversation; selecting another tool converts to its format and saves to disk without keeping a copy in Arc Harness\"",
+   "replace": "\"Select a destination. The Arc Harness session environment lets you continue the conversation. Selecting another tool converts to its format and saves to disk without keeping a copy in Arc Harness.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Write Codex rollout JSONL to ~/.arc/exports/, then place into Codex's sessions directory\"",
+   "replace": "\"Write Codex rollout JSONL to ~/.arc/exports/, then move it into the Codex sessions directory.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Write Kimi wire.jsonl to ~/.arc/exports/, then place into Kimi's session directory\"",
+   "replace": "\"Write Kimi wire.jsonl to ~/.arc/exports/, then move it into the Kimi session directory.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Retained {n} existing Arc Harness sessions\"",
+   "replace": "\"Retained {n} existing Arc Harness sessions.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Keep the source session's system / developer prompt as \\\"context injection\\\". Enabled by default: injected body includes an environment change notice (tools, permissions, and execution commands subject to the current Arc Harness session), with the original text appended for reference; when disabled, only the environment change notice is kept.\"",
+   "replace": "\"Keep the source session's system or developer prompt as a context injection. Enabled by default. The injected body includes an environment change notice (tools, permissions, and execution commands subject to the current Arc Harness session) with the original text appended. When disabled, only the environment change notice is kept.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Importing is low-frequency: Minimal (default) keeps only the import_chat entry tool resident (long docs loaded on demand via skill), saving ~2.1k context; Full injects all 12 tools; when disabled, in-conversation Agents cannot see this plugin's tools, but conversions can still be done via the GUI \\\"Import Sessions\\\" panel.\"",
+   "replace": "\"Importing runs infrequently. Minimal (default) keeps only the import_chat entry tool loaded (long documents load on demand via skill) and saves ~2.1k context. Full injects all 12 tools. When disabled, in-conversation agents cannot see this plugin's tools, but you can still convert sessions in the Import Sessions panel.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Show the \\\"Import Sessions\\\" quick button at the bottom of the left sidebar; when disabled, it will not appear in the sidebar, but can still be opened via the right sidebar.\"",
+   "replace": "\"Show the \\\"Import Sessions\\\" button at the bottom of the left sidebar. When disabled, it does not appear in the left sidebar, but you can still open it from the right sidebar.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Chunk reduced to 64KB but still rejected (HTTP 413): gateway or file size limit too low\"",
+   "replace": "\"Chunk reduced to 64KB but still rejected (HTTP 413). Gateway or file size limit is too low.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"WebCrypto (crypto.subtle) is unavailable in current environment; cannot calculate file fingerprint\"",
+   "replace": "\"WebCrypto (crypto.subtle) is unavailable in the current environment. Cannot calculate file fingerprint.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"No preview yet: press Enter after entering path (or click \\\"Preview\\\"), or click \\\"Select…\\\" to pick a file\"",
+   "replace": "\"No preview yet. Press Enter after entering a path (or click \\\"Preview\\\"), or click \\\"Select…\\\" to choose a file.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"This path is a directory ({n} candidate files at current level). Search subfolders as well?\"",
+   "replace": "\"This path is a directory ({n} candidate files at this level). Search subfolders as well?\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Copy failed (browser denied clipboard permission)\"",
+   "replace": "\"Copy failed (browser denied clipboard permission).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"All conversation format parsers failed ({n})\"",
+   "replace": "\"All conversation format parsers failed ({n}).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Please convert the following conversation log file into a arc-chat-import interchange v1 session document, write it as a new JSON file, and pass it back to me for re-import. If the skill `arc-chat-import-convert` is available in the environment, invoke it first for the full conversion guide; otherwise read: {url}\"",
+   "replace": "\"Convert the following conversation log file into an arc-chat-import interchange v1 session document, write it as a new JSON file, and return it to me for re-import. If the skill `arc-chat-import-convert` is available in the environment, invoke it first for the full conversion guide; otherwise read: {url}\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Attachment: Failure reasons from {n} parsers for this file (for reference):\"",
+   "replace": "\"Attachment: failure reasons from {n} parsers for this file (for reference):\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"File import service response error (route may not be registered, please restart Arc Harness and try again)\"",
+   "replace": "\"File import service response error (route may not be registered; restart Arc Harness and try again).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Hide from list (can undo in toast; keeps source file)\"",
+   "replace": "\"Hide from list (can undo in toast; keeps source file).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"{turns} turns · {messages} messages · {tools} tool calls\"",
+   "replace": "\"{turns} turns, {messages} messages, {tools} tool calls\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Search conversation content (all words must appear in the same message)\"",
+   "replace": "\"Search conversation content (all words must appear in the same message).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Searching content · {scanned}/{total} files · {n} matches\"",
+   "replace": "\"Searching content: {scanned}/{total} files, {n} matches\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Move source files of {n} sessions to Trash?\"",
+   "replace": "\"Move source files for {n} sessions to Trash?\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Original tools (Claude Code, Codex…) will no longer be able to resume this session. Copies imported into Arc Harness will be kept. Files can be restored from Trash.\"",
+   "replace": "\"Original tools (Claude Code, Codex…) will no longer be able to resume this session. Copies imported into Arc Harness are kept. Files can be restored from Trash.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Drag onto a workspace in the left sidebar to import into that workspace\"",
+   "replace": "\"Drag onto a workspace in the left sidebar to import into that workspace.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Import sessions from other tools (discover + single/multi select)\"",
+   "replace": "\"Import sessions from other tools (discover, single, or multi-select).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Import and resume sessions from Claude Code, Codex, ChatGPT and 25+ tools\"",
+   "replace": "\"Import and resume sessions from Claude Code, Codex, ChatGPT, and 25+ tools.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Filter by external tool; changing source rescans\"",
+   "replace": "\"Filter by external tool. Changing the source triggers a rescan.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Show only sessions in this workspace (AND with search)\"",
+   "replace": "\"Show only sessions in this workspace (combined with search).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Skipped {n} conversation(s) that are unchanged or cannot be appended safely\"",
+   "replace": "\"Skipped {n} conversations that are unchanged or cannot be appended safely.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"{n} source(s) blocked by an ignore record{reason}; not imported (run /unignore to clear it permanently)\"",
+   "replace": "\"{n} sources blocked by an ignore record{reason}; not imported (run /unignore to clear permanently).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Rescan; unchanged files reuse scan-cache and finish in seconds\"",
+   "replace": "\"Rescan. Unchanged files reuse the scan cache and finish in seconds.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"{n} old session(s) left unarchived: their import did not succeed (skipped or failed), so the originals stay as they are\"",
+   "replace": "\"{n} old sessions left unarchived: import did not succeed (skipped or failed), so the originals remain unchanged.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Old sessions not archived: this host exposes no archive API (the import itself completed)\"",
+   "replace": "\"Old sessions were not archived: this host exposes no archive API (the import itself completed).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"This deletes staged upload files that no import record references (including every incomplete upload). Referenced files are kept. Continue?\"",
+   "replace": "\"This deletes staged upload files that no import record references, including incomplete uploads. Referenced files are kept. Continue?\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Removal done: {deleted} succeeded, {failed} failed\"",
+   "replace": "\"Removal complete: {deleted} succeeded, {failed} failed.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Remove empty workspace registrations this plugin created (directories and logs are kept)\"",
+   "replace": "\"Remove empty workspace registrations created by this plugin (directories and logs are kept)\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Delete staged uploads no import record references (referenced ones are kept: re-import semantics key on them)\"",
+   "replace": "\"Delete staged uploads that no import record references (referenced files are kept for re-imports)\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Removed {removed} staged upload(s), kept {kept} referenced\"",
+   "replace": "\"Removed {removed} staged upload(s); kept {kept} referenced.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"{n} scan target(s) failed and were skipped: {sources} (hover for details)\"",
+   "replace": "\"{n} scan target(s) failed and were skipped: {sources} (hover for details).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Import failed: the service route is unavailable (the route may not be registered — restart Arc Harness and retry)\"",
+   "replace": "\"Import failed: the service route is unavailable (the route may not be registered; restart Arc Harness and retry).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Panel failed to load: the service route is unavailable (the route may not be registered — restart Arc Harness and retry)\"",
+   "replace": "\"Panel failed to load: the service route is unavailable (the route may not be registered; restart Arc Harness and retry).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Import this session: creates a new one when unimported; if you already chatted in the Arc Harness copy, a new copy is made instead of appending\"",
+   "replace": "\"Import this session: creates a new session if unimported. If you already chatted in the Arc Harness copy, a new copy is created instead of appending.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Where the imported conversation lands: Arc Harness sessions stay resumable; other targets are converted into that tool's own format (no Arc Harness copy left behind)\"",
+   "replace": "\"Where the imported conversation is saved: Arc Harness sessions stay resumable; other targets are converted into that tool's own format (no Arc Harness copy is kept).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Writes a Codex rollout JSONL into ~/.arc/exports/; move it into Codex's sessions directory\"",
+   "replace": "\"Writes a Codex rollout JSONL to ~/.arc/exports/; move it into Codex's sessions directory.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Writes a Kimi wire.jsonl into ~/.arc/exports/; move it into Kimi's sessions directory\"",
+   "replace": "\"Writes a Kimi wire.jsonl to ~/.arc/exports/; move it into Kimi's sessions directory.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Transferred {n} conversation(s) to {target}\"",
+   "replace": "\"Transferred {n} conversation(s) to {target}.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Keep the source session's system/developer prompt as a \\\"context injection\\\". On by default: the injected body carries a note that the environment changed and tools, permissions, and instructions now follow Arc Harness, with the original prompt appended for reference; turn off to keep only the note.\"",
+   "replace": "\"Keep the source session's system or developer prompt as a \\\"context injection\\\". On by default: the injected text notes that the environment changed and tools, permissions, and instructions now follow Arc Harness, with the original prompt appended for reference. Turn off to keep only the note.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Import is a low-frequency need: Minimal (default) keeps only the import_chat entry tool resident (its long-form guide loads on demand as a skill), saving ~2.1k tokens of context; Full injects all 12 tools; Off hides this plugin's tools from the in-conversation agent — the Import Sessions panel still works.\"",
+   "replace": "\"Import is rarely needed: Minimal (default) keeps only the import_chat entry tool resident (its guide loads on demand as a skill), saving ~2.1k context tokens; Full injects all 12 tools; Off hides this plugin's tools from the in-conversation agent—the Import Sessions panel still works.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Show the 'Import Sessions' quick button at the bottom of the left sidebar; when disabled, the button is hidden from the sidebar and remains accessible via the right sidebar.\"",
+   "replace": "\"Show the 'Import Sessions' shortcut at the bottom of the left sidebar. When disabled, the button is hidden from the left sidebar and remains accessible in the right sidebar.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Rejected even at the 64KB minimum chunk (HTTP 413): the gateway or file limit is too small\"",
+   "replace": "\"Rejected even at the 64KB minimum chunk size (HTTP 413): the gateway or file limit is too small.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"No WebCrypto (crypto.subtle) in this environment, so file fingerprints cannot be computed\"",
+   "replace": "\"WebCrypto (crypto.subtle) is unavailable in this environment, so file fingerprints cannot be computed.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Copy failed (clipboard permission denied)\"",
+   "replace": "\"Copy failed (clipboard permission denied).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Every conversation-format parser failed ({n})\"",
+   "replace": "\"Every conversation format parser failed ({n}).\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Convert the chat transcript below into a arc-chat-import interchange v1 session document, write it as a new JSON file, and hand it back to me for re-import. If a skill named `arc-chat-import-convert` is available, invoke it first for the full conversion guide; otherwise read: {url}\"",
+   "replace": "\"Convert the chat transcript below into an arc-chat-import interchange v1 session document, write it to a new JSON file, and return it for re-import. If the `arc-chat-import-convert` skill is available, invoke it first for the full conversion guide. Otherwise read: {url}\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Attached: why each of the {n} parsers rejected this file (for reference):\"",
+   "replace": "\"Why each of the {n} parsers rejected this file:\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"File import service failed to respond (the route may not be registered — restart Arc Harness and retry)\"",
+   "replace": "\"The file import service failed to respond. The route may not be registered. Restart Arc Harness and try again.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Hide from this list (Undo in the notice; the source file is kept)\"",
+   "replace": "\"Hide from this list (undo in the notice; source file is kept)\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Showing the first {n} of {total} messages\"",
+   "replace": "\"Showing the first {n} of {total} messages.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Search inside the conversations (all words must appear in one message)\"",
+   "replace": "\"Search inside conversations (all words must appear in one message)\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Searching content · {scanned}/{total} files · {n} matching\"",
+   "replace": "\"Searching content: {scanned}/{total} files, {n} matching\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Move the source file of {n} session(s) to the Recycle Bin?\"",
+   "replace": "\"Move the source file for {n} session(s) to the Recycle Bin?\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"The original tool (Claude Code, Codex…) can no longer resume it. Copies already imported into Arc Harness are kept. You can restore the file from the Recycle Bin.\"",
+   "replace": "\"The original tool (Claude Code, Codex, etc.) can no longer resume it. Copies already imported into Arc Harness are kept. You can restore the file from the Recycle Bin.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"Moved {n} source file(s) to the Recycle Bin\"",
+   "replace": "\"Moved {n} source file(s) to the Recycle Bin.\"",
+   "min": 1
+  },
+  {
+   "file": "arc-chat-import/lib/client.js",
+   "find": "\"From All Sources import to ARC session environment\"",
+   "replace": "\"Import from All Sources into the Arc Harness session environment\"",
+   "min": 1
+  }
+ ]
+}

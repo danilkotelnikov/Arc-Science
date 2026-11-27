@@ -2,10 +2,20 @@
 /pristine/app.asar
 /pristine/*.png
 /pristine/*.ico
+# the original desktop binary and its runtime are installed assets, not source, and each is far over the size a
+# remote will take
+/pristine/*.exe
+/pristine/runtime/
+/pristine/runtime-plan.json
 /build/
 /_scratch/
 *.tar.xz
 node_modules/
 /brandtext/_unpacked-originals/
 /brandtext/_stage/
+# the unpacked copy of a profile, written by a rewrite pass
+/brandtext/build/
+# the originals a copy pass can restore, and its answer cache; both are backups, not source
+/copy/_originals/
+/copy/_work/
 __pycache__/

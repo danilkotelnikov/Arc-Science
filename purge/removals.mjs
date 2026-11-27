@@ -4,7 +4,7 @@ import path from 'node:path';
 
 export const PROFILES = ['web', 'desktop'];
 export const PROFILES_ROOT = 'C:/Users/danil/.dsh/profiles';
-export const SKIP_PKGS = new Set(['dsh-hoh', 'dsh-theme-pair']);
+export const SKIP_PKGS = new Set(['arc-hoh', 'arc-theme']);
 
 export function pluginList(profile) {
   const pj = JSON.parse(fs.readFileSync(`${PROFILES_ROOT}/${profile}/package.json`, 'utf8'));

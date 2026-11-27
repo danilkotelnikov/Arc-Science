@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "generated": "2026-11-26T06:56:01.388Z",
+  "baseUrl": { "openai": "https://gateway.example/v1", "anthropic": "https://gateway.example" },
+  "models": [
+    {
+      "id": "text-only-model",
+      "name": "Text Only",
+      "protocols": ["openai"],
+      "context": 131072,
+      "maxOutput": 16384,
+      "modalities": { "input": ["text"], "output": ["text"] },
+      "capabilities": ["tools", "json", "streaming"]
+    },
+    {
+      "id": "vision-model",
+      "name": "Vision",
+      "protocols": ["anthropic", "openai"],
+      "context": 1000000,
+      "maxOutput": 128000,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "capabilities": ["tools", "vision", "reasoning", "structured", "streaming", "caching"],
+      "aliases": ["vision-alt", "vendor-vision-model"]
+    },
+    {
+      "id": "video-model",
+      "name": "Video",
+      "protocols": ["openai"],
+      "context": 1000000,
+      "maxOutput": null,
+      "modalities": { "input": ["text", "image", "audio", "video"], "output": ["text"] },
+      "capabilities": ["tools", "reasoning", "streaming"]
+    },
+    {
+      "id": "alias-model",
+      "name": "Aliased",
+      "protocols": ["openai"],
+      "context": 262144,
+      "maxOutput": null,
+      "modalities": { "input": ["text"], "output": ["text"] },
+      "capabilities": [],
+      "aliases": ["alias-model-free"]
+    }
+  ]
+}

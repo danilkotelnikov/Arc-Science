@@ -1,0 +1,48 @@
+{
+  "version": "2026-11-09",
+  "style": [
+    "Sentence case for every label, heading and menu item. Product and proper names keep their capitals.",
+    "A feature has one name. The settings entry, the page title and the plugin list use the title the plugin policy gives it (policies/policies.json).",
+    "A label is a short noun phrase with no full stop. A description is a full sentence with a full stop.",
+    "No emoji, no middle dot, no dash that joins a name to a gloss. Say Arc Harness, never deployment, host or generation.",
+    "Same word for the same thing: session, plugin, skill, model."
+  ],
+  "rules": [
+    { "file": "@michengai/arc-archive-manager/lib/client.js", "find": "\"archived.badge\":\"Archived sessions\"", "replace": "\"archived.badge\":\"Session lifecycle\"" },
+
+    { "file": "@michengai/arc-skills-manager/lib/client.js", "find": "title:\"Skills\"", "replace": "title:\"Skill library\"" },
+    { "file": "@michengai/arc-skills-manager/lib/client.js", "find": "\"scope.repositories\":\"Discover Skills\"", "replace": "\"scope.repositories\":\"Discover skills\"" },
+
+    { "file": "@nagi-ovo/arc-visualize/lib/client.js", "find": "lang() === \"en\" ? \"Visualize\" : \"Visualization\"", "replace": "\"Inline visualization\"" },
+    { "file": "@nagi-ovo/arc-visualize/lib/client.js", "find": "\"Editorial · Editorial\"", "replace": "\"Editorial\"" },
+    { "file": "@nagi-ovo/arc-visualize/lib/client.js", "find": "\"Paper · Paper\"", "replace": "\"Paper\"" },
+    { "file": "@nagi-ovo/arc-visualize/lib/client.js", "find": "\"Sketch · Sketch\"", "replace": "\"Sketch\"" },
+    { "file": "@nagi-ovo/arc-visualize/lib/client.js", "find": "\"Terminal · Terminal\"", "replace": "\"Terminal\"" },
+
+    { "file": "arc-better-sidebar/lib/client.js", "find": "settingsNav: \"Side card\"", "replace": "settingsNav: \"Project workbench\"", "min": 2 },
+    { "file": "arc-better-sidebar/lib/client.js", "find": "\"Manage side card content and default behavior\"", "replace": "\"Choose what the workbench shows and how it behaves\"" },
+    { "file": "arc-better-sidebar/lib/client.js", "find": "\"Manage what the side card shows and how it behaves\"", "replace": "\"Choose what the workbench shows and how it behaves\"" },
+
+    { "file": "arc-chat-import/lib/client.js", "find": "\"settings.tab\": \"Session Import\"", "replace": "\"settings.tab\": \"Conversation import\"", "min": 2 },
+    { "file": "arc-chat-import/lib/client.js", "find": "\"settings.sidebarButton.title\": \"Sidebar Entry\"", "replace": "\"settings.sidebarButton.title\": \"Sidebar entry\"" },
+    { "file": "arc-chat-import/lib/client.js", "find": "\"settings.injectTools.off\": \"Close\"", "replace": "\"settings.injectTools.off\": \"Off\"" },
+
+    { "file": "arc-vision-router/lib/client.js", "find": "nav: 'Vision Router - Image Recognition'", "replace": "nav: 'Visual inspection'" },
+    { "file": "arc-vision-router/lib/client.js", "find": "onboardingTitle: 'Vision Router is ready 🎉'", "replace": "onboardingTitle: 'Visual inspection is ready'", "min": 2 },
+    { "file": "arc-vision-router/lib/client.js", "find": "groupParams: 'Performance and Timeout'", "replace": "groupParams: 'Performance and timeout'" },
+    { "file": "arc-vision-router/lib/client.js", "find": "groupDeveloper: 'Developer settings'", "replace": "groupDeveloper: 'Developer'", "min": 2 },
+
+    { "file": "arc-client-auto-continue/lib/client.js", "find": "\"category.safety.title\": \"Safety Protection\"", "replace": "\"category.safety.title\": \"Safety\"" },
+    { "file": "arc-client-auto-continue/lib/client.js", "find": "\"category.status.title\": \"Status & Logs\"", "replace": "\"category.status.title\": \"Status and logs\"" },
+    { "file": "arc-client-auto-continue/lib/client.js", "find": "\"stats.title\": \"Today's Statistics\"", "replace": "\"stats.title\": \"Today's stats\"" },
+    { "file": "arc-client-auto-continue/lib/client.js", "find": "\"recovery.title\": \"Recent Recovery Attempts\"", "replace": "\"recovery.title\": \"Recent recovery attempts\"" },
+    { "file": "arc-client-auto-continue/lib/client.js", "find": "\"pause.title\": \"Paused Sessions\"", "replace": "\"pause.title\": \"Paused sessions\"" },
+    { "file": "arc-client-auto-continue/lib/client.js", "find": "\"composer.label\": \"Auto-Continue\"", "replace": "\"composer.label\": \"Auto-continue\"" },
+
+    { "file": "arc-mode/lib/client.js", "find": "'Effect on open benchmarks'", "replace": "'Open benchmark results'" },
+    { "file": "arc-mode/lib/client.js", "find": "'Runs in Claude Code and stays as it is'", "replace": "'Runs in Claude Code and is not changed here'" },
+    { "file": "arc-mode/lib/client.js", "find": "'Not an open benchmark, and the work differs per model, so these rows rank nothing.'", "replace": "'These are not open benchmarks, and the work differs per model, so the rows rank nothing.'" },
+    { "file": "arc-mode/lib/client.js", "find": "'Loading mode state…'", "replace": "'Loading…'" },
+    { "file": "arc-mode/lib/client.js", "find": "missing: 'File missing'", "replace": "missing: 'Missing'" }
+  ]
+}

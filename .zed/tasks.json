@@ -1,0 +1,212 @@
+[
+  // ── Build ────────────────────────────────────────────────────────────────
+  {
+    "label": "Build: brand assets",
+    "command": "python",
+    "args": ["brand/build_brand.py"],
+    "env": { "PYTHONUTF8": "1" },
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["build"]
+  },
+  {
+    "label": "Build: archive",
+    "command": "node",
+    "args": ["tools/build.mjs"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["build"]
+  },
+  {
+    "label": "Build: full rebuild (brand → archive → check)",
+    "command": "cmd",
+    "args": [
+      "/c",
+      "set PYTHONUTF8=1 && python brand/build_brand.py && node tools/build.mjs && node test/build-check.mjs build/app.asar _scratch"
+    ],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["build"]
+  },
+
+  // ── ArcCrawler ───────────────────────────────────────────────────────────
+  {
+    "label": "ArcCrawler: all phases",
+    "command": "node",
+    "args": ["test/ui-crawl.mjs", "--out", "_scratch/crawl"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test", "crawl"]
+  },
+  {
+    "label": "ArcCrawler: first-run",
+    "command": "node",
+    "args": ["test/ui-crawl.mjs", "--phase", "first-run", "--out", "_scratch/crawl"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test", "crawl"]
+  },
+  {
+    "label": "ArcCrawler: dark",
+    "command": "node",
+    "args": ["test/ui-crawl.mjs", "--phase", "dark", "--out", "_scratch/crawl"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test", "crawl"]
+  },
+  {
+    "label": "ArcCrawler: light",
+    "command": "node",
+    "args": ["test/ui-crawl.mjs", "--phase", "light", "--out", "_scratch/crawl"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test", "crawl"]
+  },
+  {
+    "label": "ArcCrawler: lean (all phases)",
+    "command": "node",
+    "args": ["test/ui-crawl.mjs", "--lean", "--out", "_scratch/crawl-lean"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test", "crawl"]
+  },
+  {
+    "label": "ArcCrawler: keep server after run",
+    "command": "node",
+    "args": ["test/ui-crawl.mjs", "--keep", "--out", "_scratch/crawl"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test", "crawl"]
+  },
+
+  // ── Static checks ────────────────────────────────────────────────────────
+  {
+    "label": "Check: build archive",
+    "command": "node",
+    "args": ["test/build-check.mjs", "build/app.asar", "_scratch"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test"]
+  },
+  {
+    "label": "Check: ui-strings (archive)",
+    "command": "node",
+    "args": ["test/ui-strings.mjs", "--list"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test"]
+  },
+  {
+    "label": "Check: ui-strings (profiles)",
+    "command": "node",
+    "args": ["test/ui-strings.mjs", "--profiles", "--list"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test"]
+  },
+  {
+    "label": "Check: independent-scan (archive)",
+    "command": "node",
+    "args": ["test/independent-scan.mjs", "--list"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test"]
+  },
+  {
+    "label": "Check: independent-scan (profiles)",
+    "command": "node",
+    "args": ["test/independent-scan.mjs", "--profiles", "--list"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test"]
+  },
+  {
+    "label": "Check: positive-control (must find a lot in pristine)",
+    "command": "node",
+    "args": ["test/positive-control.mjs"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test"]
+  },
+  {
+    "label": "Check: net census (static)",
+    "command": "node",
+    "args": ["test/no-deepseek-net.mjs", "--list"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test"]
+  },
+  {
+    "label": "Check: net trace (live)",
+    "command": "node",
+    "args": ["test/no-deepseek-net.mjs", "--live", "--list"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test"]
+  },
+  {
+    "label": "Check: image-scan",
+    "command": "python",
+    "args": ["test/image-scan.py"],
+    "env": { "PYTHONUTF8": "1" },
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test"]
+  },
+  {
+    "label": "Check: asar-roundtrip (pristine)",
+    "command": "node",
+    "args": ["test/asar-roundtrip.mjs", "pristine/app.asar", "_scratch"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["test"]
+  },
+
+  // ── Install ──────────────────────────────────────────────────────────────
+  {
+    "label": "Install: status",
+    "command": "node",
+    "args": ["tools/install.mjs", "status"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["install"]
+  },
+  {
+    "label": "Install: install (close the app first)",
+    "command": "node",
+    "args": ["tools/install.mjs", "install"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["install"]
+  },
+  {
+    "label": "Install: rollback",
+    "command": "node",
+    "args": ["tools/install.mjs", "rollback"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "tags": ["install"]
+  }
+]

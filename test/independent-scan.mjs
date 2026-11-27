@@ -1,13 +1,14 @@
 // A second, independent look at the text a person reads. It shares no code with lib/brandrules.mjs: its own string finder,
 // its own patterns, its own allow list (test/independent.allow.json). If the build rules are too narrow, this scan finds what they missed.
 //   node test/independent-scan.mjs [archive.asar]    (default build/app.asar)
-//   node test/independent-scan.mjs --profiles        plugin packages and local plugins in ~/.dsh (or --dsh-home <folder>)
+//   node test/independent-scan.mjs --profiles        plugin packages and local plugins in the data home (or --dsh-home <folder>)
 //   add --list for every finding, --tier for the names that wait for the rename slices, --skips for the files not read and why
 // It checks itself first: known-bad samples must be found, and each kind of file must give at least the stated number of pieces.
 // A scan that reads nothing must fail, not pass. Files it does not read are counted by reason; a big file that carries the old names is a finding.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { dataHome } from '../lib/testhome.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -216,9 +217,9 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
   const missing = cfg.skipFiles.filter((s) => !(cfg.skipReasons || {})[s]);
   if (missing.length) { console.error('SKIP LIST: no reason stated for ' + missing.join(' ; ')); process.exit(3); }
   const profiles = args.includes('--profiles');
-  const fixture = !!opt('--dsh-home');   // a test folder in place of ~/.dsh: the floors do not apply
+  const fixture = !!opt('--dsh-home');   // a test folder in place of the data home: the floors do not apply
   if (profiles) {
-    const h = opt('--dsh-home') || path.join(os.homedir(), '.dsh');
+    const h = opt('--dsh-home') || path.join(dataHome());
     const walk = function* (d, depth = 0) { let e; try { e = fs.readdirSync(d, { withFileTypes: true }); } catch { return; } for (const x of e) { const p = path.join(d, x.name); if (x.isDirectory()) { if (x.name === '.pnpm' || x.name === '.bin' || x.name.startsWith('_archive')) continue; if (depth < DEPTH) yield* walk(p, depth + 1); } else yield p; } };
     for (const d of [path.join(h, 'local-plugins'), path.join(h, 'profiles', 'web', 'node_modules'), path.join(h, 'profiles', 'desktop', 'node_modules')]) {
       for (const p of walk(d)) { if (!READ.test(p)) continue; let st; try { st = fs.statSync(p); } catch { continue; } const buf = fs.readFileSync(p); if (st.size > BIG) { bigFile(p, buf); continue; } scan(p, buf.toString('utf8')); }

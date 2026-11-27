@@ -10,6 +10,10 @@ import { openAsar, writeAsar } from '../lib/asar.mjs';
 import { allow, rewriteFile, rewriteHosts } from '../lib/brandrules.mjs';
 import { recolorSvg, recolorBlueAttrsInScript, recolorBlueTokens, replaceVendorBlue, recolorBlueHues, HUE_ARCHIVE } from '../lib/iconcolor.mjs';
 import { swapPicture } from '../lib/whaleimg.mjs';
+import { arcText, LEFT } from '../lib/arcnames.mjs';
+import { makeArcCopy } from '../lib/arcunpacked.mjs';
+import { applyOAuthPatches } from '../lib/oauth-patches.mjs';
+import { applyKatexDollarPatch } from '../lib/katex-dollar-patch.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.resolve(process.argv[2] || path.join(root, 'build', 'app.asar'));
@@ -137,6 +141,9 @@ const NAME_STYLE = '{fontFamily:"Geist, ui-sans-serif, system-ui, -apple-system,
   put(p, s);
   report.push('running indicator: the plain cube, animated mask and still icon');
 }
+
+// ---- patch 2b: OAuth providers, RPC bridge, and Settings UI (lib/oauth-patches.mjs)
+applyOAuthPatches({ text, put, must, report });
 
 // ---- patch 3: product name in every visible string
 {
@@ -616,14 +623,14 @@ Use this image in Markdown:
   report.push('running label: "Thinking" and "Thinking for 2s" (was "Deep diving", with middle dots)');
 }
 
-// ---- patch 14: the lean core. The browser roster of the web bundle (which the desktop app serves as well) loses the screens that
+// ---- patch 14: the lean core, with a read-only Built-in plugins section kept in Settings. The browser roster of the web bundle (which the desktop app serves as well) loses the screens that
 // have no place in a v0 style harness: the Plugins page and its Built-in plugins settings, Automation tasks, trajectories,
 // skills, accounts, the subagent settings, and the mode picker with its Agent presets page. The host halves stay, so the agent
 // still works. A row is switched off by one `disabled: true` line, so a screen comes back by deleting that line.
 {
   const p = DS + 'dsh-web-app/cordis.patch.yml';
   let s = text(p);
-  const OFF = ['ui-plugin-manager', 'ui-settings-plugin-inventory', 'ui-settings-plugins', 'ui-settings-account', 'ui-schedule', 'ui-trajectory', 'ui-skill', 'ui-settings-subagent', 'ui-agent-preset', 'entry-customization'];
+  const OFF = ['ui-plugin-manager', 'ui-settings-account', 'ui-schedule', 'ui-trajectory', 'ui-skill', 'ui-settings-subagent', 'ui-agent-preset', 'entry-customization'];
   for (const id of OFF) {
     const re = new RegExp(`(\\n {4}- id: ${id}\\r?\\n {6}name: [^\\r\\n]+(\\r?\\n))(?! {6}disabled:)`);
     must(re.test(s), `lean core: row ${id} not found, or it is disabled already`);
@@ -647,31 +654,355 @@ Use this image in Markdown:
   report.push('coding view row: removed from General settings');
 }
 
-// ---- keep the runtime manifest honest: new size and hash for every changed file under dsh/
+// ---- patch 15b: preserve Google thought_signature across multi-turn and parallel tool calls in pi-ai openai-completions
+{
+  const p = 'dsh/node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js';
+  let s = text(p);
+  const streamFind = `                            const name = toolCall.function?.name ?? toolCall.custom?.name;\n                            if (!block.name && name) {\n                                block.name = name;\n                            }`;
+  const streamRepl = `${streamFind}\n                            const googleSig = toolCall.extra_content?.google?.thought_signature;\n                            if (typeof googleSig === "string" && googleSig.length > 0) {\n                                block.thoughtSignature = googleSig;\n                            }`;
+  s = replaceOnce(s, streamFind, streamRepl, 'pi-ai openai-completions stream thought_signature capture');
+
+  const convFind = `            if (toolCalls.length > 0) {\n                assistantMsg.tool_calls = toolCalls.map((tc) => {\n                    const customInputProperty = options?.grammarToolInputProperties?.get(tc.name);\n                    if (customInputProperty !== undefined) {\n                        return {\n                            id: tc.id,\n                            type: "custom",\n                            custom: {\n                                name: tc.name,\n                                input: sanitizeSurrogates(getGrammarToolInput(tc.name, tc.arguments, customInputProperty)),\n                            },\n                        };\n                    }\n                    return {\n                        id: tc.id,\n                        type: "function",\n                        function: {\n                            name: tc.name,\n                            arguments: JSON.stringify(tc.arguments),\n                        },\n                    };\n                });\n            }`;
+  const convRepl = `            if (toolCalls.length > 0) {\n                const isGoogleTarget = model.provider === "vertex" || model.provider === "google" || model.provider === "google-vertex" || /^(google\\/|gemini)/i.test(model.id || "");\n                assistantMsg.tool_calls = toolCalls.map((tc, tcIndex) => {\n                    const hasRawGoogleSig = typeof tc.thoughtSignature === "string" && tc.thoughtSignature.length > 0 && !parseLegacyEncryptedReasoningDetail(tc.thoughtSignature);\n                    const googleSig = hasRawGoogleSig ? tc.thoughtSignature : (tcIndex === 0 && isGoogleTarget ? "skip_thought_signature_validator" : undefined);\n                    const extra = googleSig ? { extra_content: { google: { thought_signature: googleSig } } } : {};\n                    const customInputProperty = options?.grammarToolInputProperties?.get(tc.name);\n                    if (customInputProperty !== undefined) {\n                        return {\n                            id: tc.id,\n                            type: "custom",\n                            custom: {\n                                name: tc.name,\n                                input: sanitizeSurrogates(getGrammarToolInput(tc.name, tc.arguments, customInputProperty)),\n                            },\n                            ...extra,\n                        };\n                    }\n                    return {\n                        id: tc.id,\n                        type: "function",\n                        function: {\n                            name: tc.name,\n                            arguments: JSON.stringify(tc.arguments),\n                        },\n                        ...extra,\n                    };\n                });\n            }`;
+  s = replaceOnce(s, convFind, convRepl, 'pi-ai openai-completions convertMessages thought_signature replay');
+  mustParse(s, p);
+  put(p, s);
+  report.push('pi-ai openai-completions: Google thought_signature captured on stream and replayed on tool_calls');
+}
+
+// ---- patch 15c: show the desktop window immediately on launch and play a choreographed skippable intro animation
+{
+  const MAIN = 'lib/main.js';
+  const navFind = '\t\tstartup ??= (async () => {\n\t\t\tawait navigateMain(applicationUrl);\n\t\t\tawait backend.start(async () => {';
+  const navRepl = '\t\tstartup ??= (async () => {\n\t\t\tawait navigateMain(applicationUrl);\n\t\t\tif (mainWindow && !mainWindow.isDestroyed() && !quitting) mainWindow.show();\n\t\t\tawait backend.start(async () => {';
+  put(MAIN, replaceOnce(text(MAIN), navFind, navRepl, 'main window immediate show on startup'));
+
+  const p = DS + 'dsh-web-frontend/dist/assets/index-BXV-oxvX.js';
+  let s = text(p);
+  const introCss = [
+    '._boot_u7vgf_3[data-dsh-boot]{--as-bg:#faf9f6;--as-bg-glow:#f4f2ed;--as-surface:#f4f2ed;--as-chip:#ece9e2;--as-border:#e6e2da;--as-border-strong:#d2cdc2;--as-ink:#26231f;--as-cube:#0a0a0a;--as-accent:#54453c;--as-sand:#a89272;--as-muted:#645e55;position:fixed;inset:0;z-index:99999;display:grid;place-items:center;overflow:hidden;user-select:none;background:radial-gradient(circle at 50% 42%,var(--as-bg-glow) 0%,var(--as-bg) 70%);color:var(--as-ink);font-family:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;transition:opacity 220ms cubic-bezier(0.22,1,0.36,1),transform 220ms cubic-bezier(0.22,1,0.36,1)}',
+    'body[data-ds-dark-theme] ._boot_u7vgf_3[data-dsh-boot]{--as-bg:#171614;--as-bg-glow:#1f1e1b;--as-surface:#1f1e1b;--as-chip:#272521;--as-border:#2e2b26;--as-border-strong:#3c3935;--as-ink:#f0eee9;--as-cube:#ffffff;--as-accent:#ede6d8;--as-sand:#a89272;--as-muted:#a39d93}',
+    '._boot_u7vgf_3[data-dsh-boot][data-exiting="true"]{opacity:0;transform:scale(1.018);pointer-events:none}',
+    '.as-intro-grid{position:absolute;inset:0;background-image:radial-gradient(var(--as-border-strong) 1px,transparent 1px);background-size:24px 24px;background-position:center center;opacity:0;transform:scale(1.06);animation:asGridIn 1400ms cubic-bezier(0.16,1,0.3,1) 40ms forwards;pointer-events:none}',
+    '.as-intro-axis-h,.as-intro-axis-v{position:absolute;background:var(--as-border);pointer-events:none}',
+    '.as-intro-axis-h{left:0;right:0;top:50%;height:1px;transform:scaleX(0);animation:asAxisX 1250ms cubic-bezier(0.16,1,0.3,1) 80ms forwards}',
+    '.as-intro-axis-v{top:0;bottom:0;left:50%;width:1px;transform:scaleY(0);animation:asAxisY 1250ms cubic-bezier(0.16,1,0.3,1) 80ms forwards}',
+    '._boot_u7vgf_3[data-dsh-boot] ._card_u7vgf_24{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:0;max-width:560px;width:calc(100% - 48px);padding:36px 32px 28px;text-align:center}',
+    '.as-intro-emblem{position:relative;width:148px;height:148px;display:grid;place-items:center;margin-bottom:22px}',
+    '.as-intro-orbit{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}',
+    '.as-orbit-dash{stroke:var(--as-border-strong);stroke-width:1.2;stroke-dasharray:4 6;fill:none;transform-origin:128px 128px;opacity:0;animation:asOrbitSpin 18s linear infinite,asFadeIn 900ms cubic-bezier(0.16,1,0.3,1) 120ms forwards}',
+    '.as-orbit-arc{stroke:var(--as-sand);stroke-width:1.6;stroke-linecap:round;fill:none;stroke-dasharray:1000;stroke-dashoffset:1000;transform-origin:128px 128px;transform:rotate(-90deg);animation:asStrokeDraw 1450ms cubic-bezier(0.16,1,0.3,1) 160ms forwards}',
+    '.as-orbit-pulse{stroke:var(--as-sand);stroke-width:1.8;fill:none;opacity:0;transform-origin:128px 128px}',
+    '.as-orbit-pulse[data-pulse="1"]{animation:asPulseWave 920ms cubic-bezier(0.16,1,0.3,1) forwards}',
+    '.as-cube-stage{position:relative;width:92px;height:92px;display:grid;place-items:center;transform:translateY(16px) scale(0.86);opacity:0;animation:asCubeRise 1100ms cubic-bezier(0.16,1,0.3,1) 60ms forwards}',
+    '.as-cube-wire,.as-cube-solid{position:absolute;inset:0;width:100%;height:100%;overflow:visible}',
+    '.as-cube-wire path{fill:none;stroke:var(--as-accent);stroke-width:3.6;stroke-linejoin:round;stroke-linecap:round;stroke-dasharray:1000;stroke-dashoffset:1000;animation:asStrokeDraw 1150ms cubic-bezier(0.22,1,0.36,1) var(--as-d,0ms) forwards}',
+    '.as-cube-solid{opacity:0;transform-origin:50% 50%;animation:asSolidFade 620ms cubic-bezier(0.22,1,0.36,1) 920ms forwards}',
+    '.as-cube-solid path{fill:var(--as-cube);fill-rule:evenodd}',
+    '.as-cube-solid[data-turn="1"]{opacity:1;animation:asCubeTurn 680ms cubic-bezier(0.34,1.56,0.64,1) forwards}',
+    '.as-eyebrow-mask{overflow:hidden;margin-bottom:12px}',
+    '.as-eyebrow{display:inline-flex;align-items:center;gap:8px;padding:4px 12px;border-radius:999px;background:var(--as-surface);border:1px solid var(--as-border-strong);font-family:"Geist Mono",ui-monospace,Consolas,monospace;font-size:11px;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:var(--as-muted);transform:translateY(120%);opacity:0;animation:asSlideUp 680ms cubic-bezier(0.16,1,0.3,1) 1450ms forwards}',
+    '.as-eyebrow-dot{width:6px;height:6px;border-radius:50%;background:var(--as-accent);animation:asDotPulse 1800ms ease-in-out infinite}',
+    '._boot_u7vgf_3[data-dsh-boot] ._wordmark_u7vgf_31{display:inline-flex;flex-wrap:wrap;justify-content:center;font-size:38px;line-height:1.12;font-weight:600;letter-spacing:-0.025em;color:var(--as-ink);margin:0 0 10px}',
+    '.as-char{display:inline-block;overflow:hidden;vertical-align:bottom;padding-bottom:2px}',
+    '.as-char-in{display:inline-block;transform:translateY(115%) rotateZ(5deg);opacity:0;transform-origin:left bottom;animation:asCharIn 720ms cubic-bezier(0.16,1,0.3,1) var(--as-cd,1650ms) forwards}',
+    '.as-tagline{font-size:14px;line-height:1.5;color:var(--as-muted);max-width:430px;margin:0 0 18px;opacity:0;transform:translateY(10px);animation:asSlideUp 700ms cubic-bezier(0.16,1,0.3,1) 2250ms forwards}',
+    '.as-pills{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-bottom:26px}',
+    '.as-pill{padding:4px 10px;border-radius:6px;background:var(--as-chip);border:1px solid var(--as-border);font-family:"Geist Mono",ui-monospace,Consolas,monospace;font-size:11px;color:var(--as-ink);opacity:0;transform:translateY(10px) scale(0.94);animation:asPillIn 580ms cubic-bezier(0.34,1.56,0.64,1) var(--as-pd,2550ms) forwards}',
+    '.as-footer{display:flex;flex-direction:column;align-items:center;gap:12px;width:100%;max-width:340px;opacity:0;transform:translateY(8px);animation:asSlideUp 620ms cubic-bezier(0.16,1,0.3,1) 950ms forwards}',
+    '.as-prog-track{position:relative;width:100%;height:3px;border-radius:999px;background:var(--as-border);overflow:hidden}',
+    '.as-prog-bar{position:absolute;inset:0;background:var(--as-accent);transform-origin:left center;transform:scaleX(0.04);transition:transform 100ms linear}',
+    '.as-meta-row{display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px}',
+    '.as-status-left{display:inline-flex;align-items:center;gap:8px;min-width:0}',
+    '._boot_u7vgf_3[data-dsh-boot] ._hint_u7vgf_39{font-family:"Geist Mono",ui-monospace,Consolas,monospace;font-size:11.5px;line-height:16px;color:var(--as-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.as-skip-btn{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:8px;background:var(--as-surface);border:1px solid var(--as-border-strong);color:var(--as-ink);font-size:12px;font-weight:500;line-height:16px;cursor:pointer;transition:transform 140ms ease,background-color 140ms ease}',
+    '.as-skip-btn:hover{background:var(--as-chip);transform:translateY(-1px)}',
+    '.as-skip-btn:active{transform:translateY(0) scale(0.98)}',
+    '.as-skip-kbd{padding:1px 5px;border-radius:4px;background:var(--as-chip);border:1px solid var(--as-border-strong);font-family:"Geist Mono",ui-monospace,Consolas,monospace;font-size:10px;color:var(--as-muted)}',
+    '@keyframes asGridIn{to{opacity:0.55;transform:scale(1)}}',
+    '@keyframes asAxisX{to{transform:scaleX(1)}}',
+    '@keyframes asAxisY{to{transform:scaleY(1)}}',
+    '@keyframes asOrbitSpin{to{transform:rotate(360deg)}}',
+    '@keyframes asFadeIn{to{opacity:1}}',
+    '@keyframes asStrokeDraw{to{stroke-dashoffset:0}}',
+    '@keyframes asCubeRise{to{opacity:1;transform:translateY(0) scale(1)}}',
+    '@keyframes asSolidFade{to{opacity:1}}',
+    '@keyframes asCubeTurn{0%{transform:scaleX(1) scaleY(1) translateY(0)}44%{transform:scaleX(0.03) scaleY(1.06) translateY(-4px)}76%{transform:scaleX(1.07) scaleY(0.97) translateY(1px)}100%{transform:scaleX(1) scaleY(1) translateY(0)}}',
+    '@keyframes asPulseWave{0%{opacity:0.75;transform:scale(0.74)}100%{opacity:0;transform:scale(1.42)}}',
+    '@keyframes asSlideUp{to{opacity:1;transform:translateY(0)}}',
+    '@keyframes asCharIn{to{opacity:1;transform:translateY(0) rotateZ(0deg)}}',
+    '@keyframes asPillIn{to{opacity:1;transform:translateY(0) scale(1)}}',
+    '@keyframes asDotPulse{0%,100%{opacity:0.45;transform:scale(0.88)}50%{opacity:1;transform:scale(1.12)}}',
+    '@media (prefers-reduced-motion:reduce){.as-intro-grid,.as-intro-axis-h,.as-intro-axis-v,.as-orbit-dash,.as-orbit-arc,.as-cube-stage,.as-cube-wire path,.as-cube-solid,.as-eyebrow,.as-char-in,.as-tagline,.as-pill,.as-footer,.as-eyebrow-dot{animation-duration:1ms !important;animation-delay:0ms !important}}',
+  ].join('\n');
+
+  const oldZz = `var zZ=class{root;card;wordmark;spinner;hint;states=new Map;active=new Set;total=0;failure;constructor(e){this.root=Yn(Kn.boot),this.root.dataset.dshBoot="",this.card=Yn(Kn.card),this.wordmark=Yn(Kn.wordmark,"HARNESS"),this.spinner=Yn(Kn.spinner),this.spinner.dataset.dshBootSpinner="",this.hint=Yn(Kn.hint,"Loading plugins…"),this.card.append(this.wordmark,this.spinner,this.hint),this.root.append(this.card),e.append(this.root),this.updateProgress()}setTotal(e){this.total=e,this.updateProgress()}setState(e,t){this.states.set(e,t),t==="active"&&this.active.add(e),this.updateProgress(),this.render()}fail(e){this.failure=e,this.render()}dispose(){this.root.remove()}render(){const e=[...this.states].filter(([,r])=>r==="failed").map(([r])=>r);if(this.failure===void 0&&e.length===0){this.spinner.parentElement!==this.card&&this.card.replaceChildren(this.wordmark,this.spinner,this.hint);return}const t=Yn(Kn.failed);t.append(Yn(Kn.failedTitle,"Failed to load plugins"));for(const r of e)t.append(Yn(Kn.failedItem,r));this.failure!==void 0&&t.append(Yn(Kn.failedItem,this.failure)),this.card.replaceChildren(this.wordmark,t)}updateProgress(){const e=this.total===0?0:Math.min(this.active.size/this.total,1);this.spinner.style.setProperty("--dsh-boot-arc",\`\${String(Math.round(72+e*216))}deg\`)}};`;
+
+  const newZz = `var zZ=class{root;card;wordmark;spinner;hint;progBar;solidSvg;pulseCircle;states=new Map;active=new Set;total=0;failure;startTime=performance.now();minDurationMs=7400;skipped=!1;disposed=!1;timers=[];rafId=0;skipWaiters=[];keyHandler;constructor(e){globalThis.__ARC_INTRO_ACTIVE__=!0;const doc=e.ownerDocument||document;if(!doc.getElementById("as-intro-style")){const st=doc.createElement("style");st.id="as-intro-style";st.textContent=${lit(introCss)};doc.head.append(st)}this.root=Yn(Kn.boot);this.root.dataset.dshBoot="";const grid=Yn("as-intro-grid"),axH=Yn("as-intro-axis-h"),axV=Yn("as-intro-axis-v");this.card=Yn(Kn.card);const ns="http://www.w3.org/2000/svg";const emblem=Yn("as-intro-emblem");const orbit=doc.createElementNS(ns,"svg");orbit.setAttribute("viewBox","0 0 256 256");orbit.setAttribute("class","as-intro-orbit");const cDash=doc.createElementNS(ns,"circle");cDash.setAttribute("cx","128");cDash.setAttribute("cy","128");cDash.setAttribute("r","118");cDash.setAttribute("class","as-orbit-dash");const cArc=doc.createElementNS(ns,"circle");cArc.setAttribute("cx","128");cArc.setAttribute("cy","128");cArc.setAttribute("r","102");cArc.setAttribute("pathLength","1000");cArc.setAttribute("class","as-orbit-arc");this.pulseCircle=doc.createElementNS(ns,"circle");this.pulseCircle.setAttribute("cx","128");this.pulseCircle.setAttribute("cy","128");this.pulseCircle.setAttribute("r","90");this.pulseCircle.setAttribute("class","as-orbit-pulse");orbit.append(cDash,cArc,this.pulseCircle);const cubeStage=Yn("as-cube-stage");const wire=doc.createElementNS(ns,"svg");wire.setAttribute("viewBox",${lit(brand.view)});wire.setAttribute("class","as-cube-wire");[${lit(brand.top)},${lit(brand.leftPlain)},${lit(brand.rightFaceRight)}].forEach((d,idx)=>{const pt=doc.createElementNS(ns,"path");pt.setAttribute("d",d);pt.setAttribute("pathLength","1000");pt.style.setProperty("--as-d",idx*130+"ms");wire.append(pt)});this.solidSvg=doc.createElementNS(ns,"svg");this.solidSvg.setAttribute("viewBox",${lit(brand.view)});this.solidSvg.setAttribute("class","as-cube-solid");this.setCubeFace("right");cubeStage.append(wire,this.solidSvg);emblem.append(orbit,cubeStage);const eyeMask=Yn("as-eyebrow-mask"),eye=Yn("as-eyebrow"),eyeDot=Yn("as-eyebrow-dot"),eyeTxt=doc.createElement("span");eyeTxt.textContent="ARC SCIENCE";eye.append(eyeDot,eyeTxt);eyeMask.append(eye);this.wordmark=Yn(Kn.wordmark);const titleStr="Arc Harness";for(let i=0;i<titleStr.length;i++){const ch=titleStr[i],outer=doc.createElement("span"),inner=doc.createElement("span");outer.className="as-char";inner.className="as-char-in";inner.textContent=ch===" "?"\\u00a0":ch;inner.style.setProperty("--as-cd",1650+i*38+"ms");outer.append(inner);this.wordmark.append(outer)}const tagline=Yn("as-tagline","Plan, check, and build with shared memory and model routing.");const pills=Yn("as-pills");["Google Vertex AI","Merge Gateway","Cammut Memory","Local Host"].forEach((lbl,idx)=>{const pl=Yn("as-pill",lbl);pl.style.setProperty("--as-pd",2500+idx*95+"ms");pills.append(pl)});const footer=Yn("as-footer"),track=Yn("as-prog-track");this.progBar=Yn("as-prog-bar");track.append(this.progBar);const metaRow=Yn("as-meta-row"),leftRow=Yn("as-status-left");this.spinner=Yn(Kn.spinner);this.spinner.dataset.dshBootSpinner="";this.hint=Yn(Kn.hint,"Loading plugins…");leftRow.append(this.spinner,this.hint);const skipBtn=Yn("as-skip-btn");skipBtn.setAttribute("role","button");skipBtn.setAttribute("tabindex","0");skipBtn.setAttribute("aria-label","Skip intro");const skipLbl=doc.createElement("span");skipLbl.textContent="Skip intro";const skipKbd=Yn("as-skip-kbd","Esc");skipBtn.append(skipLbl,skipKbd);skipBtn.addEventListener("click",()=>this.skip());skipBtn.addEventListener("keydown",(ev)=>{if(ev.key==="Enter"||ev.key===" "||ev.key==="Escape"){ev.preventDefault();this.skip()}});metaRow.append(leftRow,skipBtn);footer.append(track,metaRow);this.card.append(emblem,eyeMask,this.wordmark,tagline,pills,footer);this.root.append(grid,axH,axV,this.card);(doc.body||e).append(this.root);this.keyHandler=(ev)=>{if(ev.key==="Escape"||ev.key===" "||ev.key==="Enter"){this.skip()}};window.addEventListener("keydown",this.keyHandler,{capture:!0});this.timers.push(setTimeout(()=>this.turnCube("as"),1650),setTimeout(()=>this.turnCube("right"),4450),setTimeout(()=>this.turnCube("as"),5750));const tick=()=>{if(this.disposed)return;const elapsed=performance.now()-this.startTime;const tRatio=Math.min(elapsed/this.minDurationMs,1);const pRatio=this.total===0?0.2:Math.min(this.active.size/this.total,1);const combined=Math.max(0.04,Math.min(1,tRatio*0.78+pRatio*0.22));if(this.progBar)this.progBar.style.transform=\`scaleX(\${combined.toFixed(3)})\`;if(tRatio<1||pRatio<1)this.rafId=requestAnimationFrame(tick)};this.rafId=requestAnimationFrame(tick);this.updateProgress()}setCubeFace(mode){if(!this.solidSvg)return;const ns="http://www.w3.org/2000/svg";const faces=mode==="right"?[${lit(brand.top)},${lit(brand.rightFaceLeft)},${lit(brand.rightFaceRight)}]:[${lit(brand.top)},${lit(brand.leftAS)},${lit(brand.right)}];this.solidSvg.replaceChildren(...faces.map((d)=>{const p=document.createElementNS(ns,"path");p.setAttribute("d",d);return p}))}turnCube(targetFace){if(this.disposed||!this.solidSvg)return;this.solidSvg.removeAttribute("data-turn");void this.solidSvg.offsetWidth;this.solidSvg.setAttribute("data-turn","1");if(this.pulseCircle){this.pulseCircle.removeAttribute("data-pulse");void this.pulseCircle.offsetWidth;this.pulseCircle.setAttribute("data-pulse","1")}this.timers.push(setTimeout(()=>{if(!this.disposed)this.setCubeFace(targetFace)},300))}skip(){if(this.skipped)return;this.skipped=!0;while(this.skipWaiters.length){const r=this.skipWaiters.pop();r()}}async waitUntilReady(){if(this.hint&&!this.failure)this.hint.textContent="Starting workbench…";if(this.skipped||this.failure!==void 0)return;const rem=Math.max(0,this.minDurationMs-(performance.now()-this.startTime));if(rem<=0)return;await new Promise((res)=>{const t=setTimeout(res,rem);this.timers.push(t);this.skipWaiters.push(()=>{clearTimeout(t);res()})})}async finish(){if(this.disposed||this.failure!==void 0)return;if(this.progBar)this.progBar.style.transform="scaleX(1)";this.root.setAttribute("data-exiting","true");const ms=this.skipped?110:220;await new Promise((r)=>setTimeout(r,ms));this.dispose()}setTotal(e){this.total=e,this.updateProgress()}setState(e,t){this.states.set(e,t),t==="active"&&this.active.add(e),this.updateProgress(),this.render()}fail(e){this.failure=e,this.skip(),this.render()}dispose(){if(this.disposed)return;this.disposed=!0;if(this.keyHandler)window.removeEventListener("keydown",this.keyHandler,{capture:!0});if(this.rafId)cancelAnimationFrame(this.rafId);for(const t of this.timers)clearTimeout(t);this.timers.length=0;this.root.remove()}render(){const e=[...this.states].filter(([,r])=>r==="failed").map(([r])=>r);if(this.failure===void 0&&e.length===0)return;const t=Yn(Kn.failed);t.append(Yn(Kn.failedTitle,"Failed to load plugins"));for(const r of e)t.append(Yn(Kn.failedItem,r));this.failure!==void 0&&t.append(Yn(Kn.failedItem,this.failure)),this.card.replaceChildren(this.wordmark,t)}updateProgress(){const e=this.total===0?0:Math.min(this.active.size/this.total,1);this.spinner.style.setProperty("--dsh-boot-arc",\`\${String(Math.round(72+e*216))}deg\`);if(this.hint&&!this.failure&&this.total>0)this.hint.textContent=this.active.size>=this.total?"Workbench ready":\`Loading plugins (\${this.active.size}/\${this.total})…\`}};`;
+
+  s = replaceOnce(s, oldZz, newZz, 'choreographed intro zZ class in dsh-web-frontend');
+  const rzFind = 'this.stopDragRecall=TZ({document:this.container.ownerDocument}),await EZ(s,this.container)';
+  const rzRepl = 'this.stopDragRecall=TZ({document:this.container.ownerDocument}),await this.page.waitUntilReady(),await EZ(s,this.container),await this.page.finish()';
+  s = replaceOnce(s, rzFind, rzRepl, 'RZ.run waitUntilReady and finish hook');
+  mustParse(s, p);
+  put(p, s);
+  report.push('intro animation: GSAP-style choreographed AS cube and kinetic type intro (7.4s default, skippable via Skip intro or Esc/Space/Enter); window shows immediately on launch');
+}
+
+// ---- patch 15d: prevent currency dollar signs ($1,000 ... $5k, $200 ... $4,800+) from being parsed as KaTeX inlineMath
+applyKatexDollarPatch({ text, put, must, mustParse, report });
+
+// ---- patch 15e: the model autofetch fills every parameter of a fetched row. The discovery module read an id, a name
+// and two capacities, so an adopted row took the route's text-only default: a model that reads images could not take an
+// image, and a model that reasons offered no effort level. It now reads the input modalities, output ceiling and
+// reasoning capability of a listing, and of the public catalogue of the endpoint when the endpoint publishes one, and
+// the form stores the reasoning levels it offers. lib/model-autofetch.mjs holds the rules and is spliced in here.
+{
+  const p = DS + 'dsh-llm-pi-ai/lib/index.js';
+  let s = text(p);
+  const rule = fs.readFileSync(path.join(root, 'lib', 'model-autofetch.mjs'), 'utf8');
+
+  // the catalogue page of the public site that serves the same endpoint, and the ceiling for its reply
+  const urlFind = '/** Largest model-list page accepted by Anthropic\'s public endpoint; discovery reads one page and does not follow `has_more`. */';
+  const urlNew = `${urlFind}
+/**
+ * Public site of a gateway that publishes the parameters of its models as one JSON document. The document states the
+ * input modalities, the capacities and the capabilities of every model the gateway lists, which a model-listing
+ * endpoint does not; the model listing itself always wins where it states a fact. A reply over {@link MAX_RESPONSE_BYTES}
+ * is refused, and an endpoint that publishes nothing simply gets no extra facts.
+ */
+const CATALOGUE_PATH = "/models.json";
+/** How a gateway site and its API site relate: the site drops the "api." subdomain of its API host. */
+function catalogueUrl(baseURL) {
+	try {
+		const url = new URL(baseURL);
+		if (url.protocol !== "https:" && url.protocol !== "http:") return void 0;
+		const site = new URL(url.origin);
+		if (site.hostname.startsWith("api.")) site.hostname = site.hostname.slice(4);
+		return site.origin + CATALOGUE_PATH;
+	} catch {
+		return void 0;
+	}
+}
+/**
+ * Read the published catalogue of a gateway. A catalogue that fails to load or parse is no facts, so the listing
+ * stands on its own.
+ * @param baseURL - the endpoint the form is probing.
+ * @param signal - the caller's cancellation, when it gave one.
+ * @returns the catalogue rows by model id; empty when the gateway publishes none.
+ */
+async function readCatalogue(baseURL, signal) {
+	const url = catalogueUrl(baseURL);
+	if (url === void 0) return /* @__PURE__ */ new Map();
+	try {
+		const response = await fetch(url, {
+			method: "GET",
+			headers: { accept: "application/json" },
+			...signal === void 0 ? {} : { signal }
+		});
+		if (!response.ok) {
+			await response.body?.cancel();
+			return /* @__PURE__ */ new Map();
+		}
+		return readFileCatalogue(JSON.parse(await readBounded(response, url)));
+	} catch {
+		return /* @__PURE__ */ new Map();
+	}
+}
+${urlFind}`;
+  s = replaceOnce(s, urlFind, urlNew, 'autofetch: catalogue site url');
+
+  // one listing row, with the modalities a gateway states beside the capacities it states
+  const pushFind = `\t\tmodels.push({\n\t\t\tid,\n\t\t\tname,\n\t\t\t...contextWindow === void 0 ? {} : { contextWindow },\n\t\t\t...maxTokens === void 0 ? {} : { maxTokens }\n\t\t});`;
+  const pushNew = `\t\tconst inputModalities = modalities(entry?.modalities?.input ?? entry?.input_modalities ?? entry?.inputModalities ?? (entry?.supports_vision === true ? ["text", "image"] : void 0));
+\t\tmodels.push({
+\t\t\tid,
+\t\t\tname,
+\t\t\t...contextWindow === void 0 ? {} : { contextWindow },
+\t\t\t...maxTokens === void 0 ? {} : { maxTokens },
+\t\t\t...inputModalities === void 0 ? {} : { inputModalities }
+\t\t});`;
+  s = replaceOnce(s, pushFind, pushNew, 'autofetch: input modalities of one listed row');
+
+  // the rows the form adopts: every enabled row, offered the facts of its own catalogue row
+  const returnFind = '\treturn models;\n}\n/**\n* Accept one probe key, or refuse it before the header is built.';
+  const returnNew = `\treturn models;
+}
+/**
+ * Offer the published catalogue to every enabled row of a reply. A model the gateway marks unavailable is left out,
+ * because adopting it would only add a row whose requests fail.
+ * @param models - the rows the listing stated.
+ * @param catalogue - the gateway's published facts by model id.
+ * @returns the rows the form adopts.
+ */
+function withCatalogue(models, catalogue) {
+\treturn models.filter((model) => catalogue.get(model.id)?.status !== "unavailable").map((model) => withCatalogueParameter(model, catalogue.get(model.id)));
+}
+/**
+ * Accept one probe key, or refuse it before the header is built.`;
+  s = replaceOnce(s, returnFind, returnNew, 'autofetch: catalogue offer');
+
+  // the wire: both paths behind one reply
+  const discoverFind = '\treturn readListing(body);\n}\n';
+  const discoverNew = `\tconst listed = readListing(body);
+\treturn withCatalogue(listed, await readCatalogue(request.baseURL, request.signal));
+}
+`;
+  s = replaceOnce(s, discoverFind, discoverNew, 'autofetch: catalogue read on the discovery path');
+
+  // the rules themselves, after the last declaration they need
+  const rulesAnchor = '/** A positive integer field of a listing entry, or `undefined` when absent or unusable. */';
+  s = replaceOnce(s, rulesAnchor, `${rule}\n${rulesAnchor}`, 'autofetch: rules');
+
+  mustParse(s, p);
+  put(p, s);
+  must(/function withCatalogueParameter\(/.test(s) && /function readFileCatalogue\(/.test(s), 'autofetch: rules spliced into discovery');
+  report.push('model autofetch: a fetched row carries input modalities, output ceiling and reasoning levels');
+}
+
+// ---- client half of patch 15e: the form stores the levels a fetched row offers, and reads the gateway's published facts
+// when the listing states none. The catalogue read raises no check of its own; it fails closed like the listing does.
+{
+  const p = DS + 'dsh-client-ui-settings-models/lib/client.js';
+  let s = text(p);
+  const adoptionFind = `\t\t/** Adopt a candidate, preserving disclosed capacities and input types. */\n\t\tfunction adopt(candidate) {\n\t\t\treturn {\n\t\t\t\tid: candidate.id,\n\t\t\t\t...candidate.name === void 0 ? {} : { name: candidate.name },\n\t\t\t\t...candidate.contextWindow === void 0 ? {} : { contextWindow: candidate.contextWindow },\n\t\t\t\t...candidate.maxTokens === void 0 ? {} : { maxTokens: candidate.maxTokens },\n\t\t\t\t...candidate.inputModalities === void 0 ? {} : { input: [...candidate.inputModalities] }\n\t\t\t};\n\t\t}`;
+  const adoptionNew = `\t\t/** Adopt a candidate, preserving disclosed capacities, input types and reasoning levels. */\n\t\tfunction adopt(candidate) {\n\t\t\treturn {\n\t\t\t\tid: candidate.id,\n\t\t\t\t...candidate.name === void 0 ? {} : { name: candidate.name },\n\t\t\t\t...candidate.contextWindow === void 0 ? {} : { contextWindow: candidate.contextWindow },\n\t\t\t\t...candidate.maxTokens === void 0 ? {} : { maxTokens: candidate.maxTokens },\n\t\t\t\t...candidate.inputModalities === void 0 ? {} : { input: [...candidate.inputModalities] },\n\t\t\t\t...candidate.reasoningEfforts === void 0 ? {} : { reasoningEfforts: { ...candidate.reasoningEfforts } }\n\t\t\t};\n\t\t}\n\t\t/**\n\t\t* Read the parameters a gateway publishes for its models, as one JSON document on the site of its endpoint. A\n\t\t* gateway that publishes none, or whose document does not load, adds no facts: the fetched rows stand as listed.\n\t\t* @param baseURL - the endpoint being probed.\n\t\t* @returns the published rows by model id.\n\t\t*/\n\t\tasync function readCatalogue(baseURL) {\n\t\t\tlet url;\n\t\t\ttry {\n\t\t\t\tconst endpoint = new URL(baseURL);\n\t\t\t\tif (endpoint.protocol !== "https:" && endpoint.protocol !== "http:") return /* @__PURE__ */ new Map();\n\t\t\t\tconst site = new URL(endpoint.origin);\n\t\t\t\tif (site.hostname.startsWith("api.")) site.hostname = site.hostname.slice(4);\n\t\t\t\turl = site.origin + "/models.json";\n\t\t\t} catch {\n\t\t\t\treturn /* @__PURE__ */ new Map();\n\t\t\t}\n\t\t\ttry {\n\t\t\t\tconst response = await fetch(url, { headers: { accept: "application/json" } });\n\t\t\t\tif (!response.ok) return /* @__PURE__ */ new Map();\n\t\t\t\tconst text = await response.text();\n\t\t\t\tif (text.length > 4 * 1024 * 1024) return /* @__PURE__ */ new Map();\n\t\t\t\tconst document = JSON.parse(text);\n\t\t\t\treturn new Map(Array.isArray(document?.models) ? document.models.filter((model) => typeof model?.id === "string").map((model) => [model.id, model]) : []);\n\t\t\t} catch {\n\t\t\t\treturn /* @__PURE__ */ new Map();\n\t\t\t}\n\t\t}`;
+  s = replaceOnce(s, adoptionFind, adoptionNew, 'autofetch: the form adopts reasoning levels');
+
+  const foundFind = `\t\t\t\t\tconst found = answer.models;\n`;
+  const foundNew = `\t\t\t\t\tconst listed = answer.models;
+\t\t\t\t\tconst published = probe.baseURL === void 0 || probe.baseURL.length === 0 ? /* @__PURE__ */ new Map() : await readCatalogue(probe.baseURL);
+\t\t\t\t\tconst found = Object.fromEntries(listed.map((model) => {
+\t\t\t\t\t\tconst stated = published.get(model.id);
+\t\t\t\t\t\treturn [model.id, {
+\t\t\t\t\t\t\t...model,
+\t\t\t\t\t\t\t...model.inputModalities !== void 0 ? {} : stated?.modalities?.input === void 0 ? {} : { inputModalities: stated.modalities.input },
+\t\t\t\t\t\t\t...model.contextWindow !== void 0 ? {} : typeof stated?.context !== "number" ? {} : { contextWindow: stated.context },
+\t\t\t\t\t\t\t...model.maxTokens !== void 0 ? {} : typeof stated?.maxOutput !== "number" ? {} : { maxTokens: stated.maxOutput },
+\t\t\t\t\t\t\t...model.reasoningEfforts !== void 0 ? {} : Array.isArray(stated?.capabilities) && stated.capabilities.includes("reasoning") ? { reasoningEfforts: {
+\t\t\t\t\t\t\t\toff: null,
+\t\t\t\t\t\t\t\tlow: "low",
+\t\t\t\t\t\t\t\tmedium: "medium",
+\t\t\t\t\t\t\t\thigh: "high"
+\t\t\t\t\t\t\t} } : {}
+\t\t\t\t\t\t}];
+\t\t\t\t\t})).filter(([, model]) => published.get(model.id)?.status !== "unavailable");
+`;
+  s = replaceOnce(s, foundFind, foundNew, 'autofetch: the form reads published facts and leaves out unavailable models');
+
+  mustParse(s, p);
+  put(p, s);
+  report.push('model autofetch: the form stores reasoning levels and reads the published facts of the endpoint');
+}
+
+// ---- patch 16: the data folder is ~/.arc (was ~/.dsh), its variable ARC_HOME (was DSH_HOME), project skills in .arc/skills
+{
+  // a path segment only: after a quote, slash, tilde or space ("~/.dsh", ".dsh/skills", ".dsh-mkdir-"); never a property such as manifest?.dsh?.bundle
+  const DOT = /(?<=[\s'"`/\\~(])\.dsh(?![\w])/g, ENV = /(?<![\w])DSH_HOME(?![\w])/g;
+  let files = 0, n = 0;
+  for (const f of src.files) {
+    if (f.entry.unpacked || overrides.get(f.path) === null || !/\.(js|cjs|mjs|json|ya?ml|md)$/.test(f.path)) continue;
+    const s = text(f.path);
+    if (!/(?<=[\s'"`/\\~(])\.dsh(?![\w])|DSH_HOME/.test(s)) continue;
+    const out = s.replace(DOT, () => (n++, '.arc')).replace(ENV, () => (n++, 'ARC_HOME'));
+    if (/\.(m?js|cjs)$/.test(f.path)) mustParse(out, f.path);
+    put(f.path, out);
+    files++;
+  }
+  const home = text(DS + 'dsh-home-paths/lib/index.js');
+  must(home.includes('const DSH_HOME_DIR_NAME = ".arc";') && home.includes('const DSH_HOME_ENV = "ARC_HOME";'), 'data folder constants in dsh-home-paths');
+  must(text('lib/main.js').includes('const DSH_HOME_DIR_NAME = ".arc";'), 'data folder constant in the desktop main process');
+  must(!/\?\.arc\?\./.test(text(DS + 'dsh-app-boot/lib/index.js')), 'the dsh manifest field stays');
+  // DSH_HOME was refused in .env files by its DSH_ prefix; ARC_HOME needs its own entry
+  const bp = DS + 'dsh-app-boot/lib/index.js';
+  put(bp, replaceOnce(text(bp), 'const BOOTSTRAP_NAMES = new Set([\n\t"PATH",', 'const BOOTSTRAP_NAMES = new Set([\n\t"ARC_HOME",\n\t"PATH",', 'ARC_HOME in the bootstrap-only names'));
+  report.push(`data folder: ~/.arc and ARC_HOME (${n} places in ${files} files)`);
+}
+
+// ---- patch 17: clean room. Every internal name of the original moves to Arc (lib/arcnames.mjs): package names
+// (@deepseek-ai/dsh-x -> @arc-harness/arc-x), the runtime folder (dsh/ -> arc/), code names, the "dsh" package.json field,
+// the command and link names. File paths are renamed when the archive is written; the files kept beside the archive
+// (app.asar.unpacked) get the same names in build/app.asar.unpacked, made of hard links and rewritten texts.
+const TEXTFILE = /\.(m?js|cjs|json|ya?ml|md|txt|css|html|svg|ts|map|sh|cmd|ps1|py|toml|xml|lock|c|h)$|(^|\/)[^./]+$/i;
+const unpackedNew = new Map(); // new path under arc/ -> rewritten buffer of an unpacked text file
+{
+  let files = 0, n = 0, clash = 0;
+  for (const f of src.files) {
+    if (f.entry.unpacked || overrides.get(f.path) === null || !TEXTFILE.test(f.path)) continue;
+    const s = overrides.has(f.path) ? overrides.get(f.path).toString('utf8') : src.read(f).toString('utf8');
+    const [t, k] = arcText(s);
+    if (!k) continue;
+    // a new name may not already exist in the same file with another meaning (arcFoo next to dshFoo)
+    const had = new Set(s.match(/[\w$-]*(?:arc|Arc|ARC)[\w$-]*/g) || []);
+    for (const w of new Set(s.match(/[\w$-]*(?:dsh|Dsh|DSH)[\w$-]*/g) || [])) { if (/^(?:dsh|Dsh|DSH)$/.test(w)) continue; const nw = arcText(w)[0]; if (nw !== w && had.has(nw)) { clash++; if (clash < 6) console.log(`name clash in ${f.path}: ${w} -> ${nw}`); } }
+    put(f.path, t);
+    files++; n += k;
+  }
+  must(clash === 0, `${clash} renamed names already exist in the same file`);
+  const resources = process.env.ARC_RESOURCES || path.join(process.env.LOCALAPPDATA || '', 'Programs', 'DeepSeek Harness', 'resources');
+  const unpackedSrc = [path.join(root, 'pristine', 'app.asar.unpacked'), path.join(resources, 'app.asar.unpacked')].find((d) => fs.existsSync(path.join(d, 'dsh')));
+  must(unpackedSrc, 'the original app.asar.unpacked (with its dsh folder) was not found');
+  const ud = out + '.unpacked';
+  if (fs.existsSync(ud)) {
+    if (fs.lstatSync(ud).isSymbolicLink()) fs.rmdirSync(ud); // a junction left by a test: remove the link only
+    else fs.rmSync(ud, { recursive: true }); // our own earlier copy: hard links and rewritten texts
+  }
+  const st = makeArcCopy(unpackedSrc, ud, { rewrite: (p) => /[\\/]@deepseek-ai[\\/]/.test(p) });
+  (function walk(d, rel) {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = rel ? rel + '/' + e.name : e.name;
+      if (e.isDirectory()) walk(path.join(d, e.name), p);
+      else if (fs.statSync(path.join(d, e.name)).nlink === 1) unpackedNew.set(p, fs.readFileSync(path.join(d, e.name)));
+    }
+  })(ud, '');
+  report.push(`clean room: ${n} internal names in ${files} files move to Arc; side folder ${st.linked} files linked, ${st.rewritten} rewritten, ${st.renamed} names changed`);
+}
+
+// ---- keep the runtime manifest honest: new size and hash for every changed file under dsh/ (named arc/ in the written archive)
 {
   const mp = 'dsh/desktop-runtime.json';
   const m = JSON.parse(text(mp));
   const byPath = new Map(m.files.map((e) => [e.path, e]));
   let n = 0, gone = 0;
   const removed = new Set();
+  const rel = (p) => arcText(p)[0].slice(4);
+  const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
   for (const [p, buf] of overrides) {
     if (!p.startsWith('dsh/') || p === mp) continue;
-    const e = byPath.get(p.slice(4));
+    const e = byPath.get(rel(p));
     if (!e) {
       // a file this build adds: it gets its own manifest entry
-      if (buf !== null) { const ne = { path: p.slice(4), bytes: buf.length, sha256: crypto.createHash('sha256').update(buf).digest('hex'), executable: false }; m.files.push(ne); byPath.set(ne.path, ne); n++; }
+      if (buf !== null) { const ne = { path: rel(p), bytes: buf.length, sha256: sha256(buf), executable: false }; m.files.push(ne); byPath.set(ne.path, ne); n++; }
       continue;
     }
     if (buf === null) { removed.add(e.path); gone++; continue; }
-    e.bytes = buf.length; e.sha256 = crypto.createHash('sha256').update(buf).digest('hex'); n++;
+    e.bytes = buf.length; e.sha256 = sha256(buf); n++;
+  }
+  for (const [p, buf] of unpackedNew) {
+    const e = byPath.get(p.slice(4));
+    must(e, 'manifest entry of a rewritten unpacked file: ' + p);
+    e.bytes = buf.length; e.sha256 = sha256(buf); n++;
   }
   m.files = m.files.filter((e) => !removed.has(e.path));
   put(mp, JSON.stringify(m));
   report.push(`runtime manifest: ${n} entries updated, ${gone} removed`);
 }
 
+// ---- clean-room check: no old name is left in any text file of the written archive (base64 data excepted)
+{
+  let left = 0;
+  for (const f of src.files) {
+    if (f.entry.unpacked || overrides.get(f.path) === null || !TEXTFILE.test(f.path)) continue;
+    const s = overrides.has(f.path) ? overrides.get(f.path).toString('utf8') : src.read(f).toString('utf8');
+    const skip = [...s.matchAll(/[A-Za-z0-9+/=_-]{120,}/g)].filter((r) => /[+=]/.test(r[0])).map((r) => [r.index, r.index + r[0].length]);
+    for (const m of s.matchAll(LEFT)) if (!skip.some(([x, y]) => m.index >= x && m.index < y)) { left++; if (left < 6) console.log('left:', f.path, s.slice(Math.max(0, m.index - 30), m.index + 30).replace(/\s+/g, ' ')); }
+  }
+  must(left === 0, `${left} old names left in the archive text`);
+  report.push('clean room: 0 old names left in the archive text');
+}
+
 fs.mkdirSync(path.dirname(out), { recursive: true });
-const info = writeAsar(src, out, overrides);
+const info = writeAsar(src, out, overrides, (seg) => arcText(seg)[0]);
 const sha = crypto.createHash('sha256').update(fs.readFileSync(out)).digest('hex');
 fs.writeFileSync(path.join(path.dirname(out), 'BUILD.json'), JSON.stringify({ built: new Date().toISOString(), source: 'pristine/app.asar', changedFiles: overrides.size, report, sha256: sha, ...info }, null, 2));
 console.log(report.map((r) => '- ' + r).join('\n'));

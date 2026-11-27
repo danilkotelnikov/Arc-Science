@@ -14,7 +14,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { openAsar } from '../lib/asar.mjs';
-import { quietConfig, removeHome, linkTree, treeHash, treeDiff } from '../lib/testhome.mjs';
+import { quietConfig, removeHome, linkTree, treeHash, treeDiff, dataHome } from '../lib/testhome.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -137,13 +137,13 @@ function disabledIn(expr, profile) {
 function loadOwners(a) {
   const owners = { web: new Map(), desktop: new Map(), ids: { web: new Map(), desktop: new Map() } }; // package -> [ "id:on|off" ]; ids: id -> "ON|off|?"
   for (const profile of ['web', 'desktop']) {
-    const dir = path.join(home, '.dsh', 'profiles', profile);
+    const dir = path.join(dataHome(), 'profiles', profile);
     let pj; try { pj = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')); } catch { continue; }
     const state = new Map(); // id -> {name, disabled}
     const apply = (rows) => { for (const r of rows) { const s = state.get(r.id) || {}; if (r.name) s.name = r.name; if (r.disabled !== undefined) s.disabled = r.disabled; state.set(r.id, s); } };
-    for (const b of pj.dsh?.profile?.bundles || []) {
+    for (const b of (pj.arc || pj.dsh)?.profile?.bundles || []) {
       let t = null;
-      const inArchive = a.byPath.get(`dsh/node_modules/${b}/cordis.patch.yml`);
+      const inArchive = a.byPath.get(`arc/node_modules/${b}/cordis.patch.yml`);
       if (inArchive) t = a.read(inArchive).toString('utf8');
       else { try { t = fs.readFileSync(path.join(dir, 'node_modules', b, 'cordis.patch.yml'), 'utf8'); } catch { /* none */ } }
       if (t) apply(rowsOf(t));
@@ -176,9 +176,9 @@ function readTrace(file) {
 async function liveRun(traceFile, waitSec) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const exe = path.join(installDir, 'DeepSeek Harness.exe');
-  const cli = path.join(archive, 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js');
+  const cli = path.join(archive, 'arc', 'node_modules', '@arc-harness', 'arc-desktop-host', 'lib', 'cli.js');
   const unpacked = archive + '.unpacked';
-  const realProfile = path.join(home, '.dsh', 'profiles', 'web');
+  const realProfile = path.join(dataHome(), 'profiles', 'web');
   const hashOf = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
   let madeUnpacked = false, testHome = null, child = null, out = null, before = null, nmBefore = null, stoppedAt = null;
   try {
@@ -203,7 +203,7 @@ async function liveRun(traceFile, waitSec) {
     const tracer = path.join(here, 'net-trace.cjs').replace(/\\/g, '/');
     child = spawn(exe, ['--expose-internals', cli, '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', '0'], {
       cwd: installDir, stdio: ['ignore', out, out], windowsHide: true,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: testHome, ARC_NET_TRACE: traceFile, NODE_OPTIONS: `--require=${tracer}` },
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ARC_HOME: testHome, DSH_HOME: testHome, ARC_NET_TRACE: traceFile, NODE_OPTIONS: `--require=${tracer}` },
     });
     let url = null;
     for (let i = 0; i < 90 && !url; i++) { // wait for the printed URL
@@ -242,8 +242,8 @@ counts.archive = scanArchive(archive, hits);
 const a = openAsar(archive);
 const owners = loadOwners(a);
 a.close();
-for (const p of ['web', 'desktop']) counts['profile ' + p] = scanDir('profile ' + p, path.join(home, '.dsh', 'profiles', p), hits);
-counts['local plugins'] = scanDir('local plugin', path.join(home, '.dsh', 'local-plugins'), hits, /^(?:backups|node_modules|\.git)$/);
+for (const p of ['web', 'desktop']) counts['profile ' + p] = scanDir('profile ' + p, path.join(dataHome(), 'profiles', p), hits);
+counts['local plugins'] = scanDir('local plugin', path.join(dataHome(), 'local-plugins'), hits, /^(?:backups|node_modules|\.git)$/);
 const installed = path.join(installDir, 'resources', 'runtime');
 if (fs.existsSync(installed)) counts['installed runtime'] = scanDir('installed', installed, hits);
 // floors (about 65 % of what was read on 2026-11-01): a source that was not read must not pass as "0 findings"

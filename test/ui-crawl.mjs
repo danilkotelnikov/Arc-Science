@@ -14,7 +14,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { classify } from '../lib/brandrules.mjs';
 import { findIn, TIER } from './independent-scan.mjs';
-import { quietConfig, removeHome, linkTree, treeHash, treeDiff } from '../lib/testhome.mjs';
+import { quietConfig, removeHome, linkTree, treeHash, treeDiff, dataHome } from '../lib/testhome.mjs';
 import { lean } from '../tools/lean-profile.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -52,15 +52,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const killTree = (pid) => { try { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* gone */ } };
 
 // ---- the server: the web profile served from the archive under test
+if (!fs.existsSync(asar)) { console.error('archive not found: ' + asar + '\nRun: node tools/build.mjs'); process.exit(2); }
 const unpacked = asar + '.unpacked';
 let madeUnpacked = false;
-if (!fs.existsSync(unpacked)) { fs.symlinkSync(path.join(APP_DIR, 'resources', 'app.asar.unpacked'), unpacked, 'junction'); madeUnpacked = true; }
+if (!fs.existsSync(unpacked)) {
+  // the native binaries must sit beside the archive; check the installed Arc copy first, then fall back to
+  // the original preserved in pristine/ (the same source that build.mjs uses when it creates build/app.asar.unpacked)
+  const candidates = [
+    path.join(APP_DIR, 'resources', 'app.asar.unpacked'),  // installed location (after install.mjs install)
+    path.join(root, 'pristine', 'app.asar.unpacked'),       // original preserved by the first install
+  ];
+  const src = candidates.find(fs.existsSync);
+  if (!src) { console.error('no app.asar.unpacked found in any known location:\n' + candidates.map((c) => '  ' + c).join('\n') + '\nRun: node tools/build.mjs'); process.exit(2); }
+  fs.symlinkSync(src, unpacked, 'junction');
+  madeUnpacked = true;
+}
 const serverLog = path.join(outDir, 'server.log');
 // a throwaway home keeps the settings, sessions and storages of the test apart from the user's data;
 // only the plugin profiles are shared (read for plugins and config)
 // The profile is a copy of its small config files plus a hard-linked copy of its plugin packages: the app writes settings
 // (for example the theme choice) into cordis.patch.yml, and that must never reach the real profile.
-const realProfile = path.join(os.homedir(), '.dsh', 'profiles', 'web');
+const realProfile = path.join(dataHome(), 'profiles', 'web');
 const hashOf = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
 const realConfigs = fs.readdirSync(realProfile).filter((f) => f !== 'node_modules' && fs.statSync(path.join(realProfile, f)).isFile());
 const realBefore = new Map(realConfigs.map((f) => [f, hashOf(path.join(realProfile, f))]));
@@ -71,12 +83,12 @@ fs.mkdirSync(path.join(testHome, 'profiles', 'web'), { recursive: true });
 for (const f of realConfigs) {
   const from = path.join(realProfile, f), to = path.join(testHome, 'profiles', 'web', f);
   if (f === 'cordis.patch.yml') fs.writeFileSync(to, quietConfig(fs.readFileSync(from, 'utf8')));
-  else if (f === 'package.json' && argv.includes('--lean')) fs.writeFileSync(to, lean(fs.readFileSync(from, 'utf8'))); // the lean bundle list of tools/lean-profile.mjs
+  else if (f === 'package.json' && argv.includes('--lean')) fs.writeFileSync(to, lean(fs.readFileSync(from, 'utf8'), (b) => fs.existsSync(path.join(realProfile, 'node_modules', b)) || argv.some((a, i) => argv[i - 1] === '--plugin' && path.basename(a) === b))); // the lean bundle list of tools/lean-profile.mjs
   else fs.copyFileSync(from, to);
 }
 if (phase === 'dark' || phase === 'light') {
   const cfg = path.join(testHome, 'profiles', 'web', 'cordis.patch.yml');
-  fs.appendFileSync(cfg, `\n- id: ui-theme\n  name: "@deepseek-ai/dsh-client-ui-theme"\n  config:\n    preference: ${phase}\n`);
+  fs.appendFileSync(cfg, `\n- id: ui-theme\n  name: "@arc-harness/arc-client-ui-theme"\n  config:\n    preference: ${phase}\n`);
 }
 // The plugin packages are a real tree of hard links to the real files (a junction to the real folder made ten plugins fail to load, because the
 // loader resolves @deepseek-ai/* from the real path). The real package files are hashed before and after: a write through a link would change them.
@@ -100,8 +112,8 @@ async function cleanupHome() {
   if (!(await removeHome(testHome))) console.log(`WARN the throwaway home ${testHome} could not be removed; remove it by hand`);
   if (madeUnpacked) { try { fs.rmdirSync(unpacked); } catch { /* in use */ } }
 }
-const server = spawn(EXE, ['--expose-internals', `${asar}/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js`, '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', '0'],
-  { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: testHome }, stdio: ['ignore', fs.openSync(serverLog, 'w'), fs.openSync(serverLog, 'a')], windowsHide: true });
+const server = spawn(EXE, ['--expose-internals', `${asar}/arc/node_modules/@arc-harness/arc-desktop-host/lib/cli.js`, '--profile', 'web', '--no-open', '--host', '127.0.0.1', '--port', '0'],
+  { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ARC_HOME: testHome, DSH_HOME: testHome }, stdio: ['ignore', fs.openSync(serverLog, 'w'), fs.openSync(serverLog, 'a')], windowsHide: true });
 let url = null;
 for (let i = 0; i < 90 && !url; i++) {
   await sleep(1000);
@@ -238,7 +250,7 @@ const HOME = "__arc.clickAndWait('New session', 900)";
 const OPT_SETTINGS = 'the settings page appears only when the data home holds data of that plugin; a fresh test home has none';
 const LEAN = argv.includes('--lean'); // the lean profile (tools/lean-profile.mjs) on the lean core (patch 14 of tools/build.mjs)
 const ABSENT_NAV = ['Plugins', 'Automation tasks', 'Context Insights', 'More', 'Import Sessions', 'Standard mode', 'Minimal mode', 'Creator mode', 'PTC mode'];
-const ABSENT_SETTINGS = ['Built-in plugins', 'Agent presets', 'Skills', 'Visualize', 'Side card', 'Vision Router', 'Archived sessions', 'Account'];
+const ABSENT_SETTINGS = ['Agent presets', 'Skills', 'Visualize', 'Side card', 'Vision Router', 'Archived sessions', 'Account'];
 const LEAN_SCREENS = [
   { name: 'home', run: async () => true },
   { name: 'model-menu', pre: HOME, run: async () => evalIn("__arc.clickAndWait('Select model')") },
@@ -308,7 +320,7 @@ async function crawl(scheme, tag) {
     if (!(await evalIn("__arc.openSettings('General')"))) fail(`${tag}: General settings could not be opened`);
     else if ((await evalIn('__arc.texts()')).some((l) => l.includes('Show coding view'))) fail(`${tag}: General settings still show "Show coding view"`);
     await closeAll();
-    // the Trace tab of dsh-hoh: the HoH ledger and the Cammut brief in the right sidebar
+    // the Trace tab of arc-hoh: the HoH ledger and the Cammut brief in the right sidebar
     await evalIn(HOME);
     if (!(await evalIn("!!__arc.find('Trace') || __arc.clickAndWait('Open right sidebar')"))) fail(`${tag}: the right sidebar could not be opened`); // an earlier screen may have left it open
     else if (!(await evalIn("__arc.clickAndWait('Trace', 1200)"))) fail(`${tag}: the right sidebar has no Trace tab`);

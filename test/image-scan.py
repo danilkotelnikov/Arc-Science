@@ -1,6 +1,6 @@
 """Find the old vendor's whale, and its blue, in pictures. The text scans cannot see pictures; this scan reads them by content.
 
-    python test/image-scan.py --asar build/app.asar --dir ~/.dsh/profiles/web [--dir ...] [--floor-raster N] [--floor-text N]
+    python test/image-scan.py --asar build/app.asar --dir ~/.arc/profiles/web [--dir ...] [--floor-raster N] [--floor-text N]
     python test/image-scan.py --survey --asar pristine/app.asar --dir <folder>      (lists every distinct raster picture; no verdict)
     python test/image-scan.py --self-check
 
@@ -41,7 +41,7 @@ TEXT_EXT = {'.js', '.mjs', '.cjs', '.css', '.html', '.htm', '.json', '.svg', '.m
 MAX_IMAGE, MAX_TEXT = 24 * 2**20, 14 * 2**20
 DATA_URI = re.compile(rb'data:image\\?/(png|webp|gif|jpe?g|x-icon|vnd\.microsoft\.icon|svg\+xml)(?:;charset=[\w-]+)?;base64,([A-Za-z0-9+/=]+)')
 # skipped on purpose: the translation tool of this kit keeps old copies of plugin files; no profile loads it and it leaves with the rename slices
-SKIP = re.compile(r'[\\/]local-plugins[\\/]dsh-english[\\/]')
+SKIP = re.compile(r'[\\/]local-plugins[\\/](?:dsh|arc)-english[\\/]')
 # (the DevTools icon folder of the inspector package is third-party artwork: generic icons, never the whale; the whale list is still checked first)
 FIXTURE_DIR = re.compile(r'[\\/](test|tests|__tests__|fixtures|fonts|demo|examples?)[\\/]|[\\/]lib[\\/]devtools[\\/]', re.I)
 # path fragments of the whale drawn as vector art (the mark as used in the original app and in its plugins)
@@ -81,18 +81,18 @@ HTML_STYLE = re.compile(rb'<style\b[^>]*>(.*?)</style>|\bstyle\s*=\s*"([^"]*)"|\
 HUE_LAB = re.compile(rb'\b(ok)?lab\(\s*[\d.]+%?\s+(-?[\d.]+)\s+(-?[\d.]+)', re.I)   # oklab and lab: lightness a b
 HUE_ALLOW = [
     (re.compile(r'[\\/]lib[\\/]devtools[\\/]|[\\/]debug[\\/]src[\\/]'), 'DevTools frontend and the debug library (third party)'),
-    (re.compile(r'dsh-client-ui-sidebar-terminal'), 'terminal palette: ANSI blue is a terminal colour'),
-    (re.compile(r'dsh-client-ui-sidebar-documentpreview[\\/]lib[\\/]client\.(?:excel|pdf)\.js$'),
+    (re.compile(r'(?:dsh|arc)-client-ui-sidebar-terminal'), 'terminal palette: ANSI blue is a terminal colour'),
+    (re.compile(r'(?:dsh|arc)-client-ui-sidebar-documentpreview[\\/]lib[\\/]client\.(?:excel|pdf)\.js$'),
      'spreadsheet and PDF viewers: chart palettes and colour pickers of the user\'s own data, the hyperlink cell colour (rgb(0, 0, 255)), example colours named in its help text, the near-white toolbar background (#fafafc) and PDF highlight colour choices; the spreadsheet interface colours are replaced by build patch 8d, and test/build-check.mjs pins every blue colour the spreadsheet file may keep (hex, rgb() and hsl() forms, with counts)'),
     (re.compile(r'[\\/]vendor-[^\\/]*\.js$'), 'vendor bundle of libraries'),
-    (re.compile(r'[\\/](?:mermaid|khroma|cytoscape[\w-]*|tinycolor2|@upsetjs|react-icons|katex|@codemirror|@xterm|jimp|qrcode|ds-harness-remote)[\\/]'),
+    (re.compile(r'[\\/](?:mermaid|khroma|cytoscape[\w-]*|tinycolor2|@upsetjs|react-icons|katex|@codemirror|@xterm|jimp|qrcode|(?:ds|arc)-harness-remote)[\\/]'),
      'third-party libraries (diagrams, colour maths, graphs, icons, math, editor, terminal, images) and the switched-off remote plugin'),
     (re.compile(r'[\\/]node_modules[\\/]es-toolkit[\\/]'),
      'es-toolkit, a utility library whose code examples name colours (color: \'purple\'); only the installed package folder'),
-    (re.compile(r'[\\/]dsh-better-sidebar[\\/]lib[\\/]client-(?:terminal|editor|mermaid)\.'),
+    (re.compile(r'[\\/](?:dsh|arc)-better-sidebar[\\/]lib[\\/]client-(?:terminal|editor|mermaid)\.'),
      'bundled terminal, code editor and diagram libraries (ANSI colours, syntax categories and diagram themes keep their colours)'),
-    (re.compile(r'[\\/]@nagi-ovo[\\/]dsh-visualize[\\/]'),
-     'Visualize chart series palettes (charts keep their colours); its interface colours are replaced by apply-profiles and checked by test/profile-state.mjs'),
+    (re.compile(r'[\\/]@nagi-ovo[\\/](?:dsh|arc)-visualize[\\/]'),
+     'Visualize chart series palettes (charts keep their colours); its interface colours are replaced by apply-profiles and checked by the apply-profiles tool'),
     (re.compile(r'[\\/]node_modules[\\/](?:@[^\\/]+[\\/])?[^\\/]+[\\/]node_modules[\\/]'), 'nested third-party packages'),
 ]
 

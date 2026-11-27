@@ -15,6 +15,7 @@ import { recolorSvg, recolorBlueAttrsInScript, replaceVendorBlue, recolorBlueHue
 import { swapPicture } from '../lib/whaleimg.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// The original data home on purpose: this tool runs before the first install, and its rules match the original names.
 const home = path.join(os.homedir(), '.dsh');
 const dirs = [path.join(home, 'local-plugins'), path.join(home, 'profiles', 'web', 'node_modules'), path.join(home, 'profiles', 'desktop', 'node_modules')];
 // scripts of the data home that show text on a page or in a dialog
@@ -91,9 +92,9 @@ if (args.includes('--manifest')) {
 
 const changed = [];
 let scanned = 0;
-// Files that stay as they were. dsh-hoh is a plugin of the owner that sends a retrieval query to Cammut at run time; the old
+// Files that stay as they were. arc-hoh is a plugin of the owner that sends a retrieval query to Cammut at run time; the old
 // wording of the query ranks the stored notes, so rewriting it would change what the plugin finds (QA finding, 2026-11-01).
-const KEEP = /[\\/]dsh-hoh[\\/]lib[\\/]index\.js$|[\\/]local-plugins[\\/]dsh-english[\\/]/;   // (the second part: a translation tool of this kit with old file copies)
+const KEEP = /[\\/](?:dsh|arc)-hoh[\\/]lib[\\/]index\.js$|[\\/]local-plugins[\\/]dsh-english[\\/]/;   // (the second part: a translation tool of this kit with old file copies)
 // The Visualize plugin names its first style "whale" in its code (STYLE_IDS, the style table, locale keys) and shows the id on its
 // settings page. The id is renamed to "cube" everywhere in the three runtime files at once, so the id and the table keys still agree.
 const VISUALIZE_FILES = /@nagi-ovo[\\/]dsh-visualize[\\/]lib[\\/](?:index\.js|client\.js|index\.d\.ts)$/;
