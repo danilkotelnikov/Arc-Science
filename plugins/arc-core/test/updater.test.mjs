@@ -1322,6 +1322,31 @@ test('a check of a channel that is no longer chosen does not mark the state as f
   assert.deepEqual({ phase: again.phase, failed: again.failed }, { phase: 'failed', failed: true });
 });
 
+test('an install whose own check failed does not go on with an older release list, also when the channel changed meanwhile', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  const other = e.make();
+  let broken = false;
+  const u = e.make({ fetchImpl: async (url, o) => { if (broken && /\/releases\?/.test(String(url))) { other.setChannel('beta'); throw new TypeError('fetch failed'); } return fetch(url, o); } });
+  assert.equal((await u.check()).latest, '0.6.1'); // this window now holds a release list from an earlier check
+  const before = u.getState().installed;
+  broken = true;
+  const r = await u.install();
+  assert.equal(r.ok, false, 'the install went on although its own check had failed');
+  assert.match(String(r.error), /Could not reach GitHub/);
+  assert.equal(u.getState().installed, before);
+});
+
+test('an install of a version that no release carries says so in the state, so the page can show it', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  const r = await e.u.install({ version: '0.9.9' });
+  assert.equal(r.ok, false);
+  const s = e.u.getState();
+  assert.equal(s.phase, 'idle');
+  assert.match(String(s.message), /0\.9\.9 was not found/);
+});
+
 test('release notes: text within the limit stays whole, and longer text carries one character more so that a reader can tell it was cut', () => {
   const rel = (body) => ({ tag_name: 'v0.6.1', draft: false, prerelease: false, assets: [], body });
   assert.equal(pickRelease([rel('n'.repeat(1200))]).notes.length, 1200);
@@ -1329,12 +1354,81 @@ test('release notes: text within the limit stays whole, and longer text carries 
   assert.equal(pickRelease([rel('n'.repeat(5000))]).notes.length, 1201);
 });
 
-test('console route: the channel does not change while an update runs', async () => {
+test('console route: the channel does not change while an update runs', async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-route-')); t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const calls = [];
   const busy = { getState: () => ({ busy: true, channel: 'release' }), setChannel: (c) => { calls.push(c); return {}; }, check: async () => ({}) };
-  const r = await serveConsoleRoute(post('api/arc-core/update/action', { kind: 'channel', channel: 'beta' }), {}, createResearchSessionStore(), { updater: busy });
+  const r = await serveConsoleRoute(post('api/arc-core/update/action', { kind: 'channel', channel: 'beta' }), {}, createResearchSessionStore({ arcHome: tmp, live: false }), { updater: busy });
   assert.equal(r.ok, false);
   assert.match(r.error, /update is running/);
   assert.ok(r.error.length <= 90);
   assert.deepEqual(calls, [], 'the choice was not saved');
+});
+
+test('an install whose own check failed leaves a failure line in the state, also when the channel changed meanwhile', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  const other = e.make();
+  let broken = false;
+  const u = e.make({ fetchImpl: async (url, o) => { if (broken && /\/releases\?/.test(String(url))) { other.setChannel('beta'); throw new TypeError('fetch failed'); } return fetch(url, o); } });
+  await u.check();
+  broken = true;
+  assert.equal((await u.install()).ok, false);
+  const s = u.getState();
+  assert.equal(s.failed, true, 'the page would show nothing for this refusal');
+  assert.match(String(s.message), /Could not reach GitHub/);
+});
+
+test('a plain check that fails while an install reads the release list does not stop that install', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  // the first list read belongs to the plain check: it is held and then fails. The second belongs to the install.
+  let n = 0; const open = [null, null];
+  const held = [new Promise((r) => { open[0] = r; }), new Promise((r) => { open[1] = r; })];
+  const u = e.make({ fetchImpl: async (url, o) => { if (/\/releases\?/.test(String(url))) { const k = n++; if (k < 2) await held[k]; if (k === 0) throw new TypeError('fetch failed'); } return fetch(url, o); } });
+  const first = u.check();
+  await pause(30);
+  const inst = u.install();
+  await pause(120); // the install now waits for its own list read
+  open[0]();
+  await first;
+  open[1]();
+  const r = await inst;
+  assert.equal(r.ok, true, `the failure of another check stopped the install: ${r.error}`);
+});
+
+test('a late failed check of a channel that is no longer chosen does not erase the failure of the chosen channel', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  let n = 0, open = null; const held = new Promise((r) => { open = r; });
+  const u = e.make({ fetchImpl: async () => { const k = n++; if (k === 0) await held; throw new TypeError('fetch failed'); } });
+  const first = u.check(); // made for Release, and still on its way
+  await new Promise((r) => setTimeout(r, 30));
+  u.setChannel('beta');
+  assert.equal((await u.check()).failed, true, 'the check of the chosen channel failed');
+  open();
+  await first;
+  assert.equal(u.getState().failed, true, 'the late failure of the Release check erased the failure of the Beta check');
+});
+
+test('a late failed check of a channel that is no longer chosen leaves the phase alone while a newer check still runs', async (t) => {
+  const e = await setup(); t.after(e.cleanup);
+  e.srv.state.publish(buildKit('0.6.1'));
+  e.srv.state.publish(buildKit('0.7.0-beta.1'), { prerelease: true });
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  let n = 0; const open = [null, null];
+  const held = [new Promise((r) => { open[0] = r; }), new Promise((r) => { open[1] = r; })];
+  const u = e.make({ fetchImpl: async (url, o) => { const k = n++; if (k < 2) await held[k]; if (k === 0) throw new TypeError('fetch failed'); return fetch(url, o); } });
+  const older = u.check(); // made for Release: held, and then it fails
+  await pause(30);
+  u.setChannel('beta');
+  const newer = u.check(); // made for Beta: held, and then it succeeds
+  await pause(30);
+  open[0]();
+  await older;
+  assert.equal(u.getState().phase, 'checking', 'the late failure of the older check ended the phase of the check that still runs');
+  open[1]();
+  const s = await newer;
+  assert.deepEqual({ phase: s.phase, latest: s.latest }, { phase: 'idle', latest: '0.7.0-beta.1' });
 });

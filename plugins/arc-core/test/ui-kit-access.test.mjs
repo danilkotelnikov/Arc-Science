@@ -1034,3 +1034,23 @@ test('Updates: notes of exactly the limit are shown whole', () => {
   assert.equal(cut.length, 1200);
   assert.ok(cut.endsWith('\u2026'));
 });
+
+test('Updates: a long version name that the updater accepts shows whole', async () => {
+  const long = '0.10.10-alpha.1234567'; // 21 characters, and a valid version
+  const s = await realState({ installed: '0.6.0', releases: [{ ...rel(long), prerelease: true }], channel: 'alpha' });
+  assert.equal(s.latest, long);
+  assert.ok(text(upage(s)).includes(long), 'the page cut a version that the updater accepts');
+});
+
+test('Updates: a version name of up to 24 characters shows whole, a longer one is cut, and a line with two names stays inside 90 characters', async () => {
+  const whole = '10.10.10-alpha.123456789', longer = '100.10.10-alpha.123456789';
+  assert.equal(whole.length, 24); assert.equal(longer.length, 25);
+  const a = await realState({ installed: '0.6.0', releases: [{ ...rel(whole), prerelease: true }], channel: 'alpha' });
+  assert.equal(a.latest, whole);
+  assert.ok(text(upage(a)).includes(whole));
+  const b = await realState({ installed: '0.6.0', releases: [{ ...rel(longer), prerelease: true }], channel: 'alpha' });
+  assert.equal(b.latest, longer);
+  assert.ok(!text(upage(b)).includes(longer) && text(upage(b)).includes(longer.slice(0, 23) + '\u2026'));
+  const two = upage(derive(a, { installed: whole, backupVersion: whole, hasBackup: true }));
+  for (const leaf of all(two, (n) => has(n, 'sub') || has(n, 'ak-status') || n.type === 'button').map(text)) assert.ok(leaf.length <= 90, `a line has ${leaf.length} characters: ${leaf}`);
+});

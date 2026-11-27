@@ -28,7 +28,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
 
   const en = {
     "tab.title": "Arc console",
-    "tab.guide": "Unified console for Research, Memory, Molecullage, Prose, connectors and Settings.",
+    "tab.guide": "Research, memory, figures and text checks.",
     "state.loading": "Loading console…",
     "state.error": "Could not read the console state.",
     "nav.workspaces": "Workspaces",
@@ -252,6 +252,73 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     "upd.goback": "Go back to {v}",
     "upd.goback.title": "Go back to {v}?",
     "upd.goback.go": "Go back",
+    "pane.views": "Console views",
+    "pane.view.research": "Research",
+    "pane.view.memory": "Memory",
+    "pane.view.figures": "Figures",
+    "pane.view.prose": "Prose",
+    "pane.view.status": "Status",
+    "pane.view.cammut": "Cammut",
+    "pane.kind.decision": "Decision",
+    "pane.kind.claim": "Claim",
+    "pane.kind.release": "Release",
+    "pane.state.pursued": "Pursued",
+    "pane.state.parked": "Parked",
+    "pane.state.dropped": "Dropped",
+    "pane.state.test": "Needs a test",
+    "pane.state.open": "Open",
+    "pane.state.waits": "Waits for you",
+    "pane.state.approved": "Approved",
+    "pane.state.revise": "To revise",
+    "pane.state.hold": "On hold",
+    "pane.level": "Checked to level {n} of {m}",
+    "pane.level.about": "About the levels",
+    "pane.level.hint": "Each level is a harder check. Level {m} is the hardest.",
+    "pane.evidence.measured": "Measured",
+    "pane.evidence.published": "Published",
+    "pane.evidence.simulated": "Simulated",
+    "pane.evidence.architecture": "Architecture",
+    "pane.evidence.target": "Target",
+    "pane.research.support": "Support {s}. Value for its cost {v}.",
+    "pane.research.empty": "No research entries yet.",
+    "pane.evidence": "Evidence",
+    "pane.more": "More actions",
+    "pane.more.for": "More for {name}",
+    "pane.release.title": "Release candidate {hash}",
+    "pane.release.checks": "Release checks",
+    "pane.release.text": "Your verdict decides the release.",
+    "pane.search": "Search",
+    "pane.memory.search": "Search the shared notes",
+    "pane.figures.search": "Search the sources",
+    "pane.nothing": "Nothing matches.",
+    "pane.figures.none": "No source is listed.",
+    "pane.use.label": "Use in chat: {name}",
+    "pane.unpin": "Unpin",
+    "pane.prose.text": "Text to check",
+    "pane.prose.place": "Paste a text to check",
+    "pane.prose.sample": "Use a sample",
+    "pane.prose.clean": "Clean",
+    "pane.prose.count": "To fix: {n}",
+    "pane.prose.tofix": "To fix",
+    "pane.prose.rewrite": "Replace with plain words",
+    "pane.prose.why.word": "A filler word from the list. Name the plain action.",
+    "pane.prose.why.contrast": "A contrast frame. Say what the thing is.",
+    "pane.prose.why.stock": "A stock phrase. Say the fact itself.",
+    "pane.prose.why.other": "A mark of the word rules.",
+    "pane.status.gateway": "Local gateway",
+    "pane.status.providers": "Providers",
+    "pane.status.servers": "Tool servers",
+    "pane.status.memory": "Memory",
+    "pane.status.addons": "Add-ons",
+    "pane.status.updates": "Updates",
+    "pane.status.running": "Running",
+    "pane.status.unreached": "Not reached",
+    "pane.status.listed": "Listed: {n}",
+    "pane.status.of": "On: {n} of {m}",
+    "pane.status.recall.on": "Recall on",
+    "pane.status.recall.off": "Recall off",
+    "pane.status.installed": "Installed: {n}",
+    "pane.status.update": "Needs update",
   };
 
   const TEXT_FONT = "var(--arc-font-family-text-default, \"Geist\", system-ui, sans-serif)";
@@ -492,6 +559,28 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     " .ak-meter i{display:block;height:100%;background:var(--ak-brown)}",
     " .ak-fold{margin-left:-10px}",
     " .ak-notes{margin:8px 0 0;max-height:240px;overflow:auto;font-size:13px;line-height:20px;color:var(--ak-label-2);white-space:pre-wrap;overflow-wrap:anywhere}",
+    // the side panel (S062): its views, a row that opens a detail, a search field, a text box
+    ".ak-panel{max-width:none;height:100%;box-sizing:border-box;padding:8px 16px 24px;overflow:auto}",
+    " .ak-views{display:flex;gap:2px;flex-wrap:wrap;margin:0 -4px 12px}",
+    " .ak-tab{height:28px;padding:0 10px;border:0;border-radius:8px;background:transparent;font:inherit;font-size:13px;line-height:20px;color:var(--ak-label-2);white-space:nowrap;cursor:pointer}",
+    " .ak-tab:hover{background:var(--ak-hover)}",
+    " .ak-tab[aria-selected=true]{background:var(--ak-pressed);color:var(--ak-label)}",
+    " button.ak-row{width:100%;border:0;border-bottom:.5px solid var(--ak-line-2);background:transparent;font:inherit;color:var(--ak-label);text-align:left;cursor:pointer}",
+    " button.ak-row:hover{background:var(--ak-hover)}",
+    " button.ak-row .name,[data-arc-kit] button.ak-row .sub{display:block}",
+    " .ak-tag{display:inline-flex;align-items:center;padding:1px 8px;border:.5px solid var(--ak-line-3);border-radius:999px;font-size:11px;line-height:17px;font-weight:500;color:var(--ak-label-3);white-space:nowrap}",
+    " .ak-detail h2{margin:8px 0 4px;font-size:16px;line-height:24px;font-weight:500;overflow-wrap:anywhere}",
+    " .ak-detail p{margin:0 0 12px;color:var(--ak-label-2);overflow-wrap:anywhere}",
+    " .ak-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}",
+    " .ak-group{display:flex;align-items:center;gap:4px;margin:20px 0 0;font-size:12px;line-height:18px;font-weight:500;color:var(--ak-label-2)}",
+    " .ak-acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:16px 0 0}",
+    " .ak-search{display:flex;gap:8px;align-items:center;margin:0 0 8px}",
+    " .ak-field{display:flex;flex:1;min-width:0;align-items:center;gap:6px;height:33px;padding:0 8px;border:.5px solid var(--ak-line-3);border-radius:10px;background:var(--ak-layer)}",
+    " .ak-field:focus-within{border-color:var(--ak-brown);box-shadow:0 0 0 1px var(--ak-brown)}",
+    " .ak-field input{flex:1;min-width:0;height:24px;padding:1px 2px;border:0;outline:0;background:transparent;font:inherit;font-size:14px;line-height:22px;color:var(--ak-label)}",
+    " .ak-area{display:block;width:100%;box-sizing:border-box;min-height:96px;padding:6px 10px;border:.5px solid var(--ak-line-3);border-radius:10px;background:var(--ak-layer);resize:vertical;font:inherit;font-size:14px;line-height:22px;color:var(--ak-label)}",
+    " .ak-area:focus-visible{outline:2px solid currentColor;outline-offset:2px}",
+    " .ak-q{quotes:none;padding:1px 3px;border-radius:4px;background:var(--ak-hover)}",
   ].map((rule) => "[data-arc-kit]" + rule).join("");
 
   function Ic({ n, size = 16 }) {
@@ -719,7 +808,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         : h("p", { role: "status", className: "ak-empty" }, t("access.loading")));
     }
     const u = info, act = (a) => { if (onAction) onAction(a); };
-    const ver = (v) => oneLine(v, 20); // a version comes from a release or a local file: it is cut like any outside text
+    const ver = (v) => oneLine(v, 24); // a version comes from a release or a local file: it is cut like any outside text. 24 keeps a line with two versions inside 90 characters and shows a pre-release number of up to nine digits whole.
     // a hint at the end of a row opens back into the page; one at the start of a line (side "start") opens toward it
     const about = (label, text, side = "end") => h(InfoHint, { label, text, align: side, glyph: h(Ic, { n: "info" }) });
     const steps = UPDATE_PHASES.length - 1, stepAt = UPDATE_PHASES.indexOf(u.phase); // the last phase, done, is no step
@@ -1704,6 +1793,217 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
       ));
   }
 
+  // ---- The side panel of the rewrite (S062): five views on what the console state holds today, from the approved prototype.
+  // Pure: every value arrives in props, and every change leaves through a callback.
+  const PANEL_VIEWS = ["research", "memory", "figures", "prose", "status"];
+  const VIEW_OF_WORKSPACE = { Research: "research", Memory: "memory", Molecullage: "figures", Prose: "prose" };
+  const WORKSPACE_OF_VIEW = { research: "Research", memory: "Memory", figures: "Molecullage", prose: "Prose" };
+  const DECISION_STATE = { Pursue: ["pursued", "on"], Park: ["parked", ""], Drop: ["dropped", ""], "Request a test": ["test", "warn"] };
+  const VERDICT_STATE = { Approve: ["approved", "on"], Revise: ["revise", "warn"], Hold: ["hold", ""] };
+  const VERDICTS = ["Approve", "Revise", "Hold"];
+  const OPERATOR_RUNGS = ["L5", "L6"]; // switches of the operator in the ladder of the state: no checks of a claim
+  // the word of an evidence level comes from the dictionary; a level the dictionary does not know keeps its own word
+  const levelWord = (lv, t) => (en[`pane.evidence.${lv}`] ? t(`pane.evidence.${lv}`) : capital(lv));
+  const PROSE_WHY = { "refused-word": "pane.prose.why.word", "contrast-x-not-y": "pane.prose.why.contrast", "formulaic-phrase": "pane.prose.why.stock" };
+  const PROSE_SAMPLE = "The new assay is not a shortcut, but a careful protocol.";
+  const rungNo = (r) => { const m = /^L(\d+)$/.exec(String(r || "")); return m ? Number(m[1]) : 0; };
+  const capital = (s) => { const x = String(s || ""); return x ? x[0].toUpperCase() + x.slice(1) : ""; };
+
+  // a short list of actions behind one button. Escape closes the open list only; the arrow keys open it and move in it.
+  function Menu({ label, items, onPick, disabled = false }) {
+    const [open, setOpen] = React.useState(false);
+    const keys = (e) => {
+      if (e.key === "Escape") {
+        if (!open) return;
+        e.stopPropagation?.(); e.nativeEvent?.stopImmediatePropagation?.();
+        setOpen(false);
+        e.currentTarget?.querySelector?.("button")?.focus?.();
+        return;
+      }
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault?.();
+      if (!open) { if (!disabled) setOpen(true); return; }
+      const list = Array.from(e.currentTarget?.querySelectorAll?.("[role=menuitem]") || []);
+      const at = list.indexOf(e.currentTarget?.ownerDocument?.activeElement);
+      list[e.key === "ArrowDown" ? (at + 1) % list.length : (at <= 0 ? list.length : at) - 1]?.focus?.();
+    };
+    const pick = (id, e) => {
+      e?.currentTarget?.closest?.(".ak-pick")?.querySelector?.("button")?.focus?.();
+      setOpen(false);
+      if (onPick) onPick(id);
+    };
+    return h("span", { className: "ak-pick", onKeyDown: keys, onBlur: (e) => { if (!e.currentTarget?.contains?.(e.relatedTarget)) setOpen(false); } },
+      h("button", { type: "button", className: "ak-btn icon", "aria-haspopup": "menu", "aria-expanded": open && !disabled, "aria-label": label, disabled, onClick: () => { if (!disabled) setOpen(!open); } }, h(Ic, { n: "more" })),
+      open && !disabled ? h("div", { className: "ak-menu", role: "menu", "aria-label": label },
+        items.map(([id, text], i) => h("button", { key: id, type: "button", role: "menuitem", "data-act": id, tabIndex: -1, autoFocus: i === 0, onClick: (e) => pick(id, e) }, text))) : null);
+  }
+
+  // the entries of the Research view: each decision, claim and release of the state as one row with a kind and a state
+  function researchItems(state, t) {
+    const out = [], verdicts = state.verdicts || {};
+    for (const b of (state.tree && state.tree.branches) || []) {
+      const [word, dot] = DECISION_STATE[b.decision] || ["open", ""];
+      out.push({ id: `branch:${b.id}`, type: "branch", ref: b, title: String(b.title || b.id), kind: t("pane.kind.decision"), state: t(`pane.state.${word}`), dot, level: rungNo(b.rung),
+        text: t("pane.research.support", { s: b.supportLogLR, v: b.voiPerCost }), evidence: [], acts: DECISION_ACTIONS.filter((a) => a !== b.decision),
+        chat: `Branch "${b.title}" (${b.id}, rung ${b.rung}, decision ${b.decision}, support ${b.supportLogLR})` });
+    }
+    for (const c of (state.claims && state.claims.items) || []) {
+      const lv = String(c.level || "");
+      out.push({ id: `claim:${c.id}`, type: "claim", ref: c, title: String(c.text || c.id), kind: t("pane.kind.claim"), state: lv ? levelWord(lv, t) : t("pane.state.open"), dot: lv === "measured" || lv === "published" ? "on" : "", level: rungNo(c.rung),
+        text: String(c.text || ""), evidence: c.source ? [[String(c.source), levelWord(lv, t)]] : [], acts: [],
+        chat: `Claim [${c.level}, ${c.rung}]: ${c.text} (source: ${c.source})` });
+    }
+    const rel = state.release;
+    if (rel && rel.candidateHash) {
+      const v = verdicts["release:candidate"] && verdicts["release:candidate"].verdict;
+      const [word, dot] = VERDICT_STATE[v] || ["waits", "warn"];
+      out.push({ id: "release:candidate", type: "release", ref: rel, title: t("pane.release.title", { hash: oneLine(rel.candidateHash, 16) }), kind: t("pane.kind.release"), state: t(`pane.state.${word}`), dot, level: 0,
+        // The text box of the Prose view is no check of a release text, so the release does not show it as one.
+        text: t("pane.release.text"),
+        evidence: [[t("pane.release.checks"), capital(rel.verdict)]], acts: VERDICTS.filter((a) => a !== v),
+        chat: `Review release gate (${rel.verdict}, candidate ${rel.candidateHash})` });
+    }
+    return out;
+  }
+
+  function ConsolePanel({ data, failed = false, actionError = "", view: firstView = "", item: firstItem = "", onSelectView, onDecision, onVerdict, onPinSource, onUseInChat, onProseCheck, onProseRewrite, onSearchMemory, onSearchFigures, onRefresh, Cammut = null, t }) {
+    const [picked, setPicked] = React.useState(firstView);
+    const [item, setItem] = React.useState(firstItem);
+    // null: the box shows the search that the store answered last, until the user types
+    const [memQ, setMemQ] = React.useState(null);
+    const [figQ, setFigQ] = React.useState(null);
+    const [seeking, setSeeking] = React.useState(false); // a memory search of this panel is on its way
+    const [draft, setDraft] = React.useState(null); // the typed text of the Prose view, until a check takes it
+    const [fb, setFb] = React.useState("");
+    const root = React.useRef ? React.useRef(null) : { current: null };
+    const [busy, setBusy] = React.useState(false); // an action of the open detail is on its way
+    const inFlight = React.useRef ? React.useRef(false) : { current: false };
+    // React needs the same hooks on every render, so the panel computes on an empty state before its data arrives.
+    const state = data || {}, head = state.head || {};
+    // The Cammut console of the app is its own view, beside Memory, when the app passes it. It reads its own state.
+    const views = Cammut ? ["research", "memory", "cammut", "figures", "prose", "status"] : PANEL_VIEWS;
+    const view = views.includes(picked) ? picked : VIEW_OF_WORKSPACE[head.activeWorkspace] || "research";
+    const items = researchItems(state, t);
+    const open = view === "research" ? items.find((r) => r.id === item) || null : null;
+    // an entry that left the state also closes its detail
+    React.useEffect(() => { if (data && item && !items.some((r) => r.id === item)) setItem(""); });
+    const frame = (...kids) => h("div", { "data-arc-kit": "true", "data-arc-panel": "console", "data-arc-plugin-pane": "true", className: "ak-panel", ref: root }, h("style", null, KIT_CSS), ...kids);
+    if (!data) {
+      return frame(failed
+        ? h(React.Fragment, null, h("p", { role: "alert", className: "ak-alert" }, t("state.error")), h(KBtn, { look: "outline", small: true, label: t("action.retry"), onClick: onRefresh }))
+        : h("p", { role: "status", className: "ak-empty" }, t("state.loading")));
+    }
+    const focusLater = (sel) => { if (typeof setTimeout === "function") setTimeout(() => { const el = root.current && root.current.querySelector ? root.current.querySelector(sel) : null; if (el && el.focus) el.focus(); }, 0); };
+    const use = (text) => { pushToChatComposer(text, setFb, t); if (onUseInChat) onUseInChat(text); };
+    // a line longer than one line is cut, and a hint beside it holds the whole message
+    const alertLine = (said) => { const full = String(said || ""); return h("p", { role: "alert", className: "ak-alert" }, oneLine(full), full.length > 90 ? h(InfoHint, { label: t("upd.detail"), text: oneLine(full, 600), align: "end", glyph: h(Ic, { n: "info" }) }) : null); };
+    const seek = onSearchMemory ? async (q) => { setSeeking(true); try { await onSearchMemory(q); } catch { /* the pane shows the refusal */ } finally { setSeeking(false); } } : null;
+    const empty = (key) => h("p", { className: "ak-empty" }, t(key));
+    const search = (kind, value, set, send, label, bare) => h("form", { className: "ak-search", "data-search": kind, onSubmit: (e) => { e?.preventDefault?.(); const q = String(value || "").trim(); if ((q || bare) && send) send(q); } },
+      h("span", { className: "ak-field" }, h(Ic, { n: "search" }), h("input", { type: "text", name: "q", value, placeholder: label, "aria-label": label, onChange: (e) => set(e.target.value) })),
+      h("button", { type: "submit", className: "ak-btn outline sm" }, t("pane.search")));
+
+    let body;
+    if (open) {
+      const [main, ...rest] = open.acts;
+      // The main button shows the next action, so its meaning changes when the new state arrives. The action buttons are
+      // held from the click until then: the second click of a double click must not send the opposite action.
+      const run = async (a) => {
+        const fn = open.type === "branch" ? onDecision : open.type === "release" ? onVerdict : null;
+        if (!fn || inFlight.current) return;
+        inFlight.current = true; setBusy(true);
+        try { await fn(open.type === "branch" ? { branchId: open.ref.id, action: a } : { targetType: "release", targetId: "candidate", verdict: a }); } catch { /* the pane shows the refusal in its own line */ } finally { inFlight.current = false; setBusy(false); }
+      };
+      const levels = Math.max((head.ladderRungs || []).filter((r) => r && !OPERATOR_RUNGS.includes(r.id)).length || 4, open.level);
+      const word = (a) => (open.type === "release" ? t(`verdict.${a.toLowerCase()}`) : a);
+      const title = oneLine(open.title, 90);
+      body = h("div", { className: "ak-detail", "data-detail": open.id },
+        h("button", { type: "button", className: "ak-btn sm ak-fold", "data-back": "true", autoFocus: true, onClick: () => { const id = open.id; setFb(""); setItem(""); focusLater(`[data-row="research"][data-id="${id}"]`); } }, h(Ic, { n: "back" }), t("pane.view.research")),
+        h("h2", null, title),
+        h("div", { className: "ak-meta" },
+          h("span", { className: "ak-tag" }, open.kind),
+          h(KStatus, { text: open.state, dot: open.dot }),
+          open.level ? h("span", { className: "ak-status", "data-level": open.level }, t("pane.level", { n: open.level, m: levels })) : null,
+          open.level ? h(InfoHint, { label: t("pane.level.about"), text: t("pane.level.hint", { m: levels }), align: "end", glyph: h(Ic, { n: "info" }) }) : null),
+        open.text && open.text !== title ? h("p", null, open.text) : null,
+        open.evidence.length ? h(React.Fragment, null,
+          h("div", { className: "ak-group" }, t("pane.evidence")),
+          h("div", { className: "ak-rows" }, open.evidence.map(([name, level], i) => h(KRow, { key: i, kind: "evidence", id: String(i), name: oneLine(name, 90), mono: open.type === "claim", end: h(KStatus, { text: level }) })))) : null,
+        h("div", { className: "ak-acts" },
+          main ? h(KBtn, { look: "primary", label: word(main), disabled: busy, onClick: () => run(main) }) : null,
+          h(KBtn, { look: "outline", label: t("chat.use"), onClick: () => use(open.chat) }),
+          rest.length ? h(Menu, { label: t("pane.more"), items: rest.map((a) => [a, word(a)]), disabled: busy, onPick: run }) : null));
+    } else if (view === "research") {
+      body = items.length === 0 ? empty("pane.research.empty") : h("div", { className: "ak-rows" }, items.map((r) => h("button", { key: r.id, type: "button", className: "ak-row", "data-row": "research", "data-id": r.id, onClick: () => { setFb(""); setItem(r.id); } },
+        h("span", { className: "text" }, h("span", { className: "name" }, oneLine(r.title, 90)), h("span", { className: "sub" }, r.kind)),
+        h("span", { className: "end" }, h(KStatus, { text: r.state, dot: r.dot })))));
+    } else if (view === "cammut") {
+      body = h(Cammut, { t });
+    } else if (view === "memory") {
+      const m = state.memory || {}, hits = Array.isArray(m.results) ? m.results : [];
+      body = h(React.Fragment, null,
+        search("memory", memQ !== null ? memQ : String(m.lastQuery || ""), setMemQ, seek, t("pane.memory.search"), false),
+        // the pane may carry the same refusal as its own line above: one failure is said once
+        m.error && oneLine(m.error) !== oneLine(actionError) ? alertLine(m.error) : null,
+        hits.length ? h("div", { className: "ak-rows" }, hits.map((n, i) => h(KRow, {
+          key: n.id || i, kind: "note", id: String(n.id || i), name: String(n.text || ""), chips: [oneLine(n.context || "memory", 40)],
+          end: h(KBtn, { look: "outline", small: true, label: t("chat.use"), aria: t("pane.use.label", { name: oneLine(n.text, 40) }), onClick: () => use(`Shared memory [${n.context || "memory"}]: ${n.text}`) }),
+        }))) : m.lastQuery && !m.error && !seeking ? empty("pane.nothing") : null);
+    } else if (view === "figures") {
+      const f = state.molecullage || {}, pins = Array.isArray(f.pins) ? f.pins : [], found = Array.isArray(f.items) ? f.items : [];
+      const keyOf = (s) => s.id || s.name, pinned = new Set(pins.map((p) => p.id));
+      const said = (v) => (typeof v === "string" && v.trim() && v.trim().toLowerCase() !== "none" ? v.trim() : ""); // the library writes "none" for an empty field
+      const rows = [...pins.filter((p) => !found.some((s) => keyOf(s) === p.id)), ...found];
+      const asked = String(f.query || "").trim(); // the search that the store answered last
+      body = h(React.Fragment, null,
+        search("figures", figQ !== null ? figQ : String(f.query || ""), setFigQ, onSearchFigures, t("pane.figures.search"), true),
+        found.length === 0 && asked ? empty("pane.nothing") : null,
+        rows.length === 0 ? (asked ? null : empty("pane.figures.none")) : h("div", { className: "ak-rows" }, rows.map((s) => {
+          const k = keyOf(s), on = pinned.has(k), name = oneLine(s.name || k, 60);
+          return h(KRow, {
+            key: k, kind: "source", id: String(k), name, tail: on ? h("span", { className: "ak-tag" }, t("molecullage.pinned")) : null, sub: oneLine(said(s.use) || said(s.kind) || said(s.section), 90),
+            end: h(Menu, { label: t("pane.more.for", { name: oneLine(s.name || k, 40) }), items: [["pin", t(on ? "pane.unpin" : "molecullage.pin")], ["use", t("chat.use")]],
+              // a source without an id is pinned under the key of its row, because the store refuses a pin without an id
+              onPick: (a) => { if (a === "pin") { if (onPinSource) onPinSource({ source: s.id ? s : { ...s, id: k } }); } else use(`Use Molecullage source "${s.name || k}" (${s.section || "library"}${said(s.licenceClass) || said(s.kind) ? `, licence: ${said(s.licenceClass) || said(s.kind)}` : ""}${s.doi ? `, ${s.doi}` : ""}${s.url ? `, ${s.url}` : ""})`); } }),
+          });
+        })));
+    } else if (view === "prose") {
+      const p = state.prose || {}, rep = p.report || {}, marks = Array.isArray(rep.findings) ? rep.findings : [];
+      const stored = String(p.text || ""), now = draft !== null ? draft : stored;
+      // a text that the backend took leaves the draft, so the box shows what was checked; a refused one keeps the typed words
+      const send = async (fn, textNow, clear) => { if (!fn) return; const ok = await fn(textNow); if (ok !== false) setDraft((cur) => (clear || cur === textNow ? null : cur)); };
+      body = h(React.Fragment, null,
+        h("textarea", { className: "ak-area", name: "prose", value: now, placeholder: t("pane.prose.place"), "aria-label": t("pane.prose.text"), onChange: (e) => setDraft(e.target.value) }),
+        h("div", { className: "ak-acts" },
+          h(KBtn, { look: "primary", label: t("prose.apply"), onClick: () => send(onProseCheck, now, false) }),
+          // the sample only fills the box, as in the approved preview: the stored text stays until Check text sends it
+          h(KBtn, { look: "outline", label: t("pane.prose.sample"), onClick: () => setDraft(PROSE_SAMPLE) }),
+          now !== stored || !stored.trim() ? null : marks.length ? h(KStatus, { text: t("pane.prose.count", { n: marks.length }), dot: "warn" }) : h(KStatus, { text: t("pane.prose.clean"), dot: "on" })),
+        marks.length && now === stored ? h(React.Fragment, null,
+          h("div", { className: "ak-group" }, t("pane.prose.tofix")),
+          h("div", { className: "ak-rows" }, marks.map((f, i) => h(KRow, { key: i, kind: "finding", id: String(i), name: h("q", { className: "ak-q" }, oneLine(f.match, 80)), sub: t(PROSE_WHY[f.kind] || "pane.prose.why.other") }))),
+          onProseRewrite ? h("div", { className: "ak-acts" }, h(KBtn, { look: "outline", small: true, icon: "pencil", label: t("pane.prose.rewrite"), onClick: () => send(onProseRewrite, now, true) })) : null) : null);
+    } else {
+      const m = state.memory || {}, det = state.connectorsDetail || {}, srv = Array.isArray(det.Servers) ? det.Servers : [], add = (state.addons && state.addons.items) || [];
+      const off = [t("pane.status.unreached"), ""];
+      const line = (id, icon, name, [text, dot]) => h(KRow, { key: id, kind: "statusline", id, name: h(React.Fragment, null, h(Ic, { n: icon }), name), end: h(KStatus, { text, dot }) });
+      body = h("div", { className: "ak-rows" },
+        line("gateway", "gateway", t("pane.status.gateway"), m.reachable ? [t("pane.status.running"), "on"] : off),
+        line("providers", "chip", t("pane.status.providers"), !m.reachable ? off : [t("pane.status.listed", { n: (m.routes || []).length }), undefined]),
+        line("servers", "plug", t("pane.status.servers"), [t("pane.status.of", { n: srv.filter((s) => s && s.state === "ok").length, m: srv.length }), undefined]),
+        line("memory", "layers", t("pane.status.memory"), !m.reachable ? off : m.configured === false ? [t("state.unset"), ""] : m.recall ? [t("pane.status.recall.on"), "on"] : [t("pane.status.recall.off"), ""]),
+        line("addons", "blocks", t("pane.status.addons"), [t("pane.status.installed", { n: add.length }), undefined]),
+        state.update && state.update.available ? line("updates", "update", t("pane.status.updates"), [t("pane.status.update"), "warn"]) : null);
+    }
+    return frame(
+      h("div", { className: "ak-views", role: "tablist", "aria-label": t("pane.views"), onKeyDown: onTabKeys },
+        views.map((id) => h("button", { key: id, type: "button", role: "tab", id: `ak-view-${id}`, className: "ak-tab", "aria-selected": view === id, tabIndex: view === id ? 0 : -1, "data-view": id,
+          onClick: () => { setFb(""); setPicked(id); if (onSelectView && WORKSPACE_OF_VIEW[id]) onSelectView(WORKSPACE_OF_VIEW[id]); } }, t(`pane.view.${id}`)))),
+      actionError ? alertLine(actionError) : null,
+      fb ? h("p", { role: "status", className: "ak-alert ak-notice" }, fb) : null,
+      h("div", { role: "tabpanel", "aria-labelledby": `ak-view-${view}` }, body));
+  }
+
   const consoleViews = new Set(); // the refresh function of every mounted pane or Settings page
   function useConsole() {
       const [data, setData] = React.useState(null);
@@ -1754,43 +2054,29 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
         return () => { consoleViews.delete(refresh); if (w) w.removeEventListener("focus", onFocus); };
       }, []);
 
-      return { data, failed, actionError, pendingConsent, setPendingConsent, dispatch };
+      return { data, failed, actionError, pendingConsent, setPendingConsent, dispatch, refresh };
   }
 
   function makePane(t) {
     return function ArcConsolePane() {
-      const { data, failed, actionError, pendingConsent, setPendingConsent, dispatch } = useConsole();
-      const skin =
-        typeof document !== "undefined" && document.documentElement && typeof document.documentElement.getAttribute === "function"
-          ? document.documentElement.getAttribute("data-arc-skin") || "arc"
-          : "arc";
-
-      return h(View, {
+      // the side panel of the rewrite (S062). The older View stays exported for its own tests until it is removed.
+      const { data, failed, actionError, dispatch, refresh } = useConsole();
+      return h(ConsolePanel, {
         data,
         failed,
         actionError,
-        skin,
-        pendingConsent,
         t,
-        onSelectWorkspace: (workspace) => dispatch({ kind: "workspace", workspace }),
-        onSelectResearchView: (view) => dispatch({ kind: "research-view", view }),
-        onSelectConnector: (connector) => dispatch({ kind: "connector", connector }),
-        onToggleSettings: (open) => dispatch({ kind: "settings", open }),
+        Cammut: CONNECTORS.includes("Cammut") ? CammutPane : null,
+        onSelectView: (workspace) => dispatch({ kind: "workspace", workspace }),
         onDecision: ({ branchId, action }) => dispatch({ kind: "decision", branchId, action }),
-        onAddNote: (req) => dispatch({ kind: "note", ...req }),
-        onAnnotateVerdict: (req) => dispatch({ kind: "verdict", ...req }),
+        onVerdict: (req) => dispatch({ kind: "verdict", ...req }),
         onPinSource: (req) => dispatch({ kind: "molecullage-pin", ...req }),
-        onOpenConsent: (req) => setPendingConsent(req),
-        onCloseConsent: () => setPendingConsent(null),
-        onConsent: async (req) => {
-          await dispatch({ kind: "consent", ...req });
-          setPendingConsent(null);
-        },
-        onProseChange: async (text) => (await dispatch({ kind: "prose", text }))?.ok !== false,
+        onProseCheck: async (text) => (await dispatch({ kind: "prose", text }))?.ok !== false,
         onProseRewrite: async (text) => (await dispatch({ kind: "prose-rewrite", ...(typeof text === "string" ? { text } : {}) }))?.ok !== false,
-        onToggleSwitch: (rungId, enabled) => dispatch({ kind: "operator-switch", rungId, enabled }),
-        onSearchMemory: (query) => dispatch({ kind: "memory-search", query }),
-        onSearchMolecullage: (query) => dispatch({ kind: "molecullage-search", query }),
+        // A refused search leaves its line in the state. The state is read again, so the hits of the search before it leave
+        // the view; the refusal line of the pane stays, because a plain state read does not clear it.
+        onSearchMemory: async (query) => { const r = await dispatch({ kind: "memory-search", query }); if (r && r.ok === false) await refresh(); },
+        onSearchFigures: (query) => dispatch({ kind: "molecullage-search", query }),
         onRefresh: () => dispatch({ kind: "refresh" }),
       });
     };
@@ -1833,9 +2119,45 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     };
   }
 
+  // The Settings list of the app draws a gear for every page of an add-on: it picks the icon by the page id and knows
+  // none of ours. This pass puts our own icon into such an entry. It finds the entry by its label and swaps the drawing
+  // inside the icon that the app made; an entry of the app itself is never touched.
+  const SETTINGS_ICON = { memory: "layers", connectors: "plug", access: "shield", "add-ons": "blocks", updates: "update" };
+  function paintSettingsIcons(root, t) {
+    let done = 0;
+    try {
+      const byLabel = {};
+      for (const id of Object.keys(SETTINGS_ICON)) byLabel[t(`settings.nav.${id.replace("-", "")}`)] = SETTINGS_ICON[id];
+      for (const cell of Array.from(root.querySelectorAll('button[class*="navCell"]'))) {
+        const icon = byLabel[String(cell.textContent || "").trim()], svg = cell.querySelector('svg[class*="navIcon"]');
+        if (!icon || !svg || svg.getAttribute("data-arc-icon") === icon) continue;
+        svg.setAttribute("data-arc-icon", icon);
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-linecap", "round");
+        svg.setAttribute("stroke-linejoin", "round");
+        svg.innerHTML = ICONS[icon];
+        done++;
+      }
+    } catch { /* the page changed under the pass: the next pass draws the icons */ }
+    return done;
+  }
+  // The app draws its Settings list when the user opens Settings and again on each change, so the pass runs after page
+  // changes, at most once in 200 ms. Its own change of an icon starts one more pass, which then finds nothing to do.
+  function watchSettingsIcons(t) {
+    const D = typeof document !== "undefined" ? document : null, MO = typeof MutationObserver !== "undefined" ? MutationObserver : null;
+    if (!D || !D.body || !MO || typeof setTimeout !== "function") return () => {};
+    let queued = false;
+    const run = () => { queued = false; paintSettingsIcons(D, t); };
+    const mo = new MO(() => { if (!queued) { queued = true; setTimeout(run, 200); } });
+    mo.observe(D.body, { childList: true, subtree: true });
+    run();
+    return () => mo.disconnect();
+  }
+
   function apply(ctx) {
     ctx.effect(() => ctx.locale.register(NS, { en, zh: en }), "arc-core: dictionaries");
     const t = ctx.locale.bind(NS);
+    ctx.effect(() => watchSettingsIcons(t), "arc-core: settings icons");
     if (ctx.slots && typeof ctx.slots.inject === "function") {
       for (const sec of SETTINGS_SECTIONS.filter((x) => !x.connector || CONNECTORS.includes(x.connector))) {
         const Section = makeSettingsSection(sec.id, t);
@@ -1870,7 +2192,7 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     name: "arc-core",
     inject: ["slots", "locale"],
     apply,
-    kit: { ICONS, CSS: KIT_CSS, Ic, Btn: KBtn, Seg, Status: KStatus, Row: KRow, Pick, Confirm, AccessPage, UpdatesPage },
+    kit: { ICONS, CSS: KIT_CSS, Ic, Btn: KBtn, Seg, Status: KStatus, Row: KRow, Pick, Menu, Confirm, AccessPage, UpdatesPage, ConsolePanel },
     View,
     ConsentDialog,
     ConnectorView,
@@ -1887,6 +2209,8 @@ window.__ModuleLoader__.load({ id: "arc-core", factory: (require) => {
     THEMES,
     en,
     pushToChatComposer,
+    paintSettingsIcons,
+    SETTINGS_ICON,
     SettingsSectionView,
     SETTINGS_SECTIONS,
     InfoHint,

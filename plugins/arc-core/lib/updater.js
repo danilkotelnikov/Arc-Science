@@ -305,8 +305,10 @@ export function createUpdater(opts = {}) {
   // ---- check
   const check = async () => (mem.busy ? getState() : doCheck());
   // forChannel: the channel of the update that asked for this check. An update reads its channel once, at its start.
-  async function doCheck(forChannel) {
+  // own: an object of the caller that takes the failure of this one check, so no other check can write into its result.
+  async function doCheck(forChannel, own = null) {
     const channel = forChannel || settings().channel; // read now: another window of the app may have changed it
+    const mine = (mem.checks = (mem.checks || 0) + 1); // the number of this check: a newer check has a higher one
     phase('checking');
     try {
       let all = [];
@@ -326,8 +328,13 @@ export function createUpdater(opts = {}) {
       phase('idle', top ? '' : 'No release with a plain version number was found.');
     } catch (err) {
       // a check for a channel that is no longer chosen says nothing about the new one, also when it fails
-      if (settings().channel === channel) phase('failed', `Could not reach GitHub or read its answer: ${clean(err.message, 200)}`);
-      else phase('idle');
+      const said = `Could not reach GitHub or read its answer: ${clean(err.message, 200)}`;
+      if (own) own.error = said;
+      // the check of an update is its own failure, whatever the channel is now; a plain check counts only for the chosen channel
+      if (own || settings().channel === channel) phase('failed', said);
+      // A late failure for a channel that is no longer chosen ends the checking phase only when no newer check
+      // has started since. A newer check, running or ended, keeps what it wrote.
+      else if (mine === mem.checks && mem.phase === 'checking') phase('idle');
     }
     return getState();
   }
@@ -507,11 +514,13 @@ export function createUpdater(opts = {}) {
       }
       if (!journal()) await prevBack(); // an update that stopped before or during its swap left the earlier backup aside
       const channel = settings().channel; // read once, here: the check and the pick below use this one value
-      const st = await doCheck(channel);
-      if (st.phase === 'failed') return { ok: false, error: st.message };
+      const own = { error: '' };
+      await doCheck(channel, own);
+      // the check of this update failed: an older release list must not stand in, also when the channel changed meanwhile
+      if (own.error) return { ok: false, error: own.error };
       const named = back ? undefined : version;
       const pick = pickRelease(mem.releases, named, channel);
-      if (!pick) return { ok: false, error: named ? `Release ${clean(named, 40)} was not found.` : 'No release was found.' };
+      if (!pick) { const none = named ? `Release ${clean(named, 40)} was not found.` : 'No release was found.'; phase('idle', none); return { ok: false, error: none }; }
       toVersion = pick.version;
       if (back && expect && (expect.version !== toVersion || expect.channel !== channel)) {
         const moved = 'The newest version of the channel changed. Look at the page again.';
