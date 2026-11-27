@@ -895,6 +895,104 @@ function withCatalogue(models, catalogue) {
   report.push('model autofetch: the form stores reasoning levels and reads the published facts of the endpoint');
 }
 
+// ---- patch 16: a gateway may refuse an unknown client. Some answer 401 "unauthorized client detected" to a valid key
+// until the request looks like a coding tool, so a route can be unreachable although its key is right. Before a model
+// listing and before a model call, the adapter now tries the client identities of Codex, OpenCode and Roo Code and keeps
+// the first one the route accepts. lib/client-hints.mjs holds the identities and the refusal test.
+{
+  const p = DS + 'dsh-llm-pi-ai/lib/index.js';
+  let s = text(p);
+  const rule = fs.readFileSync(path.join(root, 'lib', 'client-hints.mjs'), 'utf8');
+
+  // an explicit deployment header now wins over the product's own User-Agent, which is the whole point here
+  const requestFind = `/** Merge deployment headers while removing case-insensitive attribution collisions. */\nfunction requestHeaders(headers) {\n\tconst attribution = attributionHeaders();\n\tconst reserved = new Set(Object.keys(attribution).map((name) => name.toLowerCase()));\n\treturn {\n\t\t...Object.fromEntries(Object.entries(headers ?? {}).filter(([name]) => !reserved.has(name.toLowerCase()))),\n\t\t...attribution\n\t};\n}`;
+  const requestNew = `/** Merge deployment headers; a header the deployment states wins over the product's attribution. */\nfunction requestHeaders(headers) {\n\treturn {
+\t\t...attributionHeaders(),
+\t\t...headers ?? {}
+\t};\n}`;
+  s = replaceOnce(s, requestFind, requestNew, 'client hints: a stated header wins');
+
+  // the identities, the refusal test, and one negotiation per route for the life of the process
+  const rules = `${rule}
+const CLIENT_HINT_CACHE = /* @__PURE__ */ new Map();
+/** One cache key per route and protocol; an empty string is a route that needs no identity. */
+function clientHintKey(baseURL, api) {
+\treturn String(api ?? "") + "\\u0000" + String(baseURL ?? "");
+}
+/**
+ * Ask one route which client identity it accepts. The product's own identity is tried first, so a route that needs
+ * none pays one request and nothing else. A refusal of the client is told apart from a refusal of the key, so a bad
+ * key is never retried under another name.
+ * @param baseURL - the route endpoint.
+ * @param api - the wire protocol.
+ * @param apiKey - the resolved key, when the route has one.
+ * @param signal - the caller's cancellation.
+ * @returns the accepted User-Agent, or undefined when the route needs none.
+ */
+async function negotiateClientHint(baseURL, api, apiKey, signal) {
+\tif (baseURL === void 0 || baseURL.length === 0) return void 0;
+\tconst key = clientHintKey(baseURL, api);
+\tif (CLIENT_HINT_CACHE.has(key)) return CLIENT_HINT_CACHE.get(key);
+\tconst url = listingUrl(baseURL, api ?? "openai-completions");
+\tconst probe = async (userAgent) => {
+\t\tconst headers = new Headers({ accept: "application/json" });
+\t\tif (api === "anthropic-messages") {
+\t\t\theaders.set("anthropic-version", ANTHROPIC_VERSION);
+\t\t\tif (apiKey !== void 0) headers.set("x-api-key", apiKey);
+\t\t} else if (apiKey !== void 0) headers.set("authorization", \`Bearer \${apiKey}\`);
+\t\theaders.set("user-agent", userAgent);
+\t\ttry {
+\t\t\tconst response = await fetch(url, {
+\t\t\t\tmethod: "GET",
+\t\t\t\theaders,
+\t\t\t\t...signal === void 0 ? {} : { signal }
+\t\t\t});
+\t\t\tconst body = await readBounded(response, url);
+\t\t\treturn { refused: isClientRefusal(response.status, body) };
+\t\t} catch {
+\t\t\treturn { refused: false, failed: true };
+\t\t}
+\t};
+\tconst own = attributionHeaders()["user-agent"] ?? "";
+\tif (!(await probe(own)).refused) {
+\t\tCLIENT_HINT_CACHE.set(key, void 0);
+\t\treturn void 0;
+\t}
+\tfor (const hint of hintOrder()) {
+\t\tconst attempt = await probe(hint.userAgent);
+\t\tif (!attempt.refused && attempt.failed !== true) {
+\t\t\tCLIENT_HINT_CACHE.set(key, hint.userAgent);
+\t\t\treturn hint.userAgent;
+\t\t}
+\t}
+\tCLIENT_HINT_CACHE.set(key, void 0);
+\treturn void 0;
+}
+/** The header override for one route, or an empty object when the route needs no identity. */
+async function clientHintOverride(baseURL, api, apiKey, signal) {
+\tconst accepted = await negotiateClientHint(baseURL, api, apiKey, signal);
+\treturn accepted === void 0 ? {} : { "user-agent": accepted };
+}
+/**
+ * A positive integer field of a listing entry, or \`undefined\` when absent or unusable. */`;
+  const anchor = '/** A positive integer field of a listing entry, or `undefined` when absent or unusable. */';
+  s = replaceOnce(s, anchor, rules, 'client hints: rules');
+
+  // the fetch stage: ask before the listing, and send the accepted identity
+  const listFind = '\t\tfor (const [name, value] of Object.entries(attributionHeaders())) headers.set(name, value);\n\t\tresponse = await fetch(url, {';
+  const listNew = '\t\tfor (const [name, value] of Object.entries(attributionHeaders())) headers.set(name, value);\n\t\tconst hint = await negotiateClientHint(request.baseURL, api, apiKey, request.signal);\n\t\tif (hint !== void 0) headers.set("user-agent", hint);\n\t\tresponse = await fetch(url, {';
+  s = replaceOnce(s, listFind, listNew, 'client hints: the fetch stage');
+
+  // the use stage: ask before the call, on the route's own protocol
+  const useFind = 'headers: requestHeaders(profile.headers)';
+  const useNew = 'headers: requestHeaders({\n\t\t\t\t\t...profile.headers,\n\t\t\t\t\t...await clientHintOverride(profile.baseURL, profile.api ?? model.api, apiKey, watchdog.signal)\n\t\t\t\t})';
+  s = replaceOnce(s, useFind, useNew, 'client hints: the use stage');
+
+  mustParse(s, p);
+  put(p, s);
+  report.push('client hints: Codex, OpenCode and Roo Code identities tried before a listing and before a model call');
+}
+
 // ---- patch 16: the data folder is ~/.arc (was ~/.dsh), its variable ARC_HOME (was DSH_HOME), project skills in .arc/skills
 {
   // a path segment only: after a quote, slash, tilde or space ("~/.dsh", ".dsh/skills", ".dsh-mkdir-"); never a property such as manifest?.dsh?.bundle
