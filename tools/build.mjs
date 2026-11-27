@@ -780,6 +780,11 @@ Use this image in Markdown:
   report.push('intro animation: GSAP-style choreographed AS cube and kinetic type intro (7.4s default, skippable via Skip intro or Esc/Space/Enter); window shows immediately on launch');
 }
 
+// ---- patch 15d: single-dollar math must not swallow currency text
+// "$1,000** (up to $" and "$200 ... for $" used to become inline math, so a table showed "**" and lost "$".
+// It runs before the clean-room pass, which hashes every changed file for the runtime manifest.
+applyKatexDollarPatch({ text, put, must, mustParse, report });
+
 // ---- patch 16: the data folder is ~/.arc (was ~/.dsh), its variable ARC_HOME (was DSH_HOME), project skills in .arc/skills
 {
   // a path segment only: after a quote, slash, tilde or space ("~/.dsh", ".dsh/skills", ".dsh-mkdir-"); never a property such as manifest?.dsh?.bundle
@@ -882,10 +887,6 @@ const unpackedNew = new Map(); // new path under arc/ -> rewritten buffer of an 
   put(pp, JSON.stringify(pkg, null, 2) + '\n');
   report.push(`independent version: Electron app package.json stamped to Arc Harness ${ARC_VERSION} (com.arc-science.arc-harness)`);
 }
-
-// ---- patch 19: single-dollar math must not swallow currency text
-// "$1,000** (up to $" and "$200 ... for $" used to become inline math, so the table showed "**" and lost "$".
-applyKatexDollarPatch({ text, put, must, mustParse, report });
 
 // ---- clean-room check: no old name is left in any text file of the written archive (base64 data excepted)
 {

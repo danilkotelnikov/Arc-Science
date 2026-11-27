@@ -12,7 +12,18 @@ import { arcText } from '../lib/arcnames.mjs';
 import { makeArcCopy, homeRewrite } from '../lib/arcunpacked.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const res = process.env.ARC_RESOURCES || path.join(process.env.LOCALAPPDATA || '', 'Programs', 'DeepSeek Harness', 'resources');
+// The app folder was called "DeepSeek Harness" before the rename. Look for the archive under both names, so a
+// build can still be installed after the rename, and an old name does not send the build to a folder nobody runs.
+function findResources() {
+  if (process.env.ARC_RESOURCES) return process.env.ARC_RESOURCES;
+  const base = path.join(process.env.LOCALAPPDATA || '', 'Programs');
+  for (const name of ['Arc Harness', 'DeepSeek Harness']) {
+    const dir = path.join(base, name, 'resources');
+    if (fs.existsSync(path.join(dir, 'app.asar'))) return dir;
+  }
+  return path.join(base, 'Arc Harness', 'resources');
+}
+const res = findResources();
 const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
 const pristineSums = Object.fromEntries(fs.readFileSync(path.join(root, 'pristine', 'SHA256SUMS.txt'), 'utf8').trim().split('\n').map((l) => { const [h, n] = l.split(/\s+\*?/); return [n, h]; }));
 const live = (n) => path.join(res, n);
