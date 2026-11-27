@@ -16,7 +16,7 @@
     "version:sync": "node scripts/version-sync.mjs --write",
     "bench:start": "node tools/measure-start.mjs",
     "bench:run": "node tools/bench-runner.mjs",
-    "test:archive": "node -e \"require('fs').mkdirSync('build/check',{recursive:true})\" && node test/build-check.mjs build/app.asar build/check && node test/ui-strings.mjs && node test/independent-scan.mjs && node test/positive-control.mjs",
+    "test:archive": "node -e \"require('fs').mkdirSync('build/check',{recursive:true})\" && node test/katex-dollar.test.mjs && node test/build-check.mjs build/app.asar build/check && node test/ui-strings.mjs && node test/independent-scan.mjs && node test/positive-control.mjs",
     "scan": "node scripts/privacy-scan.mjs"
   }
 }

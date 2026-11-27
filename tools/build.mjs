@@ -12,6 +12,7 @@ import { recolorSvg, recolorBlueAttrsInScript, recolorBlueTokens, replaceVendorB
 import { swapPicture } from '../lib/whaleimg.mjs';
 import { arcText, LEFT } from '../lib/arcnames.mjs';
 import { makeArcCopy } from '../lib/arcunpacked.mjs';
+import { applyKatexDollarPatch } from '../lib/katex-dollar-patch.mjs';
 import { readArcVersion } from '../scripts/version-sync.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -881,6 +882,10 @@ const unpackedNew = new Map(); // new path under arc/ -> rewritten buffer of an 
   put(pp, JSON.stringify(pkg, null, 2) + '\n');
   report.push(`independent version: Electron app package.json stamped to Arc Harness ${ARC_VERSION} (com.arc-science.arc-harness)`);
 }
+
+// ---- patch 19: single-dollar math must not swallow currency text
+// "$1,000** (up to $" and "$200 ... for $" used to become inline math, so the table showed "**" and lost "$".
+applyKatexDollarPatch({ text, put, must, mustParse, report });
 
 // ---- clean-room check: no old name is left in any text file of the written archive (base64 data excepted)
 {
